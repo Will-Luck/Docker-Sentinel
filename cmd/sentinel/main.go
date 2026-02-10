@@ -91,6 +91,7 @@ func main() {
 			EventBus:  bus,
 			Snapshots: &snapshotAdapter{db},
 			Rollback:  &rollbackAdapter{d: client, s: db, log: log},
+		Restarter: &restartAdapter{client},
 			Registry:  &registryAdapter{log: log},
 			Policy:    &policyStoreAdapter{db},
 			EventLog:  &eventLogAdapter{db},
@@ -295,6 +296,13 @@ func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.Co
 		ci.State.Restarting = inspect.State.Restarting
 	}
 	return ci, nil
+}
+
+// restartAdapter bridges docker.Client to web.ContainerRestarter.
+type restartAdapter struct{ c *docker.Client }
+
+func (a *restartAdapter) RestartContainer(ctx context.Context, id string) error {
+	return a.c.RestartContainer(ctx, id)
 }
 
 // rollbackAdapter bridges engine.RollbackFromStore to web.ContainerRollback.

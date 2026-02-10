@@ -1161,12 +1161,6 @@ tbody td {
    18. Checkbox Column
    -------------------------------------------------------------------------- */
 
-.th-checkbox,
-.td-checkbox {
-    width: 40px;
-    text-align: center;
-}
-
 .row-select,
 #select-all {
     accent-color: var(--accent);
@@ -1309,7 +1303,149 @@ tbody td {
 
 
 /* --------------------------------------------------------------------------
-   22. Responsive
+   22. Manage Mode — hidden checkboxes by default
+   -------------------------------------------------------------------------- */
+
+.th-checkbox,
+.td-checkbox {
+    width: 0;
+    max-width: 0;
+    overflow: hidden;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    opacity: 0;
+    transition: width 250ms ease, max-width 250ms ease, opacity 200ms ease, padding 250ms ease;
+}
+
+table.managing .th-checkbox,
+table.managing .td-checkbox {
+    width: 40px;
+    max-width: 40px;
+    opacity: 1;
+    padding-left: var(--sp-4) !important;
+    padding-right: var(--sp-4) !important;
+}
+
+#manage-btn.active {
+    background: var(--accent);
+    color: #ffffff;
+    border-color: var(--accent);
+}
+
+
+/* --------------------------------------------------------------------------
+   23. Status Badge Hover — Running -> Restart?
+   -------------------------------------------------------------------------- */
+
+.status-badge-wrap {
+    position: relative;
+    display: inline-flex;
+    cursor: pointer;
+}
+
+.status-badge-wrap .badge-default {
+    transition: opacity 150ms ease;
+}
+
+.status-badge-wrap .badge-hover {
+    position: absolute;
+    top: 0;
+    left: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+    white-space: nowrap;
+}
+
+.status-badge-wrap:hover .badge-default {
+    opacity: 0;
+}
+
+.status-badge-wrap:hover .badge-hover {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+
+/* --------------------------------------------------------------------------
+   24. Self-Protected Container
+   -------------------------------------------------------------------------- */
+
+.policy-disabled {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+
+/* --------------------------------------------------------------------------
+   25. Stack Row Animation
+   -------------------------------------------------------------------------- */
+
+.stack-group:not(.stack-collapsed) .container-row {
+    animation: slideDown 250ms ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   26. Accordion Slide Animation
+   -------------------------------------------------------------------------- */
+
+.accordion-panel {
+    overflow: hidden;
+}
+
+.accordion-panel.accordion-open {
+    animation: accordionOpen 300ms ease-out;
+}
+
+.accordion-panel.accordion-closing {
+    animation: accordionClose 200ms ease-in forwards;
+}
+
+@keyframes accordionOpen {
+    from {
+        opacity: 0;
+        max-height: 0;
+    }
+    to {
+        opacity: 1;
+        max-height: 500px;
+    }
+}
+
+@keyframes accordionClose {
+    from {
+        opacity: 1;
+        max-height: 500px;
+    }
+    to {
+        opacity: 0;
+        max-height: 0;
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   27. Responsive
    -------------------------------------------------------------------------- */
 
 @media (max-width: 768px) {
@@ -1408,7 +1544,7 @@ tbody td {
 
 
 /* --------------------------------------------------------------------------
-   23. Transitions — global defaults for interactive states
+   28. Transitions — global defaults for interactive states
    -------------------------------------------------------------------------- */
 
 /* Catch-all for elements that should have smooth transitions but are not
@@ -1422,7 +1558,7 @@ input[type="checkbox"] {
 
 
 /* --------------------------------------------------------------------------
-   24. Focus — keyboard-only visible outlines
+   29. Focus — keyboard-only visible outlines
    -------------------------------------------------------------------------- */
 
 :focus-visible {

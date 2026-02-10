@@ -341,6 +341,59 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apiRestart restarts a container by name.
+func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.isProtectedContainer(r.Context(), name) {
+		writeError(w, http.StatusForbidden, "cannot restart sentinel itself via the dashboard")
+		return
+	}
+
+	if s.deps.Restarter == nil {
+		writeError(w, http.StatusNotImplemented, "restart not available")
+		return
+	}
+
+	containers, err := s.deps.Docker.ListContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers for restart", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var containerID string
+	for _, c := range containers {
+		if containerName(c) == name {
+			containerID = c.ID
+			break
+		}
+	}
+
+	if containerID == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	go func() {
+		if err := s.deps.Restarter.RestartContainer(context.Background(), containerID); err != nil {
+			s.deps.Log.Error("restart failed", "name", name, "error", err)
+		}
+	}()
+
+	s.logEvent("restart", name, "Container restarted")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "restarting",
+		"name":    name,
+		"message": "restart initiated for " + name,
+	})
+}
+
 // apiChangePolicy sets a policy override for a container in BoltDB.
 // No container restart — instant DB write.
 func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {

@@ -256,6 +256,7 @@ function collapseAllStacks() {
     var panels = document.querySelectorAll(".accordion-panel");
     for (var i = 0; i < panels.length; i++) {
         panels[i].style.display = "none";
+        panels[i].classList.remove("accordion-open", "accordion-closing");
     }
     var groups = document.querySelectorAll(".stack-group");
     for (var i = 0; i < groups.length; i++) {
@@ -275,13 +276,20 @@ function toggleAccordion(name) {
     var panel = document.getElementById("accordion-" + name);
     if (!panel) return;
 
-    var isOpen = panel.style.display !== "none";
+    var isOpen = panel.style.display !== "none" && !panel.classList.contains("accordion-closing");
     if (isOpen) {
-        panel.style.display = "none";
+        panel.classList.remove("accordion-open");
+        panel.classList.add("accordion-closing");
+        setTimeout(function() {
+            panel.style.display = "none";
+            panel.classList.remove("accordion-closing");
+        }, 200);
         return;
     }
 
     panel.style.display = "";
+    panel.classList.remove("accordion-closing");
+    panel.classList.add("accordion-open");
 
     // If the panel already has server-rendered content, skip fetching.
     var contentEl = panel.querySelector(".accordion-content");
@@ -453,7 +461,31 @@ function clearSelection() {
 }
 
 /* ------------------------------------------------------------
-   10. SSE Real-time Updates
+   10. Manage Mode
+   ------------------------------------------------------------ */
+
+var manageMode = false;
+
+function toggleManageMode() {
+    manageMode = !manageMode;
+    var table = document.getElementById("container-table");
+    var btn = document.getElementById("manage-btn");
+    if (!table || !btn) return;
+
+    if (manageMode) {
+        table.classList.add("managing");
+        btn.textContent = "Done";
+        btn.classList.add("active");
+    } else {
+        table.classList.remove("managing");
+        btn.textContent = "Manage";
+        btn.classList.remove("active");
+        clearSelection();
+    }
+}
+
+/* ------------------------------------------------------------
+   11. SSE Real-time Updates
    ------------------------------------------------------------ */
 
 var sseReloadTimer = null;
@@ -539,7 +571,7 @@ function initSSE() {
 }
 
 /* ------------------------------------------------------------
-   11. Initialisation
+   12. Initialisation
    ------------------------------------------------------------ */
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -635,4 +667,21 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
     }
+
+    // Restart badge click delegation.
+    document.addEventListener("click", function(e) {
+        var badge = e.target.closest(".status-badge-wrap .badge-hover");
+        if (!badge) return;
+        e.stopPropagation();
+        var wrap = badge.closest(".status-badge-wrap");
+        if (!wrap) return;
+        var name = wrap.getAttribute("data-name");
+        if (!name) return;
+        apiPost(
+            "/api/containers/" + encodeURIComponent(name) + "/restart",
+            null,
+            "Restart initiated for " + name,
+            "Failed to restart " + name
+        );
+    });
 });

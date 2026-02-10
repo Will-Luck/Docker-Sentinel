@@ -60,6 +60,7 @@
                 <div class="btn-group">
                     <button class="btn" onclick="expandAllStacks()">Expand All</button>
                     <button class="btn" onclick="collapseAllStacks()">Collapse All</button>
+                    <button class="btn" id="manage-btn" onclick="toggleManageMode()">Manage</button>
                 </div>
             </div>
             <div class="table-wrap">
@@ -99,19 +100,31 @@
                             </tr>
                             {{range .Containers}}
                             <tr class="container-row" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
-                                <td class="td-checkbox"><input type="checkbox" class="row-select" value="{{.Name}}" id="select-{{.Name}}" aria-label="Select {{.Name}}"></td>
+                                <td class="td-checkbox">
+                                    {{if not .IsSelf}}
+                                        <input type="checkbox" class="row-select" value="{{.Name}}" id="select-{{.Name}}" aria-label="Select {{.Name}}">
+                                    {{end}}
+                                </td>
                                 <td>
                                     <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
+                                    {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
                                 </td>
                                 <td class="cell-image mono">{{.Image}}</td>
                                 <td>
-                                    <select class="policy-select policy-{{.Policy}}"
-                                            onchange="changePolicy('{{.Name}}', this.value)"
-                                            data-current="{{.Policy}}">
-                                        <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto</option>
-                                        <option value="manual" {{if eq .Policy "manual"}}selected{{end}}>manual</option>
-                                        <option value="pinned" {{if eq .Policy "pinned"}}selected{{end}}>pinned</option>
-                                    </select>
+                                    {{if .IsSelf}}
+                                        <span class="policy-select policy-pinned policy-disabled" title="Self-protected">
+                                            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:2px"><path d="M8 1a4 4 0 00-4 4v3H3a1 1 0 00-1 1v5a1 1 0 001 1h10a1 1 0 001-1V9a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm-2 4a2 2 0 114 0v3H6V5z"/></svg>
+                                            self
+                                        </span>
+                                    {{else}}
+                                        <select class="policy-select policy-{{.Policy}}"
+                                                onchange="this.className='policy-select policy-'+this.value; changePolicy('{{.Name}}', this.value)"
+                                                data-current="{{.Policy}}">
+                                            <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto</option>
+                                            <option value="manual" {{if eq .Policy "manual"}}selected{{end}}>manual</option>
+                                            <option value="pinned" {{if eq .Policy "pinned"}}selected{{end}}>pinned</option>
+                                        </select>
+                                    {{end}}
                                 </td>
                                 <td>
                                     {{if .Maintenance}}
@@ -119,14 +132,21 @@
                                     {{else if .HasUpdate}}
                                         <span class="badge badge-warning">Update Available</span>
                                     {{else if eq .State "running"}}
-                                        <span class="badge badge-success">Running</span>
+                                        {{if .IsSelf}}
+                                            <span class="badge badge-success">Running</span>
+                                        {{else}}
+                                            <span class="status-badge-wrap" data-name="{{.Name}}">
+                                                <span class="badge badge-success badge-default">Running</span>
+                                                <span class="badge badge-error badge-hover">Restart?</span>
+                                            </span>
+                                        {{end}}
                                     {{else}}
                                         <span class="badge badge-error">{{.State}}</span>
                                     {{end}}
                                 </td>
                                 <td>
                                     <div class="btn-group">
-                                        {{if ne .Policy "pinned"}}
+                                        {{if and (ne .Policy "pinned") (not .IsSelf)}}
                                         <button class="btn btn-warning"
                                                 onclick="triggerUpdate('{{.Name}}', event)">
                                             Update

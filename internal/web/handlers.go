@@ -31,6 +31,7 @@ type containerView struct {
 	State       string
 	Maintenance bool
 	HasUpdate   bool
+	IsSelf      bool
 	Stack       string // com.docker.compose.project label, or "" for standalone
 }
 
@@ -76,6 +77,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			State:       c.State,
 			Maintenance: maintenance,
 			HasUpdate:   pendingNames[name],
+			IsSelf:      c.Labels["sentinel.self"] == "true",
 			Stack:       c.Labels["com.docker.compose.project"],
 		})
 	}
@@ -286,6 +288,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		Policy:      detailPolicy,
 		State:       found.State,
 		Maintenance: maintenance,
+		IsSelf:      found.Labels["sentinel.self"] == "true",
 	}
 
 	// Gather history.

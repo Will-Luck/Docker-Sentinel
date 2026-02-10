@@ -26,6 +26,7 @@ type Dependencies struct {
 	EventBus  *events.Bus
 	Snapshots SnapshotStore
 	Rollback  ContainerRollback
+	Restarter ContainerRestarter
 	Registry  RegistryVersionChecker
 	Policy    PolicyStore
 	EventLog  EventLogger
@@ -144,6 +145,11 @@ type ContainerUpdater interface {
 	UpdateContainer(ctx context.Context, id, name string) error
 }
 
+// ContainerRestarter restarts a container by ID.
+type ContainerRestarter interface {
+	RestartContainer(ctx context.Context, id string) error
+}
+
 // ConfigReader provides settings for display.
 type ConfigReader interface {
 	Values() map[string]string
@@ -235,6 +241,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/approve/{name}", s.apiApprove)
 	s.mux.HandleFunc("POST /api/reject/{name}", s.apiReject)
 	s.mux.HandleFunc("POST /api/update/{name}", s.apiUpdate)
+	s.mux.HandleFunc("POST /api/containers/{name}/restart", s.apiRestart)
 	s.mux.HandleFunc("GET /api/settings", s.apiSettings)
 	s.mux.HandleFunc("GET /api/logs", s.apiLogs)
 

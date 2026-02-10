@@ -61,6 +61,12 @@ func (c *Client) StartContainer(ctx context.Context, id string) error {
 	return err
 }
 
+// RestartContainer restarts a running container.
+func (c *Client) RestartContainer(ctx context.Context, id string) error {
+	_, err := c.api.ContainerRestart(ctx, id, client.ContainerRestartOptions{})
+	return err
+}
+
 // PullImage pulls an image by reference, waiting for pull to complete.
 func (c *Client) PullImage(ctx context.Context, refStr string) error {
 	resp, err := c.api.ImagePull(ctx, refStr, client.ImagePullOptions{})
