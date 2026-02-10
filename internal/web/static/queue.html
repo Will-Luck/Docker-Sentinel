@@ -6,7 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Update Queue — Docker-Sentinel</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
 <body>
     <nav class="nav">
@@ -38,47 +37,61 @@
                     <thead>
                         <tr>
                             <th>Container</th>
-                            <th>Current Image</th>
-                            <th>Current Digest</th>
-                            <th>Remote Digest</th>
+                            <th>Image</th>
                             <th>Detected</th>
-                            <th>Changelog</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {{if .Queue}}
-                            {{range .Queue}}
-                            <tr>
-                                <td><a href="/container/{{.ContainerName}}" class="container-link">{{.ContainerName}}</a></td>
-                                <td class="cell-image mono">{{.CurrentImage}}</td>
-                                <td class="cell-digest" title="{{.CurrentDigest}}">{{truncDigest .CurrentDigest}}</td>
-                                <td class="cell-digest" title="{{.RemoteDigest}}">{{truncDigest .RemoteDigest}}</td>
-                                <td title="{{fmtTime .DetectedAt}}">{{fmtTimeAgo .DetectedAt}}</td>
-                                <td>
-                                    {{with changelogURL .CurrentImage}}
-                                        <a href="{{.}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
-                                    {{else}}
-                                        <span class="text-muted">-</span>
-                                    {{end}}
-                                </td>
+                            {{range $i, $q := .Queue}}
+                            <tr class="container-row" onclick="onRowClick(event, 'queue-{{$i}}')">
+                                <td><a href="/container/{{$q.ContainerName}}" class="container-link">{{$q.ContainerName}}</a></td>
+                                <td class="cell-image mono">{{$q.CurrentImage}}</td>
+                                <td title="{{fmtTime $q.DetectedAt}}">{{fmtTimeAgo $q.DetectedAt}}</td>
                                 <td>
                                     <div class="btn-group">
                                         <button class="btn btn-success"
-                                                onclick="approveUpdate('{{.ContainerName}}')">
+                                                onclick="approveUpdate('{{$q.ContainerName}}')">
                                             Approve
                                         </button>
                                         <button class="btn btn-error"
-                                                onclick="rejectUpdate('{{.ContainerName}}')">
+                                                onclick="rejectUpdate('{{$q.ContainerName}}')">
                                             Reject
                                         </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr class="accordion-panel" id="accordion-queue-{{$i}}" style="display:none">
+                                <td colspan="4">
+                                    <div class="accordion-content">
+                                        <div class="accordion-grid">
+                                            <div class="accordion-section">
+                                                <div class="accordion-label">Detected At</div>
+                                                <div class="accordion-value mono">{{fmtTime $q.DetectedAt}}</div>
+                                                <div class="accordion-label">Current Digest</div>
+                                                <div class="accordion-value mono">{{if $q.CurrentDigest}}{{$q.CurrentDigest}}{{else}}<span class="text-muted">—</span>{{end}}</div>
+                                                <div class="accordion-label">Remote Digest</div>
+                                                <div class="accordion-value mono">{{if $q.RemoteDigest}}{{$q.RemoteDigest}}{{else}}<span class="text-muted">—</span>{{end}}</div>
+                                            </div>
+                                            <div class="accordion-section">
+                                                <div class="accordion-label">Changelog</div>
+                                                <div class="accordion-value">
+                                                    {{with changelogURL $q.CurrentImage}}
+                                                        <a href="{{.}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
+                                                    {{else}}
+                                                        <span class="text-muted">Not available</span>
+                                                    {{end}}
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </td>
                             </tr>
                             {{end}}
                         {{else}}
                             <tr>
-                                <td colspan="7">
+                                <td colspan="4">
                                     <div class="empty-state">
                                         <h3>Queue is empty</h3>
                                         <p>No containers are waiting for approval. Updates with "manual" policy will appear here when detected.</p>
