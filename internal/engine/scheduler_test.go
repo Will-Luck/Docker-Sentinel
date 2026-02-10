@@ -7,6 +7,7 @@ import (
 
 	"github.com/GiteaLN/Docker-Sentinel/internal/config"
 	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
+	"github.com/GiteaLN/Docker-Sentinel/internal/notify"
 	"github.com/GiteaLN/Docker-Sentinel/internal/registry"
 )
 
@@ -22,7 +23,8 @@ func TestSchedulerRunsInitialScan(t *testing.T) {
 		GracePeriod:   1 * time.Second,
 		PollInterval:  1 * time.Hour,
 	}
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk)
+	notifier := notify.NewMulti(log)
+	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier)
 	sched := NewScheduler(u, cfg, log, clk)
 
 	// Cancel immediately after the initial scan.

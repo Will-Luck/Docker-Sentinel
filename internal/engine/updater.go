@@ -10,7 +10,9 @@ import (
 	"github.com/GiteaLN/Docker-Sentinel/internal/clock"
 	"github.com/GiteaLN/Docker-Sentinel/internal/config"
 	"github.com/GiteaLN/Docker-Sentinel/internal/docker"
+	"github.com/GiteaLN/Docker-Sentinel/internal/guardian"
 	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
+	"github.com/GiteaLN/Docker-Sentinel/internal/notify"
 	"github.com/GiteaLN/Docker-Sentinel/internal/registry"
 	"github.com/GiteaLN/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
@@ -30,25 +32,27 @@ type ScanResult struct {
 
 // Updater performs container scanning and update operations.
 type Updater struct {
-	docker  docker.API
-	checker *registry.Checker
-	store   *store.Store
-	queue   *Queue
-	cfg     *config.Config
-	log     *logging.Logger
-	clock   clock.Clock
+	docker   docker.API
+	checker  *registry.Checker
+	store    *store.Store
+	queue    *Queue
+	cfg      *config.Config
+	log      *logging.Logger
+	clock    clock.Clock
+	notifier *notify.Multi
 }
 
 // NewUpdater creates an Updater with all dependencies.
-func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queue, cfg *config.Config, log *logging.Logger, clk clock.Clock) *Updater {
+func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queue, cfg *config.Config, log *logging.Logger, clk clock.Clock, notifier *notify.Multi) *Updater {
 	return &Updater{
-		docker:  d,
-		checker: checker,
-		store:   s,
-		queue:   q,
-		cfg:     cfg,
-		log:     log,
-		clock:   clk,
+		docker:   d,
+		checker:  checker,
+		store:    s,
+		queue:    q,
+		cfg:      cfg,
+		log:      log,
+		clock:    clk,
+		notifier: notifier,
 	}
 }
 
@@ -112,6 +116,15 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 		u.log.Info("update available", "name", name, "image", imageRef,
 			"local_digest", check.LocalDigest, "remote_digest", check.RemoteDigest)
 
+		u.notifier.Notify(ctx, notify.Event{
+			Type:          notify.EventUpdateAvailable,
+			ContainerName: name,
+			OldImage:      imageRef,
+			OldDigest:     check.LocalDigest,
+			NewDigest:     check.RemoteDigest,
+			Timestamp:     u.clock.Now(),
+		})
+
 		switch policy {
 		case docker.PolicyAuto:
 			result.AutoCount++
@@ -161,6 +174,13 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 
 	oldImage := inspect.Config.Image
 	u.log.Info("saved snapshot", "name", name, "image", oldImage)
+
+	u.notifier.Notify(ctx, notify.Event{
+		Type:          notify.EventUpdateStarted,
+		ContainerName: name,
+		OldImage:      oldImage,
+		Timestamp:     u.clock.Now(),
+	})
 
 	// 2. Mark maintenance window.
 	if err := u.store.SetMaintenance(name, true); err != nil {
@@ -221,13 +241,27 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	healthy, err := u.validateContainer(ctx, newID)
 	if err != nil || !healthy {
 		u.log.Error("validation failed, rolling back", "name", name, "error", err)
+		u.notifier.Notify(ctx, notify.Event{
+			Type:          notify.EventUpdateFailed,
+			ContainerName: name,
+			OldImage:      oldImage,
+			Error:         fmt.Sprintf("validation failed: %v", err),
+			Timestamp:     u.clock.Now(),
+		})
 		_ = u.docker.StopContainer(ctx, newID, 10)
 		_ = u.docker.RemoveContainer(ctx, newID)
 		u.doRollback(ctx, name, snapshotData, start)
 		return fmt.Errorf("new container %s failed validation", name)
 	}
 
-	// 7. Success — clear maintenance and record.
+	// 7. Remove maintenance label for Guardian compatibility.
+	_, err = u.finaliseContainer(ctx, newID, name)
+	if err != nil {
+		u.log.Error("failed to finalise container (maintenance label may persist)", "name", name, "error", err)
+		// Don't rollback — the container is working, just has an extra label.
+	}
+
+	// 8. Success — clear maintenance and record.
 	_ = u.store.SetMaintenance(name, false)
 	u.queue.Remove(name)
 
@@ -241,6 +275,15 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 		NewDigest:     newDigest,
 		Outcome:       "success",
 		Duration:      duration,
+	})
+
+	u.notifier.Notify(ctx, notify.Event{
+		Type:          notify.EventUpdateSucceeded,
+		ContainerName: name,
+		OldImage:      oldImage,
+		NewImage:      oldImage,
+		NewDigest:     newDigest,
+		Timestamp:     u.clock.Now(),
 	})
 
 	u.log.Info("update complete", "name", name, "duration", duration)
@@ -264,6 +307,18 @@ func (u *Updater) validateContainer(ctx context.Context, id string) (bool, error
 func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []byte, start time.Time) {
 	if err := rollback(ctx, u.docker, name, snapshotData, u.log); err != nil {
 		u.log.Error("rollback also failed", "name", name, "error", err)
+		u.notifier.Notify(ctx, notify.Event{
+			Type:          notify.EventRollbackFailed,
+			ContainerName: name,
+			Error:         err.Error(),
+			Timestamp:     u.clock.Now(),
+		})
+	} else {
+		u.notifier.Notify(ctx, notify.Event{
+			Type:          notify.EventRollbackOK,
+			ContainerName: name,
+			Timestamp:     u.clock.Now(),
+		})
 	}
 	_ = u.store.SetMaintenance(name, false)
 
@@ -308,7 +363,53 @@ func addMaintenanceLabel(cfg *container.Config) {
 	if cfg.Labels == nil {
 		cfg.Labels = make(map[string]string)
 	}
-	cfg.Labels["sentinel.maintenance"] = "true"
+	cfg.Labels[guardian.MaintenanceLabel] = "true"
+}
+
+// finaliseContainer replaces the running container with an identical one
+// that has the sentinel.maintenance label removed. This ensures
+// Docker-Guardian can see the container after a successful update.
+//
+// The process is: inspect -> clone config without label -> stop -> remove
+// -> create -> start. Returns the new container ID.
+func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (string, error) {
+	inspect, err := u.docker.InspectContainer(ctx, id)
+	if err != nil {
+		return id, fmt.Errorf("inspect for finalise: %w", err)
+	}
+
+	// If the maintenance label is not present, nothing to do.
+	if !guardian.HasMaintenanceLabel(inspect.Config.Labels) {
+		return id, nil
+	}
+
+	cleanConfig := cloneConfig(inspect.Config)
+	delete(cleanConfig.Labels, guardian.MaintenanceLabel)
+
+	hostConfig := inspect.HostConfig
+	netConfig := rebuildNetworkingConfig(inspect.NetworkSettings)
+
+	u.log.Info("finalising container (removing maintenance label)", "name", name)
+
+	if err := u.docker.StopContainer(ctx, id, 10); err != nil {
+		return id, fmt.Errorf("stop for finalise: %w", err)
+	}
+
+	if err := u.docker.RemoveContainer(ctx, id); err != nil {
+		return id, fmt.Errorf("remove for finalise: %w", err)
+	}
+
+	newID, err := u.docker.CreateContainer(ctx, name, cleanConfig, hostConfig, netConfig)
+	if err != nil {
+		return id, fmt.Errorf("create for finalise: %w", err)
+	}
+
+	if err := u.docker.StartContainer(ctx, newID); err != nil {
+		return newID, fmt.Errorf("start for finalise: %w", err)
+	}
+
+	u.log.Info("finalised container", "name", name, "new_id", truncateID(newID))
+	return newID, nil
 }
 
 // rebuildNetworkingConfig extracts only the IPAM config, aliases, and driver opts

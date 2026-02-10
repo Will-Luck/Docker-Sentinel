@@ -1,0 +1,111 @@
+{{define "index.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker-Sentinel</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">Sentinel <span>Dashboard</span></a>
+        <ul class="nav-links">
+            <li><a href="/" class="active">Dashboard</a></li>
+            <li><a href="/queue">Queue</a></li>
+            <li><a href="/history">History</a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <div class="page-header">
+            <div>
+                <h1>Containers</h1>
+                <p class="subtitle">Monitored containers and their update status</p>
+            </div>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat-card">
+                <div class="stat-label">Total</div>
+                <div class="stat-value info">{{.TotalContainers}}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Running</div>
+                <div class="stat-value success">{{.RunningContainers}}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Updates Pending</div>
+                <div class="stat-value warning">{{.PendingUpdates}}</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>Container Status</h2>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Image</th>
+                            <th>Policy</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{if .Containers}}
+                            {{range .Containers}}
+                            <tr>
+                                <td><strong>{{.Name}}</strong></td>
+                                <td class="cell-image mono">{{.Image}}</td>
+                                <td>
+                                    <span class="badge policy-{{.Policy}}">{{.Policy}}</span>
+                                </td>
+                                <td>
+                                    {{if .Maintenance}}
+                                        <span class="badge badge-warning">Updating</span>
+                                    {{else if .HasUpdate}}
+                                        <span class="badge badge-warning">Update Available</span>
+                                    {{else if eq .State "running"}}
+                                        <span class="badge badge-success">Running</span>
+                                    {{else}}
+                                        <span class="badge badge-error">{{.State}}</span>
+                                    {{end}}
+                                </td>
+                                <td>
+                                    <div class="btn-group">
+                                        {{if ne .Policy "pinned"}}
+                                        <button class="btn btn-warning"
+                                                onclick="triggerUpdate('{{.Name}}')">
+                                            Update Now
+                                        </button>
+                                        {{end}}
+                                    </div>
+                                </td>
+                            </tr>
+                            {{end}}
+                        {{else}}
+                            <tr>
+                                <td colspan="5">
+                                    <div class="empty-state">
+                                        <h3>No containers found</h3>
+                                        <p>Sentinel is not monitoring any containers yet.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

@@ -70,6 +70,19 @@ func (q *Queue) Get(name string) (PendingUpdate, bool) {
 	return u, ok
 }
 
+// Approve atomically retrieves and removes a pending update.
+// Returns the update and true if found, or zero value and false if not.
+func (q *Queue) Approve(name string) (PendingUpdate, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	u, ok := q.pending[name]
+	if ok {
+		delete(q.pending, name)
+		q.persist()
+	}
+	return u, ok
+}
+
 // List returns all pending updates.
 func (q *Queue) List() []PendingUpdate {
 	q.mu.Lock()

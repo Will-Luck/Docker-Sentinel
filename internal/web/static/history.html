@@ -1,0 +1,93 @@
+{{define "history.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Update History — Docker-Sentinel</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">Sentinel <span>Dashboard</span></a>
+        <ul class="nav-links">
+            <li><a href="/">Dashboard</a></li>
+            <li><a href="/queue">Queue</a></li>
+            <li><a href="/history" class="active">History</a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <div class="page-header">
+            <div>
+                <h1>Update History</h1>
+                <p class="subtitle">Chronological record of container updates and rollbacks</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>Recent Updates ({{len .History}})</h2>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Container</th>
+                            <th>Old Image</th>
+                            <th>New Image</th>
+                            <th>Outcome</th>
+                            <th>Duration</th>
+                            <th>Error</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{if .History}}
+                            {{range .History}}
+                            <tr>
+                                <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
+                                <td><strong>{{.ContainerName}}</strong></td>
+                                <td class="cell-image mono">{{.OldImage}}</td>
+                                <td class="cell-image mono">{{.NewImage}}</td>
+                                <td>
+                                    {{if eq .Outcome "success"}}
+                                        <span class="badge badge-success">Success</span>
+                                    {{else if eq .Outcome "rollback"}}
+                                        <span class="badge badge-error">Rollback</span>
+                                    {{else}}
+                                        <span class="badge badge-muted">{{.Outcome}}</span>
+                                    {{end}}
+                                </td>
+                                <td class="mono">{{fmtDuration .Duration}}</td>
+                                <td>
+                                    {{if .Error}}
+                                        <span class="mono" title="{{.Error}}">{{.Error}}</span>
+                                    {{else}}
+                                        <span class="text-muted">—</span>
+                                    {{end}}
+                                </td>
+                            </tr>
+                            {{end}}
+                        {{else}}
+                            <tr>
+                                <td colspan="7">
+                                    <div class="empty-state">
+                                        <h3>No history yet</h3>
+                                        <p>Update records will appear here after Sentinel performs its first container update.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

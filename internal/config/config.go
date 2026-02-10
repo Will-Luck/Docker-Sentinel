@@ -25,17 +25,37 @@ type Config struct {
 
 	// Logging
 	LogJSON bool
+
+	// Notifications
+	GotifyURL      string
+	GotifyToken    string
+	WebhookURL     string
+	WebhookHeaders string // comma-separated "Key:Value" pairs
+
+	// Registry
+	DockerConfigPath string // path to docker config.json for private registry auth
+
+	// Web dashboard
+	WebPort    string
+	WebEnabled bool
 }
 
 // Load reads all configuration from environment variables with defaults.
 func Load() *Config {
 	return &Config{
-		DockerSock:    envStr("SENTINEL_DOCKER_SOCK", "/var/run/docker.sock"),
-		PollInterval:  envDuration("SENTINEL_POLL_INTERVAL", 6*time.Hour),
-		GracePeriod:   envDuration("SENTINEL_GRACE_PERIOD", 30*time.Second),
-		DefaultPolicy: envStr("SENTINEL_DEFAULT_POLICY", "manual"),
-		DBPath:        envStr("SENTINEL_DB_PATH", "/data/sentinel.db"),
-		LogJSON:       envBool("SENTINEL_LOG_JSON", true),
+		DockerSock:       envStr("SENTINEL_DOCKER_SOCK", "/var/run/docker.sock"),
+		PollInterval:     envDuration("SENTINEL_POLL_INTERVAL", 6*time.Hour),
+		GracePeriod:      envDuration("SENTINEL_GRACE_PERIOD", 30*time.Second),
+		DefaultPolicy:    envStr("SENTINEL_DEFAULT_POLICY", "manual"),
+		DBPath:           envStr("SENTINEL_DB_PATH", "/data/sentinel.db"),
+		LogJSON:          envBool("SENTINEL_LOG_JSON", true),
+		GotifyURL:        envStr("SENTINEL_GOTIFY_URL", ""),
+		GotifyToken:      envStr("SENTINEL_GOTIFY_TOKEN", ""),
+		WebhookURL:       envStr("SENTINEL_WEBHOOK_URL", ""),
+		WebhookHeaders:   envStr("SENTINEL_WEBHOOK_HEADERS", ""),
+		DockerConfigPath: envStr("SENTINEL_DOCKER_CONFIG", "/root/.docker/config.json"),
+		WebPort:          envStr("SENTINEL_WEB_PORT", "8080"),
+		WebEnabled:       envBool("SENTINEL_WEB_ENABLED", true),
 	}
 }
 
@@ -55,6 +75,23 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("SENTINEL_DEFAULT_POLICY must be auto, manual, or pinned, got %q", c.DefaultPolicy))
 	}
 	return errors.Join(errs...)
+}
+
+// Values returns all configuration as a string map for display.
+func (c *Config) Values() map[string]string {
+	return map[string]string{
+		"SENTINEL_DOCKER_SOCK":    c.DockerSock,
+		"SENTINEL_POLL_INTERVAL":  c.PollInterval.String(),
+		"SENTINEL_GRACE_PERIOD":   c.GracePeriod.String(),
+		"SENTINEL_DEFAULT_POLICY": c.DefaultPolicy,
+		"SENTINEL_DB_PATH":        c.DBPath,
+		"SENTINEL_LOG_JSON":       fmt.Sprintf("%t", c.LogJSON),
+		"SENTINEL_GOTIFY_URL":     c.GotifyURL,
+		"SENTINEL_WEBHOOK_URL":    c.WebhookURL,
+		"SENTINEL_DOCKER_CONFIG":  c.DockerConfigPath,
+		"SENTINEL_WEB_PORT":       c.WebPort,
+		"SENTINEL_WEB_ENABLED":    fmt.Sprintf("%t", c.WebEnabled),
+	}
 }
 
 func envStr(key, def string) string {

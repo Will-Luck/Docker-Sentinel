@@ -16,6 +16,7 @@ type CheckResult struct {
 	UpdateAvailable bool
 	IsLocal         bool
 	Error           error
+	NewerVersions   []string // Newer semver versions available (newest first)
 }
 
 // Checker queries the Docker daemon and remote registry to determine
@@ -81,4 +82,62 @@ func extractHash(digest string) string {
 		return digest[i:]
 	}
 	return digest
+}
+
+// CheckVersioned performs a digest check and, for versioned tags, also looks
+// for newer semver releases by listing remote tags.
+func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResult {
+	result := c.Check(ctx, imageRef)
+
+	// Only attempt version lookup if the base check succeeded and the image
+	// has a semver-like tag.
+	tag := extractTag(imageRef)
+	if tag == "" || result.Error != nil || result.IsLocal {
+		return result
+	}
+
+	_, ok := ParseSemVer(tag)
+	if !ok {
+		return result
+	}
+
+	repo := normaliseRepo(imageRef)
+	token, err := FetchAnonymousToken(ctx, repo)
+	if err != nil {
+		c.log.Debug("failed to fetch anonymous token for version check", "repo", repo, "error", err)
+		return result
+	}
+
+	tags, err := ListTags(ctx, imageRef, token)
+	if err != nil {
+		c.log.Debug("failed to list tags for version check", "repo", repo, "error", err)
+		return result
+	}
+
+	newer := NewerVersions(tag, tags)
+	for _, sv := range newer {
+		result.NewerVersions = append(result.NewerVersions, sv.Raw)
+	}
+
+	return result
+}
+
+// extractTag returns the tag portion of an image reference, or empty string
+// if there is no tag (e.g. digest-pinned or bare image name).
+func extractTag(imageRef string) string {
+	// Remove digest portion if present.
+	if idx := strings.Index(imageRef, "@"); idx >= 0 {
+		return ""
+	}
+
+	if idx := strings.LastIndex(imageRef, ":"); idx >= 0 {
+		// Ensure the colon is after any slash (not part of a registry hostname
+		// with a port like ghcr.io:443/owner/repo).
+		tag := imageRef[idx+1:]
+		if !strings.Contains(tag, "/") {
+			return tag
+		}
+	}
+
+	return ""
 }

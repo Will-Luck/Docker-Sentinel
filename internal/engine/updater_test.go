@@ -8,6 +8,7 @@ import (
 
 	"github.com/GiteaLN/Docker-Sentinel/internal/config"
 	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
+	"github.com/GiteaLN/Docker-Sentinel/internal/notify"
 	"github.com/GiteaLN/Docker-Sentinel/internal/registry"
 	"github.com/moby/moby/api/types/container"
 )
@@ -23,7 +24,8 @@ func newTestUpdater(t *testing.T, mock *mockDocker) (*Updater, *mockClock) {
 		DefaultPolicy: "manual",
 		GracePeriod:   1 * time.Second,
 	}
-	return NewUpdater(mock, checker, s, q, cfg, log, clk), clk
+	notifier := notify.NewMulti(log)
+	return NewUpdater(mock, checker, s, q, cfg, log, clk, notifier), clk
 }
 
 func TestScanSkipsPinned(t *testing.T) {
@@ -120,6 +122,7 @@ func TestScanAutoUpdate(t *testing.T) {
 	}
 
 	// The new container after creation needs to pass validation.
+	// Include the maintenance label to exercise the finaliseContainer path.
 	mock.inspectResults["new-nginx"] = container.InspectResponse{
 		ID:   "new-nginx",
 		Name: "/nginx",
@@ -128,8 +131,11 @@ func TestScanAutoUpdate(t *testing.T) {
 			Restarting: false,
 		},
 		Config: &container.Config{
-			Image: "docker.io/library/nginx:1.25",
+			Image:  "docker.io/library/nginx:1.25",
+			Labels: map[string]string{"sentinel.maintenance": "true"},
 		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
 	}
 
 	u, _ := newTestUpdater(t, mock)
@@ -146,21 +152,23 @@ func TestScanAutoUpdate(t *testing.T) {
 		t.Errorf("Failed = %d, want 0", result.Failed)
 	}
 
-	// Verify the lifecycle steps.
+	// Verify the lifecycle steps including finalise.
+	// pull(1) + stop(old:1, finalise:1) + remove(old:1, finalise:1)
+	// + create(new:1, finalise:1) + start(new:1, finalise:1)
 	if len(mock.pullCalls) != 1 {
 		t.Errorf("pullCalls = %d, want 1", len(mock.pullCalls))
 	}
-	if len(mock.stopCalls) != 1 {
-		t.Errorf("stopCalls = %d, want 1", len(mock.stopCalls))
+	if len(mock.stopCalls) != 2 {
+		t.Errorf("stopCalls = %d, want 2 (old + finalise)", len(mock.stopCalls))
 	}
-	if len(mock.removeCalls) != 1 {
-		t.Errorf("removeCalls = %d, want 1", len(mock.removeCalls))
+	if len(mock.removeCalls) != 2 {
+		t.Errorf("removeCalls = %d, want 2 (old + finalise)", len(mock.removeCalls))
 	}
-	if len(mock.createCalls) != 1 {
-		t.Errorf("createCalls = %d, want 1", len(mock.createCalls))
+	if len(mock.createCalls) != 2 {
+		t.Errorf("createCalls = %d, want 2 (new + finalise)", len(mock.createCalls))
 	}
-	if len(mock.startCalls) != 1 {
-		t.Errorf("startCalls = %d, want 1", len(mock.startCalls))
+	if len(mock.startCalls) != 2 {
+		t.Errorf("startCalls = %d, want 2 (new + finalise)", len(mock.startCalls))
 	}
 }
 
@@ -198,6 +206,85 @@ func TestUpdateContainerRollbackOnValidationFailure(t *testing.T) {
 	// createCalls: 1 (new container) + 1 (rollback container)
 	if len(mock.createCalls) < 2 {
 		t.Errorf("createCalls = %d, want >= 2 (new + rollback)", len(mock.createCalls))
+	}
+}
+
+func TestFinaliseContainerRemovesMaintenanceLabel(t *testing.T) {
+	mock := newMockDocker()
+
+	// Container with the maintenance label set.
+	mock.inspectResults["new-abc"] = container.InspectResponse{
+		ID:   "new-abc",
+		Name: "/myapp",
+		State: &container.State{
+			Running:    true,
+			Restarting: false,
+		},
+		Config: &container.Config{
+			Image: "myapp:latest",
+			Labels: map[string]string{
+				"sentinel.maintenance": "true",
+				"sentinel.policy":      "auto",
+			},
+		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	u, _ := newTestUpdater(t, mock)
+	newID, err := u.finaliseContainer(context.Background(), "new-abc", "myapp")
+	if err != nil {
+		t.Fatalf("finaliseContainer: %v", err)
+	}
+
+	// The mock returns "new-" + name for CreateContainer.
+	if newID != "new-myapp" {
+		t.Errorf("newID = %q, want new-myapp", newID)
+	}
+
+	// Should have stopped, removed, created, and started.
+	if len(mock.stopCalls) != 1 || mock.stopCalls[0] != "new-abc" {
+		t.Errorf("stopCalls = %v, want [new-abc]", mock.stopCalls)
+	}
+	if len(mock.removeCalls) != 1 || mock.removeCalls[0] != "new-abc" {
+		t.Errorf("removeCalls = %v, want [new-abc]", mock.removeCalls)
+	}
+	if len(mock.createCalls) != 1 || mock.createCalls[0] != "myapp" {
+		t.Errorf("createCalls = %v, want [myapp]", mock.createCalls)
+	}
+	if len(mock.startCalls) != 1 || mock.startCalls[0] != "new-myapp" {
+		t.Errorf("startCalls = %v, want [new-myapp]", mock.startCalls)
+	}
+}
+
+func TestFinaliseContainerSkipsWhenNoLabel(t *testing.T) {
+	mock := newMockDocker()
+
+	// Container WITHOUT the maintenance label.
+	mock.inspectResults["new-abc"] = container.InspectResponse{
+		ID:   "new-abc",
+		Name: "/myapp",
+		Config: &container.Config{
+			Image:  "myapp:latest",
+			Labels: map[string]string{"sentinel.policy": "auto"},
+		},
+	}
+
+	u, _ := newTestUpdater(t, mock)
+	newID, err := u.finaliseContainer(context.Background(), "new-abc", "myapp")
+	if err != nil {
+		t.Fatalf("finaliseContainer: %v", err)
+	}
+
+	// Should return original ID without making any docker calls.
+	if newID != "new-abc" {
+		t.Errorf("newID = %q, want new-abc (unchanged)", newID)
+	}
+	if len(mock.stopCalls) != 0 {
+		t.Errorf("stopCalls = %d, want 0 (no finalise needed)", len(mock.stopCalls))
+	}
+	if len(mock.createCalls) != 0 {
+		t.Errorf("createCalls = %d, want 0 (no finalise needed)", len(mock.createCalls))
 	}
 }
 

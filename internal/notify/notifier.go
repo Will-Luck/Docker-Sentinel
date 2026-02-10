@@ -1,0 +1,71 @@
+// Package notify provides event notification for Docker Sentinel.
+package notify
+
+import (
+	"context"
+	"time"
+)
+
+// EventType identifies what happened during an update lifecycle.
+type EventType string
+
+const (
+	EventUpdateAvailable  EventType = "update_available"
+	EventUpdateStarted    EventType = "update_started"
+	EventUpdateSucceeded  EventType = "update_succeeded"
+	EventUpdateFailed     EventType = "update_failed"
+	EventRollbackOK       EventType = "rollback_succeeded"
+	EventRollbackFailed   EventType = "rollback_failed"
+	EventVersionAvailable EventType = "version_available"
+)
+
+// Event represents a notification event.
+type Event struct {
+	Type          EventType `json:"type"`
+	ContainerName string    `json:"container_name"`
+	OldImage      string    `json:"old_image,omitempty"`
+	NewImage      string    `json:"new_image,omitempty"`
+	OldDigest     string    `json:"old_digest,omitempty"`
+	NewDigest     string    `json:"new_digest,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	Timestamp     time.Time `json:"timestamp"`
+}
+
+// Notifier sends events to an external system.
+type Notifier interface {
+	Send(ctx context.Context, event Event) error
+	Name() string
+}
+
+// Logger is a minimal logging interface to avoid importing the logging package.
+type Logger interface {
+	Info(msg string, args ...any)
+	Error(msg string, args ...any)
+}
+
+// Multi fans out events to multiple notifiers.
+// It never returns errors — failures are logged but don't block updates.
+type Multi struct {
+	notifiers []Notifier
+	log       Logger
+}
+
+// NewMulti creates a dispatcher from the given notifiers.
+func NewMulti(log Logger, notifiers ...Notifier) *Multi {
+	return &Multi{notifiers: notifiers, log: log}
+}
+
+// Notify sends an event to all registered notifiers.
+// Errors are logged but never propagated — notifications must not block updates.
+func (m *Multi) Notify(ctx context.Context, event Event) {
+	for _, n := range m.notifiers {
+		if err := n.Send(ctx, event); err != nil {
+			m.log.Error("notification failed",
+				"provider", n.Name(),
+				"event", string(event.Type),
+				"container", event.ContainerName,
+				"error", err.Error(),
+			)
+		}
+	}
+}
