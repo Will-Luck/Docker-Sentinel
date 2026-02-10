@@ -89,11 +89,21 @@ function escapeHTML(str) {
    5. API Actions
    ------------------------------------------------------------ */
 
-function apiPost(url, body, successMsg, errorMsg) {
+function apiPost(url, body, successMsg, errorMsg, triggerEl) {
     var opts = { method: "POST" };
     if (body) {
         opts.headers = { "Content-Type": "application/json" };
         opts.body = JSON.stringify(body);
+    }
+    if (triggerEl) {
+        triggerEl.classList.add("loading");
+        triggerEl.disabled = true;
+    }
+    function clearLoading() {
+        if (triggerEl) {
+            triggerEl.classList.remove("loading");
+            triggerEl.disabled = false;
+        }
     }
     fetch(url, opts)
         .then(function (resp) {
@@ -107,45 +117,55 @@ function apiPost(url, body, successMsg, errorMsg) {
             } else {
                 showToast(result.data.error || errorMsg, "error");
             }
+            clearLoading();
         })
         .catch(function () {
+            clearLoading();
             showToast("Network error — " + errorMsg.toLowerCase(), "error");
         });
 }
 
-function approveUpdate(name) {
+function approveUpdate(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
         "/api/approve/" + encodeURIComponent(name),
         null,
         "Approved update for " + name,
-        "Failed to approve"
+        "Failed to approve",
+        btn
     );
 }
 
-function rejectUpdate(name) {
+function rejectUpdate(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
         "/api/reject/" + encodeURIComponent(name),
         null,
         "Rejected update for " + name,
-        "Failed to reject"
+        "Failed to reject",
+        btn
     );
 }
 
-function triggerUpdate(name) {
+function triggerUpdate(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
         "/api/update/" + encodeURIComponent(name),
         null,
         "Update started for " + name,
-        "Failed to trigger update"
+        "Failed to trigger update",
+        btn
     );
 }
 
-function triggerRollback(name) {
+function triggerRollback(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
         "/api/containers/" + encodeURIComponent(name) + "/rollback",
         null,
         "Rollback started for " + name,
-        "Failed to trigger rollback"
+        "Failed to trigger rollback",
+        btn
     );
 }
 
@@ -219,12 +239,16 @@ function toggleStack(headerRow) {
     var group = headerRow.closest(".stack-group");
     if (!group) return;
     group.classList.toggle("stack-collapsed");
+    var expanded = !group.classList.contains("stack-collapsed");
+    headerRow.setAttribute("aria-expanded", expanded ? "true" : "false");
 }
 
 function expandAllStacks() {
     var groups = document.querySelectorAll(".stack-group");
     for (var i = 0; i < groups.length; i++) {
         groups[i].classList.remove("stack-collapsed");
+        var header = groups[i].querySelector(".stack-header");
+        if (header) header.setAttribute("aria-expanded", "true");
     }
 }
 
@@ -236,6 +260,8 @@ function collapseAllStacks() {
     var groups = document.querySelectorAll(".stack-group");
     for (var i = 0; i < groups.length; i++) {
         groups[i].classList.add("stack-collapsed");
+        var header = groups[i].querySelector(".stack-header");
+        if (header) header.setAttribute("aria-expanded", "false");
     }
 }
 
@@ -448,11 +474,17 @@ function setConnectionStatus(connected) {
     if (connected) {
         dot.className = "status-dot connected";
         dot.title = "Live";
-        if (label) label.textContent = "Live";
+        if (label) {
+            label.textContent = "Live";
+            label.classList.add("connected");
+        }
     } else {
         dot.className = "status-dot disconnected";
         dot.title = "Reconnecting\u2026";
-        if (label) label.textContent = "Reconnecting\u2026";
+        if (label) {
+            label.textContent = "Reconnecting\u2026";
+            label.classList.remove("connected");
+        }
     }
 }
 
@@ -521,6 +553,60 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     initSettingsPage();
+
+    // Keyboard support for stack headers.
+    var stackHeaders = document.querySelectorAll(".stack-header");
+    for (var sh = 0; sh < stackHeaders.length; sh++) {
+        stackHeaders[sh].setAttribute("tabindex", "0");
+        stackHeaders[sh].setAttribute("role", "button");
+        stackHeaders[sh].setAttribute("aria-expanded", "false");
+        stackHeaders[sh].addEventListener("keydown", function(e) {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                toggleStack(this);
+            }
+        });
+    }
+
+    // Keyboard support for policy help tooltips.
+    var policyHelps = document.querySelectorAll(".policy-help");
+    for (var ph = 0; ph < policyHelps.length; ph++) {
+        policyHelps[ph].setAttribute("role", "button");
+        policyHelps[ph].setAttribute("aria-label", "Policy information");
+        policyHelps[ph].addEventListener("keydown", function(e) {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                var tooltip = this.querySelector(".policy-tooltip");
+                if (tooltip) {
+                    var isVisible = tooltip.style.display === "block";
+                    tooltip.style.display = isVisible ? "" : "block";
+                }
+            }
+        });
+    }
+
+    // Click-to-copy for digest and mono values in accordion detail views.
+    document.addEventListener("click", function(e) {
+        var target = e.target.closest(".accordion-content .mono, .accordion-content .cell-digest");
+        if (!target) return;
+        var text = target.textContent.trim();
+        if (!text || text === "\u2014") return;
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(function() {
+                showToast("Copied to clipboard", "info");
+            });
+        }
+    });
+
+    // Escape key closes open tooltips.
+    document.addEventListener("keydown", function(e) {
+        if (e.key === "Escape") {
+            var tooltips = document.querySelectorAll(".policy-tooltip");
+            for (var t = 0; t < tooltips.length; t++) {
+                tooltips[t].style.display = "";
+            }
+        }
+    });
 
     // Multi-select: checkbox delegation on container table.
     var table = document.getElementById("container-table");

@@ -6,8 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Container.Name}} — Sentinel</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
 <body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
     <nav class="nav">
         <a href="/" class="nav-brand">
             <span class="nav-logo">S</span>
@@ -20,15 +22,15 @@
             <a href="/logs" class="nav-link">Logs</a>
             <a href="/settings" class="nav-link">Settings</a>
         </div>
-        <div class="nav-status">
+        <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
             <span id="sse-label" class="nav-status-text">Disconnected</span>
         </div>
     </nav>
 
-    <main class="main-content">
+    <main class="main-content" id="main-content">
         <div class="breadcrumb">
-            <a href="/">Dashboard</a> / <strong>{{.Container.Name}}</strong>
+            <a href="/">Dashboard</a> / <span class="breadcrumb-current">{{.Container.Name}}</span>
         </div>
 
         <div class="card detail-summary">
@@ -62,10 +64,10 @@
             </div>
             <div class="detail-actions">
                 {{if ne .Container.Policy "pinned"}}
-                <button class="btn btn-success" onclick="triggerUpdate('{{.Container.Name}}')">Update Now</button>
+                <button class="btn btn-warning" onclick="triggerUpdate('{{.Container.Name}}', event)">Update Now</button>
                 {{end}}
                 {{if .HasSnapshot}}
-                <button class="btn btn-warning" onclick="triggerRollback('{{.Container.Name}}')">Rollback</button>
+                <button class="btn btn-warning" onclick="triggerRollback('{{.Container.Name}}', event)">Rollback</button>
                 {{end}}
             </div>
         </div>
@@ -147,7 +149,7 @@
                         <tr>
                             <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
                             <td class="cell-image mono">{{.ImageRef}}</td>
-                            <td><button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}')">Rollback</button></td>
+                            <td><button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}', event)">Rollback</button></td>
                         </tr>
                         {{end}}
                     </tbody>
