@@ -1,0 +1,40 @@
+{{define "error.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} — Sentinel</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">Sentinel <span>Dashboard</span></a>
+        <ul class="nav-links">
+            <li><a href="/">Dashboard</a></li>
+            <li><a href="/queue">Queue</a></li>
+            <li><a href="/history">History</a></li>
+        </ul>
+        <div class="nav-status">
+            <span id="sse-indicator" class="connection-dot disconnected" title="Disconnected"></span>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="card">
+            <div class="card-body">
+                <div class="empty-state">
+                    <h3>{{.Title}}</h3>
+                    <p>{{.Message}}</p>
+                    <div style="margin-top: 1.5rem;">
+                        <a href="/" class="btn btn-info">Back to Dashboard</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

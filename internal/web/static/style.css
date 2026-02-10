@@ -477,6 +477,7 @@ tbody td {
     appearance: none;
     -webkit-appearance: none;
     background: var(--bg-surface);
+    color: var(--text-primary);
     border: 1px solid var(--border);
     border-radius: 100px;
     padding: 0.2rem 1.4rem 0.2rem 0.6rem;
@@ -490,6 +491,11 @@ tbody td {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%238892a4' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 0.5rem center;
+}
+
+.policy-select option {
+    background: var(--bg-card);
+    color: var(--text-primary);
 }
 
 .policy-select:hover {

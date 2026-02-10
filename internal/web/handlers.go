@@ -131,7 +131,7 @@ type containerDetailData struct {
 func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
-		http.Error(w, "container name required", http.StatusBadRequest)
+		s.renderError(w, http.StatusBadRequest, "Bad Request", "Container name is required.")
 		return
 	}
 
@@ -139,7 +139,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	containers, err := s.deps.Docker.ListContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers", "error", err)
-		http.Error(w, "failed to load containers", http.StatusInternalServerError)
+		s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load containers.")
 		return
 	}
 
@@ -151,7 +151,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if found == nil {
-		http.Error(w, "container not found: "+name, http.StatusNotFound)
+		s.renderError(w, http.StatusNotFound, "Container Not Found", "The container \""+name+"\" was not found. It may have been removed.")
 		return
 	}
 
@@ -210,6 +210,12 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	s.renderTemplate(w, "container.html", data)
 }
 
+// errorPageData holds data for the error.html template.
+type errorPageData struct {
+	Title   string
+	Message string
+}
+
 // renderTemplate executes a named template and writes the result.
 func (s *Server) renderTemplate(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -217,4 +223,10 @@ func (s *Server) renderTemplate(w http.ResponseWriter, name string, data any) {
 		s.deps.Log.Error("template render failed", "template", name, "error", err)
 		http.Error(w, "render error", http.StatusInternalServerError)
 	}
+}
+
+// renderError renders the error page with nav bar and a link back to the dashboard.
+func (s *Server) renderError(w http.ResponseWriter, status int, title, message string) {
+	w.WriteHeader(status)
+	s.renderTemplate(w, "error.html", errorPageData{Title: title, Message: message})
 }
