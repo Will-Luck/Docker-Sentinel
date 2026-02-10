@@ -1,0 +1,78 @@
+{{define "logs.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activity Log — Docker-Sentinel</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <span class="nav-logo">S</span>
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">
+                Queue
+                {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
+            </a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/logs" class="nav-link active">Logs</a>
+            <a href="/settings" class="nav-link">Settings</a>
+        </div>
+        <div class="nav-status">
+            <span id="sse-indicator" class="status-dot disconnected"></span>
+            <span id="sse-label" class="nav-status-text">Disconnected</span>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="page-header">
+            <div>
+                <h1>Activity Log</h1>
+                <p class="subtitle">All actions performed via the dashboard</p>
+            </div>
+        </div>
+
+        <div class="card">
+            {{if .Logs}}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Type</th>
+                            <th>Container</th>
+                            <th>Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Logs}}
+                        <tr>
+                            <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
+                            <td><span class="badge {{if eq .Type "policy_set"}}badge-info{{else if eq .Type "policy_delete"}}badge-muted{{else if eq .Type "approve"}}badge-success{{else if eq .Type "reject"}}badge-error{{else if eq .Type "update"}}badge-success{{else if eq .Type "rollback"}}badge-warning{{else}}badge-muted{{end}}">{{.Type}}</span></td>
+                            <td class="mono">{{if .Container}}<a href="/container/{{.Container}}">{{.Container}}</a>{{else}}-{{end}}</td>
+                            <td>{{.Message}}</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{else}}
+            <div class="card-body">
+                <div class="empty-state">
+                    <p>No activity logged yet. Actions like policy changes, approvals, and updates will appear here.</p>
+                </div>
+            </div>
+            {{end}}
+        </div>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

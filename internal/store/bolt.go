@@ -16,6 +16,7 @@ var (
 	bucketState     = []byte("state")
 	bucketQueue     = []byte("queue")
 	bucketPolicies  = []byte("policies")
+	bucketLogs      = []byte("logs")
 )
 
 // UpdateRecord represents a completed (or failed) container update.
@@ -45,7 +46,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -305,6 +306,48 @@ func (s *Store) AllPolicyOverrides() map[string]string {
 		})
 	})
 	return result
+}
+
+// LogEntry represents a timestamped event in the activity log.
+type LogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Type      string    `json:"type"`    // policy_set, policy_delete, bulk_policy, update, rollback, approve, reject
+	Message   string    `json:"message"`
+	Container string    `json:"container,omitempty"`
+}
+
+// AppendLog writes a log entry to the logs bucket.
+func (s *Store) AppendLog(entry LogEntry) error {
+	if entry.Timestamp.IsZero() {
+		entry.Timestamp = time.Now().UTC()
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal log entry: %w", err)
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketLogs)
+		key := []byte(entry.Timestamp.Format(time.RFC3339Nano))
+		return b.Put(key, data)
+	})
+}
+
+// ListLogs returns the most recent log entries, newest first, up to limit.
+func (s *Store) ListLogs(limit int) ([]LogEntry, error) {
+	var entries []LogEntry
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketLogs)
+		c := b.Cursor()
+		for k, v := c.Last(); k != nil && len(entries) < limit; k, v = c.Prev() {
+			var entry LogEntry
+			if err := json.Unmarshal(v, &entry); err != nil {
+				continue
+			}
+			entries = append(entries, entry)
+		}
+		return nil
+	})
+	return entries, err
 }
 
 // DeleteOldSnapshots removes all but the N most recent snapshots for a container.

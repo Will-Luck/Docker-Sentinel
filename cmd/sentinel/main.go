@@ -93,6 +93,7 @@ func main() {
 			Rollback:  &rollbackAdapter{d: client, s: db, log: log},
 			Registry:  &registryAdapter{log: log},
 			Policy:    &policyStoreAdapter{db},
+			EventLog:  &eventLogAdapter{db},
 			Log:       log.Logger,
 		})
 
@@ -352,4 +353,33 @@ func (a *policyStoreAdapter) DeletePolicyOverride(name string) error {
 
 func (a *policyStoreAdapter) AllPolicyOverrides() map[string]string {
 	return a.s.AllPolicyOverrides()
+}
+
+// eventLogAdapter bridges store.Store to web.EventLogger.
+type eventLogAdapter struct{ s *store.Store }
+
+func (a *eventLogAdapter) AppendLog(entry web.LogEntry) error {
+	return a.s.AppendLog(store.LogEntry{
+		Timestamp: entry.Timestamp,
+		Type:      entry.Type,
+		Message:   entry.Message,
+		Container: entry.Container,
+	})
+}
+
+func (a *eventLogAdapter) ListLogs(limit int) ([]web.LogEntry, error) {
+	entries, err := a.s.ListLogs(limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.LogEntry, len(entries))
+	for i, e := range entries {
+		result[i] = web.LogEntry{
+			Timestamp: e.Timestamp,
+			Type:      e.Type,
+			Message:   e.Message,
+			Container: e.Container,
+		}
+	}
+	return result, nil
 }

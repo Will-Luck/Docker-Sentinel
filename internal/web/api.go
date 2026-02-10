@@ -99,6 +99,8 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	s.logEvent("approve", name, "Update approved and started")
+
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "approved",
 		"name":    name,
@@ -115,6 +117,7 @@ func (s *Server) apiReject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.Queue.Remove(name)
+	s.logEvent("reject", name, "Update rejected")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "rejected",
@@ -159,6 +162,8 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Error("manual update failed", "name", name, "error", err)
 		}
 	}()
+
+	s.logEvent("update", name, "Manual update triggered")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "started",
@@ -312,6 +317,8 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	s.logEvent("rollback", name, "Rollback triggered")
+
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "started",
 		"name":    name,
@@ -362,6 +369,7 @@ func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.Log.Info("policy override set", "name", name, "policy", body.Policy)
+	s.logEvent("policy_set", name, "Policy set to "+body.Policy)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
@@ -393,6 +401,8 @@ func (s *Server) apiDeletePolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete policy override")
 		return
 	}
+
+	s.logEvent("policy_delete", name, "Policy override removed")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
@@ -495,6 +505,10 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 		"policy", body.Policy, "applied", applied,
 		"blocked", len(blocked), "unchanged", len(unchanged))
 
+	for _, c := range changes {
+		s.logEvent("policy_set", c.Name, "Bulk policy set to "+body.Policy)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"mode":      "executed",
 		"applied":   applied,
@@ -557,4 +571,16 @@ func containerPolicy(labels map[string]string) string {
 		}
 	}
 	return "manual"
+}
+
+// logEvent appends a log entry if the EventLog dependency is available.
+func (s *Server) logEvent(eventType, container, message string) {
+	if s.deps.EventLog == nil {
+		return
+	}
+	_ = s.deps.EventLog.AppendLog(LogEntry{
+		Type:      eventType,
+		Message:   message,
+		Container: container,
+	})
 }

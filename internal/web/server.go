@@ -28,6 +28,7 @@ type Dependencies struct {
 	Rollback  ContainerRollback
 	Registry  RegistryVersionChecker
 	Policy    PolicyStore
+	EventLog  EventLogger
 	Log       *slog.Logger
 }
 
@@ -59,6 +60,20 @@ type PolicyStore interface {
 	SetPolicyOverride(name, policy string) error
 	DeletePolicyOverride(name string) error
 	AllPolicyOverrides() map[string]string
+}
+
+// EventLogger writes and reads activity log entries.
+type EventLogger interface {
+	AppendLog(entry LogEntry) error
+	ListLogs(limit int) ([]LogEntry, error)
+}
+
+// LogEntry mirrors store.LogEntry.
+type LogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Type      string    `json:"type"`
+	Message   string    `json:"message"`
+	Container string    `json:"container,omitempty"`
 }
 
 // UpdateRecord mirrors store.UpdateRecord to avoid importing store.
@@ -198,6 +213,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /queue", s.handleQueue)
 	s.mux.HandleFunc("GET /history", s.handleHistory)
 	s.mux.HandleFunc("GET /settings", s.handleSettings)
+	s.mux.HandleFunc("GET /logs", s.handleLogs)
 
 	// SSE event stream.
 	s.mux.HandleFunc("GET /api/events", s.apiSSE)
@@ -216,6 +232,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/reject/{name}", s.apiReject)
 	s.mux.HandleFunc("POST /api/update/{name}", s.apiUpdate)
 	s.mux.HandleFunc("GET /api/settings", s.apiSettings)
+	s.mux.HandleFunc("GET /api/logs", s.apiLogs)
 
 	// Per-container HTML page.
 	s.mux.HandleFunc("GET /container/{name}", s.handleContainerDetail)

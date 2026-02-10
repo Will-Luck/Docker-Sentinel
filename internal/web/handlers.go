@@ -13,6 +13,7 @@ type pageData struct {
 	Queue      []PendingUpdate
 	History    []UpdateRecord
 	Settings   map[string]string
+	Logs       []LogEntry
 
 	// Dashboard stats (computed by the handler).
 	TotalContainers   int
@@ -189,6 +190,46 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		QueueCount: len(s.deps.Queue.List()),
 	}
 	s.renderTemplate(w, "settings.html", data)
+}
+
+// handleLogs renders the activity log page.
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	var logs []LogEntry
+	if s.deps.EventLog != nil {
+		var err error
+		logs, err = s.deps.EventLog.ListLogs(200)
+		if err != nil {
+			s.deps.Log.Error("failed to list logs", "error", err)
+		}
+	}
+	if logs == nil {
+		logs = []LogEntry{}
+	}
+
+	data := pageData{
+		Page:       "logs",
+		Logs:       logs,
+		QueueCount: len(s.deps.Queue.List()),
+	}
+	s.renderTemplate(w, "logs.html", data)
+}
+
+// apiLogs returns recent activity log entries as JSON.
+func (s *Server) apiLogs(w http.ResponseWriter, r *http.Request) {
+	if s.deps.EventLog == nil {
+		writeJSON(w, http.StatusOK, []LogEntry{})
+		return
+	}
+	logs, err := s.deps.EventLog.ListLogs(200)
+	if err != nil {
+		s.deps.Log.Error("failed to list logs", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list logs")
+		return
+	}
+	if logs == nil {
+		logs = []LogEntry{}
+	}
+	writeJSON(w, http.StatusOK, logs)
 }
 
 // containerDetailData holds all data for the per-container detail page.
