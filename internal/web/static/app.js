@@ -167,6 +167,12 @@ function expandAllStacks() {
 }
 
 function collapseAllStacks() {
+    // Close all open accordion panels first.
+    var panels = document.querySelectorAll(".accordion-panel");
+    for (var i = 0; i < panels.length; i++) {
+        panels[i].style.display = "none";
+    }
+    // Then collapse all stacks.
     var groups = document.querySelectorAll(".stack-group");
     for (var i = 0; i < groups.length; i++) {
         groups[i].classList.add("stack-collapsed");
