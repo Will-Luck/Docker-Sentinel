@@ -204,6 +204,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/containers/{name}/versions", s.apiContainerVersions)
 	s.mux.HandleFunc("POST /api/containers/{name}/rollback", s.apiRollback)
 	s.mux.HandleFunc("POST /api/containers/{name}/policy", s.apiChangePolicy)
+	s.mux.HandleFunc("POST /api/bulk/policy", s.apiBulkPolicy)
 	s.mux.HandleFunc("GET /api/history", s.apiHistory)
 	s.mux.HandleFunc("GET /api/queue", s.apiQueue)
 	s.mux.HandleFunc("POST /api/approve/{name}", s.apiApprove)

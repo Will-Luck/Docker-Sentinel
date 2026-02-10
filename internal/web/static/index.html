@@ -6,7 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Docker-Sentinel</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
 <body>
     <nav class="nav">
@@ -49,21 +48,46 @@
                 <h2>Container Status</h2>
             </div>
             <div class="table-wrap">
-                <table>
+                <table id="container-table">
                     <thead>
                         <tr>
+                            <th class="th-checkbox"><input type="checkbox" id="select-all" title="Select all"></th>
                             <th>Name</th>
                             <th>Image</th>
-                            <th>Policy</th>
+                            <th class="policy-header">
+                                Policy
+                                <span class="policy-help" tabindex="0">
+                                    &#9432;
+                                    <span class="policy-tooltip">
+                                        <strong>auto</strong> — updates applied automatically<br>
+                                        <strong>manual</strong> — queued for approval<br>
+                                        <strong>pinned</strong> — never updated
+                                    </span>
+                                </span>
+                            </th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {{if .Containers}}
+                    {{if .Stacks}}
+                        {{range .Stacks}}
+                        <tbody class="stack-group" data-stack="{{.Name}}">
+                            <tr class="stack-header" onclick="toggleStack(this)">
+                                <td colspan="6">
+                                    <div class="stack-header-inner">
+                                        <span class="stack-chevron">&#9656;</span>
+                                        <span class="stack-name">{{.Name}}</span>
+                                        <span class="badge badge-muted stack-count">{{len .Containers}}</span>
+                                    </div>
+                                </td>
+                            </tr>
                             {{range .Containers}}
-                            <tr>
-                                <td><a href="/container/{{.Name}}" class="container-link">{{.Name}}</a></td>
+                            <tr class="container-row" data-name="{{.Name}}">
+                                <td class="td-checkbox"><input type="checkbox" class="row-select" value="{{.Name}}"></td>
+                                <td>
+                                    <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
+                                    <button class="accordion-toggle" onclick="toggleAccordion('{{.Name}}', this)" title="Expand info">+</button>
+                                </td>
                                 <td class="cell-image mono">{{.Image}}</td>
                                 <td>
                                     <select class="policy-select policy-{{.Policy}}"
@@ -90,27 +114,49 @@
                                         {{if ne .Policy "pinned"}}
                                         <button class="btn btn-warning"
                                                 onclick="triggerUpdate('{{.Name}}')">
-                                            Update Now
+                                            Update
                                         </button>
                                         {{end}}
                                     </div>
                                 </td>
                             </tr>
+                            <tr class="accordion-panel" id="accordion-{{.Name}}" style="display:none">
+                                <td colspan="6">
+                                    <div class="accordion-content">
+                                        <div class="accordion-loading">Loading...</div>
+                                    </div>
+                                </td>
+                            </tr>
                             {{end}}
-                        {{else}}
+                        </tbody>
+                        {{end}}
+                    {{else}}
+                        <tbody>
                             <tr>
-                                <td colspan="5">
+                                <td colspan="6">
                                     <div class="empty-state">
                                         <h3>No containers found</h3>
                                         <p>Sentinel is not monitoring any containers yet.</p>
                                     </div>
                                 </td>
                             </tr>
-                        {{end}}
-                    </tbody>
+                        </tbody>
+                    {{end}}
                 </table>
             </div>
         </div>
+    </div>
+
+    <!-- Bulk action bar -->
+    <div id="bulk-bar" class="bulk-bar" style="display:none">
+        <span id="bulk-count" class="bulk-count">0 selected</span>
+        <select id="bulk-policy" class="policy-select">
+            <option value="auto">auto</option>
+            <option value="manual">manual</option>
+            <option value="pinned">pinned</option>
+        </select>
+        <button class="btn btn-success" onclick="applyBulkPolicy()">Apply Policy</button>
+        <button class="btn" onclick="clearSelection()">Cancel</button>
     </div>
 
     <div id="toast-container" class="toast-container"></div>

@@ -1,11 +1,15 @@
 package web
 
-import "net/http"
+import (
+	"net/http"
+	"sort"
+)
 
 // pageData is the common data structure passed to all page templates.
 type pageData struct {
 	Page       string
 	Containers []containerView
+	Stacks     []stackGroup
 	Queue      []PendingUpdate
 	History    []UpdateRecord
 	Settings   map[string]string
@@ -25,6 +29,13 @@ type containerView struct {
 	State       string
 	Maintenance bool
 	HasUpdate   bool
+	Stack       string // com.docker.compose.project label, or "" for standalone
+}
+
+// stackGroup groups containers by their Docker Compose project name.
+type stackGroup struct {
+	Name       string
+	Containers []containerView
 }
 
 // handleDashboard renders the main container dashboard.
@@ -55,6 +66,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			State:       c.State,
 			Maintenance: maintenance,
 			HasUpdate:   pendingNames[name],
+			Stack:       c.Labels["com.docker.compose.project"],
 		})
 	}
 
@@ -70,9 +82,42 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Group containers by stack (Docker Compose project).
+	stackMap := make(map[string][]containerView)
+	var stackOrder []string
+	for _, v := range views {
+		key := v.Stack
+		if _, seen := stackMap[key]; !seen {
+			stackOrder = append(stackOrder, key)
+		}
+		stackMap[key] = append(stackMap[key], v)
+	}
+	// Named stacks alphabetically, standalone ("") last.
+	sort.Slice(stackOrder, func(i, j int) bool {
+		if stackOrder[i] == "" {
+			return false
+		}
+		if stackOrder[j] == "" {
+			return true
+		}
+		return stackOrder[i] < stackOrder[j]
+	})
+	stacks := make([]stackGroup, 0, len(stackOrder))
+	for _, key := range stackOrder {
+		name := key
+		if name == "" {
+			name = "Standalone"
+		}
+		stacks = append(stacks, stackGroup{
+			Name:       name,
+			Containers: stackMap[key],
+		})
+	}
+
 	data := pageData{
 		Page:              "dashboard",
 		Containers:        views,
+		Stacks:            stacks,
 		TotalContainers:   len(views),
 		RunningContainers: running,
 		PendingUpdates:    pending,

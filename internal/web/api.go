@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 )
 
@@ -353,6 +354,51 @@ func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {
 		"status":  "started",
 		"name":    name,
 		"message": "policy change to " + body.Policy + " started for " + name,
+	})
+}
+
+// apiBulkPolicy changes the update policy for multiple containers at once.
+func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Containers []string `json:"containers"`
+		Policy     string   `json:"policy"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	switch body.Policy {
+	case "auto", "manual", "pinned":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "policy must be auto, manual, or pinned")
+		return
+	}
+
+	if len(body.Containers) == 0 {
+		writeError(w, http.StatusBadRequest, "containers list must not be empty")
+		return
+	}
+
+	if s.deps.Policy == nil {
+		writeError(w, http.StatusNotImplemented, "policy change not available")
+		return
+	}
+
+	for _, name := range body.Containers {
+		n := name // capture for goroutine
+		go func() {
+			if err := s.deps.Policy.ChangePolicy(context.Background(), n, body.Policy); err != nil {
+				s.deps.Log.Error("bulk policy change failed", "name", n, "policy", body.Policy, "error", err)
+			}
+		}()
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "started",
+		"containers": body.Containers,
+		"message":    fmt.Sprintf("policy change to %s started for %d containers", body.Policy, len(body.Containers)),
 	})
 }
 
