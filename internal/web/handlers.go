@@ -18,6 +18,7 @@ type pageData struct {
 	TotalContainers   int
 	RunningContainers int
 	PendingUpdates    int
+	QueueCount        int // sidebar badge: number of items in queue
 }
 
 // containerView is a container with computed display fields.
@@ -129,6 +130,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		TotalContainers:   len(views),
 		RunningContainers: running,
 		PendingUpdates:    pending,
+		QueueCount:        len(s.deps.Queue.List()),
 	}
 
 	s.renderTemplate(w, "index.html", data)
@@ -142,8 +144,9 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := pageData{
-		Page:  "queue",
-		Queue: items,
+		Page:       "queue",
+		Queue:      items,
+		QueueCount: len(items),
 	}
 
 	s.renderTemplate(w, "queue.html", data)
@@ -163,8 +166,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := pageData{
-		Page:    "history",
-		History: records,
+		Page:       "history",
+		History:    records,
+		QueueCount: len(s.deps.Queue.List()),
 	}
 
 	s.renderTemplate(w, "history.html", data)

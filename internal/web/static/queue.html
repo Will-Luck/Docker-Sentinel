@@ -8,101 +8,124 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <nav class="nav">
-        <a href="/" class="nav-brand">Sentinel <span>Dashboard</span></a>
-        <ul class="nav-links">
-            <li><a href="/">Dashboard</a></li>
-            <li><a href="/queue" class="active">Queue</a></li>
-            <li><a href="/history">History</a></li>
-        </ul>
-        <div class="nav-status">
-            <span id="sse-indicator" class="connection-dot disconnected" title="Disconnected"></span>
-        </div>
-    </nav>
-
-    <div class="container">
-        <div class="page-header">
-            <div>
-                <h1>Update Queue</h1>
-                <p class="subtitle">Containers awaiting manual approval for updates</p>
+    <div class="layout" id="layout">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <span class="sidebar-logo">S</span>
+                <span class="sidebar-label sidebar-brand">Sentinel</span>
+                <button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">&#171;</button>
             </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <h2>Pending Updates ({{len .Queue}})</h2>
+            <nav class="sidebar-nav">
+                <a href="/" class="sidebar-link" data-page="dashboard">
+                    <span class="sidebar-icon">&#9636;</span>
+                    <span class="sidebar-label">Dashboard</span>
+                </a>
+                <a href="/queue" class="sidebar-link active" data-page="queue">
+                    <span class="sidebar-icon">&#9776;</span>
+                    <span class="sidebar-label">Queue</span>
+                    {{if .QueueCount}}<span class="sidebar-badge">{{.QueueCount}}</span>{{end}}
+                </a>
+                <a href="/history" class="sidebar-link" data-page="history">
+                    <span class="sidebar-icon">&#8635;</span>
+                    <span class="sidebar-label">History</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button class="sidebar-link" onclick="cycleTheme()" id="theme-toggle" type="button">
+                    <span class="sidebar-icon" id="theme-icon">&#9790;</span>
+                    <span class="sidebar-label" id="theme-label">Dark</span>
+                </button>
+                <div class="sidebar-status">
+                    <span id="sse-indicator" class="status-dot disconnected" title="Disconnected"></span>
+                    <span class="sidebar-label" id="sse-label">Disconnected</span>
+                </div>
             </div>
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Container</th>
-                            <th>Image</th>
-                            <th>Detected</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{if .Queue}}
-                            {{range $i, $q := .Queue}}
-                            <tr class="container-row" onclick="onRowClick(event, 'queue-{{$i}}')">
-                                <td><a href="/container/{{$q.ContainerName}}" class="container-link">{{$q.ContainerName}}</a></td>
-                                <td class="cell-image mono">{{$q.CurrentImage}}</td>
-                                <td title="{{fmtTime $q.DetectedAt}}">{{fmtTimeAgo $q.DetectedAt}}</td>
-                                <td>
-                                    <div class="btn-group">
-                                        <button class="btn btn-success"
-                                                onclick="approveUpdate('{{$q.ContainerName}}')">
-                                            Approve
-                                        </button>
-                                        <button class="btn btn-error"
-                                                onclick="rejectUpdate('{{$q.ContainerName}}')">
-                                            Reject
-                                        </button>
-                                    </div>
-                                </td>
+        </aside>
+
+        <main class="main-content">
+            <div class="page-header">
+                <div>
+                    <h1>Update Queue</h1>
+                    <p class="subtitle">Containers awaiting manual approval for updates</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>Pending Updates ({{len .Queue}})</h2>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Container</th>
+                                <th>Image</th>
+                                <th>Detected</th>
+                                <th>Actions</th>
                             </tr>
-                            <tr class="accordion-panel" id="accordion-queue-{{$i}}" style="display:none">
-                                <td colspan="4">
-                                    <div class="accordion-content">
-                                        <div class="accordion-grid">
-                                            <div class="accordion-section">
-                                                <div class="accordion-label">Detected At</div>
-                                                <div class="accordion-value mono">{{fmtTime $q.DetectedAt}}</div>
-                                                <div class="accordion-label">Current Digest</div>
-                                                <div class="accordion-value mono">{{if $q.CurrentDigest}}{{$q.CurrentDigest}}{{else}}<span class="text-muted">—</span>{{end}}</div>
-                                                <div class="accordion-label">Remote Digest</div>
-                                                <div class="accordion-value mono">{{if $q.RemoteDigest}}{{$q.RemoteDigest}}{{else}}<span class="text-muted">—</span>{{end}}</div>
-                                            </div>
-                                            <div class="accordion-section">
-                                                <div class="accordion-label">Changelog</div>
-                                                <div class="accordion-value">
-                                                    {{with changelogURL $q.CurrentImage}}
-                                                        <a href="{{.}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
-                                                    {{else}}
-                                                        <span class="text-muted">Not available</span>
-                                                    {{end}}
+                        </thead>
+                        <tbody>
+                            {{if .Queue}}
+                                {{range $i, $q := .Queue}}
+                                <tr class="container-row" onclick="onRowClick(event, 'queue-{{$i}}')">
+                                    <td><a href="/container/{{$q.ContainerName}}" class="container-link">{{$q.ContainerName}}</a></td>
+                                    <td class="cell-image mono">{{$q.CurrentImage}}</td>
+                                    <td title="{{fmtTime $q.DetectedAt}}">{{fmtTimeAgo $q.DetectedAt}}</td>
+                                    <td>
+                                        <div class="btn-group">
+                                            <button class="btn btn-success"
+                                                    onclick="approveUpdate('{{$q.ContainerName}}')">
+                                                Approve
+                                            </button>
+                                            <button class="btn btn-error"
+                                                    onclick="rejectUpdate('{{$q.ContainerName}}')">
+                                                Reject
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr class="accordion-panel" id="accordion-queue-{{$i}}" style="display:none">
+                                    <td colspan="4">
+                                        <div class="accordion-content">
+                                            <div class="accordion-grid">
+                                                <div class="accordion-section">
+                                                    <div class="accordion-label">Detected At</div>
+                                                    <div class="accordion-value mono">{{fmtTime $q.DetectedAt}}</div>
+                                                    <div class="accordion-label">Current Digest</div>
+                                                    <div class="accordion-value mono">{{if $q.CurrentDigest}}{{$q.CurrentDigest}}{{else}}<span class="text-muted">—</span>{{end}}</div>
+                                                    <div class="accordion-label">Remote Digest</div>
+                                                    <div class="accordion-value mono">{{if $q.RemoteDigest}}{{$q.RemoteDigest}}{{else}}<span class="text-muted">—</span>{{end}}</div>
+                                                </div>
+                                                <div class="accordion-section">
+                                                    <div class="accordion-label">Changelog</div>
+                                                    <div class="accordion-value">
+                                                        {{with changelogURL $q.CurrentImage}}
+                                                            <a href="{{.}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
+                                                        {{else}}
+                                                            <span class="text-muted">Not available</span>
+                                                        {{end}}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
-                                </td>
-                            </tr>
+                                    </td>
+                                </tr>
+                                {{end}}
+                            {{else}}
+                                <tr>
+                                    <td colspan="4">
+                                        <div class="empty-state">
+                                            <h3>Queue is empty</h3>
+                                            <p>No containers are waiting for approval. Updates with "manual" policy will appear here when detected.</p>
+                                        </div>
+                                    </td>
+                                </tr>
                             {{end}}
-                        {{else}}
-                            <tr>
-                                <td colspan="4">
-                                    <div class="empty-state">
-                                        <h3>Queue is empty</h3>
-                                        <p>No containers are waiting for approval. Updates with "manual" policy will appear here when detected.</p>
-                                    </div>
-                                </td>
-                            </tr>
-                        {{end}}
-                    </tbody>
-                </table>
+                        </tbody>
+                    </table>
+                </div>
             </div>
-        </div>
+        </main>
     </div>
 
     <div id="toast-container" class="toast-container"></div>

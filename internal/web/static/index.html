@@ -8,147 +8,170 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <nav class="nav">
-        <a href="/" class="nav-brand">Sentinel <span>Dashboard</span></a>
-        <ul class="nav-links">
-            <li><a href="/" class="active">Dashboard</a></li>
-            <li><a href="/queue">Queue</a></li>
-            <li><a href="/history">History</a></li>
-        </ul>
-        <div class="nav-status">
-            <span id="sse-indicator" class="connection-dot disconnected" title="Disconnected"></span>
-        </div>
-    </nav>
-
-    <div class="container">
-        <div class="page-header">
-            <div>
-                <h1>Containers</h1>
-                <p class="subtitle">Monitored containers and their update status</p>
+    <div class="layout" id="layout">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <span class="sidebar-logo">S</span>
+                <span class="sidebar-label sidebar-brand">Sentinel</span>
+                <button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">&#171;</button>
             </div>
-        </div>
-
-        <div class="stats" id="stats">
-            <div class="stat-card">
-                <div class="stat-label">Total</div>
-                <div class="stat-value info">{{.TotalContainers}}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Running</div>
-                <div class="stat-value success">{{.RunningContainers}}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Updates Pending</div>
-                <div class="stat-value warning">{{.PendingUpdates}}</div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <h2>Container Status</h2>
-                <div class="btn-group">
-                    <button class="btn" onclick="expandAllStacks()">Expand All</button>
-                    <button class="btn" onclick="collapseAllStacks()">Collapse All</button>
+            <nav class="sidebar-nav">
+                <a href="/" class="sidebar-link active" data-page="dashboard">
+                    <span class="sidebar-icon">&#9636;</span>
+                    <span class="sidebar-label">Dashboard</span>
+                </a>
+                <a href="/queue" class="sidebar-link" data-page="queue">
+                    <span class="sidebar-icon">&#9776;</span>
+                    <span class="sidebar-label">Queue</span>
+                    {{if .QueueCount}}<span class="sidebar-badge">{{.QueueCount}}</span>{{end}}
+                </a>
+                <a href="/history" class="sidebar-link" data-page="history">
+                    <span class="sidebar-icon">&#8635;</span>
+                    <span class="sidebar-label">History</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button class="sidebar-link" onclick="cycleTheme()" id="theme-toggle" type="button">
+                    <span class="sidebar-icon" id="theme-icon">&#9790;</span>
+                    <span class="sidebar-label" id="theme-label">Dark</span>
+                </button>
+                <div class="sidebar-status">
+                    <span id="sse-indicator" class="status-dot disconnected" title="Disconnected"></span>
+                    <span class="sidebar-label" id="sse-label">Disconnected</span>
                 </div>
             </div>
-            <div class="table-wrap">
-                <table id="container-table">
-                    <thead>
-                        <tr>
-                            <th class="th-checkbox"><input type="checkbox" id="select-all" title="Select all"></th>
-                            <th>Name</th>
-                            <th>Image</th>
-                            <th class="policy-header">
-                                Policy
-                                <span class="policy-help" tabindex="0">
-                                    &#9432;
-                                    <span class="policy-tooltip">
-                                        <strong>auto</strong> — updates applied automatically<br>
-                                        <strong>manual</strong> — queued for approval<br>
-                                        <strong>pinned</strong> — never updated
-                                    </span>
-                                </span>
-                            </th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    {{if .Stacks}}
-                        {{range .Stacks}}
-                        <tbody class="stack-group stack-collapsed" data-stack="{{.Name}}">
-                            <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
-                                <td colspan="6">
-                                    <div class="stack-header-inner">
-                                        <span class="stack-chevron">&#9656;</span>
-                                        <span class="stack-name">{{.Name}}</span>
-                                        <span class="badge badge-muted stack-count">{{len .Containers}}</span>
-                                        {{if .HasPending}}<span class="badge badge-warning">Updates Available</span>{{end}}
-                                    </div>
-                                </td>
-                            </tr>
-                            {{range .Containers}}
-                            <tr class="container-row" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
-                                <td class="td-checkbox"><input type="checkbox" class="row-select" value="{{.Name}}"></td>
-                                <td>
-                                    <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
-                                </td>
-                                <td class="cell-image mono">{{.Image}}</td>
-                                <td>
-                                    <select class="policy-select policy-{{.Policy}}"
-                                            onchange="changePolicy('{{.Name}}', this.value)"
-                                            data-current="{{.Policy}}">
-                                        <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto</option>
-                                        <option value="manual" {{if eq .Policy "manual"}}selected{{end}}>manual</option>
-                                        <option value="pinned" {{if eq .Policy "pinned"}}selected{{end}}>pinned</option>
-                                    </select>
-                                </td>
-                                <td>
-                                    {{if .Maintenance}}
-                                        <span class="badge badge-warning">Updating</span>
-                                    {{else if .HasUpdate}}
-                                        <span class="badge badge-warning">Update Available</span>
-                                    {{else if eq .State "running"}}
-                                        <span class="badge badge-success">Running</span>
-                                    {{else}}
-                                        <span class="badge badge-error">{{.State}}</span>
-                                    {{end}}
-                                </td>
-                                <td>
-                                    <div class="btn-group">
-                                        {{if ne .Policy "pinned"}}
-                                        <button class="btn btn-warning"
-                                                onclick="triggerUpdate('{{.Name}}')">
-                                            Update
-                                        </button>
-                                        {{end}}
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr class="accordion-panel" id="accordion-{{.Name}}" style="display:none">
-                                <td colspan="6">
-                                    <div class="accordion-content">
-                                        <div class="accordion-loading">Loading...</div>
-                                    </div>
-                                </td>
-                            </tr>
-                            {{end}}
-                        </tbody>
-                        {{end}}
-                    {{else}}
-                        <tbody>
-                            <tr>
-                                <td colspan="6">
-                                    <div class="empty-state">
-                                        <h3>No containers found</h3>
-                                        <p>Sentinel is not monitoring any containers yet.</p>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    {{end}}
-                </table>
+        </aside>
+
+        <main class="main-content">
+            <div class="page-header">
+                <div>
+                    <h1>Containers</h1>
+                    <p class="subtitle">Monitored containers and their update status</p>
+                </div>
             </div>
-        </div>
+
+            <div class="stats" id="stats">
+                <div class="stat-card">
+                    <div class="stat-label">Total</div>
+                    <div class="stat-value info">{{.TotalContainers}}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Running</div>
+                    <div class="stat-value success">{{.RunningContainers}}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Updates Pending</div>
+                    <div class="stat-value warning">{{.PendingUpdates}}</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>Container Status</h2>
+                    <div class="btn-group">
+                        <button class="btn" onclick="expandAllStacks()">Expand All</button>
+                        <button class="btn" onclick="collapseAllStacks()">Collapse All</button>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table id="container-table">
+                        <thead>
+                            <tr>
+                                <th class="th-checkbox"><input type="checkbox" id="select-all" title="Select all"></th>
+                                <th>Name</th>
+                                <th>Image</th>
+                                <th class="policy-header">
+                                    Policy
+                                    <span class="policy-help" tabindex="0">
+                                        &#9432;
+                                        <span class="policy-tooltip">
+                                            <strong>auto</strong> — updates applied automatically<br>
+                                            <strong>manual</strong> — queued for approval<br>
+                                            <strong>pinned</strong> — never updated
+                                        </span>
+                                    </span>
+                                </th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        {{if .Stacks}}
+                            {{range .Stacks}}
+                            <tbody class="stack-group stack-collapsed" data-stack="{{.Name}}">
+                                <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
+                                    <td colspan="6">
+                                        <div class="stack-header-inner">
+                                            <span class="stack-chevron">&#9656;</span>
+                                            <span class="stack-name">{{.Name}}</span>
+                                            <span class="badge badge-muted stack-count">{{len .Containers}}</span>
+                                            {{if .HasPending}}<span class="badge badge-warning">Updates Available</span>{{end}}
+                                        </div>
+                                    </td>
+                                </tr>
+                                {{range .Containers}}
+                                <tr class="container-row" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
+                                    <td class="td-checkbox"><input type="checkbox" class="row-select" value="{{.Name}}"></td>
+                                    <td>
+                                        <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
+                                    </td>
+                                    <td class="cell-image mono">{{.Image}}</td>
+                                    <td>
+                                        <select class="policy-select policy-{{.Policy}}"
+                                                onchange="changePolicy('{{.Name}}', this.value)"
+                                                data-current="{{.Policy}}">
+                                            <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto</option>
+                                            <option value="manual" {{if eq .Policy "manual"}}selected{{end}}>manual</option>
+                                            <option value="pinned" {{if eq .Policy "pinned"}}selected{{end}}>pinned</option>
+                                        </select>
+                                    </td>
+                                    <td>
+                                        {{if .Maintenance}}
+                                            <span class="badge badge-warning">Updating</span>
+                                        {{else if .HasUpdate}}
+                                            <span class="badge badge-warning">Update Available</span>
+                                        {{else if eq .State "running"}}
+                                            <span class="badge badge-success">Running</span>
+                                        {{else}}
+                                            <span class="badge badge-error">{{.State}}</span>
+                                        {{end}}
+                                    </td>
+                                    <td>
+                                        <div class="btn-group">
+                                            {{if ne .Policy "pinned"}}
+                                            <button class="btn btn-warning"
+                                                    onclick="triggerUpdate('{{.Name}}')">
+                                                Update
+                                            </button>
+                                            {{end}}
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr class="accordion-panel" id="accordion-{{.Name}}" style="display:none">
+                                    <td colspan="6">
+                                        <div class="accordion-content">
+                                            <div class="accordion-loading">Loading...</div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                            {{end}}
+                        {{else}}
+                            <tbody>
+                                <tr>
+                                    <td colspan="6">
+                                        <div class="empty-state">
+                                            <h3>No containers found</h3>
+                                            <p>Sentinel is not monitoring any containers yet.</p>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        {{end}}
+                    </table>
+                </div>
+            </div>
+        </main>
     </div>
 
     <!-- Bulk action bar -->
