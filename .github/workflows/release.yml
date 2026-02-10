@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Run tests
+        run: go test -count=1 ./...
+
+  build-image:
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          for pair in linux/amd64 linux/arm64 linux/arm/v7 darwin/amd64 darwin/arm64; do
+            OS="${pair%%/*}"
+            ARCH_RAW="${pair#*/}"
+            ARCH="${ARCH_RAW//\//-}"
+            GOARM=""
+            if [[ "$ARCH_RAW" == arm/v* ]]; then
+              GOARM="${ARCH_RAW##*v}"
+              export GOARM
+            fi
+            CGO_ENABLED=0 GOOS="$OS" GOARCH="${ARCH_RAW%%/*}" go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o "dist/docker-sentinel-${OS}-${ARCH}" ./cmd/sentinel
+          done
+      - name: Create release
+        run: gh release create ${{ github.ref_name }} dist/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

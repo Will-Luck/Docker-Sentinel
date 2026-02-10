@@ -1,5 +1,10 @@
 # Docker-Sentinel
 
+[![CI](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml/badge.svg)](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Will-Luck/Docker-Sentinel/total)](https://github.com/Will-Luck/Docker-Sentinel/releases)
+[![GHCR](https://img.shields.io/badge/ghcr.io-docker--sentinel-blue?logo=github)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
+
 A container update orchestrator with a web dashboard, written in Go. Replaces Watchtower with per-container update policies, pre-update snapshots, post-update health validation, automatic rollback, and real-time notifications.
 
 ## Features
@@ -23,7 +28,7 @@ docker run -d \
   -v sentinel-data:/data \
   -p 8080:8080 \
   -e SENTINEL_POLL_INTERVAL=6h \
-  docker-sentinel:latest
+  ghcr.io/will-luck/docker-sentinel:latest
 ```
 
 Then open `http://localhost:8080` in your browser.
