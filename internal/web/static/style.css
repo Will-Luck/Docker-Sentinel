@@ -1,6 +1,6 @@
 /* ==========================================================================
    Docker-Sentinel Dashboard v3 — Style Sheet
-   Dark-first, zinc grey palette, sidebar layout, light-dark() theming
+   Dark-first, zinc grey palette, top nav layout, light-dark() theming
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -44,7 +44,6 @@
     --bg-surface: light-dark(#ffffff, #141414);
     --bg-raised: light-dark(var(--zinc-50), var(--zinc-900));
     --bg-hover: light-dark(var(--zinc-200), var(--zinc-800));
-    --bg-sidebar: light-dark(#ffffff, #0a0a0a);
     --bg-input: light-dark(#ffffff, var(--zinc-900));
 
     --fg-primary: light-dark(var(--zinc-900), var(--zinc-50));
@@ -97,11 +96,6 @@
     --sp-6: 24px;
     --sp-8: 32px;
     --sp-10: 40px;
-
-    /* Sidebar dimensions */
-    --sidebar-width: 220px;
-    --sidebar-collapsed: 56px;
-    --header-height: 0px;
 }
 
 
@@ -154,23 +148,117 @@ h1, h2, h3, h4 {
 
 
 /* --------------------------------------------------------------------------
-   3. Layout — CSS Grid (sidebar + main)
+   3. Nav Bar
    -------------------------------------------------------------------------- */
 
-.layout {
-    display: grid;
-    grid-template-columns: var(--sidebar-width) 1fr;
-    min-height: 100vh;
-    transition: grid-template-columns 200ms ease;
-
-    &.sidebar-collapsed {
-        grid-template-columns: var(--sidebar-collapsed) 1fr;
-    }
+.nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-6);
+    height: 56px;
+    padding: 0 var(--sp-6);
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
 }
 
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    text-decoration: none;
+    color: inherit;
+    flex-shrink: 0;
+}
+
+.nav-logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-full);
+    background: var(--accent);
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 0.8rem;
+    line-height: 1;
+}
+
+.nav-brand-text {
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--fg-primary);
+}
+
+.nav-links {
+    display: flex;
+    gap: 0;
+    height: 100%;
+}
+
+.nav-link {
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    height: 100%;
+    color: var(--fg-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    transition: color 150ms, background 150ms, border-color 150ms;
+}
+
+.nav-link:hover {
+    color: var(--fg-primary);
+    background: var(--bg-hover);
+}
+
+.nav-link.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.nav-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: var(--radius-full);
+    background: var(--accent);
+    color: #ffffff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1;
+    margin-left: 6px;
+}
+
+.nav-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+
+.nav-status-text {
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+}
+
+
+/* --------------------------------------------------------------------------
+   4. Main Content + Page Header
+   -------------------------------------------------------------------------- */
+
 .main-content {
-    overflow-y: auto;
-    max-height: 100vh;
+    max-width: 1400px;
+    margin: 0 auto;
     padding: var(--sp-6) var(--sp-8);
 }
 
@@ -190,211 +278,6 @@ h1, h2, h3, h4 {
         font-size: 0.85rem;
         color: var(--fg-secondary);
         margin-top: var(--sp-1);
-    }
-}
-
-
-/* --------------------------------------------------------------------------
-   4. Sidebar
-   -------------------------------------------------------------------------- */
-
-.sidebar {
-    background: var(--bg-sidebar);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    position: sticky;
-    top: 0;
-    overflow: hidden;
-    transition: width 200ms ease;
-    z-index: 300;
-}
-
-.sidebar-header {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-3);
-    padding: var(--sp-4) var(--sp-4);
-    border-bottom: 1px solid var(--border);
-    min-height: 56px;
-}
-
-.sidebar-logo {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
-    border-radius: var(--radius-full);
-    background: var(--accent);
-    color: #ffffff;
-    font-weight: 700;
-    font-size: 0.9rem;
-    line-height: 1;
-}
-
-.sidebar-brand {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--fg-primary);
-    white-space: nowrap;
-    overflow: hidden;
-}
-
-.sidebar-toggle {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--fg-secondary);
-    cursor: pointer;
-    transition: background 150ms, color 150ms, border-color 150ms;
-    font-size: 0.85rem;
-
-    &:hover {
-        background: var(--bg-hover);
-        color: var(--fg-primary);
-        border-color: var(--border);
-    }
-}
-
-.sidebar-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: var(--sp-2) var(--sp-2);
-    flex: 1;
-}
-
-.sidebar-link {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-3);
-    padding: 10px var(--sp-4);
-    border-radius: var(--radius);
-    color: var(--fg-secondary);
-    text-decoration: none;
-    font-size: 0.875rem;
-    font-weight: 500;
-    white-space: nowrap;
-    transition: background 150ms, color 150ms;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    width: 100%;
-    text-align: left;
-    border-left: 3px solid transparent;
-
-    &:hover {
-        background: var(--bg-hover);
-        color: var(--fg-primary);
-    }
-
-    &.active {
-        background: var(--bg-hover);
-        color: var(--fg-primary);
-        border-left-color: var(--accent);
-    }
-}
-
-.sidebar-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    min-width: 20px;
-    text-align: center;
-    color: var(--fg-secondary);
-    font-size: 1rem;
-}
-
-.sidebar-label {
-    overflow: hidden;
-    white-space: nowrap;
-    transition: opacity 200ms;
-}
-
-.sidebar-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 6px;
-    border-radius: var(--radius-full);
-    background: var(--accent);
-    color: #ffffff;
-    font-size: 0.65rem;
-    font-weight: 700;
-    line-height: 1;
-    margin-left: auto;
-}
-
-.sidebar-footer {
-    margin-top: auto;
-    border-top: 1px solid var(--border);
-    padding: var(--sp-2) var(--sp-2);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.sidebar-status {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    padding: 6px var(--sp-4);
-    font-size: 0.75rem;
-    color: var(--fg-muted);
-    border-left: 3px solid transparent;
-}
-
-/* Collapsed sidebar: hide labels, badges, and brand */
-.sidebar-collapsed {
-    & .sidebar-label,
-    & .sidebar-brand,
-    & .sidebar-badge {
-        opacity: 0;
-        width: 0;
-        overflow: hidden;
-        pointer-events: none;
-    }
-
-    & .sidebar-header {
-        justify-content: center;
-        padding: var(--sp-4) var(--sp-2);
-    }
-
-    & .sidebar-toggle {
-        margin-left: 0;
-    }
-
-    & .sidebar-link {
-        justify-content: center;
-        padding: 10px var(--sp-2);
-        border-left-width: 0;
-    }
-
-    & .sidebar-status {
-        justify-content: center;
-        padding: 6px var(--sp-2);
-        border-left-width: 0;
-    }
-
-    & .sidebar-nav {
-        padding: var(--sp-2) var(--sp-1);
-    }
-
-    & .sidebar-footer {
-        padding: var(--sp-2) var(--sp-1);
     }
 }
 
@@ -949,13 +832,13 @@ tbody td {
 
 
 /* --------------------------------------------------------------------------
-   12. Bulk Action Bar — fixed bottom, accounts for sidebar width
+   12. Bulk Action Bar — fixed bottom
    -------------------------------------------------------------------------- */
 
 .bulk-bar {
     position: fixed;
     bottom: 0;
-    left: var(--sidebar-width);
+    left: 0;
     right: 0;
     z-index: 200;
     background: var(--bg-surface);
@@ -966,12 +849,6 @@ tbody td {
     align-items: center;
     gap: var(--sp-4);
     animation: slideUp 200ms ease-out;
-    transition: left 200ms ease;
-}
-
-/* When sidebar is collapsed, bulk bar shifts left */
-.sidebar-collapsed .bulk-bar {
-    left: var(--sidebar-collapsed);
 }
 
 .bulk-count {
@@ -1256,7 +1133,66 @@ tbody td {
 
 
 /* --------------------------------------------------------------------------
-   20. Utility Helpers
+   20. Settings Page
+   -------------------------------------------------------------------------- */
+
+.settings-grid {
+    display: grid;
+    gap: var(--sp-6);
+    max-width: 800px;
+}
+
+.setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--sp-4) 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.setting-row:last-child {
+    border-bottom: none;
+}
+
+.setting-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 2px;
+}
+
+.setting-desc {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+}
+
+.setting-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 32px 6px 12px;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+    cursor: pointer;
+    outline: none;
+    transition: border-color 150ms;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%23a1a1aa' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+}
+
+.setting-select:hover {
+    border-color: var(--border-strong);
+}
+
+.setting-select:focus {
+    border-color: var(--accent);
+}
+
+
+/* --------------------------------------------------------------------------
+   21. Utility Helpers
    -------------------------------------------------------------------------- */
 
 .text-muted {
@@ -1265,55 +1201,22 @@ tbody td {
 
 
 /* --------------------------------------------------------------------------
-   21. Responsive — 768px sidebar icon-only, 480px sidebar hidden/overlay
+   22. Responsive
    -------------------------------------------------------------------------- */
 
 @media (max-width: 768px) {
-    /* Sidebar collapses to icon-only by default on tablet */
-    .layout {
-        grid-template-columns: var(--sidebar-collapsed) 1fr;
+    .nav {
+        padding: 0 var(--sp-3);
+        gap: var(--sp-3);
     }
 
-    .sidebar {
-        width: var(--sidebar-collapsed);
+    .nav-brand-text {
+        display: none;
     }
 
-    .sidebar-label,
-    .sidebar-brand,
-    .sidebar-badge {
-        opacity: 0;
-        width: 0;
-        overflow: hidden;
-        pointer-events: none;
-    }
-
-    .sidebar-header {
-        justify-content: center;
-        padding: var(--sp-4) var(--sp-2);
-    }
-
-    .sidebar-toggle {
-        margin-left: 0;
-    }
-
-    .sidebar-link {
-        justify-content: center;
-        padding: 10px var(--sp-2);
-        border-left-width: 0;
-    }
-
-    .sidebar-status {
-        justify-content: center;
-        padding: 6px var(--sp-2);
-        border-left-width: 0;
-    }
-
-    .sidebar-nav {
-        padding: var(--sp-2) var(--sp-1);
-    }
-
-    .sidebar-footer {
-        padding: var(--sp-2) var(--sp-1);
+    .nav-link {
+        padding: 0 var(--sp-3);
+        font-size: 0.8rem;
     }
 
     .main-content {
@@ -1328,10 +1231,6 @@ tbody td {
         grid-template-columns: repeat(2, 1fr);
     }
 
-    .bulk-bar {
-        left: var(--sidebar-collapsed);
-    }
-
     thead th,
     tbody td {
         padding: var(--sp-2) var(--sp-3);
@@ -1339,30 +1238,12 @@ tbody td {
 }
 
 @media (max-width: 480px) {
-    /* Sidebar hidden entirely — overlay mode */
-    .layout {
-        grid-template-columns: 1fr;
-    }
-
-    .sidebar {
-        position: fixed;
-        left: -var(--sidebar-width);
-        top: 0;
-        width: var(--sidebar-width);
-        height: 100vh;
-        z-index: 400;
-        transform: translateX(-100%);
-        transition: transform 200ms ease;
-    }
-
-    /* When sidebar is toggled open on mobile */
-    .layout.sidebar-open .sidebar {
-        transform: translateX(0);
+    .nav-status-text {
+        display: none;
     }
 
     .main-content {
         padding: var(--sp-3) var(--sp-3);
-        max-height: none;
     }
 
     .stats {
@@ -1378,7 +1259,6 @@ tbody td {
     }
 
     .bulk-bar {
-        left: 0;
         flex-wrap: wrap;
         padding: var(--sp-3) var(--sp-4);
     }
@@ -1405,7 +1285,7 @@ tbody td {
 
 
 /* --------------------------------------------------------------------------
-   22. Transitions — global defaults for interactive states
+   23. Transitions — global defaults for interactive states
    -------------------------------------------------------------------------- */
 
 /* Catch-all for elements that should have smooth transitions but are not

@@ -194,6 +194,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /{$}", s.handleDashboard)
 	s.mux.HandleFunc("GET /queue", s.handleQueue)
 	s.mux.HandleFunc("GET /history", s.handleHistory)
+	s.mux.HandleFunc("GET /settings", s.handleSettings)
 
 	// SSE event stream.
 	s.mux.HandleFunc("GET /api/events", s.apiSSE)

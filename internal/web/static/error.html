@@ -8,53 +8,36 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="layout" id="layout">
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
-                <span class="sidebar-logo">S</span>
-                <span class="sidebar-label sidebar-brand">Sentinel</span>
-                <button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">&#171;</button>
-            </div>
-            <nav class="sidebar-nav">
-                <a href="/" class="sidebar-link" data-page="dashboard">
-                    <span class="sidebar-icon">&#9636;</span>
-                    <span class="sidebar-label">Dashboard</span>
-                </a>
-                <a href="/queue" class="sidebar-link" data-page="queue">
-                    <span class="sidebar-icon">&#9776;</span>
-                    <span class="sidebar-label">Queue</span>
-                </a>
-                <a href="/history" class="sidebar-link" data-page="history">
-                    <span class="sidebar-icon">&#8635;</span>
-                    <span class="sidebar-label">History</span>
-                </a>
-            </nav>
-            <div class="sidebar-footer">
-                <button class="sidebar-link" onclick="cycleTheme()" id="theme-toggle" type="button">
-                    <span class="sidebar-icon" id="theme-icon">&#9790;</span>
-                    <span class="sidebar-label" id="theme-label">Dark</span>
-                </button>
-                <div class="sidebar-status">
-                    <span id="sse-indicator" class="status-dot disconnected" title="Disconnected"></span>
-                    <span class="sidebar-label" id="sse-label">Disconnected</span>
-                </div>
-            </div>
-        </aside>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <span class="nav-logo">S</span>
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">Queue</a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/settings" class="nav-link">Settings</a>
+        </div>
+        <div class="nav-status">
+            <span id="sse-indicator" class="status-dot disconnected"></span>
+            <span id="sse-label" class="nav-status-text">Disconnected</span>
+        </div>
+    </nav>
 
-        <main class="main-content">
-            <div class="card">
-                <div class="card-body">
-                    <div class="empty-state">
-                        <h3>{{.Title}}</h3>
-                        <p>{{.Message}}</p>
-                        <div style="margin-top: 1.5rem;">
-                            <a href="/" class="btn btn-info">Back to Dashboard</a>
-                        </div>
+    <main class="main-content">
+        <div class="card">
+            <div class="card-body">
+                <div class="empty-state">
+                    <h3>{{.Title}}</h3>
+                    <p>{{.Message}}</p>
+                    <div style="margin-top: 1.5rem;">
+                        <a href="/" class="btn btn-info">Back to Dashboard</a>
                     </div>
                 </div>
             </div>
-        </main>
-    </div>
+        </div>
+    </main>
 
     <script src="/static/app.js"></script>
 </body>

@@ -1,0 +1,93 @@
+{{define "settings.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings — Docker-Sentinel</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <span class="nav-logo">S</span>
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">
+                Queue
+                {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
+            </a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/settings" class="nav-link active">Settings</a>
+        </div>
+        <div class="nav-status">
+            <span id="sse-indicator" class="status-dot disconnected"></span>
+            <span id="sse-label" class="nav-status-text">Disconnected</span>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <div class="page-header">
+            <div>
+                <h1>Settings</h1>
+                <p class="subtitle">Dashboard preferences (stored in your browser)</p>
+            </div>
+        </div>
+
+        <div class="settings-grid">
+            <div class="card">
+                <div class="card-header"><h2>Appearance</h2></div>
+                <div class="card-body">
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <div class="setting-label">Theme</div>
+                            <div class="setting-desc">Choose your colour scheme</div>
+                        </div>
+                        <select id="theme-select" class="setting-select">
+                            <option value="auto">Auto (system)</option>
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                        </select>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <div class="setting-label">Default stack view</div>
+                            <div class="setting-desc">Whether stacks start collapsed or expanded on the dashboard</div>
+                        </div>
+                        <select id="stack-default" class="setting-select">
+                            <option value="collapsed">Collapsed</option>
+                            <option value="expanded">Expanded</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header"><h2>Server Configuration</h2></div>
+                <div class="card-body">
+                    <p class="subtitle" style="margin-bottom: var(--sp-4)">These are set via environment variables and cannot be changed from the dashboard.</p>
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+                            <tbody>
+                                {{range $k, $v := .Settings}}
+                                <tr>
+                                    <td class="mono">{{$k}}</td>
+                                    <td class="mono">{{$v}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

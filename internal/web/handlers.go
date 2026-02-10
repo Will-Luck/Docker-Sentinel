@@ -174,6 +174,16 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	s.renderTemplate(w, "history.html", data)
 }
 
+// handleSettings renders the settings page.
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	data := pageData{
+		Page:       "settings",
+		Settings:   s.deps.Config.Values(),
+		QueueCount: len(s.deps.Queue.List()),
+	}
+	s.renderTemplate(w, "settings.html", data)
+}
+
 // containerDetailData holds all data for the per-container detail page.
 type containerDetailData struct {
 	Container    containerView

@@ -8,64 +8,45 @@
    ------------------------------------------------------------ */
 
 function initTheme() {
-    var saved = localStorage.getItem("sentinel-theme") || "dark";
+    var saved = localStorage.getItem("sentinel-theme") || "auto";
     applyTheme(saved);
-}
-
-function cycleTheme() {
-    var current = localStorage.getItem("sentinel-theme") || "dark";
-    var next;
-    if (current === "dark") {
-        next = "light";
-    } else if (current === "light") {
-        next = "auto";
-    } else {
-        next = "dark";
-    }
-    applyTheme(next);
-    localStorage.setItem("sentinel-theme", next);
 }
 
 function applyTheme(theme) {
     var root = document.documentElement;
-    var icon = document.getElementById("theme-icon");
-    var label = document.getElementById("theme-label");
 
     if (theme === "dark") {
         root.style.colorScheme = "dark";
-        if (icon) icon.textContent = "\u263E";
-        if (label) label.textContent = "Dark";
     } else if (theme === "light") {
         root.style.colorScheme = "light";
-        if (icon) icon.textContent = "\u263C";
-        if (label) label.textContent = "Light";
     } else {
         root.style.colorScheme = "dark light";
-        if (icon) icon.textContent = "\u2699";
-        if (label) label.textContent = "Auto";
     }
 
     localStorage.setItem("sentinel-theme", theme);
 }
 
 /* ------------------------------------------------------------
-   2. Sidebar
+   2. Settings Page
    ------------------------------------------------------------ */
 
-function initSidebar() {
-    var collapsed = localStorage.getItem("sentinel-sidebar") === "collapsed";
-    if (collapsed) {
-        var layout = document.querySelector(".layout");
-        if (layout) layout.classList.add("sidebar-collapsed");
-    }
-}
+function initSettingsPage() {
+    var themeSelect = document.getElementById("theme-select");
+    var stackSelect = document.getElementById("stack-default");
+    if (!themeSelect) return;
 
-function toggleSidebar() {
-    var layout = document.querySelector(".layout");
-    if (!layout) return;
-    layout.classList.toggle("sidebar-collapsed");
-    var isCollapsed = layout.classList.contains("sidebar-collapsed");
-    localStorage.setItem("sentinel-sidebar", isCollapsed ? "collapsed" : "expanded");
+    themeSelect.value = localStorage.getItem("sentinel-theme") || "auto";
+    stackSelect.value = localStorage.getItem("sentinel-stacks") || "collapsed";
+
+    themeSelect.addEventListener("change", function() {
+        applyTheme(themeSelect.value);
+        localStorage.setItem("sentinel-theme", themeSelect.value);
+        showToast("Theme updated", "success");
+    });
+    stackSelect.addEventListener("change", function() {
+        localStorage.setItem("sentinel-stacks", stackSelect.value);
+        showToast("Stack default updated", "success");
+    });
 }
 
 /* ------------------------------------------------------------
@@ -531,8 +512,15 @@ function initSSE() {
 
 document.addEventListener("DOMContentLoaded", function () {
     initTheme();
-    initSidebar();
     initSSE();
+
+    // Apply stack default preference.
+    var stackPref = localStorage.getItem("sentinel-stacks") || "collapsed";
+    if (stackPref === "expanded") {
+        expandAllStacks();
+    }
+
+    initSettingsPage();
 
     // Multi-select: checkbox delegation on container table.
     var table = document.getElementById("container-table");
