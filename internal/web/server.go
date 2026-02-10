@@ -27,7 +27,7 @@ type Dependencies struct {
 	Snapshots SnapshotStore
 	Rollback  ContainerRollback
 	Registry  RegistryVersionChecker
-	Policy    PolicyChanger
+	Policy    PolicyStore
 	Log       *slog.Logger
 }
 
@@ -53,9 +53,12 @@ type RegistryVersionChecker interface {
 	ListVersions(ctx context.Context, imageRef string) ([]string, error)
 }
 
-// PolicyChanger applies a new update policy to a container.
-type PolicyChanger interface {
-	ChangePolicy(ctx context.Context, name, newPolicy string) error
+// PolicyStore reads and writes policy overrides in BoltDB.
+type PolicyStore interface {
+	GetPolicyOverride(name string) (string, bool)
+	SetPolicyOverride(name, policy string) error
+	DeletePolicyOverride(name string) error
+	AllPolicyOverrides() map[string]string
 }
 
 // UpdateRecord mirrors store.UpdateRecord to avoid importing store.
@@ -205,6 +208,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/containers/{name}/versions", s.apiContainerVersions)
 	s.mux.HandleFunc("POST /api/containers/{name}/rollback", s.apiRollback)
 	s.mux.HandleFunc("POST /api/containers/{name}/policy", s.apiChangePolicy)
+	s.mux.HandleFunc("DELETE /api/containers/{name}/policy", s.apiDeletePolicy)
 	s.mux.HandleFunc("POST /api/bulk/policy", s.apiBulkPolicy)
 	s.mux.HandleFunc("GET /api/history", s.apiHistory)
 	s.mux.HandleFunc("GET /api/queue", s.apiQueue)

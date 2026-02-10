@@ -60,11 +60,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		name := containerName(c)
 		maintenance, _ := s.deps.Store.GetMaintenance(name)
 
+		policy := containerPolicy(c.Labels)
+		if s.deps.Policy != nil {
+			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+				policy = p
+			}
+		}
+
 		views = append(views, containerView{
 			ID:          c.ID,
 			Name:        name,
 			Image:       c.Image,
-			Policy:      containerPolicy(c.Labels),
+			Policy:      policy,
 			State:       c.State,
 			Maintenance: maintenance,
 			HasUpdate:   pendingNames[name],
@@ -224,11 +231,18 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 
 	maintenance, _ := s.deps.Store.GetMaintenance(name)
 
+	detailPolicy := containerPolicy(found.Labels)
+	if s.deps.Policy != nil {
+		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+			detailPolicy = p
+		}
+	}
+
 	view := containerView{
 		ID:          found.ID,
 		Name:        containerName(*found),
 		Image:       found.Image,
-		Policy:      containerPolicy(found.Labels),
+		Policy:      detailPolicy,
 		State:       found.State,
 		Maintenance: maintenance,
 	}

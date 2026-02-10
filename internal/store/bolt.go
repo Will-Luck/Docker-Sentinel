@@ -15,6 +15,7 @@ var (
 	bucketHistory   = []byte("history")
 	bucketState     = []byte("state")
 	bucketQueue     = []byte("queue")
+	bucketPolicies  = []byte("policies")
 )
 
 // UpdateRecord represents a completed (or failed) container update.
@@ -44,7 +45,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -260,6 +261,50 @@ func (s *Store) ListHistoryByContainer(name string, limit int) ([]UpdateRecord, 
 		return nil
 	})
 	return records, err
+}
+
+// GetPolicyOverride returns the DB-stored policy override for a container.
+// Returns ("", false) if no override exists.
+func (s *Store) GetPolicyOverride(name string) (string, bool) {
+	var policy string
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketPolicies)
+		v := b.Get([]byte(name))
+		if v != nil {
+			policy = string(v)
+		}
+		return nil
+	})
+	return policy, policy != ""
+}
+
+// SetPolicyOverride stores a policy override for a container in BoltDB.
+func (s *Store) SetPolicyOverride(name, policy string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketPolicies)
+		return b.Put([]byte(name), []byte(policy))
+	})
+}
+
+// DeletePolicyOverride removes the policy override for a container.
+func (s *Store) DeletePolicyOverride(name string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketPolicies)
+		return b.Delete([]byte(name))
+	})
+}
+
+// AllPolicyOverrides returns all stored policy overrides.
+func (s *Store) AllPolicyOverrides() map[string]string {
+	result := make(map[string]string)
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketPolicies)
+		return b.ForEach(func(k, v []byte) error {
+			result[string(k)] = string(v)
+			return nil
+		})
+	})
+	return result
 }
 
 // DeleteOldSnapshots removes all but the N most recent snapshots for a container.

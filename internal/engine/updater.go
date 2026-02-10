@@ -101,7 +101,8 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 
 		name := containerName(c)
 		labels := c.Labels
-		policy := docker.ContainerPolicy(labels, u.cfg.DefaultPolicy)
+		resolved := ResolvePolicy(u.store, labels, name, u.cfg.DefaultPolicy)
+		policy := docker.Policy(resolved.Policy)
 
 		// Skip pinned containers.
 		if policy == docker.PolicyPinned {

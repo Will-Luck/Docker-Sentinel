@@ -80,8 +80,6 @@ func main() {
 	queue := engine.NewQueue(db, bus)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
-	policyChanger := engine.NewPolicyChanger(client, db, log)
-
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
@@ -94,7 +92,7 @@ func main() {
 			Snapshots: &snapshotAdapter{db},
 			Rollback:  &rollbackAdapter{d: client, s: db, log: log},
 			Registry:  &registryAdapter{log: log},
-			Policy:    &policyAdapter{p: policyChanger},
+			Policy:    &policyStoreAdapter{db},
 			Log:       log.Logger,
 		})
 
@@ -337,9 +335,21 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	return versions, nil
 }
 
-// policyAdapter bridges engine.PolicyChanger to web.PolicyChanger.
-type policyAdapter struct{ p *engine.PolicyChanger }
+// policyStoreAdapter bridges store.Store to web.PolicyStore.
+type policyStoreAdapter struct{ s *store.Store }
 
-func (a *policyAdapter) ChangePolicy(ctx context.Context, name, newPolicy string) error {
-	return a.p.ChangePolicy(ctx, name, newPolicy)
+func (a *policyStoreAdapter) GetPolicyOverride(name string) (string, bool) {
+	return a.s.GetPolicyOverride(name)
+}
+
+func (a *policyStoreAdapter) SetPolicyOverride(name, policy string) error {
+	return a.s.SetPolicyOverride(name, policy)
+}
+
+func (a *policyStoreAdapter) DeletePolicyOverride(name string) error {
+	return a.s.DeletePolicyOverride(name)
+}
+
+func (a *policyStoreAdapter) AllPolicyOverrides() map[string]string {
+	return a.s.AllPolicyOverrides()
 }
