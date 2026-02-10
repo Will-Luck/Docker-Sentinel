@@ -4,3 +4,5 @@ bin/
 *.out
 .env
 CLAUDE.md
+docs/DESIGN.md
+.gitea/
