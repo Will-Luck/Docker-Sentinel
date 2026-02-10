@@ -85,6 +85,15 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 	}
 	result.Total = len(containers)
 
+	// Prune queue entries for containers that no longer exist.
+	liveNames := make(map[string]bool, len(containers))
+	for _, c := range containers {
+		liveNames[containerName(c)] = true
+	}
+	if pruned := u.queue.Prune(liveNames); pruned > 0 {
+		u.log.Info("pruned stale queue entries", "count", pruned)
+	}
+
 	for _, c := range containers {
 		if ctx.Err() != nil {
 			return result

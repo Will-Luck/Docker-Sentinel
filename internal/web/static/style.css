@@ -459,11 +459,20 @@ tbody td {
 
 /* Container name links */
 
+.container-row {
+    cursor: pointer;
+}
+
 .container-link {
     color: var(--info);
     text-decoration: none;
     font-weight: 600;
     transition: color 0.2s;
+}
+
+.container-link:hover {
+    color: var(--success);
+    text-decoration: underline;
 }
 
 .container-link:hover {

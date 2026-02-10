@@ -82,11 +82,10 @@
                                 </td>
                             </tr>
                             {{range .Containers}}
-                            <tr class="container-row" data-name="{{.Name}}">
+                            <tr class="container-row" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
                                 <td class="td-checkbox"><input type="checkbox" class="row-select" value="{{.Name}}"></td>
                                 <td>
                                     <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
-                                    <button class="accordion-toggle" onclick="toggleAccordion('{{.Name}}', this)" title="Expand info">+</button>
                                 </td>
                                 <td class="cell-image mono">{{.Image}}</td>
                                 <td>

@@ -6,7 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Update History — Docker-Sentinel</title>
     <link rel="stylesheet" href="/static/style.css">
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
 <body>
     <nav class="nav">
@@ -39,43 +38,57 @@
                         <tr>
                             <th>Time</th>
                             <th>Container</th>
-                            <th>Old Image</th>
-                            <th>New Image</th>
                             <th>Outcome</th>
                             <th>Duration</th>
-                            <th>Error</th>
                         </tr>
                     </thead>
                     <tbody>
                         {{if .History}}
-                            {{range .History}}
-                            <tr>
-                                <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
-                                <td><a href="/container/{{.ContainerName}}" class="container-link">{{.ContainerName}}</a></td>
-                                <td class="cell-image mono">{{.OldImage}}</td>
-                                <td class="cell-image mono">{{.NewImage}}</td>
+                            {{range $i, $r := .History}}
+                            <tr class="container-row" onclick="onRowClick(event, 'history-{{$i}}')">
+                                <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
+                                <td><a href="/container/{{$r.ContainerName}}" class="container-link">{{$r.ContainerName}}</a></td>
                                 <td>
-                                    {{if eq .Outcome "success"}}
+                                    {{if eq $r.Outcome "success"}}
                                         <span class="badge badge-success">Success</span>
-                                    {{else if eq .Outcome "rollback"}}
+                                    {{else if eq $r.Outcome "rollback"}}
                                         <span class="badge badge-error">Rollback</span>
                                     {{else}}
-                                        <span class="badge badge-muted">{{.Outcome}}</span>
+                                        <span class="badge badge-muted">{{$r.Outcome}}</span>
                                     {{end}}
                                 </td>
-                                <td class="mono">{{fmtDuration .Duration}}</td>
-                                <td>
-                                    {{if .Error}}
-                                        <span class="mono" title="{{.Error}}">{{.Error}}</span>
-                                    {{else}}
-                                        <span class="text-muted">—</span>
-                                    {{end}}
+                                <td class="mono">{{fmtDuration $r.Duration}}</td>
+                            </tr>
+                            <tr class="accordion-panel" id="accordion-history-{{$i}}" style="display:none">
+                                <td colspan="4">
+                                    <div class="accordion-content">
+                                        <div class="accordion-grid">
+                                            <div class="accordion-section">
+                                                <div class="accordion-label">Timestamp</div>
+                                                <div class="accordion-value mono">{{fmtTime $r.Timestamp}}</div>
+                                                <div class="accordion-label">Old Image</div>
+                                                <div class="accordion-value mono">{{$r.OldImage}}</div>
+                                                <div class="accordion-label">New Image</div>
+                                                <div class="accordion-value mono">{{$r.NewImage}}</div>
+                                            </div>
+                                            <div class="accordion-section">
+                                                <div class="accordion-label">Old Digest</div>
+                                                <div class="accordion-value mono">{{if $r.OldDigest}}{{$r.OldDigest}}{{else}}<span class="text-muted">—</span>{{end}}</div>
+                                                <div class="accordion-label">New Digest</div>
+                                                <div class="accordion-value mono">{{if $r.NewDigest}}{{$r.NewDigest}}{{else}}<span class="text-muted">—</span>{{end}}</div>
+                                                {{if $r.Error}}
+                                                <div class="accordion-label">Error</div>
+                                                <div class="accordion-value mono" style="color: var(--error);">{{$r.Error}}</div>
+                                                {{end}}
+                                            </div>
+                                        </div>
+                                    </div>
                                 </td>
                             </tr>
                             {{end}}
                         {{else}}
                             <tr>
-                                <td colspan="7">
+                                <td colspan="4">
                                     <div class="empty-state">
                                         <h3>No history yet</h3>
                                         <p>Update records will appear here after Sentinel performs its first container update.</p>

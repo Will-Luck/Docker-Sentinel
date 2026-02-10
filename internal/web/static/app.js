@@ -140,6 +140,17 @@ function updateToVersion(name) {
     showToast("Version pinning to " + version + " is not yet implemented", "info");
 }
 
+// --- Row click (accordion toggle, skipping interactive elements) ---
+
+function onRowClick(e, name) {
+    // If the click was on a link, button, select, or checkbox — let it do its thing.
+    var tag = e.target.tagName;
+    if (tag === "A" || tag === "BUTTON" || tag === "SELECT" || tag === "INPUT" || tag === "OPTION") {
+        return;
+    }
+    toggleAccordion(name);
+}
+
 // --- Stack toggle ---
 
 function toggleStack(headerRow) {
@@ -152,19 +163,21 @@ function toggleStack(headerRow) {
 
 var accordionCache = {};
 
-function toggleAccordion(name, btn) {
+function toggleAccordion(name) {
     var panel = document.getElementById("accordion-" + name);
     if (!panel) return;
 
     var isOpen = panel.style.display !== "none";
     if (isOpen) {
         panel.style.display = "none";
-        if (btn) btn.textContent = "+";
         return;
     }
 
     panel.style.display = "";
-    if (btn) btn.textContent = "\u2212"; // minus sign
+
+    // If the panel already has server-rendered content (e.g. history page), skip fetching.
+    var contentEl = panel.querySelector(".accordion-content");
+    if (contentEl && contentEl.querySelector(".accordion-grid")) return;
 
     // Use cache if available.
     if (accordionCache[name]) {
@@ -173,7 +186,6 @@ function toggleAccordion(name, btn) {
     }
 
     // Lazy-load from API.
-    var contentEl = panel.querySelector(".accordion-content");
     contentEl.textContent = "Loading...";
 
     var enc = encodeURIComponent(name);

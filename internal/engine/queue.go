@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -105,6 +106,25 @@ func (q *Queue) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.pending)
+}
+
+// Prune removes queue entries for containers that no longer exist.
+// Pass the set of currently running container names.
+func (q *Queue) Prune(liveNames map[string]bool) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var removed int
+	for name := range q.pending {
+		if !liveNames[name] {
+			delete(q.pending, name)
+			removed++
+		}
+	}
+	if removed > 0 {
+		q.persist()
+		q.publishEvent("", fmt.Sprintf("pruned %d stale entries", removed))
+	}
+	return removed
 }
 
 // publishEvent emits a queue change SSE event if the event bus is configured.
