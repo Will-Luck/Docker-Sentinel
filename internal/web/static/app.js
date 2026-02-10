@@ -159,6 +159,20 @@ function toggleStack(headerRow) {
     tbody.classList.toggle("stack-collapsed");
 }
 
+function expandAllStacks() {
+    var groups = document.querySelectorAll(".stack-group");
+    for (var i = 0; i < groups.length; i++) {
+        groups[i].classList.remove("stack-collapsed");
+    }
+}
+
+function collapseAllStacks() {
+    var groups = document.querySelectorAll(".stack-group");
+    for (var i = 0; i < groups.length; i++) {
+        groups[i].classList.add("stack-collapsed");
+    }
+}
+
 // --- Accordion ---
 
 var accordionCache = {};
