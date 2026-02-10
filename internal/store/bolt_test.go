@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -194,5 +195,169 @@ func TestPendingQueue(t *testing.T) {
 	}
 	if string(data) != string(queue) {
 		t.Errorf("got %q, want %q", data, queue)
+	}
+}
+
+func TestListSnapshots(t *testing.T) {
+	s := testStore(t)
+
+	// Save 3 snapshots for the same container with slight delays.
+	if err := s.SaveSnapshot("web", []byte("snap-1")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := s.SaveSnapshot("web", []byte("snap-2")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := s.SaveSnapshot("web", []byte("snap-3")); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := s.ListSnapshots("web")
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(entries))
+	}
+
+	// Newest first.
+	if string(entries[0].Data) != "snap-3" {
+		t.Errorf("first entry data = %q, want %q", entries[0].Data, "snap-3")
+	}
+	if string(entries[2].Data) != "snap-1" {
+		t.Errorf("last entry data = %q, want %q", entries[2].Data, "snap-1")
+	}
+
+	// Verify timestamps are descending.
+	for i := 1; i < len(entries); i++ {
+		if entries[i].Timestamp.After(entries[i-1].Timestamp) {
+			t.Errorf("entry %d timestamp (%v) is after entry %d (%v)", i, entries[i].Timestamp, i-1, entries[i-1].Timestamp)
+		}
+	}
+}
+
+func TestListSnapshotsEmpty(t *testing.T) {
+	s := testStore(t)
+
+	entries, err := s.ListSnapshots("nonexistent")
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("got %d entries, want 0", len(entries))
+	}
+}
+
+func TestListHistoryByContainer(t *testing.T) {
+	s := testStore(t)
+
+	now := time.Now().UTC()
+	records := []UpdateRecord{
+		{Timestamp: now.Add(-3 * time.Minute), ContainerName: "nginx", Outcome: "success", OldImage: "nginx:1.24"},
+		{Timestamp: now.Add(-2 * time.Minute), ContainerName: "redis", Outcome: "success", OldImage: "redis:7"},
+		{Timestamp: now.Add(-1 * time.Minute), ContainerName: "nginx", Outcome: "rollback", OldImage: "nginx:1.25"},
+		{Timestamp: now, ContainerName: "postgres", Outcome: "success", OldImage: "postgres:16"},
+	}
+
+	for _, r := range records {
+		if err := s.RecordUpdate(r); err != nil {
+			t.Fatalf("RecordUpdate: %v", err)
+		}
+	}
+
+	// Filter by nginx — should get 2 records, newest first.
+	got, err := s.ListHistoryByContainer("nginx", 10)
+	if err != nil {
+		t.Fatalf("ListHistoryByContainer: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d records, want 2", len(got))
+	}
+	if got[0].Outcome != "rollback" {
+		t.Errorf("first nginx record outcome = %q, want %q", got[0].Outcome, "rollback")
+	}
+	if got[1].Outcome != "success" {
+		t.Errorf("second nginx record outcome = %q, want %q", got[1].Outcome, "success")
+	}
+
+	// Filter by redis — should get 1 record.
+	got, err = s.ListHistoryByContainer("redis", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d redis records, want 1", len(got))
+	}
+
+	// Limit — only 1 nginx record.
+	got, err = s.ListHistoryByContainer("nginx", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d records with limit 1, want 1", len(got))
+	}
+	if got[0].Outcome != "rollback" {
+		t.Errorf("limited record outcome = %q, want %q", got[0].Outcome, "rollback")
+	}
+}
+
+func TestDeleteOldSnapshots(t *testing.T) {
+	s := testStore(t)
+
+	// Save 5 snapshots.
+	for i := 0; i < 5; i++ {
+		if err := s.SaveSnapshot("app", []byte(fmt.Sprintf("snap-%d", i))); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond) // ensure different timestamps
+	}
+
+	// Delete keeping 2.
+	if err := s.DeleteOldSnapshots("app", 2); err != nil {
+		t.Fatalf("DeleteOldSnapshots: %v", err)
+	}
+
+	entries, err := s.ListSnapshots("app")
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+
+	// The 2 newest should remain (snap-4 and snap-3).
+	if string(entries[0].Data) != "snap-4" {
+		t.Errorf("newest entry = %q, want %q", entries[0].Data, "snap-4")
+	}
+	if string(entries[1].Data) != "snap-3" {
+		t.Errorf("second entry = %q, want %q", entries[1].Data, "snap-3")
+	}
+}
+
+func TestDeleteOldSnapshotsKeepAll(t *testing.T) {
+	s := testStore(t)
+
+	// Save 3 snapshots.
+	for i := 0; i < 3; i++ {
+		if err := s.SaveSnapshot("svc", []byte(fmt.Sprintf("snap-%d", i))); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// Keep >= count should not delete anything.
+	if err := s.DeleteOldSnapshots("svc", 5); err != nil {
+		t.Fatalf("DeleteOldSnapshots: %v", err)
+	}
+
+	entries, err := s.ListSnapshots("svc")
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(entries))
 	}
 }

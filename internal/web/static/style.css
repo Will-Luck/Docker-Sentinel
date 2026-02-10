@@ -457,6 +457,216 @@ tbody td {
     color: var(--text-secondary);
 }
 
+/* Container name links */
+
+.container-link {
+    color: var(--info);
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.2s;
+}
+
+.container-link:hover {
+    color: var(--success);
+    text-decoration: underline;
+}
+
+/* Policy select dropdown */
+
+.policy-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 0.2rem 1.4rem 0.2rem 0.6rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%238892a4' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+}
+
+.policy-select:hover {
+    border-color: var(--text-muted);
+}
+
+.policy-select:focus {
+    border-color: var(--info);
+}
+
+.policy-select.policy-auto {
+    background-color: rgba(0, 212, 170, 0.1);
+    color: var(--success);
+    border-color: rgba(0, 212, 170, 0.25);
+}
+
+.policy-select.policy-manual {
+    background-color: rgba(52, 152, 219, 0.1);
+    color: var(--info);
+    border-color: rgba(52, 152, 219, 0.25);
+}
+
+.policy-select.policy-pinned {
+    background-color: rgba(90, 100, 120, 0.1);
+    color: var(--text-secondary);
+    border-color: rgba(90, 100, 120, 0.25);
+}
+
+/* SSE connection indicator */
+
+.nav-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    padding: 0 0.5rem;
+}
+
+.connection-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transition: background 0.3s;
+}
+
+.connection-dot.connected {
+    background: var(--success);
+    box-shadow: 0 0 6px rgba(0, 212, 170, 0.5);
+}
+
+.connection-dot.disconnected {
+    background: var(--error);
+    box-shadow: 0 0 6px rgba(231, 76, 60, 0.4);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* Breadcrumb navigation */
+
+.breadcrumb {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 1.25rem;
+}
+
+.breadcrumb a {
+    color: var(--info);
+    text-decoration: none;
+}
+
+.breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+/* Container detail page */
+
+.detail-summary {
+    margin-bottom: 1.5rem;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.25rem;
+    padding: 1.25rem;
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.detail-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
+.detail-value {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.detail-actions {
+    padding: 0 1.25rem 1.25rem;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* Version picker */
+
+.version-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.version-picker select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.4rem 2rem 0.4rem 0.75rem;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    cursor: pointer;
+    outline: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%238892a4' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+}
+
+.version-picker select:hover {
+    border-color: var(--text-muted);
+}
+
+.version-picker select:focus {
+    border-color: var(--info);
+}
+
+/* Changelog link */
+
+.changelog-link {
+    color: var(--info);
+    text-decoration: none;
+    font-size: 0.8rem;
+    transition: color 0.2s;
+}
+
+.changelog-link:hover {
+    color: var(--success);
+    text-decoration: underline;
+}
+
+/* Text muted helper */
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+/* Section spacing for detail page */
+
+.detail-section {
+    margin-bottom: 1.5rem;
+}
+
 /* Responsive */
 
 @media (max-width: 768px) {

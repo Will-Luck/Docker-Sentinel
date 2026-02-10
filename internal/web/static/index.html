@@ -16,6 +16,9 @@
             <li><a href="/queue">Queue</a></li>
             <li><a href="/history">History</a></li>
         </ul>
+        <div class="nav-status">
+            <span id="sse-indicator" class="connection-dot disconnected" title="Disconnected"></span>
+        </div>
     </nav>
 
     <div class="container">
@@ -60,10 +63,16 @@
                         {{if .Containers}}
                             {{range .Containers}}
                             <tr>
-                                <td><strong>{{.Name}}</strong></td>
+                                <td><a href="/container/{{.Name}}" class="container-link">{{.Name}}</a></td>
                                 <td class="cell-image mono">{{.Image}}</td>
                                 <td>
-                                    <span class="badge policy-{{.Policy}}">{{.Policy}}</span>
+                                    <select class="policy-select policy-{{.Policy}}"
+                                            onchange="changePolicy('{{.Name}}', this.value)"
+                                            data-current="{{.Policy}}">
+                                        <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto</option>
+                                        <option value="manual" {{if eq .Policy "manual"}}selected{{end}}>manual</option>
+                                        <option value="pinned" {{if eq .Policy "pinned"}}selected{{end}}>pinned</option>
+                                    </select>
                                 </td>
                                 <td>
                                     {{if .Maintenance}}

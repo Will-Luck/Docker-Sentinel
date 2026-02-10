@@ -16,7 +16,7 @@ import (
 func newTestUpdater(t *testing.T, mock *mockDocker) (*Updater, *mockClock) {
 	t.Helper()
 	s := testStore(t)
-	q := NewQueue(s)
+	q := NewQueue(s, nil)
 	log := logging.New(false)
 	clk := newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	checker := registry.NewChecker(mock, log)
@@ -25,7 +25,7 @@ func newTestUpdater(t *testing.T, mock *mockDocker) (*Updater, *mockClock) {
 		GracePeriod:   1 * time.Second,
 	}
 	notifier := notify.NewMulti(log)
-	return NewUpdater(mock, checker, s, q, cfg, log, clk, notifier), clk
+	return NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil), clk
 }
 
 func TestScanSkipsPinned(t *testing.T) {

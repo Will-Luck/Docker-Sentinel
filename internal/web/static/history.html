@@ -16,6 +16,9 @@
             <li><a href="/queue">Queue</a></li>
             <li><a href="/history" class="active">History</a></li>
         </ul>
+        <div class="nav-status">
+            <span id="sse-indicator" class="connection-dot disconnected" title="Disconnected"></span>
+        </div>
     </nav>
 
     <div class="container">
@@ -48,7 +51,7 @@
                             {{range .History}}
                             <tr>
                                 <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
-                                <td><strong>{{.ContainerName}}</strong></td>
+                                <td><a href="/container/{{.ContainerName}}" class="container-link">{{.ContainerName}}</a></td>
                                 <td class="cell-image mono">{{.OldImage}}</td>
                                 <td class="cell-image mono">{{.NewImage}}</td>
                                 <td>

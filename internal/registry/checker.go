@@ -91,7 +91,7 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 
 	// Only attempt version lookup if the base check succeeded and the image
 	// has a semver-like tag.
-	tag := extractTag(imageRef)
+	tag := ExtractTag(imageRef)
 	if tag == "" || result.Error != nil || result.IsLocal {
 		return result
 	}
@@ -101,7 +101,7 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 		return result
 	}
 
-	repo := normaliseRepo(imageRef)
+	repo := NormaliseRepo(imageRef)
 	token, err := FetchAnonymousToken(ctx, repo)
 	if err != nil {
 		c.log.Debug("failed to fetch anonymous token for version check", "repo", repo, "error", err)
@@ -122,9 +122,9 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 	return result
 }
 
-// extractTag returns the tag portion of an image reference, or empty string
+// ExtractTag returns the tag portion of an image reference, or empty string
 // if there is no tag (e.g. digest-pinned or bare image name).
-func extractTag(imageRef string) string {
+func ExtractTag(imageRef string) string {
 	// Remove digest portion if present.
 	if idx := strings.Index(imageRef, "@"); idx >= 0 {
 		return ""

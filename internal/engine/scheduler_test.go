@@ -14,7 +14,7 @@ import (
 func TestSchedulerRunsInitialScan(t *testing.T) {
 	mock := newMockDocker()
 	s := testStore(t)
-	q := NewQueue(s)
+	q := NewQueue(s, nil)
 	log := logging.New(false)
 	clk := newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	checker := registry.NewChecker(mock, log)
@@ -24,7 +24,7 @@ func TestSchedulerRunsInitialScan(t *testing.T) {
 		PollInterval:  1 * time.Hour,
 	}
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier)
+	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
 	sched := NewScheduler(u, cfg, log, clk)
 
 	// Cancel immediately after the initial scan.

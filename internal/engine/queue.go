@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GiteaLN/Docker-Sentinel/internal/events"
 	"github.com/GiteaLN/Docker-Sentinel/internal/store"
 )
 
@@ -23,13 +24,15 @@ type Queue struct {
 	mu      sync.Mutex
 	pending map[string]PendingUpdate // keyed by container name
 	store   *store.Store
+	events  *events.Bus
 }
 
 // NewQueue creates a queue, optionally restoring from BoltDB.
-func NewQueue(s *store.Store) *Queue {
+func NewQueue(s *store.Store, bus *events.Bus) *Queue {
 	q := &Queue{
 		pending: make(map[string]PendingUpdate),
 		store:   s,
+		events:  bus,
 	}
 
 	// Restore from persistent storage.
@@ -52,6 +55,7 @@ func (q *Queue) Add(update PendingUpdate) {
 	defer q.mu.Unlock()
 	q.pending[update.ContainerName] = update
 	q.persist()
+	q.publishEvent(update.ContainerName, "added")
 }
 
 // Remove removes a pending update by container name.
@@ -60,6 +64,7 @@ func (q *Queue) Remove(name string) {
 	defer q.mu.Unlock()
 	delete(q.pending, name)
 	q.persist()
+	q.publishEvent(name, "removed")
 }
 
 // Get returns a pending update by container name.
@@ -79,6 +84,7 @@ func (q *Queue) Approve(name string) (PendingUpdate, bool) {
 	if ok {
 		delete(q.pending, name)
 		q.persist()
+		q.publishEvent(name, "approved")
 	}
 	return u, ok
 }
@@ -99,6 +105,19 @@ func (q *Queue) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.pending)
+}
+
+// publishEvent emits a queue change SSE event if the event bus is configured.
+func (q *Queue) publishEvent(name, message string) {
+	if q.events == nil {
+		return
+	}
+	q.events.Publish(events.SSEEvent{
+		Type:          events.EventQueueChange,
+		ContainerName: name,
+		Message:       message,
+		Timestamp:     time.Now(),
+	})
 }
 
 func (q *Queue) persist() {

@@ -1,8 +1,10 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -189,4 +191,104 @@ func (s *Store) LoadPendingQueue() ([]byte, error) {
 		return nil
 	})
 	return data, err
+}
+
+// SnapshotEntry represents a stored snapshot with its timestamp.
+type SnapshotEntry struct {
+	Timestamp time.Time
+	Data      []byte
+}
+
+// ListSnapshots returns all snapshots for a container, newest first.
+func (s *Store) ListSnapshots(name string) ([]SnapshotEntry, error) {
+	var entries []SnapshotEntry
+	prefix := []byte(name + "::")
+
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSnapshots)
+		c := b.Cursor()
+
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			// Parse timestamp from key suffix (after "::").
+			tsStr := string(k[len(prefix):])
+			ts, err := time.Parse(time.RFC3339Nano, tsStr)
+			if err != nil {
+				continue // skip malformed keys
+			}
+
+			data := make([]byte, len(v))
+			copy(data, v)
+
+			entries = append(entries, SnapshotEntry{
+				Timestamp: ts,
+				Data:      data,
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Sort newest first (reverse chronological).
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Timestamp.After(entries[j].Timestamp)
+	})
+
+	return entries, nil
+}
+
+// ListHistoryByContainer returns update records filtered by container name,
+// newest first, up to limit.
+func (s *Store) ListHistoryByContainer(name string, limit int) ([]UpdateRecord, error) {
+	var records []UpdateRecord
+
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketHistory)
+		c := b.Cursor()
+
+		// Reverse cursor scan (start at end, move backwards).
+		for k, v := c.Last(); k != nil && len(records) < limit; k, v = c.Prev() {
+			var rec UpdateRecord
+			if err := json.Unmarshal(v, &rec); err != nil {
+				continue
+			}
+			if rec.ContainerName == name {
+				records = append(records, rec)
+			}
+		}
+		return nil
+	})
+	return records, err
+}
+
+// DeleteOldSnapshots removes all but the N most recent snapshots for a container.
+func (s *Store) DeleteOldSnapshots(name string, keep int) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSnapshots)
+		c := b.Cursor()
+		prefix := []byte(name + "::")
+
+		// Collect all matching keys.
+		var keys [][]byte
+		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+			keyCopy := make([]byte, len(k))
+			copy(keyCopy, k)
+			keys = append(keys, keyCopy)
+		}
+
+		// Keys are in lexicographic (chronological) order — newest are at the end.
+		// Delete all except the last `keep` keys.
+		if len(keys) <= keep {
+			return nil
+		}
+
+		toDelete := keys[:len(keys)-keep]
+		for _, k := range toDelete {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

@@ -28,7 +28,7 @@ type SemVer struct {
 // The imageRef should be a full reference like "library/nginx" or "gitea/gitea".
 // The token is a bearer token from FetchAnonymousToken or a registry credential.
 func ListTags(ctx context.Context, imageRef string, token string) ([]string, error) {
-	repo := normaliseRepo(imageRef)
+	repo := NormaliseRepo(imageRef)
 	url := "https://registry-1.docker.io/v2/" + repo + "/tags/list"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -168,9 +168,9 @@ func NewerVersions(current string, tags []string) []SemVer {
 	return newer
 }
 
-// normaliseRepo converts an image reference to a Docker Hub repository path.
+// NormaliseRepo converts an image reference to a Docker Hub repository path.
 // "nginx" becomes "library/nginx", "gitea/gitea:1.21" becomes "gitea/gitea".
-func normaliseRepo(imageRef string) string {
+func NormaliseRepo(imageRef string) string {
 	// Strip tag or digest.
 	ref := imageRef
 	if idx := strings.Index(ref, "@"); idx >= 0 {

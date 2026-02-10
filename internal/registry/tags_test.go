@@ -155,9 +155,9 @@ func TestNormaliseRepo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := normaliseRepo(tt.input)
+			got := NormaliseRepo(tt.input)
 			if got != tt.want {
-				t.Errorf("normaliseRepo(%q) = %q, want %q", tt.input, got, tt.want)
+				t.Errorf("NormaliseRepo(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -177,9 +177,9 @@ func TestExtractTag(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := extractTag(tt.input)
+			got := ExtractTag(tt.input)
 			if got != tt.want {
-				t.Errorf("extractTag(%q) = %q, want %q", tt.input, got, tt.want)
+				t.Errorf("ExtractTag(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}

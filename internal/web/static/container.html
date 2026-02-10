@@ -1,0 +1,151 @@
+{{define "container.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Container.Name}} — Sentinel</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-brand">Sentinel <span>Dashboard</span></a>
+        <ul class="nav-links">
+            <li><a href="/">Dashboard</a></li>
+            <li><a href="/queue">Queue</a></li>
+            <li><a href="/history">History</a></li>
+        </ul>
+        <div class="nav-status">
+            <span id="sse-indicator" class="connection-dot disconnected" title="Disconnected"></span>
+        </div>
+    </nav>
+
+    <main class="container">
+        <div class="breadcrumb">
+            <a href="/">Dashboard</a> / <strong>{{.Container.Name}}</strong>
+        </div>
+
+        <div class="card detail-summary">
+            <div class="detail-grid">
+                <div class="detail-item">
+                    <span class="detail-label">Image</span>
+                    <span class="detail-value mono">{{.Container.Image}}</span>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Status</span>
+                    <span class="badge {{if eq .Container.State "running"}}badge-success{{else}}badge-error{{end}}">{{.Container.State}}</span>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Policy</span>
+                    <select class="policy-select" onchange="changePolicy('{{.Container.Name}}', this.value)">
+                        <option value="auto" {{if eq .Container.Policy "auto"}}selected{{end}}>auto</option>
+                        <option value="manual" {{if eq .Container.Policy "manual"}}selected{{end}}>manual</option>
+                        <option value="pinned" {{if eq .Container.Policy "pinned"}}selected{{end}}>pinned</option>
+                    </select>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Maintenance</span>
+                    <span>{{if .Container.Maintenance}}Yes{{else}}No{{end}}</span>
+                </div>
+                {{if .ChangelogURL}}
+                <div class="detail-item">
+                    <span class="detail-label">Changelog</span>
+                    <a href="{{.ChangelogURL}}" target="_blank" rel="noopener" class="changelog-link">View releases</a>
+                </div>
+                {{end}}
+            </div>
+            <div class="detail-actions">
+                {{if ne .Container.Policy "pinned"}}
+                <button class="btn btn-success" onclick="triggerUpdate('{{.Container.Name}}')">Update Now</button>
+                {{end}}
+                {{if .HasSnapshot}}
+                <button class="btn btn-warning" onclick="triggerRollback('{{.Container.Name}}')">Rollback</button>
+                {{end}}
+            </div>
+        </div>
+
+        {{if .Versions}}
+        <div class="card">
+            <div class="card-header">Available Versions</div>
+            <div class="version-picker">
+                <select id="version-select" class="policy-select">
+                    {{range .Versions}}
+                    <option value="{{.}}">{{.}}</option>
+                    {{end}}
+                </select>
+                <button class="btn btn-info" onclick="updateToVersion('{{.Container.Name}}')">Update to Version</button>
+            </div>
+        </div>
+        {{end}}
+
+        <div class="card">
+            <div class="card-header">Update History</div>
+            {{if .History}}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Old Image</th>
+                            <th>New Image</th>
+                            <th>Outcome</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .History}}
+                        <tr>
+                            <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
+                            <td class="cell-image mono">{{.OldImage}}</td>
+                            <td class="cell-image mono">{{.NewImage}}</td>
+                            <td>
+                                {{if eq .Outcome "success"}}<span class="badge badge-success">Success</span>
+                                {{else if eq .Outcome "rollback"}}<span class="badge badge-error">Rollback</span>
+                                {{else}}<span class="badge badge-muted">{{.Outcome}}</span>{{end}}
+                            </td>
+                            <td class="mono">{{fmtDuration .Duration}}</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{else}}
+            <div class="empty-state"><p>No update history for this container.</p></div>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <div class="card-header">Snapshots (Rollback Targets)</div>
+            {{if .Snapshots}}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Taken</th>
+                            <th>Image</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Snapshots}}
+                        <tr>
+                            <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
+                            <td class="cell-image mono">{{.ImageRef}}</td>
+                            <td><button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}')">Rollback</button></td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            {{else}}
+            <div class="empty-state"><p>No snapshots available. A snapshot is saved before each update.</p></div>
+            {{end}}
+        </div>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}

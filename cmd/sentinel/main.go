@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"github.com/GiteaLN/Docker-Sentinel/internal/config"
 	"github.com/GiteaLN/Docker-Sentinel/internal/docker"
 	"github.com/GiteaLN/Docker-Sentinel/internal/engine"
+	"github.com/GiteaLN/Docker-Sentinel/internal/events"
 	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
 	"github.com/GiteaLN/Docker-Sentinel/internal/notify"
 	"github.com/GiteaLN/Docker-Sentinel/internal/registry"
@@ -74,19 +76,26 @@ func main() {
 
 	clk := clock.Real{}
 	checker := registry.NewChecker(client, log)
-	queue := engine.NewQueue(db)
-	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier)
+	bus := events.New()
+	queue := engine.NewQueue(db, bus)
+	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
+	policyChanger := engine.NewPolicyChanger(client, db, log)
 
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
-			Store:   &storeAdapter{db},
-			Queue:   &queueAdapter{queue},
-			Docker:  &dockerAdapter{client},
-			Updater: updater,
-			Config:  cfg,
-			Log:     log.Logger,
+			Store:     &storeAdapter{db},
+			Queue:     &queueAdapter{queue},
+			Docker:    &dockerAdapter{client},
+			Updater:   updater,
+			Config:    cfg,
+			EventBus:  bus,
+			Snapshots: &snapshotAdapter{db},
+			Rollback:  &rollbackAdapter{d: client, s: db, log: log},
+			Registry:  &registryAdapter{log: log},
+			Policy:    &policyAdapter{p: policyChanger},
+			Log:       log.Logger,
 		})
 
 		go func() {
@@ -154,8 +163,66 @@ func (a *storeAdapter) ListHistory(limit int) ([]web.UpdateRecord, error) {
 	return result, nil
 }
 
+func (a *storeAdapter) ListHistoryByContainer(name string, limit int) ([]web.UpdateRecord, error) {
+	records, err := a.s.ListHistoryByContainer(name, limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.UpdateRecord, len(records))
+	for i, r := range records {
+		result[i] = web.UpdateRecord{
+			Timestamp:     r.Timestamp,
+			ContainerName: r.ContainerName,
+			OldImage:      r.OldImage,
+			OldDigest:     r.OldDigest,
+			NewImage:      r.NewImage,
+			NewDigest:     r.NewDigest,
+			Outcome:       r.Outcome,
+			Duration:      r.Duration,
+			Error:         r.Error,
+		}
+	}
+	return result, nil
+}
+
 func (a *storeAdapter) GetMaintenance(name string) (bool, error) {
 	return a.s.GetMaintenance(name)
+}
+
+// snapshotAdapter converts store.Store to web.SnapshotStore.
+type snapshotAdapter struct{ s *store.Store }
+
+func (a *snapshotAdapter) ListSnapshots(name string) ([]web.SnapshotEntry, error) {
+	entries, err := a.s.ListSnapshots(name)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.SnapshotEntry, len(entries))
+	for i, e := range entries {
+		// Extract image reference from the snapshot JSON data.
+		imageRef := extractImageFromSnapshot(e.Data)
+		result[i] = web.SnapshotEntry{
+			Timestamp: e.Timestamp,
+			ImageRef:  imageRef,
+		}
+	}
+	return result, nil
+}
+
+// extractImageFromSnapshot parses the image reference from a container inspect JSON snapshot.
+func extractImageFromSnapshot(data []byte) string {
+	var snap struct {
+		Config *struct {
+			Image string `json:"Image"`
+		} `json:"Config"`
+	}
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return ""
+	}
+	if snap.Config != nil {
+		return snap.Config.Image
+	}
+	return ""
 }
 
 // queueAdapter converts engine.Queue to web.UpdateQueue.
@@ -229,4 +296,50 @@ func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.Co
 		ci.State.Restarting = inspect.State.Restarting
 	}
 	return ci, nil
+}
+
+// rollbackAdapter bridges engine.RollbackFromStore to web.ContainerRollback.
+type rollbackAdapter struct {
+	d   *docker.Client
+	s   *store.Store
+	log *logging.Logger
+}
+
+func (a *rollbackAdapter) RollbackContainer(ctx context.Context, name string) error {
+	return engine.RollbackFromStore(ctx, a.d, a.s, name, a.log)
+}
+
+// registryAdapter bridges registry.ListTags to web.RegistryVersionChecker.
+type registryAdapter struct {
+	log *logging.Logger
+}
+
+func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]string, error) {
+	tag := registry.ExtractTag(imageRef)
+	if tag == "" {
+		return nil, nil
+	}
+	repo := registry.NormaliseRepo(imageRef)
+	token, err := registry.FetchAnonymousToken(ctx, repo)
+	if err != nil {
+		return nil, fmt.Errorf("fetch token: %w", err)
+	}
+	tags, err := registry.ListTags(ctx, imageRef, token)
+	if err != nil {
+		return nil, fmt.Errorf("list tags: %w", err)
+	}
+	// Filter to semver-parseable tags and return newest first.
+	newer := registry.NewerVersions(tag, tags)
+	versions := make([]string, len(newer))
+	for i, sv := range newer {
+		versions[i] = sv.Raw
+	}
+	return versions, nil
+}
+
+// policyAdapter bridges engine.PolicyChanger to web.PolicyChanger.
+type policyAdapter struct{ p *engine.PolicyChanger }
+
+func (a *policyAdapter) ChangePolicy(ctx context.Context, name, newPolicy string) error {
+	return a.p.ChangePolicy(ctx, name, newPolicy)
 }

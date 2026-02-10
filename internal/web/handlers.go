@@ -117,6 +117,99 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	s.renderTemplate(w, "history.html", data)
 }
 
+// containerDetailData holds all data for the per-container detail page.
+type containerDetailData struct {
+	Container    containerView
+	History      []UpdateRecord
+	Snapshots    []SnapshotEntry
+	Versions     []string
+	HasSnapshot  bool
+	ChangelogURL string
+}
+
+// handleContainerDetail renders the per-container detail page.
+func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		http.Error(w, "container name required", http.StatusBadRequest)
+		return
+	}
+
+	// Find container by name.
+	containers, err := s.deps.Docker.ListContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers", "error", err)
+		http.Error(w, "failed to load containers", http.StatusInternalServerError)
+		return
+	}
+
+	var found *ContainerSummary
+	for _, c := range containers {
+		if containerName(c) == name {
+			found = &c
+			break
+		}
+	}
+	if found == nil {
+		http.Error(w, "container not found: "+name, http.StatusNotFound)
+		return
+	}
+
+	maintenance, _ := s.deps.Store.GetMaintenance(name)
+
+	view := containerView{
+		ID:          found.ID,
+		Name:        containerName(*found),
+		Image:       found.Image,
+		Policy:      containerPolicy(found.Labels),
+		State:       found.State,
+		Maintenance: maintenance,
+	}
+
+	// Gather history.
+	history, err := s.deps.Store.ListHistoryByContainer(name, 50)
+	if err != nil {
+		s.deps.Log.Warn("failed to list history for container", "name", name, "error", err)
+	}
+	if history == nil {
+		history = []UpdateRecord{}
+	}
+
+	// Gather snapshots (nil-check dependency).
+	var snapshots []SnapshotEntry
+	if s.deps.Snapshots != nil {
+		storeEntries, err := s.deps.Snapshots.ListSnapshots(name)
+		if err != nil {
+			s.deps.Log.Warn("failed to list snapshots", "name", name, "error", err)
+		}
+		snapshots = append(snapshots, storeEntries...)
+	}
+	if snapshots == nil {
+		snapshots = []SnapshotEntry{}
+	}
+
+	// Gather versions (nil-check dependency).
+	var versions []string
+	if s.deps.Registry != nil {
+		versions, err = s.deps.Registry.ListVersions(r.Context(), found.Image)
+		if err != nil {
+			s.deps.Log.Warn("failed to list versions", "name", name, "error", err)
+			versions = nil
+		}
+	}
+
+	data := containerDetailData{
+		Container:    view,
+		History:      history,
+		Snapshots:    snapshots,
+		Versions:     versions,
+		HasSnapshot:  len(snapshots) > 0,
+		ChangelogURL: ChangelogURL(found.Image),
+	}
+
+	s.renderTemplate(w, "container.html", data)
+}
+
 // renderTemplate executes a named template and writes the result.
 func (s *Server) renderTemplate(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

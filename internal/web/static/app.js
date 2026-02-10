@@ -36,7 +36,6 @@ function approveUpdate(name) {
         .then(function (result) {
             if (result.ok) {
                 showToast("Approved update for " + name, "success");
-                refreshContent();
             } else {
                 showToast(result.data.error || "Failed to approve", "error");
             }
@@ -56,7 +55,6 @@ function rejectUpdate(name) {
         .then(function (result) {
             if (result.ok) {
                 showToast("Rejected update for " + name, "info");
-                refreshContent();
             } else {
                 showToast(result.data.error || "Failed to reject", "error");
             }
@@ -76,7 +74,6 @@ function triggerUpdate(name) {
         .then(function (result) {
             if (result.ok) {
                 showToast("Update started for " + name, "success");
-                refreshContent();
             } else {
                 showToast(result.data.error || "Failed to trigger update", "error");
             }
@@ -86,28 +83,139 @@ function triggerUpdate(name) {
         });
 }
 
-// Refresh the main content area after an action.
-function refreshContent() {
-    // Trigger htmx to re-fetch tables if present.
-    var tables = document.querySelectorAll("[hx-get]");
-    tables.forEach(function (el) {
-        if (typeof htmx !== "undefined") {
-            htmx.trigger(el, "refresh");
-        }
-    });
-
-    // Fallback: reload after a short delay to let the server process.
-    setTimeout(function () {
-        window.location.reload();
-    }, 1500);
+function triggerRollback(name) {
+    fetch("/api/containers/" + encodeURIComponent(name) + "/rollback", { method: "POST" })
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function (result) {
+            if (result.ok) {
+                showToast("Rollback started for " + name, "success");
+            } else {
+                showToast(result.data.error || "Failed to trigger rollback", "error");
+            }
+        })
+        .catch(function () {
+            showToast("Network error — could not trigger rollback", "error");
+        });
 }
 
-// htmx configuration — listen for errors.
+function changePolicy(name, newPolicy) {
+    fetch("/api/containers/" + encodeURIComponent(name) + "/policy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ policy: newPolicy })
+    })
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function (result) {
+            if (result.ok) {
+                showToast("Policy change to " + newPolicy + " started for " + name, "success");
+            } else {
+                showToast(result.data.error || "Failed to change policy", "error");
+            }
+        })
+        .catch(function () {
+            showToast("Network error — could not change policy", "error");
+        });
+}
+
+function updateToVersion(name) {
+    var sel = document.getElementById("version-select");
+    if (!sel) return;
+    var version = sel.value;
+    showToast("Version pinning to " + version + " is not yet implemented", "info");
+}
+
+// --- SSE real-time updates ---
+
+var sseReloadTimer = null;
+
+function scheduleReload() {
+    // Debounce: batch rapid events into a single reload after 800ms of quiet.
+    if (sseReloadTimer) clearTimeout(sseReloadTimer);
+    sseReloadTimer = setTimeout(function () {
+        window.location.reload();
+    }, 800);
+}
+
+function setConnectionStatus(connected) {
+    var dot = document.getElementById("sse-indicator");
+    if (!dot) return;
+    if (connected) {
+        dot.className = "connection-dot connected";
+        dot.title = "Live";
+    } else {
+        dot.className = "connection-dot disconnected";
+        dot.title = "Reconnecting...";
+    }
+}
+
+function initSSE() {
+    if (typeof EventSource === "undefined") return;
+
+    var es = new EventSource("/api/events");
+
+    es.addEventListener("connected", function () {
+        setConnectionStatus(true);
+    });
+
+    es.addEventListener("container_update", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            showToast(data.message || ("Update: " + data.container_name), "info");
+        } catch (_) {}
+        scheduleReload();
+    });
+
+    es.addEventListener("container_state", function () {
+        scheduleReload();
+    });
+
+    es.addEventListener("queue_change", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            showToast(data.message || "Queue updated", "info");
+        } catch (_) {}
+        scheduleReload();
+    });
+
+    es.addEventListener("scan_complete", function () {
+        scheduleReload();
+    });
+
+    es.addEventListener("policy_change", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            showToast(data.message || ("Policy changed: " + data.container_name), "info");
+        } catch (_) {}
+        scheduleReload();
+    });
+
+    es.onopen = function () {
+        setConnectionStatus(true);
+    };
+
+    es.onerror = function () {
+        setConnectionStatus(false);
+        // EventSource will auto-reconnect.
+    };
+}
+
+// --- Initialisation ---
+
 document.addEventListener("DOMContentLoaded", function () {
+    initSSE();
+
     if (typeof htmx !== "undefined") {
         htmx.config.defaultSwapStyle = "innerHTML";
 
-        document.body.addEventListener("htmx:responseError", function (event) {
+        document.body.addEventListener("htmx:responseError", function () {
             showToast("Failed to load data from server", "error");
         });
 

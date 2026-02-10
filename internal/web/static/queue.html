@@ -16,6 +16,9 @@
             <li><a href="/queue" class="active">Queue</a></li>
             <li><a href="/history">History</a></li>
         </ul>
+        <div class="nav-status">
+            <span id="sse-indicator" class="connection-dot disconnected" title="Disconnected"></span>
+        </div>
     </nav>
 
     <div class="container">
@@ -39,6 +42,7 @@
                             <th>Current Digest</th>
                             <th>Remote Digest</th>
                             <th>Detected</th>
+                            <th>Changelog</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -46,11 +50,18 @@
                         {{if .Queue}}
                             {{range .Queue}}
                             <tr>
-                                <td><strong>{{.ContainerName}}</strong></td>
+                                <td><a href="/container/{{.ContainerName}}" class="container-link">{{.ContainerName}}</a></td>
                                 <td class="cell-image mono">{{.CurrentImage}}</td>
                                 <td class="cell-digest" title="{{.CurrentDigest}}">{{truncDigest .CurrentDigest}}</td>
                                 <td class="cell-digest" title="{{.RemoteDigest}}">{{truncDigest .RemoteDigest}}</td>
                                 <td title="{{fmtTime .DetectedAt}}">{{fmtTimeAgo .DetectedAt}}</td>
+                                <td>
+                                    {{with changelogURL .CurrentImage}}
+                                        <a href="{{.}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
+                                    {{else}}
+                                        <span class="text-muted">-</span>
+                                    {{end}}
+                                </td>
                                 <td>
                                     <div class="btn-group">
                                         <button class="btn btn-success"
@@ -67,7 +78,7 @@
                             {{end}}
                         {{else}}
                             <tr>
-                                <td colspan="6">
+                                <td colspan="7">
                                     <div class="empty-state">
                                         <h3>Queue is empty</h3>
                                         <p>No containers are waiting for approval. Updates with "manual" policy will appear here when detected.</p>

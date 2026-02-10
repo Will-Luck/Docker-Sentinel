@@ -21,7 +21,7 @@ func testStore(t *testing.T) *store.Store {
 
 func TestQueueAddAndList(t *testing.T) {
 	s := testStore(t)
-	q := NewQueue(s)
+	q := NewQueue(s, nil)
 
 	q.Add(PendingUpdate{ContainerName: "nginx", ContainerID: "aaa"})
 	q.Add(PendingUpdate{ContainerName: "redis", ContainerID: "bbb"})
@@ -38,7 +38,7 @@ func TestQueueAddAndList(t *testing.T) {
 
 func TestQueueGetAndRemove(t *testing.T) {
 	s := testStore(t)
-	q := NewQueue(s)
+	q := NewQueue(s, nil)
 
 	q.Add(PendingUpdate{ContainerName: "nginx", ContainerID: "aaa", DetectedAt: time.Now()})
 
@@ -62,7 +62,7 @@ func TestQueueGetAndRemove(t *testing.T) {
 
 func TestQueueReplaceExisting(t *testing.T) {
 	s := testStore(t)
-	q := NewQueue(s)
+	q := NewQueue(s, nil)
 
 	q.Add(PendingUpdate{ContainerName: "nginx", RemoteDigest: "sha256:old"})
 	q.Add(PendingUpdate{ContainerName: "nginx", RemoteDigest: "sha256:new"})
@@ -80,12 +80,12 @@ func TestQueuePersistence(t *testing.T) {
 	s := testStore(t)
 
 	// Add items in one queue instance.
-	q1 := NewQueue(s)
+	q1 := NewQueue(s, nil)
 	q1.Add(PendingUpdate{ContainerName: "nginx", ContainerID: "aaa"})
 	q1.Add(PendingUpdate{ContainerName: "redis", ContainerID: "bbb"})
 
 	// Create a new queue from the same store — should restore.
-	q2 := NewQueue(s)
+	q2 := NewQueue(s, nil)
 	if q2.Len() != 2 {
 		t.Fatalf("restored queue Len() = %d, want 2", q2.Len())
 	}

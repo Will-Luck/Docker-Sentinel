@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/GiteaLN/Docker-Sentinel/internal/events"
 )
 
 //go:embed static/*
@@ -16,18 +18,44 @@ var staticFS embed.FS
 
 // Dependencies defines what the web server needs from the rest of the application.
 type Dependencies struct {
-	Store   HistoryStore
-	Queue   UpdateQueue
-	Docker  ContainerLister
-	Updater ContainerUpdater
-	Config  ConfigReader
-	Log     *slog.Logger
+	Store     HistoryStore
+	Queue     UpdateQueue
+	Docker    ContainerLister
+	Updater   ContainerUpdater
+	Config    ConfigReader
+	EventBus  *events.Bus
+	Snapshots SnapshotStore
+	Rollback  ContainerRollback
+	Registry  RegistryVersionChecker
+	Policy    PolicyChanger
+	Log       *slog.Logger
 }
 
 // HistoryStore reads update history and maintenance state.
 type HistoryStore interface {
 	ListHistory(limit int) ([]UpdateRecord, error)
+	ListHistoryByContainer(name string, limit int) ([]UpdateRecord, error)
 	GetMaintenance(name string) (bool, error)
+}
+
+// SnapshotStore reads container snapshots.
+type SnapshotStore interface {
+	ListSnapshots(name string) ([]SnapshotEntry, error)
+}
+
+// ContainerRollback triggers a rollback to the most recent snapshot.
+type ContainerRollback interface {
+	RollbackContainer(ctx context.Context, name string) error
+}
+
+// RegistryVersionChecker lists available image versions from a registry.
+type RegistryVersionChecker interface {
+	ListVersions(ctx context.Context, imageRef string) ([]string, error)
+}
+
+// PolicyChanger applies a new update policy to a container.
+type PolicyChanger interface {
+	ChangePolicy(ctx context.Context, name, newPolicy string) error
 }
 
 // UpdateRecord mirrors store.UpdateRecord to avoid importing store.
@@ -41,6 +69,12 @@ type UpdateRecord struct {
 	Outcome       string        `json:"outcome"`
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
+}
+
+// SnapshotEntry represents a snapshot with a parsed image reference for display.
+type SnapshotEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	ImageRef  string    `json:"image_ref"`
 }
 
 // UpdateQueue manages pending manual approvals.
@@ -123,7 +157,7 @@ func (s *Server) ListenAndServe(addr string) error {
 		Addr:         addr,
 		Handler:      s.mux,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: 0, // SSE connections are long-lived; per-handler timeouts used instead.
 		IdleTimeout:  120 * time.Second,
 	}
 	s.deps.Log.Info("web dashboard listening", "addr", addr)
@@ -140,11 +174,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) parseTemplates() {
 	funcMap := template.FuncMap{
-		"fmtDuration": formatDuration,
-		"fmtTime":     formatTime,
-		"fmtTimeAgo":  formatTimeAgo,
-		"truncDigest": truncateDigest,
-		"json":        marshalJSON,
+		"fmtDuration":  formatDuration,
+		"fmtTime":      formatTime,
+		"fmtTimeAgo":   formatTimeAgo,
+		"truncDigest":  truncateDigest,
+		"json":         marshalJSON,
+		"changelogURL": ChangelogURL,
 	}
 
 	s.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(staticFS, "static/*.html"))
@@ -160,14 +195,24 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /queue", s.handleQueue)
 	s.mux.HandleFunc("GET /history", s.handleHistory)
 
+	// SSE event stream.
+	s.mux.HandleFunc("GET /api/events", s.apiSSE)
+
 	// JSON API.
 	s.mux.HandleFunc("GET /api/containers", s.apiContainers)
+	s.mux.HandleFunc("GET /api/containers/{name}", s.apiContainerDetail)
+	s.mux.HandleFunc("GET /api/containers/{name}/versions", s.apiContainerVersions)
+	s.mux.HandleFunc("POST /api/containers/{name}/rollback", s.apiRollback)
+	s.mux.HandleFunc("POST /api/containers/{name}/policy", s.apiChangePolicy)
 	s.mux.HandleFunc("GET /api/history", s.apiHistory)
 	s.mux.HandleFunc("GET /api/queue", s.apiQueue)
 	s.mux.HandleFunc("POST /api/approve/{name}", s.apiApprove)
 	s.mux.HandleFunc("POST /api/reject/{name}", s.apiReject)
 	s.mux.HandleFunc("POST /api/update/{name}", s.apiUpdate)
 	s.mux.HandleFunc("GET /api/settings", s.apiSettings)
+
+	// Per-container HTML page.
+	s.mux.HandleFunc("GET /container/{name}", s.handleContainerDetail)
 }
 
 func (s *Server) serveCSS(w http.ResponseWriter, r *http.Request) {

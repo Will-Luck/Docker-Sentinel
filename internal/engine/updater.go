@@ -10,6 +10,7 @@ import (
 	"github.com/GiteaLN/Docker-Sentinel/internal/clock"
 	"github.com/GiteaLN/Docker-Sentinel/internal/config"
 	"github.com/GiteaLN/Docker-Sentinel/internal/docker"
+	"github.com/GiteaLN/Docker-Sentinel/internal/events"
 	"github.com/GiteaLN/Docker-Sentinel/internal/guardian"
 	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
 	"github.com/GiteaLN/Docker-Sentinel/internal/notify"
@@ -40,10 +41,11 @@ type Updater struct {
 	log      *logging.Logger
 	clock    clock.Clock
 	notifier *notify.Multi
+	events   *events.Bus
 }
 
 // NewUpdater creates an Updater with all dependencies.
-func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queue, cfg *config.Config, log *logging.Logger, clk clock.Clock, notifier *notify.Multi) *Updater {
+func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queue, cfg *config.Config, log *logging.Logger, clk clock.Clock, notifier *notify.Multi, bus *events.Bus) *Updater {
 	return &Updater{
 		docker:   d,
 		checker:  checker,
@@ -53,7 +55,21 @@ func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queu
 		log:      log,
 		clock:    clk,
 		notifier: notifier,
+		events:   bus,
 	}
+}
+
+// publishEvent emits an SSE event if the event bus is configured.
+func (u *Updater) publishEvent(evtType events.EventType, name, message string) {
+	if u.events == nil {
+		return
+	}
+	u.events.Publish(events.SSEEvent{
+		Type:          evtType,
+		ContainerName: name,
+		Message:       message,
+		Timestamp:     u.clock.Now(),
+	})
 }
 
 // Scan lists running containers, checks for updates, and processes them
@@ -115,6 +131,7 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 
 		u.log.Info("update available", "name", name, "image", imageRef,
 			"local_digest", check.LocalDigest, "remote_digest", check.RemoteDigest)
+		u.publishEvent(events.EventContainerUpdate, name, "update available")
 
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventUpdateAvailable,
@@ -146,9 +163,12 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 				DetectedAt:    u.clock.Now(),
 			})
 			u.log.Info("update queued for manual approval", "name", name)
+			u.publishEvent(events.EventQueueChange, name, "queued for approval")
 			result.Queued++
 		}
 	}
+
+	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf("total=%d updated=%d", result.Total, result.Updated))
 
 	return result
 }
@@ -174,6 +194,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 
 	oldImage := inspect.Config.Image
 	u.log.Info("saved snapshot", "name", name, "image", oldImage)
+	u.publishEvent(events.EventContainerUpdate, name, "update started")
 
 	u.notifier.Notify(ctx, notify.Event{
 		Type:          notify.EventUpdateStarted,
@@ -241,6 +262,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	healthy, err := u.validateContainer(ctx, newID)
 	if err != nil || !healthy {
 		u.log.Error("validation failed, rolling back", "name", name, "error", err)
+		u.publishEvent(events.EventContainerUpdate, name, "update failed")
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventUpdateFailed,
 			ContainerName: name,
@@ -286,7 +308,13 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 		Timestamp:     u.clock.Now(),
 	})
 
+	// 9. Clean old snapshots — keep only the most recent one.
+	if err := u.store.DeleteOldSnapshots(name, 1); err != nil {
+		u.log.Warn("failed to clean old snapshots", "name", name, "error", err)
+	}
+
 	u.log.Info("update complete", "name", name, "duration", duration)
+	u.publishEvent(events.EventContainerUpdate, name, "update succeeded")
 	return nil
 }
 
@@ -307,6 +335,7 @@ func (u *Updater) validateContainer(ctx context.Context, id string) (bool, error
 func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []byte, start time.Time) {
 	if err := rollback(ctx, u.docker, name, snapshotData, u.log); err != nil {
 		u.log.Error("rollback also failed", "name", name, "error", err)
+		u.publishEvent(events.EventContainerUpdate, name, "rollback failed")
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventRollbackFailed,
 			ContainerName: name,
@@ -314,6 +343,7 @@ func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []by
 			Timestamp:     u.clock.Now(),
 		})
 	} else {
+		u.publishEvent(events.EventContainerUpdate, name, "rollback succeeded")
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventRollbackOK,
 			ContainerName: name,
