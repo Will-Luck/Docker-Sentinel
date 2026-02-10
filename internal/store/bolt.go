@@ -311,7 +311,7 @@ func (s *Store) AllPolicyOverrides() map[string]string {
 // LogEntry represents a timestamped event in the activity log.
 type LogEntry struct {
 	Timestamp time.Time `json:"timestamp"`
-	Type      string    `json:"type"`    // policy_set, policy_delete, bulk_policy, update, rollback, approve, reject
+	Type      string    `json:"type"` // policy_set, policy_delete, bulk_policy, update, rollback, approve, reject
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
 }

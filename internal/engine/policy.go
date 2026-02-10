@@ -5,7 +5,6 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
-	"github.com/moby/moby/api/types/container"
 )
 
 // PolicySource indicates where a resolved policy came from.
@@ -49,15 +48,4 @@ func ValidatePolicy(policy string) error {
 	default:
 		return fmt.Errorf("invalid policy: %q (must be auto, manual, or pinned)", policy)
 	}
-}
-
-// findContainerID searches containers for one matching the given name and
-// returns its ID. Returns empty string if not found.
-func findContainerID(containers []container.Summary, name string) string {
-	for _, c := range containers {
-		if containerName(c) == name {
-			return c.ID
-		}
-	}
-	return ""
 }
