@@ -36,6 +36,7 @@ type containerView struct {
 type stackGroup struct {
 	Name       string
 	Containers []containerView
+	HasPending bool // true if any container in the group has an update available
 }
 
 // handleDashboard renders the main container dashboard.
@@ -108,10 +109,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = "Standalone"
 		}
-		stacks = append(stacks, stackGroup{
+		group := stackGroup{
 			Name:       name,
 			Containers: stackMap[key],
-		})
+		}
+		for _, c := range group.Containers {
+			if c.HasUpdate {
+				group.HasPending = true
+				break
+			}
+		}
+		stacks = append(stacks, group)
 	}
 
 	data := pageData{

@@ -76,12 +76,13 @@
                     {{if .Stacks}}
                         {{range .Stacks}}
                         <tbody class="stack-group stack-collapsed" data-stack="{{.Name}}">
-                            <tr class="stack-header" onclick="toggleStack(this)">
+                            <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
                                 <td colspan="6">
                                     <div class="stack-header-inner">
                                         <span class="stack-chevron">&#9656;</span>
                                         <span class="stack-name">{{.Name}}</span>
                                         <span class="badge badge-muted stack-count">{{len .Containers}}</span>
+                                        {{if .HasPending}}<span class="badge badge-warning">Updates Available</span>{{end}}
                                     </div>
                                 </td>
                             </tr>

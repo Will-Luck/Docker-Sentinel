@@ -734,6 +734,14 @@ tbody td {
     padding: 0.1rem 0.4rem;
 }
 
+.stack-pending {
+    background: rgba(240, 165, 0, 0.08);
+}
+
+.stack-pending .stack-name {
+    color: var(--warning);
+}
+
 .stack-collapsed .container-row,
 .stack-collapsed .accordion-panel {
     display: none !important;
