@@ -10,6 +10,9 @@ build:
 test:
 	go test -v -race ./...
 
+test-ci:
+	go test -v -count=1 ./...
+
 lint:
 	golangci-lint run ./...
 
