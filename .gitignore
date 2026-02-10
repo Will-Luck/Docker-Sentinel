@@ -3,3 +3,4 @@ bin/
 *.test
 *.out
 .env
+CLAUDE.md

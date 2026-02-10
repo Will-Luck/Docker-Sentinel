@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/GiteaLN/Docker-Sentinel/internal/docker"
-	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 )

@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/GiteaLN/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 )
 
 //go:embed static/*

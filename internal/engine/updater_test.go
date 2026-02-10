@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GiteaLN/Docker-Sentinel/internal/config"
-	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
-	"github.com/GiteaLN/Docker-Sentinel/internal/notify"
-	"github.com/GiteaLN/Docker-Sentinel/internal/registry"
+	"github.com/Will-Luck/Docker-Sentinel/internal/config"
+	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/moby/moby/api/types/container"
 )
 

@@ -43,7 +43,7 @@ func TestIsLocalImage(t *testing.T) {
 		{"ghcr.io/owner/image", false},
 		{"docker.io/library/nginx", false},
 		{"registry.example.com/myapp:latest", false},
-		{"192.168.1.57:5000/myapp", false},
+		{"registry.local:5000/myapp", false},
 		{"localhost/myapp", false},
 		{"gitea/gitea:latest", false},
 		{"postgres:16-alpine", false},

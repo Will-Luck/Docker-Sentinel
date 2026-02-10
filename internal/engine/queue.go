@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GiteaLN/Docker-Sentinel/internal/events"
-	"github.com/GiteaLN/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // PendingUpdate represents a container with an available update awaiting approval.

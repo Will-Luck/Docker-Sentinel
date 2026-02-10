@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/moby/moby/api/types/container"
 )
 

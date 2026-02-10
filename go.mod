@@ -1,4 +1,4 @@
-module github.com/GiteaLN/Docker-Sentinel
+module github.com/Will-Luck/Docker-Sentinel
 
 go 1.24.13
 

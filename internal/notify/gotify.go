@@ -18,7 +18,7 @@ type Gotify struct {
 }
 
 // NewGotify creates a Gotify notifier.
-// URL should be the base Gotify server URL (e.g. "http://192.168.1.57:62334").
+// URL should be the base Gotify server URL (e.g. "http://gotify.example.com").
 // Token is the application token used for authentication.
 func NewGotify(url, token string) *Gotify {
 	return &Gotify{

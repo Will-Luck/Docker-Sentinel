@@ -1,0 +1,168 @@
+# Docker-Sentinel
+
+A container update orchestrator with a web dashboard, written in Go. Replaces Watchtower with per-container update policies, pre-update snapshots, post-update health validation, automatic rollback, and real-time notifications.
+
+## Features
+
+- **Per-container update policies** via Docker labels (`auto`, `manual`, `pinned`)
+- **Pre-update snapshots** — full `docker inspect` captured before every update
+- **Automatic rollback** — if a container fails health checks after updating, Sentinel rolls back to the snapshot
+- **Web dashboard** with real-time SSE updates, container grouping by Docker Compose stack, accordion detail panels, bulk policy management, and update history
+- **Registry intelligence** — digest comparison for mutable tags (`:latest`), semver tag discovery for versioned images
+- **Notifications** — Gotify, generic webhooks, structured log output
+- **Docker-Guardian integration** — sets maintenance labels during updates to prevent restart conflicts
+- **Queue management** — manual-policy containers queue for approval; stale entries auto-pruned when containers are deleted
+- **REST API** — all dashboard functionality exposed as JSON endpoints
+
+## Quick Start
+
+```bash
+docker run -d \
+  --name docker-sentinel \
+  --restart unless-stopped \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v sentinel-data:/data \
+  -p 8080:8080 \
+  -e SENTINEL_POLL_INTERVAL=6h \
+  docker-sentinel:latest
+```
+
+Then open `http://localhost:8080` in your browser.
+
+## Configuration
+
+All configuration is via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SENTINEL_POLL_INTERVAL` | `6h` | How often to scan for updates |
+| `SENTINEL_GRACE_PERIOD` | `30s` | Wait time after update before health check |
+| `SENTINEL_DEFAULT_POLICY` | `manual` | Policy for containers without a `sentinel.policy` label |
+| `SENTINEL_DB_PATH` | `/data/sentinel.db` | BoltDB database path |
+| `SENTINEL_LOG_LEVEL` | `info` | Log level (`debug`, `info`, `warn`, `error`) |
+| `SENTINEL_LOG_JSON` | `true` | JSON structured logging |
+| `SENTINEL_WEB_ENABLED` | `true` | Enable web dashboard |
+| `SENTINEL_WEB_ADDR` | `:8080` | Web server listen address |
+| `SENTINEL_GOTIFY_URL` | | Gotify server URL for notifications |
+| `SENTINEL_GOTIFY_TOKEN` | | Gotify application token |
+| `SENTINEL_WEBHOOK_URL` | | Generic webhook URL (receives JSON POST) |
+
+## Container Labels
+
+Control Sentinel's behaviour per-container using Docker labels:
+
+| Label | Values | Default | Description |
+|-------|--------|---------|-------------|
+| `sentinel.policy` | `auto`, `manual`, `pinned` | `manual` | Update policy |
+| `sentinel.maintenance` | `true` | (absent) | Set during updates, read by Docker-Guardian |
+| `sentinel.self` | `true` | (absent) | Prevents Sentinel from updating itself |
+
+### Policy Descriptions
+
+- **auto** — updates are applied automatically when a new image is detected
+- **manual** — updates are queued for approval in the dashboard
+- **pinned** — container is never checked or updated
+
+## Update Lifecycle
+
+1. **Scan** — enumerate running containers, check policies
+2. **Check** — query registry for new digests or semver tags
+3. **Queue** — auto-policy containers proceed; manual-policy containers wait for approval
+4. **Snapshot** — capture full container config via `docker inspect`
+5. **Maintenance** — set `sentinel.maintenance=true` label (Docker-Guardian integration)
+6. **Update** — pull new image, stop, remove, recreate with identical config, start
+7. **Validate** — wait for grace period, check container is still running
+8. **Finalise** — on success: clear maintenance label, log, notify. On failure: rollback from snapshot, notify
+
+## Web Dashboard
+
+The dashboard is embedded in the binary (no external dependencies) and provides:
+
+- **Container overview** grouped by Docker Compose stack with collapsible sections
+- **Accordion panels** with lazy-loaded version info, rollback buttons, and detail links
+- **Update queue** for manual approvals
+- **Update history** with expandable detail panels
+- **Bulk policy management** — select multiple containers, apply policy in one action
+- **Real-time updates** via Server-Sent Events (SSE)
+- **Policy tooltips** explaining what each policy means
+
+## REST API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/containers` | List all containers with policy and status |
+| `GET` | `/api/containers/{name}` | Container detail (history, snapshots) |
+| `GET` | `/api/containers/{name}/versions` | Available image versions from registry |
+| `POST` | `/api/containers/{name}/policy` | Change container policy |
+| `POST` | `/api/containers/{name}/rollback` | Rollback to last snapshot |
+| `POST` | `/api/update/{name}` | Trigger immediate update |
+| `POST` | `/api/approve/{name}` | Approve queued update |
+| `POST` | `/api/reject/{name}` | Reject queued update |
+| `POST` | `/api/bulk/policy` | Bulk policy change |
+| `GET` | `/api/queue` | List pending updates |
+| `GET` | `/api/history` | Update history |
+| `GET` | `/api/settings` | Current configuration |
+| `GET` | `/api/events` | SSE event stream |
+
+## Building from Source
+
+### Prerequisites
+
+- Go 1.24+
+- Docker (for container builds)
+- golangci-lint (for linting)
+
+### Build
+
+```bash
+make build        # Build binary to bin/sentinel
+make test         # Run tests with race detector
+make lint         # Run golangci-lint
+make docker       # Build Docker image
+```
+
+## Architecture
+
+```
+Docker-Sentinel/
+├── cmd/sentinel/          # Entry point
+├── internal/
+│   ├── clock/             # Time abstraction (testable)
+│   ├── config/            # Environment variable configuration
+│   ├── docker/            # Docker API client, labels, snapshots
+│   ├── engine/            # Scheduler, updater, rollback, queue, policy
+│   ├── events/            # Event bus (SSE fan-out)
+│   ├── guardian/          # Docker-Guardian maintenance label integration
+│   ├── logging/           # Structured slog logger
+│   ├── notify/            # Notification providers (Gotify, webhook, log)
+│   ├── registry/          # Registry digest checker, semver tag discovery
+│   ├── store/             # BoltDB persistence
+│   └── web/               # HTTP server, REST API, embedded dashboard
+│       └── static/        # HTML templates, CSS, JavaScript
+├── docs/
+│   └── DESIGN.md          # Design document
+├── Dockerfile             # Multi-stage Alpine build
+├── Makefile
+└── LICENSE                # Apache 2.0
+```
+
+## Notifications
+
+### Gotify
+
+Set `SENTINEL_GOTIFY_URL` and `SENTINEL_GOTIFY_TOKEN` to receive push notifications for:
+- Update available (manual-policy containers)
+- Update started/succeeded/failed
+- Rollback triggered
+
+### Webhook
+
+Set `SENTINEL_WEBHOOK_URL` to receive JSON POST notifications. Compatible with Discord, Slack, N8N, or any webhook endpoint.
+
+## Docker-Guardian Integration
+
+If you run [Docker-Guardian](https://github.com/Will-Luck/Docker-Guardian) for container health monitoring, Sentinel sets a `sentinel.maintenance=true` label during updates. Guardian reads this label and holds off restart attempts during the update window. No configuration needed — it works via Docker labels automatically.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE) for details.

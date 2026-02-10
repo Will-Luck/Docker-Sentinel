@@ -3,9 +3,9 @@ package engine
 import (
 	"context"
 
-	"github.com/GiteaLN/Docker-Sentinel/internal/clock"
-	"github.com/GiteaLN/Docker-Sentinel/internal/config"
-	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
+	"github.com/Will-Luck/Docker-Sentinel/internal/config"
+	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 )
 
 // Scheduler runs scan cycles at the configured poll interval.

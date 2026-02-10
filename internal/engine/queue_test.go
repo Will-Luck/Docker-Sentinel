@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GiteaLN/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 func testStore(t *testing.T) *store.Store {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/GiteaLN/Docker-Sentinel/internal/docker"
-	"github.com/GiteaLN/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 )
 
 // CheckResult holds the outcome of a registry digest check.
