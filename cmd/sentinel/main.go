@@ -91,7 +91,7 @@ func main() {
 			EventBus:  bus,
 			Snapshots: &snapshotAdapter{db},
 			Rollback:  &rollbackAdapter{d: client, s: db, log: log},
-		Restarter: &restartAdapter{client},
+			Restarter: &restartAdapter{client},
 			Registry:  &registryAdapter{log: log},
 			Policy:    &policyStoreAdapter{db},
 			EventLog:  &eventLogAdapter{db},
