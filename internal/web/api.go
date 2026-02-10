@@ -84,6 +84,11 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.isProtectedContainer(r.Context(), name) {
+		writeError(w, http.StatusForbidden, "cannot approve updates for sentinel itself")
+		return
+	}
+
 	update, ok := s.deps.Queue.Approve(name)
 	if !ok {
 		writeError(w, http.StatusNotFound, "no pending update for "+name)
@@ -131,6 +136,11 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.isProtectedContainer(r.Context(), name) {
+		writeError(w, http.StatusForbidden, "cannot update sentinel itself via the dashboard")
 		return
 	}
 
@@ -303,6 +313,11 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.isProtectedContainer(r.Context(), name) {
+		writeError(w, http.StatusForbidden, "cannot rollback sentinel itself via the dashboard")
 		return
 	}
 
