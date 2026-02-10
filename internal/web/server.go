@@ -207,6 +207,10 @@ func (s *Server) registerRoutes() {
 	// Static assets.
 	s.mux.HandleFunc("GET /static/style.css", s.serveCSS)
 	s.mux.HandleFunc("GET /static/app.js", s.serveJS)
+	s.mux.HandleFunc("GET /favicon.svg", s.serveFavicon)
+	s.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 
 	// HTML pages.
 	s.mux.HandleFunc("GET /{$}", s.handleDashboard)
@@ -256,6 +260,13 @@ func (s *Server) serveJS(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	_, _ = w.Write(data)
+}
+
+func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
+	const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#3b82f6"/><text x="16" y="22" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-weight="700" font-size="20">S</text></svg>`
+	w.Header().Set("Content-Type", "image/svg+xml")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write([]byte(favicon))
 }
 
 // writeJSON encodes v as JSON and writes it to the response.

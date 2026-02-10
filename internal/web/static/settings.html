@@ -6,8 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings — Docker-Sentinel</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
 <body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
     <nav class="nav">
         <a href="/" class="nav-brand">
             <span class="nav-logo">S</span>
@@ -21,15 +23,15 @@
             </a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
-            <a href="/settings" class="nav-link active">Settings</a>
+            <a href="/settings" class="nav-link active" aria-current="page">Settings</a>
         </div>
-        <div class="nav-status">
+        <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
             <span id="sse-label" class="nav-status-text">Disconnected</span>
         </div>
     </nav>
 
-    <main class="main-content">
+    <main class="main-content" id="main-content">
         <div class="page-header">
             <div>
                 <h1>Settings</h1>
@@ -70,7 +72,7 @@
                 <div class="card-body">
                     <p class="subtitle" style="margin-bottom: var(--sp-4)">These are set via environment variables and cannot be changed from the dashboard.</p>
                     <div class="table-wrap">
-                        <table>
+                        <table class="table-readonly">
                             <thead><tr><th>Setting</th><th>Value</th></tr></thead>
                             <tbody>
                                 {{range $k, $v := .Settings}}

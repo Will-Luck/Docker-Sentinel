@@ -251,6 +251,10 @@ h1, h2, h3, h4 {
     color: var(--fg-muted);
 }
 
+.nav-status-text.connected {
+    color: var(--success);
+}
+
 
 /* --------------------------------------------------------------------------
    4. Main Content + Page Header
@@ -355,6 +359,35 @@ h1, h2, h3, h4 {
 
 .table-wrap {
     overflow-x: auto;
+    position: relative;
+}
+
+.table-wrap::after {
+    content: "";
+    position: sticky;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 24px;
+    pointer-events: none;
+    background: linear-gradient(to left, var(--bg-surface), transparent);
+    flex-shrink: 0;
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .table-wrap {
+        display: flex;
+    }
+
+    .table-wrap > table {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .table-wrap::after {
+        display: block;
+    }
 }
 
 table {
@@ -419,6 +452,12 @@ tbody td {
     font-family: var(--font-mono);
     font-size: 0.8rem;
     color: var(--fg-secondary);
+}
+
+.accordion-content .mono,
+.accordion-content .cell-digest {
+    word-break: break-all;
+    white-space: normal;
 }
 
 
@@ -511,6 +550,28 @@ tbody td {
     }
 }
 
+.btn.loading {
+    opacity: 0.7;
+    pointer-events: none;
+    position: relative;
+}
+
+.btn.loading::after {
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: var(--radius-full);
+    animation: btnSpin 600ms linear infinite;
+    margin-left: 4px;
+}
+
+@keyframes btnSpin {
+    to { transform: rotate(360deg); }
+}
+
 .btn-success {
     background: var(--success-bg);
     border-color: var(--success);
@@ -574,7 +635,6 @@ tbody td {
     text-transform: uppercase;
     letter-spacing: 0.03em;
     cursor: pointer;
-    outline: none;
     transition: border-color 150ms;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%23a1a1aa' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
@@ -594,21 +654,21 @@ tbody td {
     }
 
     &.policy-auto {
-        background-color: var(--success-bg);
+        background-color: light-dark(#bbf7d0, #14532d);
         color: var(--success-fg);
-        border-color: var(--success);
+        border-color: light-dark(var(--green-500), var(--green-400));
     }
 
     &.policy-manual {
-        background-color: var(--info-bg);
+        background-color: light-dark(#bfdbfe, #1e3a5f);
         color: var(--info-fg);
-        border-color: var(--info);
+        border-color: light-dark(var(--blue-500), var(--blue-400));
     }
 
     &.policy-pinned {
         background-color: var(--bg-raised);
         color: var(--fg-secondary);
-        border-color: var(--border-strong);
+        border-color: light-dark(var(--zinc-400), var(--zinc-600));
     }
 }
 
@@ -848,7 +908,7 @@ tbody td {
     display: flex;
     align-items: center;
     gap: var(--sp-4);
-    animation: slideUp 200ms ease-out;
+    animation: slideUp 300ms ease-out;
 }
 
 .bulk-count {
@@ -880,7 +940,7 @@ tbody td {
     right: var(--sp-5);
     z-index: 1000;
     display: flex;
-    flex-direction: column-reverse;
+    flex-direction: column;
     gap: var(--sp-2);
 }
 
@@ -973,6 +1033,11 @@ tbody td {
             text-decoration: underline;
         }
     }
+}
+
+.breadcrumb-current {
+    color: var(--fg-primary);
+    font-weight: 600;
 }
 
 
@@ -1190,6 +1255,19 @@ tbody td {
     border-color: var(--accent);
 }
 
+.table-readonly tbody tr:hover {
+    background: transparent;
+}
+
+.table-readonly thead th:first-child::before {
+    content: "\1F512 ";
+    font-size: 0.65rem;
+}
+
+.table-readonly {
+    opacity: 0.85;
+}
+
 
 /* --------------------------------------------------------------------------
    21. Utility Helpers
@@ -1197,6 +1275,36 @@ tbody td {
 
 .text-muted {
     color: var(--fg-muted);
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.skip-link {
+    position: absolute;
+    top: -100%;
+    left: var(--sp-4);
+    z-index: 999;
+    padding: var(--sp-2) var(--sp-4);
+    background: var(--accent);
+    color: #ffffff;
+    border-radius: var(--radius);
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-decoration: none;
+}
+
+.skip-link:focus {
+    top: var(--sp-2);
 }
 
 
@@ -1238,6 +1346,21 @@ tbody td {
 }
 
 @media (max-width: 480px) {
+    .nav-links {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .nav-links::-webkit-scrollbar {
+        display: none;
+    }
+
+    .nav-link {
+        padding: 0 var(--sp-3);
+        font-size: 0.8rem;
+    }
+
     .nav-status-text {
         display: none;
     }
@@ -1295,4 +1418,14 @@ a,
 select,
 input[type="checkbox"] {
     transition: background 150ms, color 150ms, border-color 150ms;
+}
+
+
+/* --------------------------------------------------------------------------
+   24. Focus — keyboard-only visible outlines
+   -------------------------------------------------------------------------- */
+
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
