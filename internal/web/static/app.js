@@ -452,6 +452,35 @@ function checkPauseState() {
 }
 
 /* ------------------------------------------------------------
+   2c. Last Scan Timestamp
+   ------------------------------------------------------------ */
+
+function refreshLastScan() {
+    var el = document.getElementById("last-scan");
+    if (!el) return;
+
+    fetch("/api/last-scan")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.last_scan) {
+                el.textContent = "Last scan: never";
+                return;
+            }
+            var t = new Date(data.last_scan);
+            var now = new Date();
+            var diff = Math.floor((now - t) / 1000);
+            var ago;
+            if (diff < 60) ago = "just now";
+            else if (diff < 3600) ago = Math.floor(diff / 60) + "m ago";
+            else if (diff < 86400) ago = Math.floor(diff / 3600) + "h ago";
+            else ago = Math.floor(diff / 86400) + "d ago";
+            el.textContent = "Last scan: " + ago;
+            el.title = t.toLocaleString();
+        })
+        .catch(function() {});
+}
+
+/* ------------------------------------------------------------
    3. Toast System
    ------------------------------------------------------------ */
 
@@ -485,6 +514,90 @@ function escapeHTML(str) {
     var div = document.createElement("div");
     div.appendChild(document.createTextNode(str));
     return div.innerHTML;
+}
+
+/* ------------------------------------------------------------
+   4a. Styled Confirmation Modal
+   ------------------------------------------------------------ */
+
+function showConfirm(title, bodyHTML) {
+    return new Promise(function(resolve) {
+        var triggerEl = document.activeElement;
+
+        var overlay = document.createElement("div");
+        overlay.className = "confirm-overlay";
+
+        var modal = document.createElement("div");
+        modal.className = "confirm-modal";
+        modal.setAttribute("role", "dialog");
+        modal.setAttribute("aria-modal", "true");
+
+        var titleId = "confirm-title-" + Date.now();
+        modal.setAttribute("aria-labelledby", titleId);
+
+        var titleEl = document.createElement("div");
+        titleEl.className = "confirm-title";
+        titleEl.id = titleId;
+        titleEl.textContent = title;
+        modal.appendChild(titleEl);
+
+        var body = document.createElement("div");
+        body.className = "confirm-body";
+        body.innerHTML = bodyHTML;
+        modal.appendChild(body);
+
+        var buttons = document.createElement("div");
+        buttons.className = "confirm-buttons";
+
+        var cancelBtn = document.createElement("button");
+        cancelBtn.className = "confirm-btn-cancel";
+        cancelBtn.textContent = "Cancel";
+        cancelBtn.type = "button";
+        buttons.appendChild(cancelBtn);
+
+        var applyBtn = document.createElement("button");
+        applyBtn.className = "confirm-btn-apply";
+        applyBtn.textContent = "Apply";
+        applyBtn.type = "button";
+        buttons.appendChild(applyBtn);
+
+        modal.appendChild(buttons);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        cancelBtn.focus();
+
+        function cleanup(result) {
+            document.body.removeChild(overlay);
+            if (triggerEl && triggerEl.focus) triggerEl.focus();
+            resolve(result);
+        }
+
+        cancelBtn.addEventListener("click", function() { cleanup(false); });
+        applyBtn.addEventListener("click", function() { cleanup(true); });
+
+        overlay.addEventListener("click", function(e) {
+            if (e.target === overlay) cleanup(false);
+        });
+
+        // Focus trap and Escape
+        modal.addEventListener("keydown", function(e) {
+            if (e.key === "Escape") {
+                e.stopPropagation();
+                cleanup(false);
+                return;
+            }
+            if (e.key === "Tab") {
+                var focusables = [cancelBtn, applyBtn];
+                var idx = focusables.indexOf(document.activeElement);
+                if (e.shiftKey) {
+                    if (idx <= 0) { e.preventDefault(); focusables[focusables.length - 1].focus(); }
+                } else {
+                    if (idx >= focusables.length - 1) { e.preventDefault(); focusables[0].focus(); }
+                }
+            }
+        });
+    });
 }
 
 /* ------------------------------------------------------------
@@ -591,16 +704,29 @@ function changePolicy(name, newPolicy) {
     );
 }
 
-function triggerSelfUpdate(event) {
+function triggerScan(event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    if (!confirm("This will restart Sentinel to apply the update. Continue?")) return;
     apiPost(
-        "/api/self-update",
+        "/api/scan",
         null,
-        "Self-update initiated — Sentinel will restart shortly",
-        "Failed to trigger self-update",
+        "Scan started — results will appear shortly",
+        "Failed to trigger scan",
         btn
     );
+}
+
+function triggerSelfUpdate(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    showConfirm("Self-Update", "<p>This will restart Sentinel to apply the update. Continue?</p>").then(function(confirmed) {
+        if (!confirmed) return;
+        apiPost(
+            "/api/self-update",
+            null,
+            "Self-update initiated \u2014 Sentinel will restart shortly",
+            "Failed to trigger self-update",
+            btn
+        );
+    });
 }
 
 function updateToVersion(name) {
@@ -651,60 +777,63 @@ function applyBulkPolicy() {
                 return;
             }
 
-            // Build a summary for the confirm dialog.
-            var summary = "Change policy to '" + policy + "' for " + changeCount + " container" + (changeCount !== 1 ? "s" : "") + "?\n\n";
+            // Build styled preview HTML for the confirm modal.
+            var bodyHTML = "";
             for (var i = 0; i < preview.changes.length; i++) {
                 var c = preview.changes[i];
-                summary += "  " + c.name + ": " + c.from + " \u2192 " + c.to + "\n";
+                bodyHTML += '<div class="confirm-change-row"><span class="confirm-change-name">' + escapeHTML(c.name) + '</span> <span class="badge badge-muted">' + escapeHTML(c.from) + '</span> \u2192 <span class="badge badge-info">' + escapeHTML(c.to) + '</span></div>';
             }
             if (blockedCount > 0) {
-                summary += "\nBlocked (" + blockedCount + "):\n";
+                bodyHTML += '<div class="confirm-section-label">Blocked (' + blockedCount + ')</div>';
                 for (var b = 0; b < preview.blocked.length; b++) {
-                    summary += "  " + preview.blocked[b].name + " — " + preview.blocked[b].reason + "\n";
+                    bodyHTML += '<div class="confirm-muted-row">' + escapeHTML(preview.blocked[b].name) + ' \u2014 ' + escapeHTML(preview.blocked[b].reason) + '</div>';
                 }
             }
             if (unchangedCount > 0) {
-                summary += "\nUnchanged (" + unchangedCount + "):\n";
+                bodyHTML += '<div class="confirm-section-label">Unchanged (' + unchangedCount + ')</div>';
                 for (var u = 0; u < preview.unchanged.length; u++) {
-                    summary += "  " + preview.unchanged[u].name + " — " + preview.unchanged[u].reason + "\n";
+                    bodyHTML += '<div class="confirm-muted-row">' + escapeHTML(preview.unchanged[u].name) + ' \u2014 ' + escapeHTML(preview.unchanged[u].reason) + '</div>';
                 }
             }
 
-            // Step 2: User confirms.
-            if (!confirm(summary)) return;
+            // Step 2: User confirms via styled modal.
+            var confirmTitle = "Change policy to \u2018" + escapeHTML(policy) + "\u2019 for " + changeCount + " container" + (changeCount !== 1 ? "s" : "") + "?";
+            showConfirm(confirmTitle, bodyHTML).then(function(confirmed) {
+                if (!confirmed) return;
 
-            // Step 3: Confirm — send with confirm: true to apply.
-            fetch("/api/bulk/policy", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ containers: names, policy: policy, confirm: true })
-            })
-                .then(function (resp2) {
-                    return resp2.json().then(function (data2) {
-                        return { ok: resp2.ok, data: data2 };
+                // Step 3: Confirm — send with confirm: true to apply.
+                fetch("/api/bulk/policy", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ containers: names, policy: policy, confirm: true })
+                })
+                    .then(function (resp2) {
+                        return resp2.json().then(function (data2) {
+                            return { ok: resp2.ok, data: data2 };
+                        });
+                    })
+                    .then(function (confirmResult) {
+                        if (!confirmResult.ok) {
+                            showToast(confirmResult.data.error || "Failed to apply bulk policy change", "error");
+                            return;
+                        }
+
+                        var applied = confirmResult.data.applied || 0;
+                        showToast("Policy changed to '" + policy + "' for " + applied + " container" + (applied !== 1 ? "s" : ""), "success");
+
+                        // Refresh affected rows to reflect new policy values.
+                        for (var r = 0; r < preview.changes.length; r++) {
+                            updateContainerRow(preview.changes[r].name);
+                        }
+
+                        // Clear selection and exit manage mode.
+                        clearSelection();
+                        if (manageMode) toggleManageMode();
+                    })
+                    .catch(function () {
+                        showToast("Network error — could not apply bulk policy change", "error");
                     });
-                })
-                .then(function (confirmResult) {
-                    if (!confirmResult.ok) {
-                        showToast(confirmResult.data.error || "Failed to apply bulk policy change", "error");
-                        return;
-                    }
-
-                    var applied = confirmResult.data.applied || 0;
-                    showToast("Policy changed to '" + policy + "' for " + applied + " container" + (applied !== 1 ? "s" : ""), "success");
-
-                    // Refresh affected rows to reflect new policy values.
-                    for (var r = 0; r < preview.changes.length; r++) {
-                        updateContainerRow(preview.changes[r].name);
-                    }
-
-                    // Clear selection and exit manage mode.
-                    clearSelection();
-                    if (manageMode) toggleManageMode();
-                })
-                .catch(function () {
-                    showToast("Network error — could not apply bulk policy change", "error");
-                });
+            });
         })
         .catch(function () {
             showToast("Network error — could not preview bulk policy change", "error");
@@ -952,7 +1081,161 @@ function clearSelection() {
     }
     var selectAll = document.getElementById("select-all");
     if (selectAll) selectAll.checked = false;
+    var stackCbs = document.querySelectorAll(".stack-select");
+    for (var s = 0; s < stackCbs.length; s++) {
+        stackCbs[s].checked = false;
+        stackCbs[s].indeterminate = false;
+    }
     updateSelectionUI();
+}
+
+function recomputeSelectionState() {
+    // Per-stack: set stack checkbox to checked/unchecked/indeterminate.
+    var stacks = document.querySelectorAll("tbody.stack-group");
+    for (var s = 0; s < stacks.length; s++) {
+        var stackCb = stacks[s].querySelector(".stack-select");
+        if (!stackCb) continue;
+        var rows = stacks[s].querySelectorAll(".row-select");
+        var total = rows.length;
+        var checked = 0;
+        for (var r = 0; r < rows.length; r++) {
+            if (rows[r].checked) checked++;
+        }
+        stackCb.checked = total > 0 && checked === total;
+        stackCb.indeterminate = checked > 0 && checked < total;
+    }
+
+    // Global select-all.
+    var allRows = document.querySelectorAll(".row-select");
+    var allTotal = allRows.length;
+    var allChecked = 0;
+    for (var a = 0; a < allRows.length; a++) {
+        if (allRows[a].checked) allChecked++;
+    }
+    var selectAll = document.getElementById("select-all");
+    if (selectAll) {
+        selectAll.checked = allTotal > 0 && allChecked === allTotal;
+        selectAll.indeterminate = allChecked > 0 && allChecked < allTotal;
+    }
+
+    updateSelectionUI();
+}
+
+/* ------------------------------------------------------------
+   9a. Filter & Sort System
+   ------------------------------------------------------------ */
+
+var filterState = { status: "all", updates: "all", sort: "default" };
+
+function initFilters() {
+    var saved = localStorage.getItem("sentinel-filters");
+    if (saved) { try { filterState = JSON.parse(saved); } catch(e) {} }
+
+    // Restore active states from saved filter state.
+    var pills = document.querySelectorAll(".filter-pill");
+    for (var i = 0; i < pills.length; i++) {
+        var p = pills[i];
+        if (filterState[p.getAttribute("data-filter")] === p.getAttribute("data-value")) {
+            p.classList.add("active");
+        }
+    }
+
+    var bar = document.getElementById("filter-bar");
+    if (bar) bar.addEventListener("click", function(e) {
+        var pill = e.target.closest(".filter-pill");
+        if (!pill) return;
+
+        var key = pill.getAttribute("data-filter");
+        var value = pill.getAttribute("data-value");
+        var exclusive = pill.getAttribute("data-exclusive");
+        var wasActive = pill.classList.contains("active");
+
+        // Deactivate exclusive siblings.
+        if (exclusive) {
+            var siblings = bar.querySelectorAll('.filter-pill[data-exclusive="' + exclusive + '"]');
+            for (var s = 0; s < siblings.length; s++) siblings[s].classList.remove("active");
+        }
+
+        // Toggle: if was active, deactivate (reset to default); if not, activate.
+        if (wasActive) {
+            pill.classList.remove("active");
+            filterState[key] = key === "sort" ? "default" : "all";
+        } else {
+            pill.classList.add("active");
+            filterState[key] = value;
+        }
+
+        localStorage.setItem("sentinel-filters", JSON.stringify(filterState));
+        applyFiltersAndSort();
+    });
+
+    applyFiltersAndSort();
+}
+
+function applyFiltersAndSort() {
+    var table = document.getElementById("container-table");
+    if (!table) return;
+    var stacks = table.querySelectorAll("tbody.stack-group");
+
+    for (var s = 0; s < stacks.length; s++) {
+        var stack = stacks[s];
+        var rows = stack.querySelectorAll(".container-row");
+        var visibleCount = 0;
+        for (var r = 0; r < rows.length; r++) {
+            var row = rows[r];
+            var show = true;
+            if (filterState.status === "running") show = row.classList.contains("state-running");
+            else if (filterState.status === "stopped") show = !row.classList.contains("state-running");
+            if (show && filterState.updates === "pending") show = row.classList.contains("has-update");
+            row.style.display = show ? "" : "none";
+            var next = row.nextElementSibling;
+            if (next && next.classList.contains("accordion-panel")) {
+                if (!show) next.style.display = "none";
+            }
+            if (show) visibleCount++;
+        }
+        stack.style.display = visibleCount === 0 ? "none" : "";
+    }
+
+    if (filterState.sort !== "default") {
+        sortRows(stacks);
+    }
+}
+
+function sortRows(stacks) {
+    for (var s = 0; s < stacks.length; s++) {
+        var tbody = stacks[s];
+        var rows = [];
+        var rowEls = tbody.querySelectorAll(".container-row");
+        for (var r = 0; r < rowEls.length; r++) {
+            if (rowEls[r].style.display === "none") continue;
+            rows.push(rowEls[r]);
+        }
+
+        if (filterState.sort === "alpha") {
+            rows.sort(function(a, b) {
+                return a.getAttribute("data-name").localeCompare(b.getAttribute("data-name"));
+            });
+        } else if (filterState.sort === "status") {
+            rows.sort(function(a, b) {
+                var sa = statusScore(a), sb = statusScore(b);
+                return sa !== sb ? sb - sa : a.getAttribute("data-name").localeCompare(b.getAttribute("data-name"));
+            });
+        }
+
+        for (var i = 0; i < rows.length; i++) {
+            var row = rows[i];
+            var acc = document.getElementById("accordion-" + row.getAttribute("data-name"));
+            tbody.appendChild(row);
+            if (acc) tbody.appendChild(acc);
+        }
+    }
+}
+
+function statusScore(row) {
+    if (!row.classList.contains("state-running")) return 3;
+    if (row.classList.contains("has-update")) return 2;
+    return 1;
 }
 
 /* ------------------------------------------------------------
@@ -1026,10 +1309,20 @@ function updateContainerRow(name) {
                 if (newAccordion && oldAccordion) {
                     oldAccordion.replaceWith(newAccordion);
                 }
+
+                // Reapply checkbox state from selectedContainers after DOM patch.
+                var newCb = newRow ? newRow.querySelector(".row-select") : null;
+                if (newCb && selectedContainers[newCb.value]) {
+                    newCb.checked = true;
+                }
+                recomputeSelectionState();
             }
 
             // Clear accordion cache for this container.
             delete accordionCache[name];
+
+            // Reapply filters after DOM patch.
+            applyFiltersAndSort();
         })
         .catch(function() {
             // Fallback: full reload on error.
@@ -1123,6 +1416,7 @@ function initSSE() {
     es.addEventListener("scan_complete", function () {
         // Re-check pause state on scan events.
         checkPauseState();
+        refreshLastScan();
         scheduleReload();
     });
 
@@ -1159,6 +1453,8 @@ document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     initSSE();
     initPauseBanner();
+    initFilters();
+    refreshLastScan();
 
     // Apply stack default preference.
     var stackPref = localStorage.getItem("sentinel-stacks") || "collapsed";
@@ -1232,20 +1528,38 @@ document.addEventListener("DOMContentLoaded", function () {
             if (target.id === "select-all") {
                 var checkboxes = table.querySelectorAll(".row-select");
                 for (var i = 0; i < checkboxes.length; i++) {
-                    var row = checkboxes[i].closest(".container-row");
-                    if (row && row.offsetParent !== null) {
-                        checkboxes[i].checked = target.checked;
-                        selectedContainers[checkboxes[i].value] = target.checked;
+                    checkboxes[i].checked = target.checked;
+                    selectedContainers[checkboxes[i].value] = target.checked;
+                }
+                recomputeSelectionState();
+                return;
+            }
+
+            // Stack-level select checkbox
+            if (target.classList.contains("stack-select")) {
+                var tbody = target.closest("tbody.stack-group");
+                if (tbody) {
+                    var rows = tbody.querySelectorAll(".row-select");
+                    for (var i = 0; i < rows.length; i++) {
+                        rows[i].checked = target.checked;
+                        selectedContainers[rows[i].value] = target.checked;
                     }
                 }
-                updateSelectionUI();
+                recomputeSelectionState();
                 return;
             }
 
             // Individual row checkbox
             if (target.classList.contains("row-select")) {
                 selectedContainers[target.value] = target.checked;
-                updateSelectionUI();
+                recomputeSelectionState();
+            }
+        });
+
+        // Prevent stack-select checkbox from toggling stack collapse.
+        table.addEventListener("click", function(e) {
+            if (e.target.classList.contains("stack-select")) {
+                e.stopPropagation();
             }
         });
     }

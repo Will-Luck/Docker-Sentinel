@@ -248,10 +248,16 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			Timestamp:     u.clock.Now(),
 		})
 
+		// Build target image for semver version bumps.
+		scanTarget := ""
+		if len(check.NewerVersions) > 0 {
+			scanTarget = replaceTag(imageRef, check.NewerVersions[0])
+		}
+
 		switch policy {
 		case docker.PolicyAuto:
 			result.AutoCount++
-			if err := u.UpdateContainer(ctx, c.ID, name); err != nil {
+			if err := u.UpdateContainer(ctx, c.ID, name, scanTarget); err != nil {
 				u.log.Error("auto-update failed", "name", name, "error", err)
 				result.Failed++
 				result.Errors = append(result.Errors, err)
@@ -283,7 +289,11 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 // UpdateContainer performs the full update lifecycle for a single container:
 // snapshot → pull → stop → remove → create → start → validate → (rollback on failure).
 // Returns ErrUpdateInProgress if the container already has an update running.
-func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
+//
+// targetImage overrides the image to pull for semver version bumps (e.g.
+// "dxflrs/garage:v2.2.0"). When empty, the current image tag is re-pulled
+// (correct for :latest-style updates where the tag is mutable).
+func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage string) error {
 	if !u.tryLock(name) {
 		return ErrUpdateInProgress
 	}
@@ -310,6 +320,11 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	}
 
 	oldImage := inspect.Config.Image
+	// Determine which image to pull: targetImage (semver bump) or oldImage (mutable tag re-pull).
+	pullImage := oldImage
+	if targetImage != "" {
+		pullImage = targetImage
+	}
 	u.log.Info("saved snapshot", "name", name, "image", oldImage)
 	u.publishEvent(events.EventContainerUpdate, name, "update started")
 
@@ -326,8 +341,8 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	}
 
 	// 3. Pull the new image.
-	u.log.Info("pulling image", "name", name, "image", oldImage)
-	if err := u.docker.PullImage(ctx, oldImage); err != nil {
+	u.log.Info("pulling image", "name", name, "image", pullImage)
+	if err := u.docker.PullImage(ctx, pullImage); err != nil {
 		if mErr := u.store.SetMaintenance(name, false); mErr != nil {
 			u.log.Warn("failed to clear maintenance flag after pull failure", "name", name, "error", mErr)
 		}
@@ -335,7 +350,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	}
 
 	// Get new image digest for the record.
-	newDigest, _ := u.docker.ImageDigest(ctx, oldImage)
+	newDigest, _ := u.docker.ImageDigest(ctx, pullImage)
 
 	// 4. Stop and remove the old container.
 	u.log.Info("stopping old container", "name", name)
@@ -351,12 +366,15 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 
 	// 5. Create and start the new container.
 	newConfig := cloneConfig(inspect.Config)
+	if targetImage != "" {
+		newConfig.Image = targetImage
+	}
 	addMaintenanceLabel(newConfig)
 
 	hostConfig := inspect.HostConfig
 	netConfig := rebuildNetworkingConfig(inspect.NetworkSettings)
 
-	u.log.Info("creating new container", "name", name, "image", oldImage)
+	u.log.Info("creating new container", "name", name, "image", pullImage)
 	newID, err := u.docker.CreateContainer(ctx, name, newConfig, hostConfig, netConfig)
 	if err != nil {
 		u.log.Error("create failed, rolling back", "name", name, "error", err)
@@ -425,7 +443,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 				ContainerName: name,
 				OldImage:      oldImage,
 				OldDigest:     extractDigestForRecord(inspect),
-				NewImage:      oldImage,
+				NewImage:      pullImage,
 				NewDigest:     newDigest,
 				Outcome:       "failed",
 				Duration:      duration,
@@ -461,7 +479,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 			ContainerName: name,
 			OldImage:      oldImage,
 			OldDigest:     extractDigestForRecord(inspect),
-			NewImage:      oldImage,
+			NewImage:      pullImage,
 			NewDigest:     newDigest,
 			Outcome:       "finalise_warning",
 			Duration:      duration,
@@ -487,7 +505,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 		ContainerName: name,
 		OldImage:      oldImage,
 		OldDigest:     extractDigestForRecord(inspect),
-		NewImage:      oldImage,
+		NewImage:      pullImage,
 		NewDigest:     newDigest,
 		Outcome:       "success",
 		Duration:      duration,
@@ -499,7 +517,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 		Type:          notify.EventUpdateSucceeded,
 		ContainerName: name,
 		OldImage:      oldImage,
-		NewImage:      oldImage,
+		NewImage:      pullImage,
 		NewDigest:     newDigest,
 		Timestamp:     u.clock.Now(),
 	})
@@ -674,6 +692,19 @@ func extractDigestForRecord(inspect container.InspectResponse) string {
 		return inspect.Image
 	}
 	return ""
+}
+
+// replaceTag replaces the tag portion of an image reference.
+// e.g. replaceTag("dxflrs/garage:v2.1.0", "v2.2.0") → "dxflrs/garage:v2.2.0"
+func replaceTag(imageRef, newTag string) string {
+	if i := strings.LastIndex(imageRef, ":"); i >= 0 {
+		// Ensure the colon separates repo from tag (not registry:port).
+		candidate := imageRef[i+1:]
+		if !strings.Contains(candidate, "/") {
+			return imageRef[:i+1] + newTag
+		}
+	}
+	return imageRef + ":" + newTag
 }
 
 // truncateID safely truncates a container ID to 12 characters for logging.

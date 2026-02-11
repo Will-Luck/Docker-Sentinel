@@ -102,10 +102,16 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build target image for semver version bumps.
+	approveTarget := ""
+	if len(update.NewerVersions) > 0 {
+		approveTarget = webReplaceTag(update.CurrentImage, update.NewerVersions[0])
+	}
+
 	// Trigger the update in background — don't block the HTTP response.
 	// Use a detached context because r.Context() is cancelled when the handler returns.
 	go func() {
-		err := s.deps.Updater.UpdateContainer(context.Background(), update.ContainerID, update.ContainerName)
+		err := s.deps.Updater.UpdateContainer(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
 		if errors.Is(err, engine.ErrUpdateInProgress) {
 			// Re-enqueue the approved update so it's not lost.
 			s.deps.Queue.Add(update)
@@ -180,7 +186,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Trigger update in background — detached context since r.Context() dies with the response.
 	go func() {
-		err := s.deps.Updater.UpdateContainer(context.Background(), containerID, name)
+		err := s.deps.Updater.UpdateContainer(context.Background(), containerID, name, "")
 		if errors.Is(err, engine.ErrUpdateInProgress) {
 			s.deps.Log.Warn("manual update skipped, already in progress", "name", name)
 			s.deps.EventBus.Publish(events.SSEEvent{
@@ -1267,6 +1273,48 @@ func (s *Server) apiNotificationEventTypes(w http.ResponseWriter, _ *http.Reques
 		result[i] = string(t)
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// apiTriggerScan triggers an immediate scan cycle.
+func (s *Server) apiTriggerScan(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "scheduler not available")
+		return
+	}
+
+	go s.deps.Scheduler.TriggerScan(context.Background())
+
+	s.logEvent("scan", "", "Manual scan triggered")
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "Scan started",
+	})
+}
+
+// apiLastScan returns the time of the last completed scan.
+func (s *Server) apiLastScan(w http.ResponseWriter, _ *http.Request) {
+	if s.deps.Scheduler == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"last_scan": nil})
+		return
+	}
+
+	t := s.deps.Scheduler.LastScanTime()
+	if t.IsZero() {
+		writeJSON(w, http.StatusOK, map[string]any{"last_scan": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"last_scan": t})
+}
+
+// webReplaceTag replaces the tag portion of an image reference.
+// e.g. webReplaceTag("dxflrs/garage:v2.1.0", "v2.2.0") → "dxflrs/garage:v2.2.0"
+func webReplaceTag(imageRef, newTag string) string {
+	if i := strings.LastIndex(imageRef, ":"); i >= 0 {
+		candidate := imageRef[i+1:]
+		if !strings.Contains(candidate, "/") {
+			return imageRef[:i+1] + newTag
+		}
+	}
+	return imageRef + ":" + newTag
 }
 
 // restoreSecrets returns the saved settings if the incoming settings contain any
