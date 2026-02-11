@@ -2,8 +2,9 @@
 
 [![CI](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml/badge.svg)](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/releases/latest)
+[![Docker Pulls](https://img.shields.io/docker/pulls/willluck/docker-sentinel)](https://hub.docker.com/r/willluck/docker-sentinel)
 [![Downloads](https://img.shields.io/github/downloads/Will-Luck/Docker-Sentinel/total)](https://github.com/Will-Luck/Docker-Sentinel/releases)
-[![Pull Requests](https://img.shields.io/github/issues-pr-closed/Will-Luck/Docker-Sentinel?label=PRs%20merged&color=blueviolet)](https://github.com/Will-Luck/Docker-Sentinel/pulls?q=is%3Apr+is%3Amerged)
+[![Last Commit](https://img.shields.io/github/last-commit/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/commits)
 [![GHCR](https://img.shields.io/badge/ghcr.io-docker--sentinel-blue?logo=github)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
 
 A container update orchestrator with a web dashboard, written in Go. Replaces Watchtower with per-container update policies, pre-update snapshots, post-update health validation, automatic rollback, and real-time notifications.
@@ -22,6 +23,7 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 ## Quick Start
 
 ```bash
+# From Docker Hub
 docker run -d \
   --name docker-sentinel \
   --restart unless-stopped \
@@ -29,7 +31,10 @@ docker run -d \
   -v sentinel-data:/data \
   -p 8080:8080 \
   -e SENTINEL_POLL_INTERVAL=6h \
-  ghcr.io/will-luck/docker-sentinel:latest
+  willluck/docker-sentinel:latest
+
+# Or from GitHub Container Registry
+# ghcr.io/will-luck/docker-sentinel:latest
 ```
 
 Then open `http://localhost:8080` in your browser.
