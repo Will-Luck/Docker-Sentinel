@@ -109,7 +109,15 @@
                                     <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
                                     {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
                                 </td>
-                                <td class="cell-image mono">{{.Image}}</td>
+                                <td class="cell-image mono" title="{{.Image}}">
+                                    {{if .NewestVersion}}
+                                        <span class="version-current">{{.Tag}}</span>
+                                        <span class="version-arrow">&rarr;</span>
+                                        <span class="version-new">{{.NewestVersion}}</span>
+                                    {{else}}
+                                        {{.Tag}}
+                                    {{end}}
+                                </td>
                                 <td>
                                     {{if .IsSelf}}
                                         <span class="policy-select policy-pinned policy-disabled" title="Self-protected">
@@ -146,7 +154,14 @@
                                 </td>
                                 <td>
                                     <div class="btn-group">
-                                        {{if and (ne .Policy "pinned") (not .IsSelf)}}
+                                        {{if .IsSelf}}
+                                            {{if .HasUpdate}}
+                                            <button class="btn btn-info"
+                                                    onclick="triggerSelfUpdate(event)">
+                                                Update Sentinel
+                                            </button>
+                                            {{end}}
+                                        {{else if and .HasUpdate (ne .Policy "pinned")}}
                                         <button class="btn btn-warning"
                                                 onclick="triggerUpdate('{{.Name}}', event)">
                                             Update

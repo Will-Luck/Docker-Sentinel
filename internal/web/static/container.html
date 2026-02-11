@@ -63,7 +63,8 @@
                 {{end}}
             </div>
             <div class="detail-actions">
-                {{if ne .Container.Policy "pinned"}}
+                {{if and (ne .Container.Policy "pinned") (not .Container.IsSelf)}}
+                <button class="btn" onclick="triggerCheck('{{.Container.Name}}', event)">Check for Updates</button>
                 <button class="btn btn-warning" onclick="triggerUpdate('{{.Container.Name}}', event)">Update Now</button>
                 {{end}}
                 {{if .HasSnapshot}}

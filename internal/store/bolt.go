@@ -17,6 +17,7 @@ var (
 	bucketQueue     = []byte("queue")
 	bucketPolicies  = []byte("policies")
 	bucketLogs      = []byte("logs")
+	bucketSettings  = []byte("settings")
 )
 
 // UpdateRecord represents a completed (or failed) container update.
@@ -46,7 +47,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -379,4 +380,27 @@ func (s *Store) DeleteOldSnapshots(name string, keep int) error {
 		}
 		return nil
 	})
+}
+
+// SaveSetting stores a setting key-value pair in the settings bucket.
+func (s *Store) SaveSetting(key, value string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		return b.Put([]byte(key), []byte(value))
+	})
+}
+
+// LoadSetting loads a setting by key from the settings bucket.
+// Returns empty string if the key doesn't exist.
+func (s *Store) LoadSetting(key string) (string, error) {
+	var val string
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		v := b.Get([]byte(key))
+		if v != nil {
+			val = string(v)
+		}
+		return nil
+	})
+	return val, err
 }

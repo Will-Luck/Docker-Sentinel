@@ -47,6 +47,79 @@ function initSettingsPage() {
         localStorage.setItem("sentinel-stacks", stackSelect.value);
         showToast("Stack default updated", "success");
     });
+
+    var pollSelect = document.getElementById("poll-interval");
+    if (pollSelect) {
+        // Fetch current interval from server settings.
+        fetch("/api/settings")
+            .then(function(r) { return r.json(); })
+            .then(function(settings) {
+                var current = settings["SENTINEL_POLL_INTERVAL"] || "6h0m0s";
+                // Normalise Go duration to match option values.
+                var normalised = current
+                    .replace("0m0s", "").replace("0s", "")
+                    .replace(/^0h/, "");
+                var matched = false;
+                for (var i = 0; i < pollSelect.options.length; i++) {
+                    if (pollSelect.options[i].value === normalised) {
+                        pollSelect.selectedIndex = i;
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched && normalised !== "") {
+                    // Set to custom and show the custom field.
+                    pollSelect.value = "custom";
+                    var customInput = document.getElementById("poll-custom");
+                    var customBtn = document.getElementById("poll-custom-btn");
+                    if (customInput) { customInput.style.display = ""; customInput.value = normalised; }
+                    if (customBtn) { customBtn.style.display = ""; }
+                }
+            })
+            .catch(function() {});
+    }
+}
+
+function onPollIntervalChange(value) {
+    var customInput = document.getElementById("poll-custom");
+    var customBtn = document.getElementById("poll-custom-btn");
+    if (value === "custom") {
+        if (customInput) customInput.style.display = "";
+        if (customBtn) customBtn.style.display = "";
+        return;
+    }
+    if (customInput) customInput.style.display = "none";
+    if (customBtn) customBtn.style.display = "none";
+    setPollInterval(value);
+}
+
+function applyCustomPollInterval() {
+    var input = document.getElementById("poll-custom");
+    if (!input || !input.value) return;
+    setPollInterval(input.value);
+}
+
+function setPollInterval(interval) {
+    fetch("/api/settings/poll-interval", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interval: interval })
+    })
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function (result) {
+            if (result.ok) {
+                showToast(result.data.message || "Poll interval updated", "success");
+            } else {
+                showToast(result.data.error || "Failed to update poll interval", "error");
+            }
+        })
+        .catch(function () {
+            showToast("Network error — could not update poll interval", "error");
+        });
 }
 
 /* ------------------------------------------------------------
@@ -158,6 +231,17 @@ function triggerUpdate(name, event) {
     );
 }
 
+function triggerCheck(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    apiPost(
+        "/api/check/" + encodeURIComponent(name),
+        null,
+        "Checking for updates on " + name,
+        "Failed to check for updates",
+        btn
+    );
+}
+
 function triggerRollback(name, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
@@ -175,6 +259,18 @@ function changePolicy(name, newPolicy) {
         { policy: newPolicy },
         "Policy changed to " + newPolicy + " for " + name,
         "Failed to change policy"
+    );
+}
+
+function triggerSelfUpdate(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    if (!confirm("This will restart Sentinel to apply the update. Continue?")) return;
+    apiPost(
+        "/api/self-update",
+        null,
+        "Self-update initiated — Sentinel will restart shortly",
+        "Failed to trigger self-update",
+        btn
     );
 }
 

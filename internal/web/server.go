@@ -18,19 +18,23 @@ var staticFS embed.FS
 
 // Dependencies defines what the web server needs from the rest of the application.
 type Dependencies struct {
-	Store     HistoryStore
-	Queue     UpdateQueue
-	Docker    ContainerLister
-	Updater   ContainerUpdater
-	Config    ConfigReader
-	EventBus  *events.Bus
-	Snapshots SnapshotStore
-	Rollback  ContainerRollback
-	Restarter ContainerRestarter
-	Registry  RegistryVersionChecker
-	Policy    PolicyStore
-	EventLog  EventLogger
-	Log       *slog.Logger
+	Store           HistoryStore
+	Queue           UpdateQueue
+	Docker          ContainerLister
+	Updater         ContainerUpdater
+	Config          ConfigReader
+	EventBus        *events.Bus
+	Snapshots       SnapshotStore
+	Rollback        ContainerRollback
+	Restarter       ContainerRestarter
+	Registry        RegistryVersionChecker
+	RegistryChecker RegistryChecker
+	Policy          PolicyStore
+	EventLog        EventLogger
+	Scheduler       SchedulerController
+	SettingsStore   SettingsStore
+	SelfUpdater     SelfUpdater
+	Log             *slog.Logger
 }
 
 // HistoryStore reads update history and maintenance state.
@@ -55,6 +59,11 @@ type RegistryVersionChecker interface {
 	ListVersions(ctx context.Context, imageRef string) ([]string, error)
 }
 
+// RegistryChecker performs a full registry check for a single container.
+type RegistryChecker interface {
+	CheckForUpdate(ctx context.Context, imageRef string) (updateAvailable bool, newerVersions []string, err error)
+}
+
 // PolicyStore reads and writes policy overrides in BoltDB.
 type PolicyStore interface {
 	GetPolicyOverride(name string) (string, bool)
@@ -67,6 +76,22 @@ type PolicyStore interface {
 type EventLogger interface {
 	AppendLog(entry LogEntry) error
 	ListLogs(limit int) ([]LogEntry, error)
+}
+
+// SelfUpdater triggers self-update via an ephemeral helper container.
+type SelfUpdater interface {
+	Update(ctx context.Context) error
+}
+
+// SchedulerController controls the scheduler's poll interval.
+type SchedulerController interface {
+	SetPollInterval(d time.Duration)
+}
+
+// SettingsStore reads and writes settings in BoltDB.
+type SettingsStore interface {
+	SaveSetting(key, value string) error
+	LoadSetting(key string) (string, error)
 }
 
 // LogEntry mirrors store.LogEntry.
@@ -99,6 +124,8 @@ type SnapshotEntry struct {
 // UpdateQueue manages pending manual approvals.
 type UpdateQueue interface {
 	List() []PendingUpdate
+	Get(name string) (PendingUpdate, bool)     // Returns a pending update without removing it.
+	Add(update PendingUpdate)                  // Adds or replaces a pending update.
 	Approve(name string) (PendingUpdate, bool) // Returns the update and removes it from the queue.
 	Remove(name string)
 }
@@ -111,6 +138,7 @@ type PendingUpdate struct {
 	CurrentDigest string    `json:"current_digest"`
 	RemoteDigest  string    `json:"remote_digest"`
 	DetectedAt    time.Time `json:"detected_at"`
+	NewerVersions []string  `json:"newer_versions,omitempty"`
 }
 
 // ContainerLister lists running containers.
@@ -241,9 +269,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/approve/{name}", s.apiApprove)
 	s.mux.HandleFunc("POST /api/reject/{name}", s.apiReject)
 	s.mux.HandleFunc("POST /api/update/{name}", s.apiUpdate)
+	s.mux.HandleFunc("POST /api/check/{name}", s.apiCheck)
 	s.mux.HandleFunc("POST /api/containers/{name}/restart", s.apiRestart)
 	s.mux.HandleFunc("GET /api/settings", s.apiSettings)
+	s.mux.HandleFunc("POST /api/settings/poll-interval", s.apiSetPollInterval)
 	s.mux.HandleFunc("GET /api/logs", s.apiLogs)
+	s.mux.HandleFunc("POST /api/self-update", s.apiSelfUpdate)
 
 	// Per-container HTML page.
 	s.mux.HandleFunc("GET /container/{name}", s.handleContainerDetail)

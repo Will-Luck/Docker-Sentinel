@@ -444,6 +444,10 @@ tbody td {
     white-space: nowrap;
 }
 
+.version-current { color: var(--fg-secondary); }
+.version-arrow { color: var(--warning); margin: 0 4px; }
+.version-new { color: var(--warning); font-weight: 600; }
+
 .cell-digest {
     max-width: 200px;
     overflow: hidden;
@@ -615,6 +619,7 @@ tbody td {
 .btn-group {
     display: flex;
     gap: var(--sp-2);
+    justify-content: center;
 }
 
 

@@ -136,3 +136,8 @@ func envDuration(key string, def time.Duration) time.Duration {
 	}
 	return d
 }
+
+// SetPollInterval updates the poll interval at runtime.
+func (c *Config) SetPollInterval(d time.Duration) {
+	c.PollInterval = d
+}
