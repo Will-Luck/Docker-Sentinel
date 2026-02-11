@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -27,14 +28,16 @@ type Queue struct {
 	pending map[string]PendingUpdate // keyed by container name
 	store   *store.Store
 	events  *events.Bus
+	log     *slog.Logger
 }
 
 // NewQueue creates a queue, optionally restoring from BoltDB.
-func NewQueue(s *store.Store, bus *events.Bus) *Queue {
+func NewQueue(s *store.Store, bus *events.Bus, log *slog.Logger) *Queue {
 	q := &Queue{
 		pending: make(map[string]PendingUpdate),
 		store:   s,
 		events:  bus,
+		log:     log,
 	}
 
 	// Restore from persistent storage.
@@ -150,5 +153,7 @@ func (q *Queue) persist() {
 	if err != nil {
 		return
 	}
-	_ = q.store.SavePendingQueue(data)
+	if err := q.store.SavePendingQueue(data); err != nil && q.log != nil {
+		q.log.Warn("failed to persist pending queue", "error", err)
+	}
 }

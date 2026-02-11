@@ -57,7 +57,6 @@ All configuration is via environment variables. Settings marked with * can also 
 | `SENTINEL_WEB_ENABLED` | `true` | Enable web dashboard |
 | `SENTINEL_WEB_PORT` | `8080` | Web dashboard port |
 | `SENTINEL_DOCKER_SOCK` | `/var/run/docker.sock` | Docker socket path |
-| `SENTINEL_DOCKER_CONFIG` | `/root/.docker/config.json` | Docker config for private registry auth |
 | `SENTINEL_GOTIFY_URL` | | Gotify server URL (legacy — prefer web UI) |
 | `SENTINEL_GOTIFY_TOKEN` | | Gotify application token (legacy — prefer web UI) |
 | `SENTINEL_WEBHOOK_URL` | | Webhook URL for JSON POST (legacy — prefer web UI) |

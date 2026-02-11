@@ -3,9 +3,11 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
@@ -20,6 +22,26 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 )
+
+// ErrUpdateInProgress is returned when an update is attempted on a container
+// that already has an update in progress.
+var ErrUpdateInProgress = fmt.Errorf("update already in progress")
+
+// finaliseError wraps an error with the stage at which finaliseContainer failed.
+// Stage values: "inspect", "stop", "remove", "create", "start".
+type finaliseError struct {
+	stage string
+	err   error
+}
+
+func (e *finaliseError) Error() string { return fmt.Sprintf("finalise %s: %v", e.stage, e.err) }
+func (e *finaliseError) Unwrap() error { return e.err }
+
+// finaliseStageIsDestructive returns true if the failure stage means the
+// container was already removed and is likely down.
+func finaliseStageIsDestructive(stage string) bool {
+	return stage == "remove" || stage == "create" || stage == "start"
+}
 
 // ScanResult summarises a single scan cycle.
 type ScanResult struct {
@@ -44,6 +66,7 @@ type Updater struct {
 	notifier *notify.Multi
 	events   *events.Bus
 	settings SettingsReader
+	updating sync.Map // map[string]*sync.Mutex — per-container update locks
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -64,6 +87,39 @@ func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queu
 // SetSettingsReader attaches a settings reader for runtime filter checks.
 func (u *Updater) SetSettingsReader(sr SettingsReader) {
 	u.settings = sr
+}
+
+// tryLock attempts to acquire the per-container update lock.
+// Returns false if the container already has an update in progress.
+func (u *Updater) tryLock(name string) bool {
+	mu := &sync.Mutex{}
+	actual, _ := u.updating.LoadOrStore(name, mu)
+	return actual.(*sync.Mutex).TryLock()
+}
+
+// unlock releases the per-container update lock and removes the entry
+// from the map to prevent stale mutex accumulation. This is safe because
+// tryLock uses LoadOrStore (atomic) and the per-container lock ensures
+// only one goroutine holds the lock at a time.
+func (u *Updater) unlock(name string) {
+	if val, ok := u.updating.Load(name); ok {
+		val.(*sync.Mutex).Unlock()
+		u.updating.Delete(name)
+	}
+}
+
+// IsUpdating reports whether a container currently has an update in progress.
+func (u *Updater) IsUpdating(name string) bool {
+	val, ok := u.updating.Load(name)
+	if !ok {
+		return false
+	}
+	mu := val.(*sync.Mutex)
+	if mu.TryLock() {
+		mu.Unlock()
+		return false
+	}
+	return true
 }
 
 // loadFilters reads filter patterns from the settings store.
@@ -134,7 +190,7 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 		name := containerName(c)
 		labels := c.Labels
 		tag := registry.ExtractTag(c.Image)
-		resolved := ResolvePolicy(u.store, labels, name, tag, u.cfg.DefaultPolicy)
+		resolved := ResolvePolicy(u.store, labels, name, tag, u.cfg.DefaultPolicy())
 		policy := docker.Policy(resolved.Policy)
 
 		// Skip pinned containers.
@@ -226,7 +282,13 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 
 // UpdateContainer performs the full update lifecycle for a single container:
 // snapshot → pull → stop → remove → create → start → validate → (rollback on failure).
+// Returns ErrUpdateInProgress if the container already has an update running.
 func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
+	if !u.tryLock(name) {
+		return ErrUpdateInProgress
+	}
+	defer u.unlock(name)
+
 	start := u.clock.Now()
 
 	// 1. Inspect and snapshot the current container.
@@ -241,6 +303,10 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	}
 	if err := u.store.SaveSnapshot(name, snapshotData); err != nil {
 		return fmt.Errorf("save snapshot for %s: %w", name, err)
+	}
+
+	if inspect.Config == nil {
+		return fmt.Errorf("inspect %s: container config is nil", name)
 	}
 
 	oldImage := inspect.Config.Image
@@ -262,7 +328,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	// 3. Pull the new image.
 	u.log.Info("pulling image", "name", name, "image", oldImage)
 	if err := u.docker.PullImage(ctx, oldImage); err != nil {
-		_ = u.store.SetMaintenance(name, false)
+		if mErr := u.store.SetMaintenance(name, false); mErr != nil {
+			u.log.Warn("failed to clear maintenance flag after pull failure", "name", name, "error", mErr)
+		}
 		return fmt.Errorf("pull image for %s: %w", name, err)
 	}
 
@@ -275,7 +343,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 		u.log.Warn("stop failed, proceeding with force remove", "name", name, "error", err)
 	}
 	if err := u.docker.RemoveContainer(ctx, id); err != nil {
-		_ = u.store.SetMaintenance(name, false)
+		if mErr := u.store.SetMaintenance(name, false); mErr != nil {
+			u.log.Warn("failed to clear maintenance flag after remove failure", "name", name, "error", mErr)
+		}
 		return fmt.Errorf("remove old container %s: %w", name, err)
 	}
 
@@ -303,9 +373,10 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	}
 
 	// 6. Wait grace period and validate.
-	u.log.Info("waiting grace period", "name", name, "duration", u.cfg.GracePeriod)
+	gracePeriod := u.cfg.GracePeriod()
+	u.log.Info("waiting grace period", "name", name, "duration", gracePeriod)
 	select {
-	case <-u.clock.After(u.cfg.GracePeriod):
+	case <-u.clock.After(gracePeriod):
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -328,18 +399,90 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 	}
 
 	// 7. Remove maintenance label for Guardian compatibility.
-	_, err = u.finaliseContainer(ctx, newID, name)
-	if err != nil {
-		u.log.Error("failed to finalise container (maintenance label may persist)", "name", name, "error", err)
-		// Don't rollback — the container is working, just has an extra label.
+	finaliseNewID, finaliseErr := u.finaliseContainer(ctx, newID, name)
+	if finaliseErr != nil {
+		var fErr *finaliseError
+		if errors.As(finaliseErr, &fErr) && finaliseStageIsDestructive(fErr.stage) {
+			// Container is likely DOWN — old was removed but new create/start failed.
+			u.log.Error("finalise failed at destructive stage, container is likely down",
+				"name", name, "stage", fErr.stage, "error", fErr.err)
+
+			// On start failure the new container exists but isn't running — remove it
+			// before rollback to avoid name conflict.
+			if fErr.stage == "start" {
+				if rmErr := u.docker.RemoveContainer(ctx, finaliseNewID); rmErr != nil {
+					u.log.Warn("failed to remove broken finalise container before rollback",
+						"name", name, "error", rmErr)
+				}
+			}
+
+			u.doRollback(ctx, name, snapshotData, start)
+
+			// Record as failed — never as success.
+			duration := u.clock.Since(start)
+			if recErr := u.store.RecordUpdate(store.UpdateRecord{
+				Timestamp:     u.clock.Now(),
+				ContainerName: name,
+				OldImage:      oldImage,
+				OldDigest:     extractDigestForRecord(inspect),
+				NewImage:      oldImage,
+				NewDigest:     newDigest,
+				Outcome:       "failed",
+				Duration:      duration,
+				Error:         finaliseErr.Error(),
+			}); recErr != nil {
+				u.log.Warn("failed to persist finalise failure record", "name", name, "error", recErr)
+			}
+
+			u.publishEvent(events.EventContainerUpdate, name, "finalise failed — rollback attempted")
+			u.notifier.Notify(ctx, notify.Event{
+				Type:          notify.EventUpdateFailed,
+				ContainerName: name,
+				OldImage:      oldImage,
+				Error:         finaliseErr.Error(),
+				Timestamp:     u.clock.Now(),
+			})
+			return finaliseErr
+		}
+
+		// Non-destructive stage (inspect or stop) — container is likely still
+		// running with the old image. Don't rollback but don't record success.
+		u.log.Warn("finalise failed at non-destructive stage, container may still be running with maintenance label",
+			"name", name, "error", finaliseErr)
+
+		if mErr := u.store.SetMaintenance(name, false); mErr != nil {
+			u.log.Warn("failed to clear maintenance flag", "name", name, "error", mErr)
+		}
+		u.queue.Remove(name)
+
+		duration := u.clock.Since(start)
+		if recErr := u.store.RecordUpdate(store.UpdateRecord{
+			Timestamp:     u.clock.Now(),
+			ContainerName: name,
+			OldImage:      oldImage,
+			OldDigest:     extractDigestForRecord(inspect),
+			NewImage:      oldImage,
+			NewDigest:     newDigest,
+			Outcome:       "finalise_warning",
+			Duration:      duration,
+			Error:         finaliseErr.Error(),
+		}); recErr != nil {
+			u.log.Warn("failed to persist finalise warning record", "name", name, "error", recErr)
+		}
+
+		u.publishEvent(events.EventContainerUpdate, name, "update complete with finalise warning")
+		return finaliseErr
 	}
 
 	// 8. Success — clear maintenance and record.
-	_ = u.store.SetMaintenance(name, false)
+	_ = finaliseNewID // new ID tracked internally; not needed further
+	if err := u.store.SetMaintenance(name, false); err != nil {
+		u.log.Warn("failed to clear maintenance flag", "name", name, "error", err)
+	}
 	u.queue.Remove(name)
 
 	duration := u.clock.Since(start)
-	_ = u.store.RecordUpdate(store.UpdateRecord{
+	if err := u.store.RecordUpdate(store.UpdateRecord{
 		Timestamp:     u.clock.Now(),
 		ContainerName: name,
 		OldImage:      oldImage,
@@ -348,7 +491,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name string) error {
 		NewDigest:     newDigest,
 		Outcome:       "success",
 		Duration:      duration,
-	})
+	}); err != nil {
+		u.log.Warn("failed to persist update record", "name", name, "error", err)
+	}
 
 	u.notifier.Notify(ctx, notify.Event{
 		Type:          notify.EventUpdateSucceeded,
@@ -401,15 +546,19 @@ func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []by
 			Timestamp:     u.clock.Now(),
 		})
 	}
-	_ = u.store.SetMaintenance(name, false)
+	if err := u.store.SetMaintenance(name, false); err != nil {
+		u.log.Warn("failed to clear maintenance flag after rollback", "name", name, "error", err)
+	}
 
-	_ = u.store.RecordUpdate(store.UpdateRecord{
+	if err := u.store.RecordUpdate(store.UpdateRecord{
 		Timestamp:     u.clock.Now(),
 		ContainerName: name,
 		Outcome:       "rollback",
 		Duration:      u.clock.Since(start),
 		Error:         "update validation failed",
-	})
+	}); err != nil {
+		u.log.Warn("failed to persist rollback record", "name", name, "error", err)
+	}
 }
 
 // containerName extracts the container name, stripping the leading /.
@@ -456,7 +605,11 @@ func addMaintenanceLabel(cfg *container.Config) {
 func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (string, error) {
 	inspect, err := u.docker.InspectContainer(ctx, id)
 	if err != nil {
-		return id, fmt.Errorf("inspect for finalise: %w", err)
+		return id, &finaliseError{stage: "inspect", err: err}
+	}
+
+	if inspect.Config == nil {
+		return id, &finaliseError{stage: "inspect", err: fmt.Errorf("container config is nil for %s", name)}
 	}
 
 	// If the maintenance label is not present, nothing to do.
@@ -473,20 +626,20 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 	u.log.Info("finalising container (removing maintenance label)", "name", name)
 
 	if err := u.docker.StopContainer(ctx, id, 10); err != nil {
-		return id, fmt.Errorf("stop for finalise: %w", err)
+		return id, &finaliseError{stage: "stop", err: err}
 	}
 
 	if err := u.docker.RemoveContainer(ctx, id); err != nil {
-		return id, fmt.Errorf("remove for finalise: %w", err)
+		return id, &finaliseError{stage: "remove", err: err}
 	}
 
 	newID, err := u.docker.CreateContainer(ctx, name, cleanConfig, hostConfig, netConfig)
 	if err != nil {
-		return id, fmt.Errorf("create for finalise: %w", err)
+		return id, &finaliseError{stage: "create", err: err}
 	}
 
 	if err := u.docker.StartContainer(ctx, newID); err != nil {
-		return newID, fmt.Errorf("start for finalise: %w", err)
+		return newID, &finaliseError{stage: "start", err: err}
 	}
 
 	u.log.Info("finalised container", "name", name, "new_id", truncateID(newID))

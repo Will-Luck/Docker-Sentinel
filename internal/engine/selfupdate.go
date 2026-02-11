@@ -56,6 +56,10 @@ func (su *SelfUpdater) Update(ctx context.Context) error {
 		return fmt.Errorf("inspect self: %w", err)
 	}
 
+	if inspect.Config == nil {
+		return fmt.Errorf("inspect %s: container config is nil", selfName)
+	}
+
 	imageRef := inspect.Config.Image
 	su.log.Info("self-update initiated", "name", selfName, "image", imageRef)
 
