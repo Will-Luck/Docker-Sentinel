@@ -118,6 +118,9 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 	for _, sv := range newer {
 		result.NewerVersions = append(result.NewerVersions, sv.Raw)
 	}
+	if len(newer) > 0 {
+		result.UpdateAvailable = true
+	}
 
 	return result
 }

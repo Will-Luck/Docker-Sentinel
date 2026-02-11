@@ -196,7 +196,7 @@ func TestUpdateContainerRollbackOnValidationFailure(t *testing.T) {
 	}
 
 	u, _ := newTestUpdater(t, mock)
-	err := u.UpdateContainer(context.Background(), "aaa", "nginx")
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
 	if err == nil {
 		t.Fatal("expected error from failed validation")
 	}
@@ -391,7 +391,7 @@ func TestUpdateContainerReturnsErrUpdateInProgress(t *testing.T) {
 	}
 
 	// Second call should return ErrUpdateInProgress.
-	err := u.UpdateContainer(context.Background(), "aaa", "nginx")
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
 	if err != ErrUpdateInProgress {
 		t.Fatalf("expected ErrUpdateInProgress, got: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestUpdateFinaliseStopFailureRecordsWarning(t *testing.T) {
 	// Step 4 stops "aaa" (different ID), so stopErr only affects finalise.
 	mock.stopErr["new-nginx"] = fmt.Errorf("stop timeout")
 
-	err := u.UpdateContainer(context.Background(), "aaa", "nginx")
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
 	if err == nil {
 		t.Fatal("expected error from finalise stop failure")
 	}
@@ -631,7 +631,7 @@ func TestUpdateFinaliseRemoveFailureTriggersRollback(t *testing.T) {
 	// removeErr["new-nginx"] only affects finalise.
 	mock.removeErr["new-nginx"] = fmt.Errorf("device busy")
 
-	err := u.UpdateContainer(context.Background(), "aaa", "nginx")
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
 	if err == nil {
 		t.Fatal("expected error from finalise remove failure")
 	}

@@ -52,8 +52,8 @@
                     </select>
                 </div>
                 <div class="detail-item">
-                    <span class="detail-label">Maintenance</span>
-                    <span>{{if .Container.Maintenance}}Yes{{else}}No{{end}}</span>
+                    <span class="detail-label">Container ID</span>
+                    <span class="mono" title="{{.Container.ID}}">{{truncDigest .Container.ID}}</span>
                 </div>
                 {{if .ChangelogURL}}
                 <div class="detail-item">
