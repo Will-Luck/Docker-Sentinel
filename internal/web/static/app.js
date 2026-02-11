@@ -48,36 +48,57 @@ function initSettingsPage() {
         showToast("Stack default updated", "success");
     });
 
-    var pollSelect = document.getElementById("poll-interval");
-    if (pollSelect) {
-        // Fetch current interval from server settings.
-        fetch("/api/settings")
-            .then(function(r) { return r.json(); })
-            .then(function(settings) {
-                var current = settings["SENTINEL_POLL_INTERVAL"] || "6h0m0s";
-                // Normalise Go duration to match option values.
-                var normalised = current
-                    .replace("0m0s", "").replace("0s", "")
-                    .replace(/^0h/, "");
-                var matched = false;
-                for (var i = 0; i < pollSelect.options.length; i++) {
-                    if (pollSelect.options[i].value === normalised) {
-                        pollSelect.selectedIndex = i;
-                        matched = true;
-                        break;
-                    }
-                }
+    // Fetch all settings and populate controls.
+    fetch("/api/settings")
+        .then(function(r) { return r.json(); })
+        .then(function(settings) {
+            // Poll interval.
+            var pollSelect = document.getElementById("poll-interval");
+            if (pollSelect) {
+                var current = settings["SENTINEL_POLL_INTERVAL"] || settings["poll_interval"] || "6h0m0s";
+                var normalised = normaliseDuration(current);
+                var matched = selectOptionByValue(pollSelect, normalised);
                 if (!matched && normalised !== "") {
-                    // Set to custom and show the custom field.
                     pollSelect.value = "custom";
-                    var customInput = document.getElementById("poll-custom");
-                    var customBtn = document.getElementById("poll-custom-btn");
-                    if (customInput) { customInput.style.display = ""; customInput.value = normalised; }
-                    if (customBtn) { customBtn.style.display = ""; }
+                    populateCustomDuration("poll", normalised);
                 }
-            })
-            .catch(function() {});
-    }
+            }
+
+            // Default policy.
+            var policySelect = document.getElementById("default-policy");
+            if (policySelect) {
+                var policy = settings["default_policy"] || settings["SENTINEL_DEFAULT_POLICY"] || "manual";
+                selectOptionByValue(policySelect, policy);
+            }
+
+            // Grace period.
+            var graceSelect = document.getElementById("grace-period");
+            if (graceSelect) {
+                var grace = settings["grace_period"] || settings["SENTINEL_GRACE_PERIOD"] || "30s";
+                var graceNorm = normaliseDuration(grace);
+                var graceMatched = selectOptionByValue(graceSelect, graceNorm);
+                if (!graceMatched && graceNorm !== "") {
+                    graceSelect.value = "custom";
+                    populateCustomDuration("grace", graceNorm);
+                }
+            }
+
+            // Pause toggle.
+            var pauseToggle = document.getElementById("pause-toggle");
+            if (pauseToggle) {
+                var paused = settings["paused"] === "true";
+                pauseToggle.checked = paused;
+                updatePauseToggleText(paused);
+            }
+
+            // Container filters.
+            var filtersArea = document.getElementById("container-filters");
+            if (filtersArea) {
+                var filters = settings["filters"] || "";
+                filtersArea.value = filters;
+            }
+        })
+        .catch(function() {});
 
     // Tab navigation.
     var tabBtns = document.querySelectorAll(".tab-btn");
@@ -85,13 +106,23 @@ function initSettingsPage() {
     if (tabBtns.length > 0) {
         var savedTab = localStorage.getItem("sentinel-settings-tab");
         if (savedTab) {
+            // Validate saved tab still exists (tabs were renamed).
+            var tabExists = false;
             for (var i = 0; i < tabBtns.length; i++) {
-                var isTarget = tabBtns[i].getAttribute("data-tab") === savedTab;
-                tabBtns[i].classList.toggle("active", isTarget);
-                tabBtns[i].setAttribute("aria-selected", isTarget ? "true" : "false");
+                if (tabBtns[i].getAttribute("data-tab") === savedTab) {
+                    tabExists = true;
+                    break;
+                }
             }
-            for (var i = 0; i < tabPanels.length; i++) {
-                tabPanels[i].classList.toggle("active", tabPanels[i].id === "tab-" + savedTab);
+            if (tabExists) {
+                for (var i = 0; i < tabBtns.length; i++) {
+                    var isTarget = tabBtns[i].getAttribute("data-tab") === savedTab;
+                    tabBtns[i].classList.toggle("active", isTarget);
+                    tabBtns[i].setAttribute("aria-selected", isTarget ? "true" : "false");
+                }
+                for (var i = 0; i < tabPanels.length; i++) {
+                    tabPanels[i].classList.toggle("active", tabPanels[i].id === "tab-" + savedTab);
+                }
             }
         }
 
@@ -115,22 +146,20 @@ function initSettingsPage() {
 }
 
 function onPollIntervalChange(value) {
-    var customInput = document.getElementById("poll-custom");
-    var customBtn = document.getElementById("poll-custom-btn");
+    var wrap = document.getElementById("poll-custom-wrap");
     if (value === "custom") {
-        if (customInput) customInput.style.display = "";
-        if (customBtn) customBtn.style.display = "";
+        if (wrap) wrap.style.display = "";
         return;
     }
-    if (customInput) customInput.style.display = "none";
-    if (customBtn) customBtn.style.display = "none";
+    if (wrap) wrap.style.display = "none";
     setPollInterval(value);
 }
 
 function applyCustomPollInterval() {
-    var input = document.getElementById("poll-custom");
-    if (!input || !input.value) return;
-    setPollInterval(input.value);
+    var unit = document.getElementById("poll-custom-unit");
+    var val = document.getElementById("poll-custom-value");
+    if (!unit || !val || !unit.value || !val.value) return;
+    setPollInterval(val.value + unit.value);
 }
 
 function setPollInterval(interval) {
@@ -154,6 +183,272 @@ function setPollInterval(interval) {
         .catch(function () {
             showToast("Network error — could not update poll interval", "error");
         });
+}
+
+/* ------------------------------------------------------------
+   2a. Settings Helpers
+   ------------------------------------------------------------ */
+
+/**
+ * Normalise a Go duration string (e.g. "6h0m0s") to a compact form (e.g. "6h").
+ * Strips trailing zero components.
+ */
+function normaliseDuration(dur) {
+    return dur
+        .replace("0m0s", "").replace("0s", "")
+        .replace(/^0h/, "");
+}
+
+/**
+ * Enable the custom duration value input when a unit is chosen.
+ * prefix is "poll" or "grace".
+ */
+function onCustomUnitChange(prefix) {
+    var unitEl = document.getElementById(prefix + "-custom-unit");
+    var valEl = document.getElementById(prefix + "-custom-value");
+    var btnEl = document.getElementById(prefix + "-custom-btn");
+    var hasUnit = unitEl && unitEl.value !== "";
+    if (valEl) {
+        valEl.disabled = !hasUnit;
+        if (hasUnit) valEl.focus();
+    }
+    if (btnEl) btnEl.disabled = !hasUnit;
+}
+
+/**
+ * Parse a normalised Go duration (e.g. "45s", "2m", "6h") into {value, unit}.
+ * Returns null if it can't parse.
+ */
+function parseDuration(dur) {
+    var match = dur.match(/^(\d+)(s|m|h)$/);
+    if (!match) return null;
+    return { value: match[1], unit: match[2] };
+}
+
+/**
+ * Populate a custom duration picker (unit select + number input) with parsed values.
+ */
+function populateCustomDuration(prefix, normalised) {
+    var wrap = document.getElementById(prefix + "-custom-wrap");
+    var unitEl = document.getElementById(prefix + "-custom-unit");
+    var valEl = document.getElementById(prefix + "-custom-value");
+    var btnEl = document.getElementById(prefix + "-custom-btn");
+    if (!wrap) return;
+
+    wrap.style.display = "";
+    var parsed = parseDuration(normalised);
+    if (parsed && unitEl && valEl) {
+        unitEl.value = parsed.unit;
+        valEl.value = parsed.value;
+        valEl.disabled = false;
+        if (btnEl) btnEl.disabled = false;
+    }
+}
+
+/**
+ * Select a dropdown option by value. Returns true if matched.
+ */
+function selectOptionByValue(selectEl, value) {
+    for (var i = 0; i < selectEl.options.length; i++) {
+        if (selectEl.options[i].value === value) {
+            selectEl.selectedIndex = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+function updatePauseToggleText(paused) {
+    var text = document.getElementById("pause-toggle-text");
+    if (text) {
+        text.textContent = paused ? "Paused" : "Off";
+    }
+}
+
+function setDefaultPolicy(value) {
+    fetch("/api/settings/default-policy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ policy: value })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Default policy updated", "success");
+            } else {
+                showToast(result.data.error || "Failed to update default policy", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not update default policy", "error");
+        });
+}
+
+function onGracePeriodChange(value) {
+    var wrap = document.getElementById("grace-custom-wrap");
+    if (value === "custom") {
+        if (wrap) wrap.style.display = "";
+        return;
+    }
+    if (wrap) wrap.style.display = "none";
+    setGracePeriod(value);
+}
+
+function applyCustomGracePeriod() {
+    var unit = document.getElementById("grace-custom-unit");
+    var val = document.getElementById("grace-custom-value");
+    if (!unit || !val || !unit.value || !val.value) return;
+    setGracePeriod(val.value + unit.value);
+}
+
+function setGracePeriod(duration) {
+    fetch("/api/settings/grace-period", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration: duration })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Grace period updated", "success");
+            } else {
+                showToast(result.data.error || "Failed to update grace period", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not update grace period", "error");
+        });
+}
+
+function setPauseState(paused) {
+    updatePauseToggleText(paused);
+    fetch("/api/settings/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paused: paused })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || (paused ? "Scanning paused" : "Scanning resumed"), "success");
+            } else {
+                showToast(result.data.error || "Failed to update pause state", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not update pause state", "error");
+        });
+}
+
+function saveFilters() {
+    var textarea = document.getElementById("container-filters");
+    if (!textarea) return;
+
+    var lines = textarea.value.split("\n");
+    var patterns = [];
+    for (var i = 0; i < lines.length; i++) {
+        var trimmed = lines[i].replace(/^\s+|\s+$/g, "");
+        if (trimmed !== "") {
+            patterns.push(trimmed);
+        }
+    }
+
+    fetch("/api/settings/filters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patterns: patterns })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Filters saved", "success");
+            } else {
+                showToast(result.data.error || "Failed to save filters", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not save filters", "error");
+        });
+}
+
+function toggleCollapsible(headerEl) {
+    var expanded = headerEl.getAttribute("aria-expanded") === "true";
+    headerEl.setAttribute("aria-expanded", expanded ? "false" : "true");
+    var body = headerEl.nextElementSibling;
+    if (body) {
+        body.style.display = expanded ? "none" : "";
+    }
+}
+
+/* ------------------------------------------------------------
+   2b. Dashboard Pause Banner
+   ------------------------------------------------------------ */
+
+function initPauseBanner() {
+    var banner = document.getElementById("pause-banner");
+    if (!banner) return;
+
+    fetch("/api/settings")
+        .then(function(r) { return r.json(); })
+        .then(function(settings) {
+            if (settings["paused"] === "true") {
+                banner.style.display = "";
+            }
+        })
+        .catch(function() {});
+}
+
+function resumeScanning() {
+    var banner = document.getElementById("pause-banner");
+    fetch("/api/settings/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paused: false })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                if (banner) banner.style.display = "none";
+                showToast("Scanning resumed", "success");
+            } else {
+                showToast(result.data.error || "Failed to resume scanning", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not resume scanning", "error");
+        });
+}
+
+function checkPauseState() {
+    var banner = document.getElementById("pause-banner");
+    if (!banner) return;
+
+    fetch("/api/settings")
+        .then(function(r) { return r.json(); })
+        .then(function(settings) {
+            banner.style.display = settings["paused"] === "true" ? "" : "none";
+        })
+        .catch(function() {});
 }
 
 /* ------------------------------------------------------------
@@ -759,7 +1054,13 @@ function initSSE() {
     });
 
     es.addEventListener("scan_complete", function () {
+        // Re-check pause state on scan events.
+        checkPauseState();
         scheduleReload();
+    });
+
+    es.addEventListener("settings_change", function () {
+        checkPauseState();
     });
 
     es.addEventListener("policy_change", function (e) {
@@ -790,6 +1091,7 @@ function initSSE() {
 document.addEventListener("DOMContentLoaded", function () {
     initTheme();
     initSSE();
+    initPauseBanner();
 
     // Apply stack default preference.
     var stackPref = localStorage.getItem("sentinel-stacks") || "collapsed";
@@ -909,6 +1211,15 @@ document.addEventListener("DOMContentLoaded", function () {
 /* ------------------------------------------------------------
    13. Notification Configuration — Multi-channel System
    ------------------------------------------------------------ */
+
+var EVENT_TYPES = [
+    { key: "update_available", label: "Update Available" },
+    { key: "update_started", label: "Update Started" },
+    { key: "update_complete", label: "Update Complete" },
+    { key: "update_failed", label: "Update Failed" },
+    { key: "rollback", label: "Rollback" },
+    { key: "state_change", label: "State Change" }
+];
 
 var PROVIDER_FIELDS = {
     gotify: [
@@ -1082,6 +1393,49 @@ function buildChannelCard(index) {
     }
 
     card.appendChild(fieldsDiv);
+
+    // Event filter pills.
+    var enabledEvents = ch.events;
+    // If events is null/undefined/empty, all events are enabled by default.
+    var allEnabled = !enabledEvents || enabledEvents.length === 0;
+
+    var pillsWrap = document.createElement("div");
+    pillsWrap.className = "event-pills";
+
+    var pillsLabel = document.createElement("div");
+    pillsLabel.className = "event-pills-label";
+    pillsLabel.textContent = "Event filters";
+    pillsWrap.appendChild(pillsLabel);
+
+    for (var e = 0; e < EVENT_TYPES.length; e++) {
+        var evtType = EVENT_TYPES[e];
+        var pill = document.createElement("button");
+        pill.type = "button";
+        pill.className = "event-pill";
+        pill.textContent = evtType.label;
+        pill.setAttribute("data-event", evtType.key);
+
+        var isActive = allEnabled;
+        if (!allEnabled) {
+            for (var k = 0; k < enabledEvents.length; k++) {
+                if (enabledEvents[k] === evtType.key) {
+                    isActive = true;
+                    break;
+                }
+            }
+        }
+        if (isActive) {
+            pill.classList.add("active");
+        }
+
+        pill.addEventListener("click", function() {
+            this.classList.toggle("active");
+        });
+
+        pillsWrap.appendChild(pill);
+    }
+
+    card.appendChild(pillsWrap);
     return card;
 }
 
@@ -1092,12 +1446,18 @@ function addChannel() {
     var type = select.value;
     var name = type.charAt(0).toUpperCase() + type.slice(1);
 
+    var defaultEvents = [];
+    for (var i = 0; i < EVENT_TYPES.length; i++) {
+        defaultEvents.push(EVENT_TYPES[i].key);
+    }
+
     notificationChannels.push({
         id: "new-" + Date.now() + "-" + Math.random().toString(36).substr(2, 6),
         type: type,
         name: name,
         enabled: true,
-        settings: "{}"
+        settings: "{}",
+        events: defaultEvents
     });
 
     select.value = "";
@@ -1145,6 +1505,16 @@ function collectChannelsFromDOM() {
         }
 
         notificationChannels[idx].settings = JSON.stringify(settings);
+
+        // Collect event pill states.
+        var pills = cards[i].querySelectorAll(".event-pill");
+        var events = [];
+        for (var p = 0; p < pills.length; p++) {
+            if (pills[p].classList.contains("active")) {
+                events.push(pills[p].getAttribute("data-event"));
+            }
+        }
+        notificationChannels[idx].events = events;
     }
 }
 

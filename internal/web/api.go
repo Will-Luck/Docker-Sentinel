@@ -254,9 +254,23 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiSettings returns the current configuration values.
+// apiSettings returns the current configuration values, merged with runtime overrides from BoltDB.
 func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.deps.Config.Values())
+	values := s.deps.Config.Values()
+
+	// Overlay runtime settings from BoltDB (these take precedence over env config).
+	if s.deps.SettingsStore != nil {
+		dbSettings, err := s.deps.SettingsStore.GetAllSettings()
+		if err != nil {
+			s.deps.Log.Warn("failed to load runtime settings", "error", err)
+		} else {
+			for k, v := range dbSettings {
+				values[k] = v
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, values)
 }
 
 // apiContainerDetail returns per-container detail as JSON.
@@ -782,6 +796,154 @@ func (s *Server) apiSetPollInterval(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apiSetDefaultPolicy sets the default policy at runtime.
+func (s *Server) apiSetDefaultPolicy(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Policy string `json:"policy"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	switch body.Policy {
+	case "auto", "manual", "pinned":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "policy must be auto, manual, or pinned")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("default_policy", body.Policy); err != nil {
+		s.deps.Log.Error("failed to save default policy", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save default policy")
+		return
+	}
+
+	s.logEvent("settings", "", "Default policy changed to "+body.Policy)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "default policy set to " + body.Policy,
+	})
+}
+
+// apiSetGracePeriod sets the grace period at runtime.
+func (s *Server) apiSetGracePeriod(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Duration string `json:"duration"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	d, err := time.ParseDuration(body.Duration)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid duration format: "+body.Duration)
+		return
+	}
+
+	if d < 0 {
+		writeError(w, http.StatusBadRequest, "grace period must not be negative")
+		return
+	}
+	if d > 10*time.Minute {
+		writeError(w, http.StatusBadRequest, "grace period must be at most 10 minutes")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("grace_period", d.String()); err != nil {
+		s.deps.Log.Error("failed to save grace period", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save grace period")
+		return
+	}
+
+	s.logEvent("settings", "", "Grace period changed to "+d.String())
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message":  "grace period set to " + d.String(),
+		"duration": d.String(),
+	})
+}
+
+// apiSetPause pauses or unpauses the scan scheduler.
+func (s *Server) apiSetPause(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Paused bool `json:"paused"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	value := "false"
+	if body.Paused {
+		value = "true"
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("paused", value); err != nil {
+		s.deps.Log.Error("failed to save pause state", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save pause state")
+		return
+	}
+
+	action := "unpaused"
+	if body.Paused {
+		action = "paused"
+	}
+	s.logEvent("settings", "", "Scheduler "+action)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "scheduler " + action,
+		"paused":  value,
+	})
+}
+
+// apiSetFilters sets container name filter patterns for scan exclusion.
+func (s *Server) apiSetFilters(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Patterns []string `json:"patterns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	value := strings.Join(body.Patterns, "\n")
+
+	if err := s.deps.SettingsStore.SaveSetting("filters", value); err != nil {
+		s.deps.Log.Error("failed to save filters", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save filters")
+		return
+	}
+
+	s.logEvent("settings", "", "Scan filters updated")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "filters updated",
+	})
+}
+
 // apiSelfUpdate triggers a self-update via an ephemeral helper container.
 func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	if s.deps.SelfUpdater == nil {
@@ -987,7 +1149,7 @@ func (s *Server) apiSaveNotifications(w http.ResponseWriter, r *http.Request) {
 			if !ch.Enabled {
 				continue
 			}
-			n, err := notify.BuildNotifier(ch)
+			n, err := notify.BuildFilteredNotifier(ch)
 			if err != nil {
 				s.deps.Log.Warn("failed to build notifier", "channel", ch.Name, "type", string(ch.Type), "error", err)
 				continue
@@ -1063,6 +1225,16 @@ func (s *Server) apiTestNotification(w http.ResponseWriter, r *http.Request) {
 		"status":  "ok",
 		"message": "test notification sent",
 	})
+}
+
+// apiNotificationEventTypes returns the list of event types available for per-channel filtering.
+func (s *Server) apiNotificationEventTypes(w http.ResponseWriter, _ *http.Request) {
+	types := notify.AllEventTypes()
+	result := make([]string, len(types))
+	for i, t := range types {
+		result[i] = string(t)
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 // restoreSecrets returns the saved settings if the incoming settings contain any

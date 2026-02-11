@@ -407,6 +407,26 @@ func (s *Store) LoadSetting(key string) (string, error) {
 	return val, err
 }
 
+// GetAllSettings returns all key-value pairs from the settings bucket.
+// Keys used internally (notification_config, notification_channels) are excluded
+// to avoid leaking large JSON blobs — only simple string settings are returned.
+func (s *Store) GetAllSettings() (map[string]string, error) {
+	result := make(map[string]string)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		return b.ForEach(func(k, v []byte) error {
+			key := string(k)
+			// Skip internal compound keys that store JSON blobs.
+			if key == "notification_config" || key == "notification_channels" {
+				return nil
+			}
+			result[key] = string(v)
+			return nil
+		})
+	})
+	return result, err
+}
+
 // NotificationConfig represents persisted notification settings.
 type NotificationConfig struct {
 	GotifyURL      string            `json:"gotify_url"`
