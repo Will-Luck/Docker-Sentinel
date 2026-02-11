@@ -26,17 +26,17 @@ type pageData struct {
 
 // containerView is a container with computed display fields.
 type containerView struct {
-	ID             string
-	Name           string
-	Image          string
-	Tag            string // Extracted tag from image ref (e.g. "latest", "v2.19.4")
-	NewestVersion  string // Newest available version if update pending (semver only)
-	Policy         string
-	State          string
-	Maintenance    bool
-	HasUpdate      bool
-	IsSelf         bool
-	Stack          string // com.docker.compose.project label, or "" for standalone
+	ID            string
+	Name          string
+	Image         string
+	Tag           string // Extracted tag from image ref (e.g. "latest", "v2.19.4")
+	NewestVersion string // Newest available version if update pending (semver only)
+	Policy        string
+	State         string
+	Maintenance   bool
+	HasUpdate     bool
+	IsSelf        bool
+	Stack         string // com.docker.compose.project label, or "" for standalone
 }
 
 // stackGroup groups containers by their Docker Compose project name.
