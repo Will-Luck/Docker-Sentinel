@@ -24,6 +24,7 @@ type Dependencies struct {
 	Docker             ContainerLister
 	Updater            ContainerUpdater
 	Config             ConfigReader
+	ConfigWriter       ConfigWriter
 	EventBus           *events.Bus
 	Snapshots          SnapshotStore
 	Rollback           ContainerRollback
@@ -189,6 +190,7 @@ type ContainerInspect struct {
 // ContainerUpdater triggers container updates.
 type ContainerUpdater interface {
 	UpdateContainer(ctx context.Context, id, name string) error
+	IsUpdating(name string) bool
 }
 
 // ContainerRestarter restarts a container by ID.
@@ -209,6 +211,12 @@ type ContainerStarter interface {
 // ConfigReader provides settings for display.
 type ConfigReader interface {
 	Values() map[string]string
+}
+
+// ConfigWriter updates mutable runtime settings in memory.
+type ConfigWriter interface {
+	SetDefaultPolicy(s string)
+	SetGracePeriod(d time.Duration)
 }
 
 // Server is the web dashboard HTTP server.

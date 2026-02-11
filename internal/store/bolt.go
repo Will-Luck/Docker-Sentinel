@@ -30,7 +30,7 @@ type UpdateRecord struct {
 	OldDigest     string        `json:"old_digest"`
 	NewImage      string        `json:"new_image"`
 	NewDigest     string        `json:"new_digest"`
-	Outcome       string        `json:"outcome"` // "success" or "rollback"
+	Outcome       string        `json:"outcome"` // "success", "rollback", "failed", or "finalise_warning"
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
 }

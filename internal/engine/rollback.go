@@ -18,6 +18,10 @@ func rollback(ctx context.Context, d docker.API, name string, snapshotData []byt
 		return fmt.Errorf("unmarshal snapshot: %w", err)
 	}
 
+	if inspect.Config == nil {
+		return fmt.Errorf("inspect %s: container config is nil", name)
+	}
+
 	log.Info("rolling back container", "name", name, "image", inspect.Config.Image)
 
 	cfg := cloneConfig(inspect.Config)

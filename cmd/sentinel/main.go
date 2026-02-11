@@ -37,9 +37,9 @@ func main() {
 
 	fmt.Println("Docker-Sentinel " + version)
 	fmt.Println("=============================================")
-	fmt.Printf("SENTINEL_POLL_INTERVAL=%s\n", cfg.PollInterval)
-	fmt.Printf("SENTINEL_GRACE_PERIOD=%s\n", cfg.GracePeriod)
-	fmt.Printf("SENTINEL_DEFAULT_POLICY=%s\n", cfg.DefaultPolicy)
+	fmt.Printf("SENTINEL_POLL_INTERVAL=%s\n", cfg.PollInterval())
+	fmt.Printf("SENTINEL_GRACE_PERIOD=%s\n", cfg.GracePeriod())
+	fmt.Printf("SENTINEL_DEFAULT_POLICY=%s\n", cfg.DefaultPolicy())
 	fmt.Printf("SENTINEL_DB_PATH=%s\n", cfg.DBPath)
 	fmt.Printf("SENTINEL_WEB_ENABLED=%t\n", cfg.WebEnabled)
 	fmt.Printf("SENTINEL_WEB_PORT=%s\n", cfg.WebPort)
@@ -71,13 +71,13 @@ func main() {
 	if saved, err := db.LoadSetting("default_policy"); err == nil && saved != "" {
 		switch saved {
 		case "auto", "manual", "pinned":
-			cfg.DefaultPolicy = saved
+			cfg.SetDefaultPolicy(saved)
 			log.Info("loaded persisted default policy", "policy", saved)
 		}
 	}
 	if saved, err := db.LoadSetting("grace_period"); err == nil && saved != "" {
 		if d, err := time.ParseDuration(saved); err == nil && d >= 0 {
-			cfg.GracePeriod = d
+			cfg.SetGracePeriod(d)
 			log.Info("loaded persisted grace period", "duration", d)
 		}
 	}
@@ -129,7 +129,7 @@ func main() {
 	clk := clock.Real{}
 	checker := registry.NewChecker(client, log)
 	bus := events.New()
-	queue := engine.NewQueue(db, bus)
+	queue := engine.NewQueue(db, bus, log.Logger)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
 	updater.SetSettingsReader(db)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
@@ -142,6 +142,7 @@ func main() {
 			Docker:             &dockerAdapter{client},
 			Updater:            updater,
 			Config:             cfg,
+			ConfigWriter:       cfg,
 			EventBus:           bus,
 			Snapshots:          &snapshotAdapter{db},
 			Rollback:           &rollbackAdapter{d: client, s: db, log: log},

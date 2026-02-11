@@ -3,10 +3,12 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
@@ -104,6 +106,12 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 	// Use a detached context because r.Context() is cancelled when the handler returns.
 	go func() {
 		err := s.deps.Updater.UpdateContainer(context.Background(), update.ContainerID, update.ContainerName)
+		if errors.Is(err, engine.ErrUpdateInProgress) {
+			// Re-enqueue the approved update so it's not lost.
+			s.deps.Queue.Add(update)
+			s.deps.Log.Warn("update busy, re-enqueued", "name", name)
+			return
+		}
 		if err != nil {
 			s.deps.Log.Error("approved update failed", "name", name, "error", err)
 		}
@@ -173,6 +181,16 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 	// Trigger update in background — detached context since r.Context() dies with the response.
 	go func() {
 		err := s.deps.Updater.UpdateContainer(context.Background(), containerID, name)
+		if errors.Is(err, engine.ErrUpdateInProgress) {
+			s.deps.Log.Warn("manual update skipped, already in progress", "name", name)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerUpdate,
+				ContainerName: name,
+				Message:       "update already in progress for " + name,
+				Timestamp:     time.Now(),
+			})
+			return
+		}
 		if err != nil {
 			s.deps.Log.Error("manual update failed", "name", name, "error", err)
 		}
@@ -746,11 +764,13 @@ func (s *Server) logEvent(eventType, container, message string) {
 	if s.deps.EventLog == nil {
 		return
 	}
-	_ = s.deps.EventLog.AppendLog(LogEntry{
+	if err := s.deps.EventLog.AppendLog(LogEntry{
 		Type:      eventType,
 		Message:   message,
 		Container: container,
-	})
+	}); err != nil {
+		s.deps.Log.Warn("failed to persist event log", "type", eventType, "container", container, "error", err)
+	}
 }
 
 // apiSetPollInterval updates the poll interval at runtime.
@@ -784,7 +804,9 @@ func (s *Server) apiSetPollInterval(w http.ResponseWriter, r *http.Request) {
 
 	// Persist to BoltDB.
 	if s.deps.SettingsStore != nil {
-		_ = s.deps.SettingsStore.SaveSetting("poll_interval", d.String())
+		if err := s.deps.SettingsStore.SaveSetting("poll_interval", d.String()); err != nil {
+			s.deps.Log.Warn("failed to persist poll interval setting", "error", err)
+		}
 	}
 
 	s.logEvent("settings", "", "Poll interval changed to "+d.String())
@@ -823,6 +845,11 @@ func (s *Server) apiSetDefaultPolicy(w http.ResponseWriter, r *http.Request) {
 		s.deps.Log.Error("failed to save default policy", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to save default policy")
 		return
+	}
+
+	// Apply to in-memory config so the engine uses the new value immediately.
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetDefaultPolicy(body.Policy)
 	}
 
 	s.logEvent("settings", "", "Default policy changed to "+body.Policy)
@@ -866,6 +893,11 @@ func (s *Server) apiSetGracePeriod(w http.ResponseWriter, r *http.Request) {
 		s.deps.Log.Error("failed to save grace period", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to save grace period")
 		return
+	}
+
+	// Apply to in-memory config so the engine uses the new value immediately.
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetGracePeriod(d)
 	}
 
 	s.logEvent("settings", "", "Grace period changed to "+d.String())

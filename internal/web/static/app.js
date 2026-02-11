@@ -621,6 +621,7 @@ function applyBulkPolicy() {
     var policyEl = document.getElementById("bulk-policy");
     var policy = policyEl ? policyEl.value : "manual";
 
+    // Step 1: Preview — ask the backend what would change.
     fetch("/api/bulk/policy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -632,15 +633,81 @@ function applyBulkPolicy() {
             });
         })
         .then(function (result) {
-            if (result.ok) {
-                showToast(result.data.message || "Bulk policy change started", "success");
-                clearSelection();
-            } else {
-                showToast(result.data.error || "Failed to apply bulk policy", "error");
+            if (!result.ok) {
+                showToast(result.data.error || "Failed to preview bulk policy change", "error");
+                return;
             }
+
+            var preview = result.data;
+            var changeCount = preview.changes ? preview.changes.length : 0;
+            var blockedCount = preview.blocked ? preview.blocked.length : 0;
+            var unchangedCount = preview.unchanged ? preview.unchanged.length : 0;
+
+            if (changeCount === 0) {
+                var msg = "No changes to apply";
+                if (blockedCount > 0) msg += " (" + blockedCount + " blocked)";
+                if (unchangedCount > 0) msg += " (" + unchangedCount + " already " + policy + ")";
+                showToast(msg, "info");
+                return;
+            }
+
+            // Build a summary for the confirm dialog.
+            var summary = "Change policy to '" + policy + "' for " + changeCount + " container" + (changeCount !== 1 ? "s" : "") + "?\n\n";
+            for (var i = 0; i < preview.changes.length; i++) {
+                var c = preview.changes[i];
+                summary += "  " + c.name + ": " + c.from + " \u2192 " + c.to + "\n";
+            }
+            if (blockedCount > 0) {
+                summary += "\nBlocked (" + blockedCount + "):\n";
+                for (var b = 0; b < preview.blocked.length; b++) {
+                    summary += "  " + preview.blocked[b].name + " — " + preview.blocked[b].reason + "\n";
+                }
+            }
+            if (unchangedCount > 0) {
+                summary += "\nUnchanged (" + unchangedCount + "):\n";
+                for (var u = 0; u < preview.unchanged.length; u++) {
+                    summary += "  " + preview.unchanged[u].name + " — " + preview.unchanged[u].reason + "\n";
+                }
+            }
+
+            // Step 2: User confirms.
+            if (!confirm(summary)) return;
+
+            // Step 3: Confirm — send with confirm: true to apply.
+            fetch("/api/bulk/policy", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ containers: names, policy: policy, confirm: true })
+            })
+                .then(function (resp2) {
+                    return resp2.json().then(function (data2) {
+                        return { ok: resp2.ok, data: data2 };
+                    });
+                })
+                .then(function (confirmResult) {
+                    if (!confirmResult.ok) {
+                        showToast(confirmResult.data.error || "Failed to apply bulk policy change", "error");
+                        return;
+                    }
+
+                    var applied = confirmResult.data.applied || 0;
+                    showToast("Policy changed to '" + policy + "' for " + applied + " container" + (applied !== 1 ? "s" : ""), "success");
+
+                    // Refresh affected rows to reflect new policy values.
+                    for (var r = 0; r < preview.changes.length; r++) {
+                        updateContainerRow(preview.changes[r].name);
+                    }
+
+                    // Clear selection and exit manage mode.
+                    clearSelection();
+                    if (manageMode) toggleManageMode();
+                })
+                .catch(function () {
+                    showToast("Network error — could not apply bulk policy change", "error");
+                });
         })
         .catch(function () {
-            showToast("Network error — could not apply bulk policy", "error");
+            showToast("Network error — could not preview bulk policy change", "error");
         });
 }
 
@@ -1215,11 +1282,23 @@ document.addEventListener("DOMContentLoaded", function () {
 var EVENT_TYPES = [
     { key: "update_available", label: "Update Available" },
     { key: "update_started", label: "Update Started" },
-    { key: "update_complete", label: "Update Complete" },
+    { key: "update_succeeded", label: "Update Succeeded" },
     { key: "update_failed", label: "Update Failed" },
-    { key: "rollback", label: "Rollback" },
-    { key: "state_change", label: "State Change" }
+    { key: "rollback_succeeded", label: "Rollback Succeeded" },
+    { key: "rollback_failed", label: "Rollback Failed" },
+    { key: "container_state", label: "State Change" }
 ];
+
+// Map legacy event keys (from older saved configs in BoltDB) to current constants.
+var LEGACY_EVENT_KEYS = {
+    "update_complete": "update_succeeded",
+    "rollback": "rollback_succeeded",
+    "state_change": "container_state"
+};
+
+function canonicaliseEventKey(key) {
+    return LEGACY_EVENT_KEYS[key] || key;
+}
 
 var PROVIDER_FIELDS = {
     gotify: [
@@ -1399,6 +1478,14 @@ function buildChannelCard(index) {
     // If events is null/undefined/empty, all events are enabled by default.
     var allEnabled = !enabledEvents || enabledEvents.length === 0;
 
+    // Canonicalise legacy event keys from saved config so pills light up correctly.
+    var canonicalEvents = [];
+    if (!allEnabled) {
+        for (var ce = 0; ce < enabledEvents.length; ce++) {
+            canonicalEvents.push(canonicaliseEventKey(enabledEvents[ce]));
+        }
+    }
+
     var pillsWrap = document.createElement("div");
     pillsWrap.className = "event-pills";
 
@@ -1417,8 +1504,8 @@ function buildChannelCard(index) {
 
         var isActive = allEnabled;
         if (!allEnabled) {
-            for (var k = 0; k < enabledEvents.length; k++) {
-                if (enabledEvents[k] === evtType.key) {
+            for (var k = 0; k < canonicalEvents.length; k++) {
+                if (canonicalEvents[k] === evtType.key) {
                     isActive = true;
                     break;
                 }

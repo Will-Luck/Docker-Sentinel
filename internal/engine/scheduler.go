@@ -54,7 +54,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	for {
 		select {
-		case <-s.clock.After(s.cfg.PollInterval):
+		case <-s.clock.After(s.cfg.PollInterval()):
 			if s.isPaused() {
 				s.log.Info("scheduler is paused, skipping scheduled scan")
 				continue
@@ -63,7 +63,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			result := s.updater.Scan(ctx)
 			s.logResult(result)
 		case <-s.resetCh:
-			s.log.Info("poll interval changed, resetting timer", "interval", s.cfg.PollInterval)
+			s.log.Info("poll interval changed, resetting timer", "interval", s.cfg.PollInterval())
 			// Timer resets on next loop iteration
 		case <-ctx.Done():
 			s.log.Info("scheduler stopped")
