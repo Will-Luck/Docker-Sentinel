@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.24-alpine
+      network: gitea_default
+    steps:
+      - name: Install dependencies
+        run: apk add --no-cache git make
+
+      - name: Checkout
+        run: |
+          git clone http://gitea-token:${{ github.token }}@gitea:3000/${{ github.repository }}.git .
+          git checkout ${{ github.sha }}
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test-ci
+
+  lint:
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.24-alpine
+      network: gitea_default
+    steps:
+      - name: Install dependencies
+        run: apk add --no-cache git make
+
+      - name: Checkout
+        run: |
+          git clone http://gitea-token:${{ github.token }}@gitea:3000/${{ github.repository }}.git .
+          git checkout ${{ github.sha }}
+
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+          export PATH="$(go env GOPATH)/bin:$PATH"
+
+      - name: Lint
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          make lint
