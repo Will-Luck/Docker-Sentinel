@@ -1364,6 +1364,14 @@ td:nth-child(6) {
     opacity: 0.85;
 }
 
+/* History table — centre-align Outcome (col 3) + Duration (col 4) */
+.table-history th:nth-child(3),
+.table-history td:nth-child(3),
+.table-history th:nth-child(4),
+.table-history td:nth-child(4) {
+    text-align: center;
+}
+
 /* Tab navigation for settings page */
 
 .tab-nav {
