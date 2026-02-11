@@ -13,6 +13,7 @@ type PolicySource string
 const (
 	SourceOverride PolicySource = "override" // BoltDB
 	SourceLabel    PolicySource = "label"    // Docker label
+	SourceLatest   PolicySource = "latest"   // :latest tag auto-policy
 	SourceDefault  PolicySource = "default"  // Global config
 )
 
@@ -23,8 +24,8 @@ type ResolvedPolicy struct {
 }
 
 // ResolvePolicy returns the effective policy for a container.
-// Precedence: DB override → Docker label → default.
-func ResolvePolicy(db *store.Store, labels map[string]string, name, defaultPolicy string) ResolvedPolicy {
+// Precedence: DB override → Docker label → latest-tag auto → default.
+func ResolvePolicy(db *store.Store, labels map[string]string, name, imageTag, defaultPolicy string) ResolvedPolicy {
 	if p, ok := db.GetPolicyOverride(name); ok {
 		switch p {
 		case "auto", "manual", "pinned":
@@ -35,6 +36,11 @@ func ResolvePolicy(db *store.Store, labels map[string]string, name, defaultPolic
 	p := docker.ContainerPolicy(labels, defaultPolicy)
 	if string(p) != defaultPolicy {
 		return ResolvedPolicy{Policy: string(p), Source: SourceLabel}
+	}
+
+	// Images tagged :latest (or with no explicit tag) default to auto-update.
+	if imageTag == "latest" || imageTag == "" {
+		return ResolvedPolicy{Policy: "auto", Source: SourceLatest}
 	}
 
 	return ResolvedPolicy{Policy: defaultPolicy, Source: SourceDefault}

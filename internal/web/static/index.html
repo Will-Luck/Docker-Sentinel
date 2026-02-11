@@ -99,84 +99,7 @@
                                 </td>
                             </tr>
                             {{range .Containers}}
-                            <tr class="container-row" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
-                                <td class="td-checkbox">
-                                    {{if not .IsSelf}}
-                                        <input type="checkbox" class="row-select" value="{{.Name}}" id="select-{{.Name}}" aria-label="Select {{.Name}}">
-                                    {{end}}
-                                </td>
-                                <td>
-                                    <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
-                                    {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
-                                </td>
-                                <td class="cell-image mono" title="{{.Image}}">
-                                    {{if .NewestVersion}}
-                                        <span class="version-current">{{.Tag}}</span>
-                                        <span class="version-arrow">&rarr;</span>
-                                        <span class="version-new">{{.NewestVersion}}</span>
-                                    {{else}}
-                                        {{.Tag}}
-                                    {{end}}
-                                </td>
-                                <td>
-                                    {{if .IsSelf}}
-                                        <span class="policy-select policy-pinned policy-disabled" title="Self-protected">
-                                            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:2px"><path d="M8 1a4 4 0 00-4 4v3H3a1 1 0 00-1 1v5a1 1 0 001 1h10a1 1 0 001-1V9a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm-2 4a2 2 0 114 0v3H6V5z"/></svg>
-                                            self
-                                        </span>
-                                    {{else}}
-                                        <select class="policy-select policy-{{.Policy}}"
-                                                onchange="this.className='policy-select policy-'+this.value; changePolicy('{{.Name}}', this.value)"
-                                                data-current="{{.Policy}}">
-                                            <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto</option>
-                                            <option value="manual" {{if eq .Policy "manual"}}selected{{end}}>manual</option>
-                                            <option value="pinned" {{if eq .Policy "pinned"}}selected{{end}}>pinned</option>
-                                        </select>
-                                    {{end}}
-                                </td>
-                                <td>
-                                    {{if .Maintenance}}
-                                        <span class="badge badge-warning">Updating</span>
-                                    {{else if .HasUpdate}}
-                                        <span class="badge badge-warning">Update Available</span>
-                                    {{else if eq .State "running"}}
-                                        {{if .IsSelf}}
-                                            <span class="badge badge-success">Running</span>
-                                        {{else}}
-                                            <span class="status-badge-wrap" data-name="{{.Name}}">
-                                                <span class="badge badge-success badge-default">Running</span>
-                                                <span class="badge badge-error badge-hover">Restart?</span>
-                                            </span>
-                                        {{end}}
-                                    {{else}}
-                                        <span class="badge badge-error">{{.State}}</span>
-                                    {{end}}
-                                </td>
-                                <td>
-                                    <div class="btn-group">
-                                        {{if .IsSelf}}
-                                            {{if .HasUpdate}}
-                                            <button class="btn btn-info"
-                                                    onclick="triggerSelfUpdate(event)">
-                                                Update Sentinel
-                                            </button>
-                                            {{end}}
-                                        {{else if and .HasUpdate (ne .Policy "pinned")}}
-                                        <button class="btn btn-warning"
-                                                onclick="triggerUpdate('{{.Name}}', event)">
-                                            Update
-                                        </button>
-                                        {{end}}
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr class="accordion-panel" id="accordion-{{.Name}}" style="display:none">
-                                <td colspan="6">
-                                    <div class="accordion-content">
-                                        <div class="accordion-loading">Loading...</div>
-                                    </div>
-                                </td>
-                            </tr>
+                            {{template "container-row" .}}
                             {{end}}
                         </tbody>
                         {{end}}
@@ -213,4 +136,92 @@
     <script src="/static/app.js"></script>
 </body>
 </html>
+{{end}}
+
+{{define "container-row"}}
+                            <tr class="container-row" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
+                                <td class="td-checkbox">
+                                    {{if not .IsSelf}}
+                                        <input type="checkbox" class="row-select" value="{{.Name}}" id="select-{{.Name}}" aria-label="Select {{.Name}}">
+                                    {{end}}
+                                </td>
+                                <td>
+                                    <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
+                                    {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
+                                </td>
+                                <td class="cell-image mono" title="{{.Image}}">
+                                    {{if .NewestVersion}}
+                                        <span class="version-current">{{.Tag}}</span>
+                                        <span class="version-arrow">&rarr;</span>
+                                        <span class="version-new">{{.NewestVersion}}</span>
+                                    {{else}}
+                                        {{.Tag}}
+                                    {{end}}
+                                </td>
+                                <td>
+                                    {{if .IsSelf}}
+                                        <span class="policy-badge-self" title="Self-protected">
+                                            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:2px"><path d="M8 1a4 4 0 00-4 4v3H3a1 1 0 00-1 1v5a1 1 0 001 1h10a1 1 0 001-1V9a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm-2 4a2 2 0 114 0v3H6V5z"/></svg>
+                                            self
+                                        </span>
+                                    {{else}}
+                                        <select class="policy-select policy-{{.Policy}}"
+                                                onchange="this.className='policy-select policy-'+this.value; changePolicy('{{.Name}}', this.value)"
+                                                data-current="{{.Policy}}">
+                                            <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto</option>
+                                            <option value="manual" {{if eq .Policy "manual"}}selected{{end}}>manual</option>
+                                            <option value="pinned" {{if eq .Policy "pinned"}}selected{{end}}>pinned</option>
+                                        </select>
+                                    {{end}}
+                                </td>
+                                <td>
+                                    {{if .Maintenance}}
+                                        <span class="badge badge-warning">Updating</span>
+                                    {{else if .HasUpdate}}
+                                        <span class="badge badge-warning">Update Available</span>
+                                    {{else if eq .State "running"}}
+                                        {{if .IsSelf}}
+                                            <span class="badge badge-success">Running</span>
+                                        {{else}}
+                                            <span class="status-badge-wrap" data-name="{{.Name}}" data-action="stop">
+                                                <span class="badge badge-success badge-default">Running</span>
+                                                <span class="badge badge-error badge-hover">Stop</span>
+                                            </span>
+                                        {{end}}
+                                    {{else}}
+                                        <span class="status-badge-wrap" data-name="{{.Name}}" data-action="start">
+                                            <span class="badge badge-error badge-default">{{.State}}</span>
+                                            <span class="badge badge-success badge-hover">Start</span>
+                                        </span>
+                                    {{end}}
+                                </td>
+                                <td>
+                                    <div class="btn-group">
+                                        {{if .IsSelf}}
+                                            {{if .HasUpdate}}
+                                            <button class="btn btn-info"
+                                                    onclick="triggerSelfUpdate(event)">
+                                                Update Sentinel
+                                            </button>
+                                            {{else}}
+                                            <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">View</a>
+                                            {{end}}
+                                        {{else if and .HasUpdate (ne .Policy "pinned")}}
+                                        <button class="btn btn-warning"
+                                                onclick="triggerUpdate('{{.Name}}', event)">
+                                            Update
+                                        </button>
+                                        {{else}}
+                                        <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">View</a>
+                                        {{end}}
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr class="accordion-panel" id="accordion-{{.Name}}" style="display:none">
+                                <td colspan="6">
+                                    <div class="accordion-content">
+                                        <div class="accordion-loading">Loading...</div>
+                                    </div>
+                                </td>
+                            </tr>
 {{end}}

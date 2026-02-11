@@ -35,79 +35,123 @@
         <div class="page-header">
             <div>
                 <h1>Settings</h1>
-                <p class="subtitle">Dashboard preferences (stored in your browser)</p>
+                <p class="subtitle">Configure Sentinel behaviour and notifications</p>
             </div>
         </div>
 
-        <div class="settings-grid">
-            <div class="card">
-                <div class="card-header"><h2>Appearance</h2></div>
-                <div class="card-body">
-                    <div class="setting-row">
-                        <div class="setting-info">
-                            <div class="setting-label">Theme</div>
-                            <div class="setting-desc">Choose your colour scheme</div>
+        <div class="tab-nav" role="tablist">
+            <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-schedule" data-tab="schedule">Update Schedule</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-notifications" data-tab="notifications">Notifications</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-server" data-tab="server">Server Config</button>
+        </div>
+
+        <!-- Update Schedule tab -->
+        <div class="tab-panel active" id="tab-schedule" role="tabpanel">
+            <div class="settings-grid">
+                <div class="card">
+                    <div class="card-header"><h2>Scanning</h2></div>
+                    <div class="card-body">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Poll interval</div>
+                                <div class="setting-desc">How often Sentinel checks for container updates</div>
+                            </div>
+                            <div class="poll-interval-control">
+                                <select id="poll-interval" class="setting-select" onchange="onPollIntervalChange(this.value)">
+                                    <option value="15m">15 minutes</option>
+                                    <option value="30m">30 minutes</option>
+                                    <option value="1h">1 hour</option>
+                                    <option value="6h">6 hours</option>
+                                    <option value="12h">12 hours</option>
+                                    <option value="24h">24 hours</option>
+                                    <option value="custom">Custom...</option>
+                                </select>
+                                <input id="poll-custom" type="text" class="setting-select" placeholder="e.g. 2h30m" style="display:none;margin-top:var(--sp-2)">
+                                <button id="poll-custom-btn" class="btn btn-success" style="display:none;margin-top:var(--sp-2)" onclick="applyCustomPollInterval()">Apply</button>
+                            </div>
                         </div>
-                        <select id="theme-select" class="setting-select">
-                            <option value="auto">Auto (system)</option>
-                            <option value="dark">Dark</option>
-                            <option value="light">Light</option>
-                        </select>
-                    </div>
-                    <div class="setting-row">
-                        <div class="setting-info">
-                            <div class="setting-label">Default stack view</div>
-                            <div class="setting-desc">Whether stacks start collapsed or expanded on the dashboard</div>
-                        </div>
-                        <select id="stack-default" class="setting-select">
-                            <option value="collapsed">Collapsed</option>
-                            <option value="expanded">Expanded</option>
-                        </select>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <div class="card">
-                <div class="card-header"><h2>Scanning</h2></div>
-                <div class="card-body">
-                    <div class="setting-row">
-                        <div class="setting-info">
-                            <div class="setting-label">Poll interval</div>
-                            <div class="setting-desc">How often Sentinel checks for container updates</div>
-                        </div>
-                        <div class="poll-interval-control">
-                            <select id="poll-interval" class="setting-select" onchange="onPollIntervalChange(this.value)">
-                                <option value="15m">15 minutes</option>
-                                <option value="30m">30 minutes</option>
-                                <option value="1h">1 hour</option>
-                                <option value="6h">6 hours</option>
-                                <option value="12h">12 hours</option>
-                                <option value="24h">24 hours</option>
-                                <option value="custom">Custom...</option>
+        <!-- Appearance tab -->
+        <div class="tab-panel" id="tab-appearance" role="tabpanel">
+            <div class="settings-grid">
+                <div class="card">
+                    <div class="card-header"><h2>Appearance</h2></div>
+                    <div class="card-body">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Theme</div>
+                                <div class="setting-desc">Choose your colour scheme</div>
+                            </div>
+                            <select id="theme-select" class="setting-select">
+                                <option value="auto">Auto (system)</option>
+                                <option value="dark">Dark</option>
+                                <option value="light">Light</option>
                             </select>
-                            <input id="poll-custom" type="text" class="setting-select" placeholder="e.g. 2h30m" style="display:none;margin-top:var(--sp-2)">
-                            <button id="poll-custom-btn" class="btn btn-success" style="display:none;margin-top:var(--sp-2)" onclick="applyCustomPollInterval()">Apply</button>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Default stack view</div>
+                                <div class="setting-desc">Whether stacks start collapsed or expanded on the dashboard</div>
+                            </div>
+                            <select id="stack-default" class="setting-select">
+                                <option value="collapsed">Collapsed</option>
+                                <option value="expanded">Expanded</option>
+                            </select>
                         </div>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <div class="card">
-                <div class="card-header"><h2>Server Configuration</h2></div>
-                <div class="card-body">
-                    <p class="subtitle" style="margin-bottom: var(--sp-4)">These are set via environment variables and cannot be changed from the dashboard.</p>
-                    <div class="table-wrap">
-                        <table class="table-readonly">
-                            <thead><tr><th>Setting</th><th>Value</th></tr></thead>
-                            <tbody>
-                                {{range $k, $v := .Settings}}
-                                <tr>
-                                    <td class="mono">{{$k}}</td>
-                                    <td class="mono">{{$v}}</td>
-                                </tr>
-                                {{end}}
-                            </tbody>
-                        </table>
+        <!-- Notifications tab -->
+        <div class="tab-panel" id="tab-notifications" role="tabpanel">
+            <div class="settings-grid">
+                <div id="channel-list"><!-- JS renders channel cards here --></div>
+                <div class="setting-actions">
+                    <div class="channel-add-wrap">
+                        <select id="channel-type-select" class="setting-select">
+                            <option value="">Add notification channel...</option>
+                            <option value="gotify">Gotify</option>
+                            <option value="webhook">Webhook</option>
+                            <option value="slack">Slack</option>
+                            <option value="discord">Discord</option>
+                            <option value="ntfy">Ntfy</option>
+                            <option value="telegram">Telegram</option>
+                            <option value="pushover">Pushover</option>
+                        </select>
+                        <button class="btn" onclick="addChannel()">Add</button>
+                    </div>
+                    <button class="btn btn-success" id="notify-save-btn" onclick="saveNotificationChannels()">Save All</button>
+                    <button class="btn" id="notify-test-btn" onclick="testNotification()">Test All</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Server Config tab -->
+        <div class="tab-panel" id="tab-server" role="tabpanel">
+            <div class="settings-grid">
+                <div class="card">
+                    <div class="card-header"><h2>Server Configuration</h2></div>
+                    <div class="card-body">
+                        <p class="subtitle" style="margin-bottom: var(--sp-4)">These are set via environment variables and cannot be changed from the dashboard.</p>
+                        <div class="table-wrap">
+                            <table class="table-readonly">
+                                <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+                                <tbody>
+                                    {{range $k, $v := .Settings}}
+                                    <tr>
+                                        <td class="mono">{{$k}}</td>
+                                        <td class="mono">{{$v}}</td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
