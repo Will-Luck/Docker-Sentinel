@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"net/http"
 	"sort"
 	"strings"
@@ -255,6 +256,94 @@ func (s *Server) apiLogs(w http.ResponseWriter, r *http.Request) {
 		logs = []LogEntry{}
 	}
 	writeJSON(w, http.StatusOK, logs)
+}
+
+// handleContainerRow returns a single container's table row HTML plus dashboard stats.
+// Used by the frontend to do targeted row replacement instead of full page reloads.
+func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	pendingNames := make(map[string]bool)
+	for _, p := range s.deps.Queue.List() {
+		pendingNames[p.ContainerName] = true
+	}
+
+	var targetView *containerView
+	running, pending := 0, 0
+	for _, c := range containers {
+		n := containerName(c)
+		if c.State == "running" {
+			running++
+		}
+		if pendingNames[n] {
+			pending++
+		}
+		if n == name {
+			maintenance, _ := s.deps.Store.GetMaintenance(n)
+			policy := containerPolicy(c.Labels)
+			if s.deps.Policy != nil {
+				if p, ok := s.deps.Policy.GetPolicyOverride(n); ok {
+					policy = p
+				}
+			}
+			tag := registry.ExtractTag(c.Image)
+			if tag == "" {
+				if idx := strings.LastIndex(c.Image, "/"); idx >= 0 {
+					tag = c.Image[idx+1:]
+				} else {
+					tag = c.Image
+				}
+			}
+			var newestVersion string
+			if pend, ok := s.deps.Queue.Get(n); ok && len(pend.NewerVersions) > 0 {
+				newestVersion = pend.NewerVersions[0]
+			}
+			v := containerView{
+				ID:            c.ID,
+				Name:          n,
+				Image:         c.Image,
+				Tag:           tag,
+				NewestVersion: newestVersion,
+				Policy:        policy,
+				State:         c.State,
+				Maintenance:   maintenance,
+				HasUpdate:     pendingNames[n],
+				IsSelf:        c.Labels["sentinel.self"] == "true",
+				Stack:         c.Labels["com.docker.compose.project"],
+			}
+			targetView = &v
+		}
+	}
+
+	if targetView == nil {
+		writeError(w, http.StatusNotFound, "container not found")
+		return
+	}
+
+	var buf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&buf, "container-row", targetView); err != nil {
+		s.deps.Log.Error("failed to render container row", "name", name, "error", err)
+		writeError(w, http.StatusInternalServerError, "render failed")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"html":    buf.String(),
+		"total":   len(containers),
+		"running": running,
+		"pending": pending,
+	})
 }
 
 // containerDetailData holds all data for the per-container detail page.

@@ -358,6 +358,9 @@ function onRowClick(e, name) {
     if (tag === "A" || tag === "BUTTON" || tag === "SELECT" || tag === "INPUT" || tag === "OPTION") {
         return;
     }
+    if (e.target.closest(".status-badge-wrap")) {
+        return;
+    }
     toggleAccordion(name);
 }
 
@@ -628,6 +631,71 @@ function scheduleReload() {
     }, 800);
 }
 
+/* ------------------------------------------------------------
+   11a. Live Row Updates — targeted DOM patching via partial endpoint
+   ------------------------------------------------------------ */
+
+function updateContainerRow(name) {
+    var enc = encodeURIComponent(name);
+    fetch("/api/containers/" + enc + "/row")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.html) return;
+
+            // Update stats counters.
+            updateStats(data.total, data.running, data.pending);
+
+            // Parse the server-rendered HTML (from Go templates, not user input)
+            // into DOM nodes using a temporary tbody element.
+            var temp = document.createElement("tbody");
+            temp.innerHTML = data.html; // Safe: server-rendered Go template HTML, no user content
+
+            var oldRow = document.querySelector('tr.container-row[data-name="' + name + '"]');
+            var oldAccordion = document.getElementById("accordion-" + name);
+
+            if (oldRow) {
+                var newRow = temp.querySelector(".container-row");
+                var newAccordion = temp.querySelector(".accordion-panel");
+
+                if (newRow) {
+                    oldRow.replaceWith(newRow);
+                    newRow.classList.add("row-updated");
+                }
+                if (newAccordion && oldAccordion) {
+                    oldAccordion.replaceWith(newAccordion);
+                }
+            }
+
+            // Clear accordion cache for this container.
+            delete accordionCache[name];
+        })
+        .catch(function() {
+            // Fallback: full reload on error.
+            scheduleReload();
+        });
+}
+
+function updateStats(total, running, pending) {
+    var stats = document.getElementById("stats");
+    if (!stats) return;
+    var values = stats.querySelectorAll(".stat-value");
+    if (values[0]) values[0].textContent = total;
+    if (values[1]) values[1].textContent = running;
+    if (values[2]) values[2].textContent = pending;
+}
+
+function showBadgeSpinner(wrap) {
+    var defaultBadge = wrap.querySelector(".badge-default");
+    var hoverBadge = wrap.querySelector(".badge-hover");
+    if (defaultBadge) defaultBadge.style.display = "none";
+    if (hoverBadge) hoverBadge.style.display = "none";
+
+    var spinner = document.createElement("span");
+    spinner.className = "badge-loading";
+    wrap.appendChild(spinner);
+    wrap.style.pointerEvents = "none";
+}
+
 function setConnectionStatus(connected) {
     var dot = document.getElementById("sse-indicator");
     var label = document.getElementById("sse-label");
@@ -663,11 +731,22 @@ function initSSE() {
         try {
             var data = JSON.parse(e.data);
             showToast(data.message || ("Update: " + data.container_name), "info");
+            if (data.container_name) {
+                updateContainerRow(data.container_name);
+                return;
+            }
         } catch (_) {}
         scheduleReload();
     });
 
-    es.addEventListener("container_state", function () {
+    es.addEventListener("container_state", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            if (data.container_name) {
+                updateContainerRow(data.container_name);
+                return;
+            }
+        } catch (_) {}
         scheduleReload();
     });
 
@@ -687,6 +766,10 @@ function initSSE() {
         try {
             var data = JSON.parse(e.data);
             showToast(data.message || ("Policy changed: " + data.container_name), "info");
+            if (data.container_name) {
+                updateContainerRow(data.container_name);
+                return;
+            }
         } catch (_) {}
         scheduleReload();
     });
@@ -808,6 +891,10 @@ document.addEventListener("DOMContentLoaded", function () {
         var name = wrap.getAttribute("data-name");
         if (!name) return;
         var action = wrap.getAttribute("data-action") || "restart";
+
+        // Show inline spinner immediately.
+        showBadgeSpinner(wrap);
+
         var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
         var label = action.charAt(0).toUpperCase() + action.slice(1);
         apiPost(

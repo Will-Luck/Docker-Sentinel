@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
 
@@ -453,7 +454,14 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.deps.Restarter.RestartContainer(context.Background(), containerID); err != nil {
 			s.deps.Log.Error("restart failed", "name", name, "error", err)
+			return
 		}
+		s.deps.EventBus.Publish(events.SSEEvent{
+			Type:          events.EventContainerState,
+			ContainerName: name,
+			Message:       "Container restarted: " + name,
+			Timestamp:     time.Now(),
+		})
 	}()
 
 	s.logEvent("restart", name, "Container restarted")
@@ -509,6 +517,13 @@ func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {
 
 	s.deps.Log.Info("policy override set", "name", name, "policy", body.Policy)
 	s.logEvent("policy_set", name, "Policy set to "+body.Policy)
+
+	s.deps.EventBus.Publish(events.SSEEvent{
+		Type:          events.EventPolicyChange,
+		ContainerName: name,
+		Message:       "Policy set to " + body.Policy + " for " + name,
+		Timestamp:     time.Now(),
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
@@ -829,7 +844,14 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.deps.Stopper.StopContainer(context.Background(), containerID); err != nil {
 			s.deps.Log.Error("stop failed", "name", name, "error", err)
+			return
 		}
+		s.deps.EventBus.Publish(events.SSEEvent{
+			Type:          events.EventContainerState,
+			ContainerName: name,
+			Message:       "Container stopped: " + name,
+			Timestamp:     time.Now(),
+		})
 	}()
 
 	s.logEvent("stop", name, "Container stopped")
@@ -882,7 +904,14 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.deps.Starter.StartContainer(context.Background(), containerID); err != nil {
 			s.deps.Log.Error("start failed", "name", name, "error", err)
+			return
 		}
+		s.deps.EventBus.Publish(events.SSEEvent{
+			Type:          events.EventContainerState,
+			ContainerName: name,
+			Message:       "Container started: " + name,
+			Timestamp:     time.Now(),
+		})
 	}()
 
 	s.logEvent("start", name, "Container started")

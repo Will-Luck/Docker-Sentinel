@@ -308,6 +308,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/settings/notifications", s.apiSaveNotifications)
 	s.mux.HandleFunc("POST /api/settings/notifications/test", s.apiTestNotification)
 
+	// Per-container HTML partial (for live row updates).
+	s.mux.HandleFunc("GET /api/containers/{name}/row", s.handleContainerRow)
+
 	// Per-container HTML page.
 	s.mux.HandleFunc("GET /container/{name}", s.handleContainerDetail)
 }

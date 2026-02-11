@@ -576,6 +576,46 @@ tbody td {
     to { transform: rotate(360deg); }
 }
 
+/* Badge spinner — replaces status badge during actions */
+
+.badge-loading {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    background: var(--bg-raised);
+    min-width: 60px;
+    height: 22px;
+}
+
+.badge-loading::before {
+    content: "";
+    display: block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--fg-muted);
+    border-top-color: var(--accent);
+    border-radius: var(--radius-full);
+    background: transparent;
+    animation: badgeSpin 800ms linear infinite;
+}
+
+@keyframes badgeSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* Row fade-in after live update */
+
+.row-updated {
+    animation: rowFadeIn 400ms ease-out;
+}
+
+@keyframes rowFadeIn {
+    from { opacity: 0.4; }
+    to { opacity: 1; }
+}
+
 .btn-success {
     background: var(--success-bg);
     border-color: var(--success);
@@ -1592,7 +1632,8 @@ table.managing .td-checkbox {
 .status-badge-wrap .badge-hover {
     position: absolute;
     top: 0;
-    left: 0;
+    left: 50%;
+    transform: translateX(-50%);
     opacity: 0;
     pointer-events: none;
     transition: opacity 150ms ease;
