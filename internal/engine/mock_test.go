@@ -63,6 +63,10 @@ func (m *mockDocker) ListContainers(_ context.Context) ([]container.Summary, err
 	return m.containers, m.containersErr
 }
 
+func (m *mockDocker) ListAllContainers(_ context.Context) ([]container.Summary, error) {
+	return m.containers, m.containersErr
+}
+
 func (m *mockDocker) InspectContainer(_ context.Context, id string) (container.InspectResponse, error) {
 	if err, ok := m.inspectErr[id]; ok && err != nil {
 		return container.InspectResponse{}, err

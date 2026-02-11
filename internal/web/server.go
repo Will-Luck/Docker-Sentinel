@@ -157,9 +157,10 @@ type PendingUpdate struct {
 	NewerVersions []string  `json:"newer_versions,omitempty"`
 }
 
-// ContainerLister lists running containers.
+// ContainerLister lists containers.
 type ContainerLister interface {
 	ListContainers(ctx context.Context) ([]ContainerSummary, error)
+	ListAllContainers(ctx context.Context) ([]ContainerSummary, error)
 	InspectContainer(ctx context.Context, id string) (ContainerInspect, error)
 }
 

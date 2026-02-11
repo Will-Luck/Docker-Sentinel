@@ -347,6 +347,24 @@ func (a *dockerAdapter) ListContainers(ctx context.Context) ([]web.ContainerSumm
 	return result, nil
 }
 
+func (a *dockerAdapter) ListAllContainers(ctx context.Context) ([]web.ContainerSummary, error) {
+	containers, err := a.c.ListAllContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.ContainerSummary, len(containers))
+	for i, c := range containers {
+		result[i] = web.ContainerSummary{
+			ID:     c.ID,
+			Names:  c.Names,
+			Image:  c.Image,
+			Labels: c.Labels,
+			State:  string(c.State),
+		}
+	}
+	return result, nil
+}
+
 func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.ContainerInspect, error) {
 	inspect, err := a.c.InspectContainer(ctx, id)
 	if err != nil {

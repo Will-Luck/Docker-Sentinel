@@ -49,7 +49,7 @@ type stackGroup struct {
 
 // handleDashboard renders the main container dashboard.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers", "error", err)
 		http.Error(w, "failed to load containers", http.StatusInternalServerError)
@@ -276,7 +276,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find container by name.
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers", "error", err)
 		s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load containers.")

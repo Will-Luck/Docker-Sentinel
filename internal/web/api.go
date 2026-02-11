@@ -12,7 +12,7 @@ import (
 
 // apiContainers returns all monitored containers with policy and maintenance status.
 func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
@@ -149,7 +149,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the container by name to get its ID.
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers for update", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
@@ -206,7 +206,7 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the container to get its image reference and ID.
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers for check", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
@@ -267,7 +267,7 @@ func (s *Server) apiContainerDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find container by name.
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
@@ -347,7 +347,7 @@ func (s *Server) apiContainerVersions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find container to extract its image reference.
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
@@ -430,7 +430,7 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers for restart", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
@@ -674,7 +674,7 @@ func (s *Server) resolvedPolicy(labels map[string]string, name string) string {
 
 // getContainerLabels fetches labels for a named container.
 func (s *Server) getContainerLabels(ctx context.Context, name string) map[string]string {
-	containers, err := s.deps.Docker.ListContainers(ctx)
+	containers, err := s.deps.Docker.ListAllContainers(ctx)
 	if err != nil {
 		return nil
 	}
@@ -806,7 +806,7 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers for stop", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
@@ -859,7 +859,7 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	containers, err := s.deps.Docker.ListContainers(r.Context())
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers for start", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
