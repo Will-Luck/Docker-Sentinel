@@ -88,18 +88,10 @@ type SelfUpdater interface {
 	Update(ctx context.Context) error
 }
 
-// NotificationConfigStore persists notification configuration.
+// NotificationConfigStore persists notification channel configuration.
 type NotificationConfigStore interface {
-	GetNotificationConfig() (NotificationConfig, error)
-	SetNotificationConfig(cfg NotificationConfig) error
-}
-
-// NotificationConfig represents persisted notification settings.
-type NotificationConfig struct {
-	GotifyURL      string            `json:"gotify_url"`
-	GotifyToken    string            `json:"gotify_token"`
-	WebhookURL     string            `json:"webhook_url"`
-	WebhookHeaders map[string]string `json:"webhook_headers"`
+	GetNotificationChannels() ([]notify.Channel, error)
+	SetNotificationChannels(channels []notify.Channel) error
 }
 
 // NotifierReconfigurer allows runtime reconfiguration of the notification chain.

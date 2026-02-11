@@ -8,6 +8,8 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
 
 var (
@@ -437,4 +439,77 @@ func (s *Store) SetNotificationConfig(cfg NotificationConfig) error {
 		b := tx.Bucket(bucketSettings)
 		return b.Put([]byte("notification_config"), data)
 	})
+}
+
+// GetNotificationChannels loads notification channels from the settings bucket.
+// Handles legacy format migration: if stored data is a JSON object (old NotificationConfig),
+// it converts it to the new channel array format.
+func (s *Store) GetNotificationChannels() ([]notify.Channel, error) {
+	var channels []notify.Channel
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		v := b.Get([]byte("notification_channels"))
+		if v == nil {
+			// Try legacy key migration.
+			legacy := b.Get([]byte("notification_config"))
+			if legacy != nil {
+				channels = migrateFromLegacy(legacy)
+			}
+			return nil
+		}
+		return json.Unmarshal(v, &channels)
+	})
+	return channels, err
+}
+
+// SetNotificationChannels saves notification channels to the settings bucket.
+func (s *Store) SetNotificationChannels(channels []notify.Channel) error {
+	data, err := json.Marshal(channels)
+	if err != nil {
+		return fmt.Errorf("marshal notification channels: %w", err)
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		return b.Put([]byte("notification_channels"), data)
+	})
+}
+
+// migrateFromLegacy converts old NotificationConfig JSON into Channel entries.
+func migrateFromLegacy(data []byte) []notify.Channel {
+	var legacy NotificationConfig
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return nil
+	}
+
+	var channels []notify.Channel
+
+	if legacy.GotifyURL != "" {
+		settings, _ := json.Marshal(notify.GotifySettings{
+			URL:   legacy.GotifyURL,
+			Token: legacy.GotifyToken,
+		})
+		channels = append(channels, notify.Channel{
+			ID:       notify.GenerateID(),
+			Type:     notify.ProviderGotify,
+			Name:     "Gotify",
+			Enabled:  true,
+			Settings: settings,
+		})
+	}
+
+	if legacy.WebhookURL != "" {
+		settings, _ := json.Marshal(notify.WebhookSettings{
+			URL:     legacy.WebhookURL,
+			Headers: legacy.WebhookHeaders,
+		})
+		channels = append(channels, notify.Channel{
+			ID:       notify.GenerateID(),
+			Type:     notify.ProviderWebhook,
+			Name:     "Webhook",
+			Enabled:  true,
+			Settings: settings,
+		})
+	}
+
+	return channels
 }

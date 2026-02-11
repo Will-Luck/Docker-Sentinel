@@ -69,43 +69,47 @@ func main() {
 		}
 	}
 
-	// Build notification chain (env vars are the base; persisted config overrides).
+	// Build notification chain from persisted channels, with env var fallback.
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, notify.NewLogNotifier(log))
 
-	gotifyURL, gotifyToken := cfg.GotifyURL, cfg.GotifyToken
-	webhookURL, webhookHeaders := cfg.WebhookURL, cfg.WebhookHeaders
+	channels, err := db.GetNotificationChannels()
+	if err != nil {
+		log.Warn("failed to load notification channels", "error", err)
+	}
 
-	// Load persisted notification config (overrides env defaults).
-	if savedCfg, err := db.GetNotificationConfig(); err == nil {
-		if savedCfg.GotifyURL != "" {
-			gotifyURL = savedCfg.GotifyURL
-			gotifyToken = savedCfg.GotifyToken
-			log.Info("loaded persisted gotify config", "url", gotifyURL)
+	if len(channels) == 0 {
+		// Env var fallback: synthesise channels from SENTINEL_GOTIFY_URL etc.
+		if cfg.GotifyURL != "" {
+			settings, _ := json.Marshal(notify.GotifySettings{URL: cfg.GotifyURL, Token: cfg.GotifyToken})
+			channels = append(channels, notify.Channel{
+				ID: notify.GenerateID(), Type: notify.ProviderGotify,
+				Name: "Gotify", Enabled: true, Settings: settings,
+			})
+			log.Info("gotify notifications enabled from env", "url", cfg.GotifyURL)
 		}
-		if savedCfg.WebhookURL != "" {
-			webhookURL = savedCfg.WebhookURL
-			webhookHeaders = ""
-			// Rebuild comma-separated headers from map for parseHeaders compat.
-			var pairs []string
-			for k, v := range savedCfg.WebhookHeaders {
-				pairs = append(pairs, k+":"+v)
-			}
-			if len(pairs) > 0 {
-				webhookHeaders = strings.Join(pairs, ",")
-			}
-			log.Info("loaded persisted webhook config", "url", webhookURL)
+		if cfg.WebhookURL != "" {
+			headers := parseHeaders(cfg.WebhookHeaders)
+			settings, _ := json.Marshal(notify.WebhookSettings{URL: cfg.WebhookURL, Headers: headers})
+			channels = append(channels, notify.Channel{
+				ID: notify.GenerateID(), Type: notify.ProviderWebhook,
+				Name: "Webhook", Enabled: true, Settings: settings,
+			})
+			log.Info("webhook notifications enabled from env", "url", cfg.WebhookURL)
 		}
 	}
 
-	if gotifyURL != "" {
-		notifiers = append(notifiers, notify.NewGotify(gotifyURL, gotifyToken))
-		log.Info("gotify notifications enabled", "url", gotifyURL)
-	}
-	if webhookURL != "" {
-		headers := parseHeaders(webhookHeaders)
-		notifiers = append(notifiers, notify.NewWebhook(webhookURL, headers))
-		log.Info("webhook notifications enabled", "url", webhookURL)
+	for _, ch := range channels {
+		if !ch.Enabled {
+			continue
+		}
+		n, buildErr := notify.BuildNotifier(ch)
+		if buildErr != nil {
+			log.Warn("failed to build notifier", "channel", ch.Name, "error", buildErr)
+			continue
+		}
+		notifiers = append(notifiers, n)
+		log.Info("notification channel enabled", "name", ch.Name, "type", string(ch.Type))
 	}
 	notifier := notify.NewMulti(log, notifiers...)
 
@@ -509,24 +513,10 @@ func (a *startAdapter) StartContainer(ctx context.Context, id string) error {
 // notifyConfigAdapter bridges store.Store to web.NotificationConfigStore.
 type notifyConfigAdapter struct{ s *store.Store }
 
-func (a *notifyConfigAdapter) GetNotificationConfig() (web.NotificationConfig, error) {
-	cfg, err := a.s.GetNotificationConfig()
-	if err != nil {
-		return web.NotificationConfig{}, err
-	}
-	return web.NotificationConfig{
-		GotifyURL:      cfg.GotifyURL,
-		GotifyToken:    cfg.GotifyToken,
-		WebhookURL:     cfg.WebhookURL,
-		WebhookHeaders: cfg.WebhookHeaders,
-	}, nil
+func (a *notifyConfigAdapter) GetNotificationChannels() ([]notify.Channel, error) {
+	return a.s.GetNotificationChannels()
 }
 
-func (a *notifyConfigAdapter) SetNotificationConfig(cfg web.NotificationConfig) error {
-	return a.s.SetNotificationConfig(store.NotificationConfig{
-		GotifyURL:      cfg.GotifyURL,
-		GotifyToken:    cfg.GotifyToken,
-		WebhookURL:     cfg.WebhookURL,
-		WebhookHeaders: cfg.WebhookHeaders,
-	})
+func (a *notifyConfigAdapter) SetNotificationChannels(channels []notify.Channel) error {
+	return a.s.SetNotificationChannels(channels)
 }

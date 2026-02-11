@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// GotifySettings holds configuration for a Gotify notification channel.
+type GotifySettings struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
+}
+
 // Gotify sends notifications to a Gotify server via its REST API.
 type Gotify struct {
 	url    string

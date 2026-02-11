@@ -110,8 +110,8 @@ function initSettingsPage() {
         }
     }
 
-    // Load notification config.
-    loadNotificationConfig();
+    // Load notification channels.
+    loadNotificationChannels();
 }
 
 function onPollIntervalChange(value) {
@@ -820,63 +820,271 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 /* ------------------------------------------------------------
-   13. Notification Configuration
+   13. Notification Configuration — Multi-channel System
    ------------------------------------------------------------ */
 
-function loadNotificationConfig() {
+var PROVIDER_FIELDS = {
+    gotify: [
+        { key: "url", label: "Server URL", type: "text", placeholder: "http://gotify:80" },
+        { key: "token", label: "App Token", type: "password", placeholder: "Token" }
+    ],
+    webhook: [
+        { key: "url", label: "URL", type: "text", placeholder: "https://example.com/webhook" },
+        { key: "headers", label: "Headers (JSON)", type: "text", placeholder: '{"Authorization": "Bearer ..."}' }
+    ],
+    slack: [
+        { key: "webhook_url", label: "Webhook URL", type: "text", placeholder: "https://hooks.slack.com/services/..." }
+    ],
+    discord: [
+        { key: "webhook_url", label: "Webhook URL", type: "text", placeholder: "https://discord.com/api/webhooks/..." }
+    ],
+    ntfy: [
+        { key: "server", label: "Server", type: "text", placeholder: "https://ntfy.sh" },
+        { key: "topic", label: "Topic", type: "text", placeholder: "sentinel" },
+        { key: "priority", label: "Priority", type: "text", placeholder: "3" }
+    ],
+    telegram: [
+        { key: "bot_token", label: "Bot Token", type: "password", placeholder: "123456:ABC-DEF..." },
+        { key: "chat_id", label: "Chat ID", type: "text", placeholder: "-1001234567890" }
+    ],
+    pushover: [
+        { key: "app_token", label: "App Token", type: "password", placeholder: "Application token" },
+        { key: "user_key", label: "User Key", type: "password", placeholder: "User/group key" }
+    ]
+};
+
+var notificationChannels = [];
+
+function loadNotificationChannels() {
     fetch("/api/settings/notifications")
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            var urlEl = document.getElementById("gotify-url");
-            var tokenEl = document.getElementById("gotify-token");
-            var whUrlEl = document.getElementById("webhook-url");
-            var whHeadersEl = document.getElementById("webhook-headers");
-            if (urlEl && data.gotify_url) urlEl.value = data.gotify_url;
-            if (tokenEl && data.gotify_token) tokenEl.value = data.gotify_token;
-            if (whUrlEl && data.webhook_url) whUrlEl.value = data.webhook_url;
-            if (whHeadersEl && data.webhook_headers) {
-                var lines = [];
-                var keys = Object.keys(data.webhook_headers);
-                for (var i = 0; i < keys.length; i++) {
-                    lines.push(keys[i] + ": " + data.webhook_headers[keys[i]]);
-                }
-                whHeadersEl.value = lines.join("\n");
+            if (Array.isArray(data)) {
+                notificationChannels = data;
+            } else {
+                notificationChannels = [];
             }
+            renderChannels();
         })
-        .catch(function() {});
+        .catch(function() {
+            notificationChannels = [];
+            renderChannels();
+        });
 }
 
-function saveNotificationConfig() {
-    var gotifyUrl = (document.getElementById("gotify-url") || {}).value || "";
-    var gotifyToken = (document.getElementById("gotify-token") || {}).value || "";
-    var webhookUrl = (document.getElementById("webhook-url") || {}).value || "";
-    var headersText = (document.getElementById("webhook-headers") || {}).value || "";
+function renderChannels() {
+    var container = document.getElementById("channel-list");
+    if (!container) return;
 
-    var headers = {};
-    if (headersText.trim()) {
-        var lines = headersText.split("\n");
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim();
-            if (!line) continue;
-            var idx = line.indexOf(":");
-            if (idx > 0) {
-                headers[line.substring(0, idx).trim()] = line.substring(idx + 1).trim();
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    if (notificationChannels.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.style.padding = "var(--sp-8) var(--sp-4)";
+        var emptyH = document.createElement("h3");
+        emptyH.textContent = "No notification channels";
+        var emptyP = document.createElement("p");
+        emptyP.textContent = "Add a channel using the dropdown below to receive update notifications.";
+        empty.appendChild(emptyH);
+        empty.appendChild(emptyP);
+        container.appendChild(empty);
+        return;
+    }
+
+    for (var i = 0; i < notificationChannels.length; i++) {
+        container.appendChild(buildChannelCard(i));
+    }
+}
+
+function buildChannelCard(index) {
+    var ch = notificationChannels[index];
+    var fields = PROVIDER_FIELDS[ch.type] || [];
+    var settings = {};
+    try { settings = JSON.parse(ch.settings || "{}"); } catch(e) { settings = ch.settings || {}; }
+
+    var card = document.createElement("div");
+    card.className = "channel-card";
+    card.setAttribute("data-index", index);
+
+    // Header: type badge + name input + enabled toggle + actions
+    var header = document.createElement("div");
+    header.className = "channel-card-header";
+
+    var badge = document.createElement("span");
+    badge.className = "channel-type-badge";
+    badge.textContent = ch.type;
+    header.appendChild(badge);
+
+    var nameInput = document.createElement("input");
+    nameInput.className = "channel-name-input";
+    nameInput.type = "text";
+    nameInput.value = ch.name || "";
+    nameInput.placeholder = "Channel name";
+    nameInput.setAttribute("data-field", "name");
+    header.appendChild(nameInput);
+
+    var actions = document.createElement("div");
+    actions.className = "channel-actions";
+
+    var toggleLabel = document.createElement("label");
+    toggleLabel.style.fontSize = "0.75rem";
+    toggleLabel.style.color = "var(--fg-secondary)";
+    toggleLabel.style.display = "flex";
+    toggleLabel.style.alignItems = "center";
+    toggleLabel.style.gap = "6px";
+
+    var toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.className = "channel-toggle";
+    toggle.checked = ch.enabled !== false;
+    toggle.setAttribute("data-field", "enabled");
+    toggleLabel.appendChild(toggle);
+    toggleLabel.appendChild(document.createTextNode("Enabled"));
+    actions.appendChild(toggleLabel);
+
+    var testBtn = document.createElement("button");
+    testBtn.className = "btn";
+    testBtn.textContent = "Test";
+    testBtn.setAttribute("data-index", index);
+    testBtn.onclick = function() { testChannel(parseInt(this.getAttribute("data-index"))); };
+    actions.appendChild(testBtn);
+
+    var delBtn = document.createElement("button");
+    delBtn.className = "btn btn-error";
+    delBtn.textContent = "Delete";
+    delBtn.setAttribute("data-index", index);
+    delBtn.onclick = function() { deleteChannel(parseInt(this.getAttribute("data-index"))); };
+    actions.appendChild(delBtn);
+
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    // Provider-specific fields
+    var fieldsDiv = document.createElement("div");
+    fieldsDiv.className = "channel-fields";
+
+    for (var f = 0; f < fields.length; f++) {
+        var field = fields[f];
+        var row = document.createElement("div");
+        row.className = "channel-field";
+
+        var label = document.createElement("div");
+        label.className = "channel-field-label";
+        label.textContent = field.label;
+        row.appendChild(label);
+
+        var input = document.createElement("input");
+        input.className = "channel-field-input";
+        input.type = field.type || "text";
+        input.placeholder = field.placeholder || "";
+        input.setAttribute("data-setting", field.key);
+
+        // Special handling for headers (object -> JSON string)
+        var val = settings[field.key];
+        if (field.key === "headers" && val && typeof val === "object") {
+            input.value = JSON.stringify(val);
+        } else if (field.key === "priority" && val !== undefined) {
+            input.value = String(val);
+        } else {
+            input.value = val || "";
+        }
+
+        row.appendChild(input);
+        fieldsDiv.appendChild(row);
+    }
+
+    card.appendChild(fieldsDiv);
+    return card;
+}
+
+function addChannel() {
+    var select = document.getElementById("channel-type-select");
+    if (!select || !select.value) return;
+
+    var type = select.value;
+    var name = type.charAt(0).toUpperCase() + type.slice(1);
+
+    notificationChannels.push({
+        id: "new-" + Date.now() + "-" + Math.random().toString(36).substr(2, 6),
+        type: type,
+        name: name,
+        enabled: true,
+        settings: "{}"
+    });
+
+    select.value = "";
+    renderChannels();
+    showToast("Added " + name + " channel — configure and save", "info");
+}
+
+function deleteChannel(index) {
+    if (index < 0 || index >= notificationChannels.length) return;
+    var name = notificationChannels[index].name || notificationChannels[index].type;
+    notificationChannels.splice(index, 1);
+    renderChannels();
+    showToast("Removed " + name + " — save to apply", "info");
+}
+
+function collectChannelsFromDOM() {
+    var cards = document.querySelectorAll(".channel-card");
+    for (var i = 0; i < cards.length; i++) {
+        var idx = parseInt(cards[i].getAttribute("data-index"));
+        if (idx < 0 || idx >= notificationChannels.length) continue;
+
+        var nameInput = cards[i].querySelector('[data-field="name"]');
+        if (nameInput) notificationChannels[idx].name = nameInput.value;
+
+        var toggle = cards[i].querySelector('[data-field="enabled"]');
+        if (toggle) notificationChannels[idx].enabled = toggle.checked;
+
+        var settings = {};
+        try { settings = JSON.parse(notificationChannels[idx].settings || "{}"); } catch(e) { settings = {}; }
+        if (typeof notificationChannels[idx].settings === "object" && notificationChannels[idx].settings !== null && !(notificationChannels[idx].settings instanceof String)) {
+            settings = notificationChannels[idx].settings;
+        }
+
+        var inputs = cards[i].querySelectorAll("[data-setting]");
+        for (var j = 0; j < inputs.length; j++) {
+            var key = inputs[j].getAttribute("data-setting");
+            var val = inputs[j].value;
+            if (key === "headers") {
+                try { settings[key] = JSON.parse(val); } catch(e) { settings[key] = {}; }
+            } else if (key === "priority") {
+                settings[key] = parseInt(val) || 3;
+            } else {
+                settings[key] = val;
             }
         }
+
+        notificationChannels[idx].settings = JSON.stringify(settings);
     }
+}
+
+function saveNotificationChannels() {
+    collectChannelsFromDOM();
 
     var btn = document.getElementById("notify-save-btn");
     if (btn) { btn.classList.add("loading"); btn.disabled = true; }
 
+    // Parse settings strings back to objects for the API.
+    var payload = [];
+    for (var i = 0; i < notificationChannels.length; i++) {
+        var ch = {};
+        var keys = Object.keys(notificationChannels[i]);
+        for (var k = 0; k < keys.length; k++) {
+            ch[keys[k]] = notificationChannels[i][keys[k]];
+        }
+        if (typeof ch.settings === "string") {
+            try { ch.settings = JSON.parse(ch.settings); } catch(e) { ch.settings = {}; }
+        }
+        payload.push(ch);
+    }
+
     fetch("/api/settings/notifications", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            gotify_url: gotifyUrl,
-            gotify_token: gotifyToken,
-            webhook_url: webhookUrl,
-            webhook_headers: headers
-        })
+        body: JSON.stringify(payload)
     })
         .then(function(resp) {
             return resp.json().then(function(data) { return { ok: resp.ok, data: data }; });
@@ -884,6 +1092,7 @@ function saveNotificationConfig() {
         .then(function(result) {
             if (result.ok) {
                 showToast(result.data.message || "Notification settings saved", "success");
+                loadNotificationChannels();
             } else {
                 showToast(result.data.error || "Failed to save notification settings", "error");
             }
@@ -896,12 +1105,28 @@ function saveNotificationConfig() {
         });
 }
 
+function testChannel(index) {
+    collectChannelsFromDOM();
+    var ch = notificationChannels[index];
+    if (!ch) return;
+
+    var btn = document.querySelectorAll('.channel-card[data-index="' + index + '"] .btn')[0];
+
+    apiPost(
+        "/api/settings/notifications/test",
+        { id: ch.id },
+        "Test sent to " + (ch.name || ch.type),
+        "Test failed for " + (ch.name || ch.type),
+        btn
+    );
+}
+
 function testNotification() {
     var btn = document.getElementById("notify-test-btn");
     apiPost(
         "/api/settings/notifications/test",
         null,
-        "Test notification sent",
+        "Test notification sent to all channels",
         "Failed to send test notification",
         btn
     );

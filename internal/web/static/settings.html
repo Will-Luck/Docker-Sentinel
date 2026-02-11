@@ -111,47 +111,23 @@
         <!-- Notifications tab -->
         <div class="tab-panel" id="tab-notifications" role="tabpanel">
             <div class="settings-grid">
-                <div class="card">
-                    <div class="card-header"><h2>Gotify</h2></div>
-                    <div class="card-body">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Server URL</div>
-                                <div class="setting-desc">Gotify server endpoint (e.g. http://gotify:80)</div>
-                            </div>
-                            <input id="gotify-url" type="text" class="setting-input" placeholder="http://gotify:80">
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">App Token</div>
-                                <div class="setting-desc">Gotify application token for sending messages</div>
-                            </div>
-                            <input id="gotify-token" type="password" class="setting-input" placeholder="Token">
-                        </div>
-                    </div>
-                </div>
-                <div class="card">
-                    <div class="card-header"><h2>Webhook</h2></div>
-                    <div class="card-body">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">URL</div>
-                                <div class="setting-desc">Webhook endpoint to POST event payloads to</div>
-                            </div>
-                            <input id="webhook-url" type="text" class="setting-input" placeholder="https://example.com/webhook">
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Headers</div>
-                                <div class="setting-desc">Custom headers, one per line (Key: Value)</div>
-                            </div>
-                            <textarea id="webhook-headers" class="setting-textarea" placeholder="Authorization: Bearer token&#10;Content-Type: application/json"></textarea>
-                        </div>
-                    </div>
-                </div>
+                <div id="channel-list"><!-- JS renders channel cards here --></div>
                 <div class="setting-actions">
-                    <button class="btn btn-success" id="notify-save-btn" onclick="saveNotificationConfig()">Save</button>
-                    <button class="btn" id="notify-test-btn" onclick="testNotification()">Send Test</button>
+                    <div class="channel-add-wrap">
+                        <select id="channel-type-select" class="setting-select">
+                            <option value="">Add notification channel...</option>
+                            <option value="gotify">Gotify</option>
+                            <option value="webhook">Webhook</option>
+                            <option value="slack">Slack</option>
+                            <option value="discord">Discord</option>
+                            <option value="ntfy">Ntfy</option>
+                            <option value="telegram">Telegram</option>
+                            <option value="pushover">Pushover</option>
+                        </select>
+                        <button class="btn" onclick="addChannel()">Add</button>
+                    </div>
+                    <button class="btn btn-success" id="notify-save-btn" onclick="saveNotificationChannels()">Save All</button>
+                    <button class="btn" id="notify-test-btn" onclick="testNotification()">Test All</button>
                 </div>
             </div>
         </div>

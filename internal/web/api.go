@@ -894,36 +894,35 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiGetNotifications returns the current notification configuration.
+// apiGetNotifications returns the current notification channels with secrets masked.
 func (s *Server) apiGetNotifications(w http.ResponseWriter, r *http.Request) {
 	if s.deps.NotifyConfig == nil {
-		writeJSON(w, http.StatusOK, NotificationConfig{})
+		writeJSON(w, http.StatusOK, []notify.Channel{})
 		return
 	}
 
-	cfg, err := s.deps.NotifyConfig.GetNotificationConfig()
+	channels, err := s.deps.NotifyConfig.GetNotificationChannels()
 	if err != nil {
-		s.deps.Log.Error("failed to load notification config", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to load notification config")
+		s.deps.Log.Error("failed to load notification channels", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load notification channels")
 		return
 	}
-
-	// Mask the Gotify token for display.
-	if cfg.GotifyToken != "" {
-		if len(cfg.GotifyToken) > 4 {
-			cfg.GotifyToken = cfg.GotifyToken[:4] + "****"
-		} else {
-			cfg.GotifyToken = "****"
-		}
+	if channels == nil {
+		channels = []notify.Channel{}
 	}
 
-	writeJSON(w, http.StatusOK, cfg)
+	// Mask secrets for API response.
+	masked := make([]notify.Channel, len(channels))
+	for i, ch := range channels {
+		masked[i] = notify.MaskSecrets(ch)
+	}
+	writeJSON(w, http.StatusOK, masked)
 }
 
-// apiSaveNotifications saves notification configuration and reconfigures notifiers.
+// apiSaveNotifications saves notification channels and reconfigures the notifier chain.
 func (s *Server) apiSaveNotifications(w http.ResponseWriter, r *http.Request) {
-	var cfg NotificationConfig
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	var channels []notify.Channel
+	if err := json.NewDecoder(r.Body).Decode(&channels); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -933,29 +932,38 @@ func (s *Server) apiSaveNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If the token looks masked, load the existing one.
-	if strings.HasSuffix(cfg.GotifyToken, "****") {
-		existing, err := s.deps.NotifyConfig.GetNotificationConfig()
-		if err == nil && existing.GotifyToken != "" {
-			cfg.GotifyToken = existing.GotifyToken
+	// Restore masked secrets from existing saved channels.
+	existing, _ := s.deps.NotifyConfig.GetNotificationChannels()
+	existingMap := make(map[string]notify.Channel)
+	for _, ch := range existing {
+		existingMap[ch.ID] = ch
+	}
+	for i, ch := range channels {
+		if old, ok := existingMap[ch.ID]; ok {
+			channels[i].Settings = restoreSecrets(ch, old)
 		}
 	}
 
-	if err := s.deps.NotifyConfig.SetNotificationConfig(cfg); err != nil {
-		s.deps.Log.Error("failed to save notification config", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to save notification config")
+	if err := s.deps.NotifyConfig.SetNotificationChannels(channels); err != nil {
+		s.deps.Log.Error("failed to save notification channels", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save notification channels")
 		return
 	}
 
-	// Reconfigure live notifiers if reconfigurer is available.
+	// Rebuild notifier chain.
 	if s.deps.NotifyReconfigurer != nil {
 		var notifiers []notify.Notifier
 		notifiers = append(notifiers, notify.NewLogNotifier(s.deps.Log))
-		if cfg.GotifyURL != "" && cfg.GotifyToken != "" {
-			notifiers = append(notifiers, notify.NewGotify(cfg.GotifyURL, cfg.GotifyToken))
-		}
-		if cfg.WebhookURL != "" {
-			notifiers = append(notifiers, notify.NewWebhook(cfg.WebhookURL, cfg.WebhookHeaders))
+		for _, ch := range channels {
+			if !ch.Enabled {
+				continue
+			}
+			n, err := notify.BuildNotifier(ch)
+			if err != nil {
+				s.deps.Log.Warn("failed to build notifier", "channel", ch.Name, "type", string(ch.Type), "error", err)
+				continue
+			}
+			notifiers = append(notifiers, n)
 		}
 		s.deps.NotifyReconfigurer.Reconfigure(notifiers...)
 	}
@@ -968,25 +976,80 @@ func (s *Server) apiSaveNotifications(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiTestNotification sends a test event through the notification chain.
+// apiTestNotification sends a test event through the notification chain or a single channel.
 func (s *Server) apiTestNotification(w http.ResponseWriter, r *http.Request) {
 	if s.deps.NotifyReconfigurer == nil {
 		writeError(w, http.StatusNotImplemented, "notifications not available")
 		return
 	}
 
-	// Send a test event through the reconfigurer (which is the Multi).
+	var body struct {
+		ID string `json:"id"`
+	}
+	// Try to decode body -- if empty, test entire chain (backward compat).
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	testEvent := notify.Event{
+		Type:          notify.EventUpdateAvailable,
+		ContainerName: "sentinel-test",
+		OldImage:      "test:latest",
+		Timestamp:     time.Now(),
+	}
+
+	if body.ID != "" && s.deps.NotifyConfig != nil {
+		// Test single channel.
+		channels, err := s.deps.NotifyConfig.GetNotificationChannels()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load channels")
+			return
+		}
+		for _, ch := range channels {
+			if ch.ID == body.ID {
+				n, err := notify.BuildNotifier(ch)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "failed to build notifier: "+err.Error())
+					return
+				}
+				if err := n.Send(r.Context(), testEvent); err != nil {
+					writeError(w, http.StatusBadGateway, "test failed: "+err.Error())
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]string{
+					"status":  "ok",
+					"message": "test notification sent to " + ch.Name,
+				})
+				return
+			}
+		}
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+
+	// Test entire chain.
 	if multi, ok := s.deps.NotifyReconfigurer.(*notify.Multi); ok {
-		multi.Notify(r.Context(), notify.Event{
-			Type:          notify.EventUpdateAvailable,
-			ContainerName: "sentinel-test",
-			OldImage:      "test:latest",
-			Timestamp:     time.Now(),
-		})
+		multi.Notify(r.Context(), testEvent)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"message": "test notification sent",
 	})
+}
+
+// restoreSecrets returns the saved settings if the incoming settings contain any
+// masked values (strings ending in "****"). This prevents overwriting real secrets
+// with their masked representations when the frontend sends back unchanged channels.
+func restoreSecrets(incoming, saved notify.Channel) json.RawMessage {
+	var fields map[string]interface{}
+	if err := json.Unmarshal(incoming.Settings, &fields); err != nil {
+		return incoming.Settings
+	}
+
+	for _, v := range fields {
+		s, ok := v.(string)
+		if ok && strings.HasSuffix(s, "****") {
+			return saved.Settings
+		}
+	}
+	return incoming.Settings
 }

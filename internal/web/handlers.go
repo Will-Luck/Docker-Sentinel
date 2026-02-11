@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
@@ -73,10 +74,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Extract tag for compact display; fall back to full image ref.
+		// Extract tag for compact display; fall back to last path segment.
 		tag := registry.ExtractTag(c.Image)
 		if tag == "" {
-			tag = c.Image
+			if idx := strings.LastIndex(c.Image, "/"); idx >= 0 {
+				tag = c.Image[idx+1:]
+			} else {
+				tag = c.Image
+			}
 		}
 
 		// Get newest version from queue entry if available.
@@ -301,7 +306,11 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 
 	detailTag := registry.ExtractTag(found.Image)
 	if detailTag == "" {
-		detailTag = found.Image
+		if idx := strings.LastIndex(found.Image, "/"); idx >= 0 {
+			detailTag = found.Image[idx+1:]
+		} else {
+			detailTag = found.Image
+		}
 	}
 
 	view := containerView{

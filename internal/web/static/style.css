@@ -720,6 +720,16 @@ tbody td {
     display: block;
 }
 
+/* Centre-align Policy, Status, Actions columns */
+th:nth-child(4),
+th:nth-child(5),
+th:nth-child(6),
+td:nth-child(4),
+td:nth-child(5),
+td:nth-child(6) {
+    text-align: center;
+}
+
 
 /* --------------------------------------------------------------------------
    10. Stack Groups — collapsible, chevron rotation, pending state
@@ -1358,6 +1368,140 @@ tbody td {
     display: flex;
     gap: var(--sp-2);
     padding: var(--sp-4) 0 0;
+}
+
+/* Notification channel cards */
+
+.channel-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--sp-4) var(--sp-5);
+    margin-bottom: var(--sp-4);
+    box-shadow: var(--shadow-sm);
+}
+
+.channel-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-4);
+}
+
+.channel-type-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--info-bg);
+    color: var(--info-fg);
+    flex-shrink: 0;
+}
+
+.channel-name-input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 8px;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+    outline: none;
+    flex: 1;
+    min-width: 120px;
+    max-width: 200px;
+}
+
+.channel-name-input:focus {
+    border-color: var(--accent);
+}
+
+.channel-actions {
+    display: flex;
+    gap: var(--sp-2);
+    margin-left: auto;
+    align-items: center;
+}
+
+.channel-fields {
+    display: grid;
+    gap: var(--sp-3);
+}
+
+.channel-field {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--sp-4);
+}
+
+.channel-field-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--fg-secondary);
+    min-width: 100px;
+    flex-shrink: 0;
+}
+
+.channel-field-input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+    outline: none;
+    flex: 1;
+    max-width: 400px;
+}
+
+.channel-field-input:focus {
+    border-color: var(--accent);
+}
+
+.channel-toggle {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 36px;
+    height: 20px;
+    border-radius: var(--radius-full);
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    position: relative;
+    transition: background 200ms;
+    flex-shrink: 0;
+}
+
+.channel-toggle::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--radius-full);
+    background: var(--fg-secondary);
+    transition: transform 200ms, background 200ms;
+}
+
+.channel-toggle:checked {
+    background: var(--success);
+    border-color: var(--success);
+}
+
+.channel-toggle:checked::after {
+    transform: translateX(16px);
+    background: #ffffff;
+}
+
+.channel-add-wrap {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: center;
 }
 
 
