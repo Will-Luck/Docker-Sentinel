@@ -61,11 +61,22 @@
 
         <div class="card">
             <div class="card-header">
-                <h2>Container Status</h2>
-                <div class="btn-group">
-                    <button class="btn" onclick="expandAllStacks()">Expand All</button>
-                    <button class="btn" onclick="collapseAllStacks()">Collapse All</button>
-                    <button class="btn" id="manage-btn" onclick="toggleManageMode()">Manage</button>
+                <div class="card-header-top">
+                    <h2>Container Status</h2>
+                    <div class="btn-group">
+                        <button class="btn" onclick="expandAllStacks()">Expand All</button>
+                        <button class="btn" onclick="collapseAllStacks()">Collapse All</button>
+                        <button class="btn" id="manage-btn" onclick="toggleManageMode()">Manage</button>
+                    </div>
+                </div>
+                <div class="filter-bar" id="filter-bar">
+                    <button class="filter-pill" data-filter="status" data-value="running" data-exclusive="status">Running</button>
+                    <button class="filter-pill" data-filter="status" data-value="stopped" data-exclusive="status">Stopped</button>
+                    <span class="filter-divider"></span>
+                    <button class="filter-pill" data-filter="updates" data-value="pending">Updatable</button>
+                    <span class="filter-divider"></span>
+                    <button class="filter-pill" data-filter="sort" data-value="alpha" data-exclusive="sort">A-Z</button>
+                    <button class="filter-pill" data-filter="sort" data-value="status" data-exclusive="sort">Priority</button>
                 </div>
             </div>
             <div class="table-wrap">
@@ -92,10 +103,11 @@
                     </thead>
                     {{if .Stacks}}
                         {{range .Stacks}}
-                        <tbody class="stack-group stack-collapsed" data-stack="{{.Name}}">
+                        <tbody class="stack-group stack-collapsed{{if gt .StoppedCount 0}} stack-has-stopped{{else if .HasPending}} stack-has-pending{{else}} stack-healthy{{end}}" data-stack="{{.Name}}">
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
                                 <td colspan="6">
                                     <div class="stack-header-inner">
+                                        <input type="checkbox" class="stack-select" data-stack="{{.Name}}" title="Select all in {{.Name}}" onclick="event.stopPropagation()">
                                         <span class="stack-chevron">&#9656;</span>
                                         <span class="stack-name">{{.Name}}</span>
                                         <span class="stack-counts">
@@ -147,7 +159,7 @@
 {{end}}
 
 {{define "container-row"}}
-                            <tr class="container-row" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
+                            <tr class="container-row state-{{.State}}{{if .HasUpdate}} has-update{{end}}" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
                                 <td class="td-checkbox">
                                     {{if not .IsSelf}}
                                         <input type="checkbox" class="row-select" value="{{.Name}}" id="select-{{.Name}}" aria-label="Select {{.Name}}">
