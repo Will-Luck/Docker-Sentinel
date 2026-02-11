@@ -43,9 +43,12 @@ type containerView struct {
 
 // stackGroup groups containers by their Docker Compose project name.
 type stackGroup struct {
-	Name       string
-	Containers []containerView
-	HasPending bool // true if any container in the group has an update available
+	Name         string
+	Containers   []containerView
+	HasPending   bool // true if any container in the group has an update available
+	RunningCount int
+	StoppedCount int
+	PendingCount int
 }
 
 // handleDashboard renders the main container dashboard.
@@ -149,9 +152,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			Containers: stackMap[key],
 		}
 		for _, c := range group.Containers {
+			if c.State == "running" {
+				group.RunningCount++
+			} else {
+				group.StoppedCount++
+			}
 			if c.HasUpdate {
 				group.HasPending = true
-				break
+				group.PendingCount++
 			}
 		}
 		stacks = append(stacks, group)
