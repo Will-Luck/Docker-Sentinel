@@ -189,7 +189,7 @@ type ContainerInspect struct {
 
 // ContainerUpdater triggers container updates.
 type ContainerUpdater interface {
-	UpdateContainer(ctx context.Context, id, name string) error
+	UpdateContainer(ctx context.Context, id, name, targetImage string) error
 	IsUpdating(name string) bool
 }
 
@@ -350,7 +350,7 @@ func (s *Server) serveJS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
-	const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#3b82f6"/><text x="16" y="22" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-weight="700" font-size="20">S</text></svg>`
+	const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="#d97757"/><text x="16" y="22" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif" font-weight="700" font-size="20">S</text></svg>`
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = w.Write([]byte(favicon))

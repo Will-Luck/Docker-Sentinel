@@ -765,11 +765,13 @@ tbody td {
     color: var(--fg-primary);
     border: 1px solid var(--border);
     border-radius: var(--radius-full);
-    padding: 2px 22px 2px 10px;
+    padding: 2px 22px 2px 22px;
     font-size: 0.7rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+    text-align: center;
+    text-align-last: center;
     cursor: pointer;
     transition: border-color 150ms;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%23b0aea5' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
