@@ -18,7 +18,21 @@ const (
 	EventRollbackOK       EventType = "rollback_succeeded"
 	EventRollbackFailed   EventType = "rollback_failed"
 	EventVersionAvailable EventType = "version_available"
+	EventContainerState   EventType = "container_state"
 )
+
+// AllEventTypes returns all event types that can be filtered for notifications.
+func AllEventTypes() []EventType {
+	return []EventType{
+		EventUpdateAvailable,
+		EventUpdateStarted,
+		EventUpdateSucceeded,
+		EventUpdateFailed,
+		EventRollbackOK,
+		EventRollbackFailed,
+		EventContainerState,
+	}
+}
 
 // Event represents a notification event.
 type Event struct {
