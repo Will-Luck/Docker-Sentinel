@@ -69,17 +69,43 @@ func main() {
 		}
 	}
 
-	// Build notification chain.
+	// Build notification chain (env vars are the base; persisted config overrides).
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, notify.NewLogNotifier(log))
-	if cfg.GotifyURL != "" {
-		notifiers = append(notifiers, notify.NewGotify(cfg.GotifyURL, cfg.GotifyToken))
-		log.Info("gotify notifications enabled", "url", cfg.GotifyURL)
+
+	gotifyURL, gotifyToken := cfg.GotifyURL, cfg.GotifyToken
+	webhookURL, webhookHeaders := cfg.WebhookURL, cfg.WebhookHeaders
+
+	// Load persisted notification config (overrides env defaults).
+	if savedCfg, err := db.GetNotificationConfig(); err == nil {
+		if savedCfg.GotifyURL != "" {
+			gotifyURL = savedCfg.GotifyURL
+			gotifyToken = savedCfg.GotifyToken
+			log.Info("loaded persisted gotify config", "url", gotifyURL)
+		}
+		if savedCfg.WebhookURL != "" {
+			webhookURL = savedCfg.WebhookURL
+			webhookHeaders = ""
+			// Rebuild comma-separated headers from map for parseHeaders compat.
+			var pairs []string
+			for k, v := range savedCfg.WebhookHeaders {
+				pairs = append(pairs, k+":"+v)
+			}
+			if len(pairs) > 0 {
+				webhookHeaders = strings.Join(pairs, ",")
+			}
+			log.Info("loaded persisted webhook config", "url", webhookURL)
+		}
 	}
-	if cfg.WebhookURL != "" {
-		headers := parseHeaders(cfg.WebhookHeaders)
-		notifiers = append(notifiers, notify.NewWebhook(cfg.WebhookURL, headers))
-		log.Info("webhook notifications enabled", "url", cfg.WebhookURL)
+
+	if gotifyURL != "" {
+		notifiers = append(notifiers, notify.NewGotify(gotifyURL, gotifyToken))
+		log.Info("gotify notifications enabled", "url", gotifyURL)
+	}
+	if webhookURL != "" {
+		headers := parseHeaders(webhookHeaders)
+		notifiers = append(notifiers, notify.NewWebhook(webhookURL, headers))
+		log.Info("webhook notifications enabled", "url", webhookURL)
 	}
 	notifier := notify.NewMulti(log, notifiers...)
 
@@ -92,23 +118,27 @@ func main() {
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
-			Store:           &storeAdapter{db},
-			Queue:           &queueAdapter{queue},
-			Docker:          &dockerAdapter{client},
-			Updater:         updater,
-			Config:          cfg,
-			EventBus:        bus,
-			Snapshots:       &snapshotAdapter{db},
-			Rollback:        &rollbackAdapter{d: client, s: db, log: log},
-			Restarter:       &restartAdapter{client},
-			Registry:        &registryAdapter{log: log},
-			RegistryChecker: &registryCheckerAdapter{checker: checker},
-			Policy:          &policyStoreAdapter{db},
-			EventLog:        &eventLogAdapter{db},
-			Scheduler:       scheduler,
-			SettingsStore:   &settingsStoreAdapter{db},
-			SelfUpdater:     &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
-			Log:             log.Logger,
+			Store:              &storeAdapter{db},
+			Queue:              &queueAdapter{queue},
+			Docker:             &dockerAdapter{client},
+			Updater:            updater,
+			Config:             cfg,
+			EventBus:           bus,
+			Snapshots:          &snapshotAdapter{db},
+			Rollback:           &rollbackAdapter{d: client, s: db, log: log},
+			Restarter:          &restartAdapter{client},
+			Registry:           &registryAdapter{log: log},
+			RegistryChecker:    &registryCheckerAdapter{checker: checker},
+			Policy:             &policyStoreAdapter{db},
+			EventLog:           &eventLogAdapter{db},
+			Scheduler:          scheduler,
+			SettingsStore:      &settingsStoreAdapter{db},
+			Stopper:            &stopAdapter{client},
+			Starter:            &startAdapter{client},
+			SelfUpdater:        &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
+			NotifyConfig:       &notifyConfigAdapter{db},
+			NotifyReconfigurer: notifier,
+			Log:                log.Logger,
 		})
 
 		go func() {
@@ -460,4 +490,43 @@ type selfUpdateAdapter struct {
 
 func (a *selfUpdateAdapter) Update(ctx context.Context) error {
 	return a.updater.Update(ctx)
+}
+
+// stopAdapter bridges docker.Client to web.ContainerStopper.
+type stopAdapter struct{ c *docker.Client }
+
+func (a *stopAdapter) StopContainer(ctx context.Context, id string) error {
+	return a.c.StopContainer(ctx, id, 10)
+}
+
+// startAdapter bridges docker.Client to web.ContainerStarter.
+type startAdapter struct{ c *docker.Client }
+
+func (a *startAdapter) StartContainer(ctx context.Context, id string) error {
+	return a.c.StartContainer(ctx, id)
+}
+
+// notifyConfigAdapter bridges store.Store to web.NotificationConfigStore.
+type notifyConfigAdapter struct{ s *store.Store }
+
+func (a *notifyConfigAdapter) GetNotificationConfig() (web.NotificationConfig, error) {
+	cfg, err := a.s.GetNotificationConfig()
+	if err != nil {
+		return web.NotificationConfig{}, err
+	}
+	return web.NotificationConfig{
+		GotifyURL:      cfg.GotifyURL,
+		GotifyToken:    cfg.GotifyToken,
+		WebhookURL:     cfg.WebhookURL,
+		WebhookHeaders: cfg.WebhookHeaders,
+	}, nil
+}
+
+func (a *notifyConfigAdapter) SetNotificationConfig(cfg web.NotificationConfig) error {
+	return a.s.SetNotificationConfig(store.NotificationConfig{
+		GotifyURL:      cfg.GotifyURL,
+		GotifyToken:    cfg.GotifyToken,
+		WebhookURL:     cfg.WebhookURL,
+		WebhookHeaders: cfg.WebhookHeaders,
+	})
 }

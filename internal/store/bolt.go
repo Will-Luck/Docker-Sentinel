@@ -404,3 +404,37 @@ func (s *Store) LoadSetting(key string) (string, error) {
 	})
 	return val, err
 }
+
+// NotificationConfig represents persisted notification settings.
+type NotificationConfig struct {
+	GotifyURL      string            `json:"gotify_url"`
+	GotifyToken    string            `json:"gotify_token"`
+	WebhookURL     string            `json:"webhook_url"`
+	WebhookHeaders map[string]string `json:"webhook_headers"`
+}
+
+// GetNotificationConfig loads the notification configuration from the settings bucket.
+func (s *Store) GetNotificationConfig() (NotificationConfig, error) {
+	var cfg NotificationConfig
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		v := b.Get([]byte("notification_config"))
+		if v == nil {
+			return nil
+		}
+		return json.Unmarshal(v, &cfg)
+	})
+	return cfg, err
+}
+
+// SetNotificationConfig saves the notification configuration to the settings bucket.
+func (s *Store) SetNotificationConfig(cfg NotificationConfig) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal notification config: %w", err)
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		return b.Put([]byte("notification_config"), data)
+	})
+}

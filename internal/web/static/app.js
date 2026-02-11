@@ -78,6 +78,40 @@ function initSettingsPage() {
             })
             .catch(function() {});
     }
+
+    // Tab navigation.
+    var tabBtns = document.querySelectorAll(".tab-btn");
+    var tabPanels = document.querySelectorAll(".tab-panel");
+    if (tabBtns.length > 0) {
+        var savedTab = localStorage.getItem("sentinel-settings-tab");
+        if (savedTab) {
+            for (var i = 0; i < tabBtns.length; i++) {
+                var isTarget = tabBtns[i].getAttribute("data-tab") === savedTab;
+                tabBtns[i].classList.toggle("active", isTarget);
+                tabBtns[i].setAttribute("aria-selected", isTarget ? "true" : "false");
+            }
+            for (var i = 0; i < tabPanels.length; i++) {
+                tabPanels[i].classList.toggle("active", tabPanels[i].id === "tab-" + savedTab);
+            }
+        }
+
+        for (var i = 0; i < tabBtns.length; i++) {
+            tabBtns[i].addEventListener("click", function() {
+                var tab = this.getAttribute("data-tab");
+                localStorage.setItem("sentinel-settings-tab", tab);
+                for (var j = 0; j < tabBtns.length; j++) {
+                    tabBtns[j].classList.toggle("active", tabBtns[j] === this);
+                    tabBtns[j].setAttribute("aria-selected", tabBtns[j] === this ? "true" : "false");
+                }
+                for (var j = 0; j < tabPanels.length; j++) {
+                    tabPanels[j].classList.toggle("active", tabPanels[j].id === "tab-" + tab);
+                }
+            });
+        }
+    }
+
+    // Load notification config.
+    loadNotificationConfig();
 }
 
 function onPollIntervalChange(value) {
@@ -764,7 +798,7 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    // Restart badge click delegation.
+    // Stop/Start/Restart badge click delegation.
     document.addEventListener("click", function(e) {
         var badge = e.target.closest(".status-badge-wrap .badge-hover");
         if (!badge) return;
@@ -773,11 +807,102 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!wrap) return;
         var name = wrap.getAttribute("data-name");
         if (!name) return;
+        var action = wrap.getAttribute("data-action") || "restart";
+        var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
+        var label = action.charAt(0).toUpperCase() + action.slice(1);
         apiPost(
-            "/api/containers/" + encodeURIComponent(name) + "/restart",
+            endpoint,
             null,
-            "Restart initiated for " + name,
-            "Failed to restart " + name
+            label + " initiated for " + name,
+            "Failed to " + action + " " + name
         );
     });
 });
+
+/* ------------------------------------------------------------
+   13. Notification Configuration
+   ------------------------------------------------------------ */
+
+function loadNotificationConfig() {
+    fetch("/api/settings/notifications")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var urlEl = document.getElementById("gotify-url");
+            var tokenEl = document.getElementById("gotify-token");
+            var whUrlEl = document.getElementById("webhook-url");
+            var whHeadersEl = document.getElementById("webhook-headers");
+            if (urlEl && data.gotify_url) urlEl.value = data.gotify_url;
+            if (tokenEl && data.gotify_token) tokenEl.value = data.gotify_token;
+            if (whUrlEl && data.webhook_url) whUrlEl.value = data.webhook_url;
+            if (whHeadersEl && data.webhook_headers) {
+                var lines = [];
+                var keys = Object.keys(data.webhook_headers);
+                for (var i = 0; i < keys.length; i++) {
+                    lines.push(keys[i] + ": " + data.webhook_headers[keys[i]]);
+                }
+                whHeadersEl.value = lines.join("\n");
+            }
+        })
+        .catch(function() {});
+}
+
+function saveNotificationConfig() {
+    var gotifyUrl = (document.getElementById("gotify-url") || {}).value || "";
+    var gotifyToken = (document.getElementById("gotify-token") || {}).value || "";
+    var webhookUrl = (document.getElementById("webhook-url") || {}).value || "";
+    var headersText = (document.getElementById("webhook-headers") || {}).value || "";
+
+    var headers = {};
+    if (headersText.trim()) {
+        var lines = headersText.split("\n");
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line) continue;
+            var idx = line.indexOf(":");
+            if (idx > 0) {
+                headers[line.substring(0, idx).trim()] = line.substring(idx + 1).trim();
+            }
+        }
+    }
+
+    var btn = document.getElementById("notify-save-btn");
+    if (btn) { btn.classList.add("loading"); btn.disabled = true; }
+
+    fetch("/api/settings/notifications", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            gotify_url: gotifyUrl,
+            gotify_token: gotifyToken,
+            webhook_url: webhookUrl,
+            webhook_headers: headers
+        })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) { return { ok: resp.ok, data: data }; });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Notification settings saved", "success");
+            } else {
+                showToast(result.data.error || "Failed to save notification settings", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not save notification settings", "error");
+        })
+        .finally(function() {
+            if (btn) { btn.classList.remove("loading"); btn.disabled = false; }
+        });
+}
+
+function testNotification() {
+    var btn = document.getElementById("notify-test-btn");
+    apiPost(
+        "/api/settings/notifications/test",
+        null,
+        "Test notification sent",
+        "Failed to send test notification",
+        btn
+    );
+}

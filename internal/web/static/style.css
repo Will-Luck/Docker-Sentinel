@@ -1267,6 +1267,99 @@ tbody td {
     opacity: 0.85;
 }
 
+/* Tab navigation for settings page */
+
+.tab-nav {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--sp-6);
+    overflow-x: auto;
+}
+
+.tab-btn {
+    padding: var(--sp-3) var(--sp-5);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--fg-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 150ms, border-color 150ms;
+}
+
+.tab-btn:hover {
+    color: var(--fg-primary);
+}
+
+.tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+/* Notification config form inputs */
+
+.setting-input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+    outline: none;
+    transition: border-color 150ms;
+    width: 100%;
+    max-width: 400px;
+}
+
+.setting-input:hover {
+    border-color: var(--border-strong);
+}
+
+.setting-input:focus {
+    border-color: var(--accent);
+}
+
+.setting-textarea {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    color: var(--fg-primary);
+    outline: none;
+    transition: border-color 150ms;
+    width: 100%;
+    max-width: 400px;
+    min-height: 80px;
+    resize: vertical;
+}
+
+.setting-textarea:hover {
+    border-color: var(--border-strong);
+}
+
+.setting-textarea:focus {
+    border-color: var(--accent);
+}
+
+.setting-actions {
+    display: flex;
+    gap: var(--sp-2);
+    padding: var(--sp-4) 0 0;
+}
+
 
 /* --------------------------------------------------------------------------
    21. Utility Helpers
@@ -1381,6 +1474,23 @@ table.managing .td-checkbox {
     align-items: center;
     gap: 4px;
     padding: 2px 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.policy-badge-self {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    border: 1px solid light-dark(var(--zinc-400), var(--zinc-600));
+    background-color: var(--bg-raised);
+    color: var(--fg-secondary);
     font-size: 0.7rem;
     font-weight: 600;
     text-transform: uppercase;

@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
 
 // apiContainers returns all monitored containers with policy and maintenance status.
@@ -782,5 +785,208 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "started",
 		"message": "Self-update initiated — Sentinel will restart shortly",
+	})
+}
+
+// apiStop stops a container by name.
+func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.isProtectedContainer(r.Context(), name) {
+		writeError(w, http.StatusForbidden, "cannot stop sentinel itself via the dashboard")
+		return
+	}
+
+	if s.deps.Stopper == nil {
+		writeError(w, http.StatusNotImplemented, "stop not available")
+		return
+	}
+
+	containers, err := s.deps.Docker.ListContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers for stop", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var containerID string
+	for _, c := range containers {
+		if containerName(c) == name {
+			containerID = c.ID
+			break
+		}
+	}
+
+	if containerID == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	go func() {
+		if err := s.deps.Stopper.StopContainer(context.Background(), containerID); err != nil {
+			s.deps.Log.Error("stop failed", "name", name, "error", err)
+		}
+	}()
+
+	s.logEvent("stop", name, "Container stopped")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "stopping",
+		"name":    name,
+		"message": "stop initiated for " + name,
+	})
+}
+
+// apiStart starts a container by name.
+func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.isProtectedContainer(r.Context(), name) {
+		writeError(w, http.StatusForbidden, "cannot start sentinel itself via the dashboard")
+		return
+	}
+
+	if s.deps.Starter == nil {
+		writeError(w, http.StatusNotImplemented, "start not available")
+		return
+	}
+
+	containers, err := s.deps.Docker.ListContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers for start", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var containerID string
+	for _, c := range containers {
+		if containerName(c) == name {
+			containerID = c.ID
+			break
+		}
+	}
+
+	if containerID == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	go func() {
+		if err := s.deps.Starter.StartContainer(context.Background(), containerID); err != nil {
+			s.deps.Log.Error("start failed", "name", name, "error", err)
+		}
+	}()
+
+	s.logEvent("start", name, "Container started")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "starting",
+		"name":    name,
+		"message": "start initiated for " + name,
+	})
+}
+
+// apiGetNotifications returns the current notification configuration.
+func (s *Server) apiGetNotifications(w http.ResponseWriter, r *http.Request) {
+	if s.deps.NotifyConfig == nil {
+		writeJSON(w, http.StatusOK, NotificationConfig{})
+		return
+	}
+
+	cfg, err := s.deps.NotifyConfig.GetNotificationConfig()
+	if err != nil {
+		s.deps.Log.Error("failed to load notification config", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load notification config")
+		return
+	}
+
+	// Mask the Gotify token for display.
+	if cfg.GotifyToken != "" {
+		if len(cfg.GotifyToken) > 4 {
+			cfg.GotifyToken = cfg.GotifyToken[:4] + "****"
+		} else {
+			cfg.GotifyToken = "****"
+		}
+	}
+
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// apiSaveNotifications saves notification configuration and reconfigures notifiers.
+func (s *Server) apiSaveNotifications(w http.ResponseWriter, r *http.Request) {
+	var cfg NotificationConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.NotifyConfig == nil {
+		writeError(w, http.StatusNotImplemented, "notification config not available")
+		return
+	}
+
+	// If the token looks masked, load the existing one.
+	if strings.HasSuffix(cfg.GotifyToken, "****") {
+		existing, err := s.deps.NotifyConfig.GetNotificationConfig()
+		if err == nil && existing.GotifyToken != "" {
+			cfg.GotifyToken = existing.GotifyToken
+		}
+	}
+
+	if err := s.deps.NotifyConfig.SetNotificationConfig(cfg); err != nil {
+		s.deps.Log.Error("failed to save notification config", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save notification config")
+		return
+	}
+
+	// Reconfigure live notifiers if reconfigurer is available.
+	if s.deps.NotifyReconfigurer != nil {
+		var notifiers []notify.Notifier
+		notifiers = append(notifiers, notify.NewLogNotifier(s.deps.Log))
+		if cfg.GotifyURL != "" && cfg.GotifyToken != "" {
+			notifiers = append(notifiers, notify.NewGotify(cfg.GotifyURL, cfg.GotifyToken))
+		}
+		if cfg.WebhookURL != "" {
+			notifiers = append(notifiers, notify.NewWebhook(cfg.WebhookURL, cfg.WebhookHeaders))
+		}
+		s.deps.NotifyReconfigurer.Reconfigure(notifiers...)
+	}
+
+	s.logEvent("settings", "", "Notification configuration updated")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"message": "notification settings saved",
+	})
+}
+
+// apiTestNotification sends a test event through the notification chain.
+func (s *Server) apiTestNotification(w http.ResponseWriter, r *http.Request) {
+	if s.deps.NotifyReconfigurer == nil {
+		writeError(w, http.StatusNotImplemented, "notifications not available")
+		return
+	}
+
+	// Send a test event through the reconfigurer (which is the Multi).
+	if multi, ok := s.deps.NotifyReconfigurer.(*notify.Multi); ok {
+		multi.Notify(r.Context(), notify.Event{
+			Type:          notify.EventUpdateAvailable,
+			ContainerName: "sentinel-test",
+			OldImage:      "test:latest",
+			Timestamp:     time.Now(),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"message": "test notification sent",
 	})
 }

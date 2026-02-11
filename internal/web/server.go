@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
 
 //go:embed static/*
@@ -18,23 +19,27 @@ var staticFS embed.FS
 
 // Dependencies defines what the web server needs from the rest of the application.
 type Dependencies struct {
-	Store           HistoryStore
-	Queue           UpdateQueue
-	Docker          ContainerLister
-	Updater         ContainerUpdater
-	Config          ConfigReader
-	EventBus        *events.Bus
-	Snapshots       SnapshotStore
-	Rollback        ContainerRollback
-	Restarter       ContainerRestarter
-	Registry        RegistryVersionChecker
-	RegistryChecker RegistryChecker
-	Policy          PolicyStore
-	EventLog        EventLogger
-	Scheduler       SchedulerController
-	SettingsStore   SettingsStore
-	SelfUpdater     SelfUpdater
-	Log             *slog.Logger
+	Store              HistoryStore
+	Queue              UpdateQueue
+	Docker             ContainerLister
+	Updater            ContainerUpdater
+	Config             ConfigReader
+	EventBus           *events.Bus
+	Snapshots          SnapshotStore
+	Rollback           ContainerRollback
+	Restarter          ContainerRestarter
+	Stopper            ContainerStopper
+	Starter            ContainerStarter
+	Registry           RegistryVersionChecker
+	RegistryChecker    RegistryChecker
+	Policy             PolicyStore
+	EventLog           EventLogger
+	Scheduler          SchedulerController
+	SettingsStore      SettingsStore
+	SelfUpdater        SelfUpdater
+	NotifyConfig       NotificationConfigStore
+	NotifyReconfigurer NotifierReconfigurer
+	Log                *slog.Logger
 }
 
 // HistoryStore reads update history and maintenance state.
@@ -81,6 +86,25 @@ type EventLogger interface {
 // SelfUpdater triggers self-update via an ephemeral helper container.
 type SelfUpdater interface {
 	Update(ctx context.Context) error
+}
+
+// NotificationConfigStore persists notification configuration.
+type NotificationConfigStore interface {
+	GetNotificationConfig() (NotificationConfig, error)
+	SetNotificationConfig(cfg NotificationConfig) error
+}
+
+// NotificationConfig represents persisted notification settings.
+type NotificationConfig struct {
+	GotifyURL      string            `json:"gotify_url"`
+	GotifyToken    string            `json:"gotify_token"`
+	WebhookURL     string            `json:"webhook_url"`
+	WebhookHeaders map[string]string `json:"webhook_headers"`
+}
+
+// NotifierReconfigurer allows runtime reconfiguration of the notification chain.
+type NotifierReconfigurer interface {
+	Reconfigure(notifiers ...notify.Notifier)
 }
 
 // SchedulerController controls the scheduler's poll interval.
@@ -176,6 +200,16 @@ type ContainerUpdater interface {
 // ContainerRestarter restarts a container by ID.
 type ContainerRestarter interface {
 	RestartContainer(ctx context.Context, id string) error
+}
+
+// ContainerStopper stops a container by ID.
+type ContainerStopper interface {
+	StopContainer(ctx context.Context, id string) error
+}
+
+// ContainerStarter starts a container by ID.
+type ContainerStarter interface {
+	StartContainer(ctx context.Context, id string) error
 }
 
 // ConfigReader provides settings for display.
@@ -275,6 +309,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/settings/poll-interval", s.apiSetPollInterval)
 	s.mux.HandleFunc("GET /api/logs", s.apiLogs)
 	s.mux.HandleFunc("POST /api/self-update", s.apiSelfUpdate)
+	s.mux.HandleFunc("POST /api/containers/{name}/stop", s.apiStop)
+	s.mux.HandleFunc("POST /api/containers/{name}/start", s.apiStart)
+	s.mux.HandleFunc("GET /api/settings/notifications", s.apiGetNotifications)
+	s.mux.HandleFunc("PUT /api/settings/notifications", s.apiSaveNotifications)
+	s.mux.HandleFunc("POST /api/settings/notifications/test", s.apiTestNotification)
 
 	// Per-container HTML page.
 	s.mux.HandleFunc("GET /container/{name}", s.handleContainerDetail)
