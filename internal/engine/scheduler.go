@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"path"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
@@ -9,13 +10,19 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 )
 
+// SettingsReader reads runtime settings from the store.
+type SettingsReader interface {
+	LoadSetting(key string) (string, error)
+}
+
 // Scheduler runs scan cycles at the configured poll interval.
 type Scheduler struct {
-	updater *Updater
-	cfg     *config.Config
-	log     *logging.Logger
-	clock   clock.Clock
-	resetCh chan struct{}
+	updater  *Updater
+	cfg      *config.Config
+	log      *logging.Logger
+	clock    clock.Clock
+	settings SettingsReader
+	resetCh  chan struct{}
 }
 
 // NewScheduler creates a Scheduler.
@@ -29,16 +36,29 @@ func NewScheduler(u *Updater, cfg *config.Config, log *logging.Logger, clk clock
 	}
 }
 
+// SetSettingsReader attaches a settings reader for runtime pause/filter checks.
+func (s *Scheduler) SetSettingsReader(sr SettingsReader) {
+	s.settings = sr
+}
+
 // Run starts the scan loop. It performs an initial scan immediately,
 // then scans at every poll interval. Exits when ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
-	s.log.Info("starting initial scan")
-	result := s.updater.Scan(ctx)
-	s.logResult(result)
+	if !s.isPaused() {
+		s.log.Info("starting initial scan")
+		result := s.updater.Scan(ctx)
+		s.logResult(result)
+	} else {
+		s.log.Info("scheduler is paused, skipping initial scan")
+	}
 
 	for {
 		select {
 		case <-s.clock.After(s.cfg.PollInterval):
+			if s.isPaused() {
+				s.log.Info("scheduler is paused, skipping scheduled scan")
+				continue
+			}
 			s.log.Info("starting scheduled scan")
 			result := s.updater.Scan(ctx)
 			s.logResult(result)
@@ -73,4 +93,27 @@ func (s *Scheduler) SetPollInterval(d time.Duration) {
 	case s.resetCh <- struct{}{}:
 	default:
 	}
+}
+
+// isPaused checks whether the scheduler is paused via a runtime setting.
+func (s *Scheduler) isPaused() bool {
+	if s.settings == nil {
+		return false
+	}
+	val, err := s.settings.LoadSetting("paused")
+	if err != nil {
+		s.log.Warn("failed to read pause setting", "error", err)
+		return false
+	}
+	return val == "true"
+}
+
+// MatchesFilter checks whether a container name matches any of the given glob patterns.
+func MatchesFilter(name string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if matched, _ := path.Match(pattern, name); matched {
+			return true
+		}
+	}
+	return false
 }

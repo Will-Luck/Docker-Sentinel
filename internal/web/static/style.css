@@ -1546,6 +1546,199 @@ td:nth-child(6) {
 
 
 /* --------------------------------------------------------------------------
+   20a. Pause Banner — dashboard warning when scanning is paused
+   -------------------------------------------------------------------------- */
+
+.pause-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-4);
+    padding: var(--sp-3) var(--sp-5);
+    margin-bottom: var(--sp-6);
+    background: var(--warning-bg);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-lg);
+    color: var(--warning-fg);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+
+/* --------------------------------------------------------------------------
+   20b. Event Filter Pills — toggle chips for notification event types
+   -------------------------------------------------------------------------- */
+
+.event-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: var(--sp-3);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--border);
+}
+
+.event-pills-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-secondary);
+    width: 100%;
+    margin-bottom: 2px;
+}
+
+.event-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 150ms, color 150ms, border-color 150ms;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-muted);
+    user-select: none;
+}
+
+.event-pill:hover {
+    border-color: var(--border-strong);
+    color: var(--fg-secondary);
+}
+
+.event-pill.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+}
+
+
+/* --------------------------------------------------------------------------
+   20c. Collapsible Section — expandable env vars on settings page
+   -------------------------------------------------------------------------- */
+
+.collapsible-section {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.collapsible-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    width: 100%;
+    padding: var(--sp-3) var(--sp-5);
+    background: var(--bg-surface);
+    border: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    text-align: left;
+    transition: background 150ms;
+}
+
+.collapsible-header:hover {
+    background: var(--bg-hover);
+}
+
+.collapsible-chevron {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+    transition: transform 200ms;
+    display: inline-block;
+}
+
+.collapsible-header[aria-expanded="true"] .collapsible-chevron {
+    transform: rotate(90deg);
+}
+
+.collapsible-body {
+    background: var(--bg-surface);
+}
+
+
+/* --------------------------------------------------------------------------
+   20d. Toggle Switch Label — settings page pause toggle
+   -------------------------------------------------------------------------- */
+
+.toggle-switch-label {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    cursor: pointer;
+}
+
+.toggle-switch-text {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+    font-weight: 500;
+    min-width: 24px;
+}
+
+
+/* --------------------------------------------------------------------------
+   20e. Custom Duration Picker — unit dropdown + number input combo
+   -------------------------------------------------------------------------- */
+
+.poll-interval-control {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+}
+
+.custom-duration-wrap {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: center;
+}
+
+.custom-duration-unit {
+    min-width: 110px;
+}
+
+.custom-duration-value {
+    width: 80px;
+    text-align: center;
+    background-image: none !important;
+    padding-right: 12px !important;
+    -moz-appearance: textfield;
+}
+
+.custom-duration-value::-webkit-inner-spin-button,
+.custom-duration-value::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.custom-duration-value:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+
+/* --------------------------------------------------------------------------
+   20f. Setting Row Variants
+   -------------------------------------------------------------------------- */
+
+.setting-row-top {
+    align-items: flex-start;
+}
+
+.setting-control-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    align-items: flex-end;
+}
+
+
+/* --------------------------------------------------------------------------
    21. Utility Helpers
    -------------------------------------------------------------------------- */
 

@@ -40,17 +40,16 @@
         </div>
 
         <div class="tab-nav" role="tablist">
-            <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-schedule" data-tab="schedule">Update Schedule</button>
-            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
+            <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-general" data-tab="general">General</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-notifications" data-tab="notifications">Notifications</button>
-            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-server" data-tab="server">Server Config</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
         </div>
 
-        <!-- Update Schedule tab -->
-        <div class="tab-panel active" id="tab-schedule" role="tabpanel">
+        <!-- General tab -->
+        <div class="tab-panel active" id="tab-general" role="tabpanel">
             <div class="settings-grid">
                 <div class="card">
-                    <div class="card-header"><h2>Scanning</h2></div>
+                    <div class="card-header"><h2>Scanning &amp; Behaviour</h2></div>
                     <div class="card-body">
                         <div class="setting-row">
                             <div class="setting-info">
@@ -67,41 +66,102 @@
                                     <option value="24h">24 hours</option>
                                     <option value="custom">Custom...</option>
                                 </select>
-                                <input id="poll-custom" type="text" class="setting-select" placeholder="e.g. 2h30m" style="display:none;margin-top:var(--sp-2)">
-                                <button id="poll-custom-btn" class="btn btn-success" style="display:none;margin-top:var(--sp-2)" onclick="applyCustomPollInterval()">Apply</button>
+                                <div id="poll-custom-wrap" class="custom-duration-wrap" style="display:none">
+                                    <select id="poll-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('poll')">
+                                        <option value="">Unit...</option>
+                                        <option value="s">Seconds</option>
+                                        <option value="m">Minutes</option>
+                                        <option value="h">Hours</option>
+                                    </select>
+                                    <input id="poll-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
+                                    <button id="poll-custom-btn" class="btn btn-success" onclick="applyCustomPollInterval()" disabled>Apply</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Default policy</div>
+                                <div class="setting-desc">Policy assigned to containers without a sentinel.policy label</div>
+                            </div>
+                            <select id="default-policy" class="setting-select" onchange="setDefaultPolicy(this.value)">
+                                <option value="auto">auto</option>
+                                <option value="manual">manual</option>
+                                <option value="pinned">pinned</option>
+                            </select>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Grace period</div>
+                                <div class="setting-desc">Time to wait after an update before checking container health</div>
+                            </div>
+                            <div class="poll-interval-control">
+                                <select id="grace-period" class="setting-select" onchange="onGracePeriodChange(this.value)">
+                                    <option value="10s">10 seconds</option>
+                                    <option value="15s">15 seconds</option>
+                                    <option value="30s">30 seconds</option>
+                                    <option value="1m0s">60 seconds</option>
+                                    <option value="2m0s">120 seconds</option>
+                                    <option value="custom">Custom...</option>
+                                </select>
+                                <div id="grace-custom-wrap" class="custom-duration-wrap" style="display:none">
+                                    <select id="grace-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('grace')">
+                                        <option value="">Unit...</option>
+                                        <option value="s">Seconds</option>
+                                        <option value="m">Minutes</option>
+                                        <option value="h">Hours</option>
+                                    </select>
+                                    <input id="grace-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
+                                    <button id="grace-custom-btn" class="btn btn-success" onclick="applyCustomGracePeriod()" disabled>Apply</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Pause scanning</div>
+                                <div class="setting-desc">Temporarily stop all automatic update checks</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="pause-toggle" class="channel-toggle" onchange="setPauseState(this.checked)">
+                                <span id="pause-toggle-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
+                        <div class="setting-row setting-row-top">
+                            <div class="setting-info">
+                                <div class="setting-label">Container filters</div>
+                                <div class="setting-desc">Exclude containers matching these patterns (one per line)</div>
+                            </div>
+                            <div class="setting-control-stack">
+                                <textarea id="container-filters" class="setting-textarea" placeholder="e.g. watchtower&#10;test-*"></textarea>
+                                <button class="btn btn-success" onclick="saveFilters()">Save Filters</button>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- Appearance tab -->
-        <div class="tab-panel" id="tab-appearance" role="tabpanel">
-            <div class="settings-grid">
-                <div class="card">
-                    <div class="card-header"><h2>Appearance</h2></div>
-                    <div class="card-body">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Theme</div>
-                                <div class="setting-desc">Choose your colour scheme</div>
+                <!-- Collapsible Environment Variables -->
+                <div class="collapsible-section">
+                    <button class="collapsible-header" onclick="toggleCollapsible(this)" aria-expanded="false">
+                        <span class="collapsible-chevron">&#9656;</span>
+                        <span>Environment Variables</span>
+                        <span class="setting-desc" style="margin-left:var(--sp-2);margin-bottom:0">Read-only values set via environment</span>
+                    </button>
+                    <div class="collapsible-body" style="display:none">
+                        <div class="card" style="border-top-left-radius:0;border-top-right-radius:0">
+                            <div class="card-body">
+                                <div class="table-wrap">
+                                    <table class="table-readonly">
+                                        <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+                                        <tbody>
+                                            {{range $k, $v := .Settings}}
+                                            <tr>
+                                                <td class="mono">{{$k}}</td>
+                                                <td class="mono">{{$v}}</td>
+                                            </tr>
+                                            {{end}}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
-                            <select id="theme-select" class="setting-select">
-                                <option value="auto">Auto (system)</option>
-                                <option value="dark">Dark</option>
-                                <option value="light">Light</option>
-                            </select>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Default stack view</div>
-                                <div class="setting-desc">Whether stacks start collapsed or expanded on the dashboard</div>
-                            </div>
-                            <select id="stack-default" class="setting-select">
-                                <option value="collapsed">Collapsed</option>
-                                <option value="expanded">Expanded</option>
-                            </select>
                         </div>
                     </div>
                 </div>
@@ -132,25 +192,32 @@
             </div>
         </div>
 
-        <!-- Server Config tab -->
-        <div class="tab-panel" id="tab-server" role="tabpanel">
+        <!-- Appearance tab -->
+        <div class="tab-panel" id="tab-appearance" role="tabpanel">
             <div class="settings-grid">
                 <div class="card">
-                    <div class="card-header"><h2>Server Configuration</h2></div>
+                    <div class="card-header"><h2>Appearance</h2></div>
                     <div class="card-body">
-                        <p class="subtitle" style="margin-bottom: var(--sp-4)">These are set via environment variables and cannot be changed from the dashboard.</p>
-                        <div class="table-wrap">
-                            <table class="table-readonly">
-                                <thead><tr><th>Setting</th><th>Value</th></tr></thead>
-                                <tbody>
-                                    {{range $k, $v := .Settings}}
-                                    <tr>
-                                        <td class="mono">{{$k}}</td>
-                                        <td class="mono">{{$v}}</td>
-                                    </tr>
-                                    {{end}}
-                                </tbody>
-                            </table>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Theme</div>
+                                <div class="setting-desc">Choose your colour scheme</div>
+                            </div>
+                            <select id="theme-select" class="setting-select">
+                                <option value="auto">Auto (system)</option>
+                                <option value="dark">Dark</option>
+                                <option value="light">Light</option>
+                            </select>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Default stack view</div>
+                                <div class="setting-desc">Whether stacks start collapsed or expanded on the dashboard</div>
+                            </div>
+                            <select id="stack-default" class="setting-select">
+                                <option value="collapsed">Collapsed</option>
+                                <option value="expanded">Expanded</option>
+                            </select>
                         </div>
                     </div>
                 </div>
