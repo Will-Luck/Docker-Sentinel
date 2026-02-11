@@ -823,9 +823,56 @@ td:nth-child(6) {
     color: var(--fg-primary);
 }
 
-.stack-count {
-    font-size: 0.65rem;
-    padding: 1px 6px;
+.stack-counts {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-3);
+    margin-left: var(--sp-2);
+}
+
+.stack-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+}
+
+.stack-indicator::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+}
+
+.stack-indicator-running {
+    color: var(--success);
+}
+
+.stack-indicator-running::before {
+    background: var(--success);
+    box-shadow: 0 0 4px light-dark(rgba(34, 197, 94, 0.4), rgba(74, 222, 128, 0.4));
+}
+
+.stack-indicator-stopped {
+    color: var(--error);
+}
+
+.stack-indicator-stopped::before {
+    background: var(--error);
+    box-shadow: 0 0 4px light-dark(rgba(239, 68, 68, 0.3), rgba(248, 113, 113, 0.3));
+}
+
+.stack-indicator-pending {
+    color: var(--warning);
+}
+
+.stack-indicator-pending::before {
+    background: var(--warning);
+    box-shadow: 0 0 4px light-dark(rgba(245, 158, 11, 0.3), rgba(251, 191, 36, 0.3));
 }
 
 /* Pending stack highlight */
