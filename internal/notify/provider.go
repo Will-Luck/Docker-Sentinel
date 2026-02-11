@@ -28,6 +28,7 @@ type Channel struct {
 	Name     string          `json:"name"`
 	Enabled  bool            `json:"enabled"`
 	Settings json.RawMessage `json:"settings"`
+	Events   []string        `json:"events,omitempty"` // which event types this channel receives; nil/empty = all
 }
 
 // GenerateID returns a random 16-character hex string suitable for channel IDs.
@@ -35,6 +36,20 @@ func GenerateID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%x", b)
+}
+
+// BuildFilteredNotifier constructs a Notifier from a Channel, wrapping it with
+// an event type filter if the channel has a non-empty Events list.
+// Channels with no Events filter receive all event types (backwards compatible).
+func BuildFilteredNotifier(ch Channel) (Notifier, error) {
+	n, err := BuildNotifier(ch)
+	if err != nil {
+		return nil, err
+	}
+	if len(ch.Events) == 0 {
+		return n, nil
+	}
+	return newFilteredNotifier(n, ch.Events), nil
 }
 
 // BuildNotifier constructs a Notifier from a Channel's type and settings.

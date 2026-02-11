@@ -108,6 +108,7 @@ type SchedulerController interface {
 type SettingsStore interface {
 	SaveSetting(key, value string) error
 	LoadSetting(key string) (string, error)
+	GetAllSettings() (map[string]string, error)
 }
 
 // LogEntry mirrors store.LogEntry.
@@ -300,6 +301,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/containers/{name}/restart", s.apiRestart)
 	s.mux.HandleFunc("GET /api/settings", s.apiSettings)
 	s.mux.HandleFunc("POST /api/settings/poll-interval", s.apiSetPollInterval)
+	s.mux.HandleFunc("POST /api/settings/default-policy", s.apiSetDefaultPolicy)
+	s.mux.HandleFunc("POST /api/settings/grace-period", s.apiSetGracePeriod)
+	s.mux.HandleFunc("POST /api/settings/pause", s.apiSetPause)
+	s.mux.HandleFunc("POST /api/settings/filters", s.apiSetFilters)
 	s.mux.HandleFunc("GET /api/logs", s.apiLogs)
 	s.mux.HandleFunc("POST /api/self-update", s.apiSelfUpdate)
 	s.mux.HandleFunc("POST /api/containers/{name}/stop", s.apiStop)
@@ -307,6 +312,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/settings/notifications", s.apiGetNotifications)
 	s.mux.HandleFunc("PUT /api/settings/notifications", s.apiSaveNotifications)
 	s.mux.HandleFunc("POST /api/settings/notifications/test", s.apiTestNotification)
+	s.mux.HandleFunc("GET /api/settings/notifications/event-types", s.apiNotificationEventTypes)
 
 	// Per-container HTML partial (for live row updates).
 	s.mux.HandleFunc("GET /api/containers/{name}/row", s.handleContainerRow)

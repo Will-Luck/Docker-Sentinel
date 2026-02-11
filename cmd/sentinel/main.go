@@ -61,11 +61,24 @@ func main() {
 	}
 	defer db.Close()
 
-	// Load persisted poll interval (overrides env default).
+	// Load persisted runtime settings (override env defaults).
 	if saved, err := db.LoadSetting("poll_interval"); err == nil && saved != "" {
 		if d, err := time.ParseDuration(saved); err == nil && d >= 5*time.Minute {
 			cfg.SetPollInterval(d)
 			log.Info("loaded persisted poll interval", "interval", d)
+		}
+	}
+	if saved, err := db.LoadSetting("default_policy"); err == nil && saved != "" {
+		switch saved {
+		case "auto", "manual", "pinned":
+			cfg.DefaultPolicy = saved
+			log.Info("loaded persisted default policy", "policy", saved)
+		}
+	}
+	if saved, err := db.LoadSetting("grace_period"); err == nil && saved != "" {
+		if d, err := time.ParseDuration(saved); err == nil && d >= 0 {
+			cfg.GracePeriod = d
+			log.Info("loaded persisted grace period", "duration", d)
 		}
 	}
 
@@ -103,7 +116,7 @@ func main() {
 		if !ch.Enabled {
 			continue
 		}
-		n, buildErr := notify.BuildNotifier(ch)
+		n, buildErr := notify.BuildFilteredNotifier(ch)
 		if buildErr != nil {
 			log.Warn("failed to build notifier", "channel", ch.Name, "error", buildErr)
 			continue
@@ -118,7 +131,9 @@ func main() {
 	bus := events.New()
 	queue := engine.NewQueue(db, bus)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
+	updater.SetSettingsReader(db)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
+	scheduler.SetSettingsReader(db)
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
@@ -503,6 +518,10 @@ func (a *settingsStoreAdapter) SaveSetting(key, value string) error {
 
 func (a *settingsStoreAdapter) LoadSetting(key string) (string, error) {
 	return a.s.LoadSetting(key)
+}
+
+func (a *settingsStoreAdapter) GetAllSettings() (map[string]string, error) {
+	return a.s.GetAllSettings()
 }
 
 // selfUpdateAdapter bridges engine.SelfUpdater to web.SelfUpdater.

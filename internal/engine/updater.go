@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
@@ -42,6 +43,7 @@ type Updater struct {
 	clock    clock.Clock
 	notifier *notify.Multi
 	events   *events.Bus
+	settings SettingsReader
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -57,6 +59,33 @@ func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queu
 		notifier: notifier,
 		events:   bus,
 	}
+}
+
+// SetSettingsReader attaches a settings reader for runtime filter checks.
+func (u *Updater) SetSettingsReader(sr SettingsReader) {
+	u.settings = sr
+}
+
+// loadFilters reads filter patterns from the settings store.
+func (u *Updater) loadFilters() []string {
+	if u.settings == nil {
+		return nil
+	}
+	val, err := u.settings.LoadSetting("filters")
+	if err != nil {
+		return nil
+	}
+	if val == "" {
+		return nil
+	}
+	var patterns []string
+	for _, p := range strings.Split(val, "\n") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			patterns = append(patterns, p)
+		}
+	}
+	return patterns
 }
 
 // publishEvent emits an SSE event if the event bus is configured.
@@ -94,6 +123,9 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 		u.log.Info("pruned stale queue entries", "count", pruned)
 	}
 
+	// Load filter patterns once per scan.
+	filters := u.loadFilters()
+
 	for _, c := range containers {
 		if ctx.Err() != nil {
 			return result
@@ -115,6 +147,13 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 		// Skip Sentinel itself (avoid self-update loops).
 		if isSentinel(labels) {
 			u.log.Debug("skipping sentinel container", "name", name)
+			result.Skipped++
+			continue
+		}
+
+		// Skip containers matching filter patterns.
+		if MatchesFilter(name, filters) {
+			u.log.Debug("skipping filtered container", "name", name)
 			result.Skipped++
 			continue
 		}
