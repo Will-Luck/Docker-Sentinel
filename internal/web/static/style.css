@@ -1458,13 +1458,12 @@ td:nth-child(6) {
 
 .container-row {
     cursor: pointer;
-    border-left: 2px solid transparent;
+    border-left: 3px solid transparent;
     transition: background 150ms, border-left-color 150ms;
 }
 
 .container-row:hover {
     background: var(--bg-hover);
-    border-left-width: 3px;
 }
 
 .container-row.state-running { border-left-color: var(--success); }
