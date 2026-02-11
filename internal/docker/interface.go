@@ -11,6 +11,7 @@ import (
 // Implemented by Client for production, and by mocks for testing.
 type API interface {
 	ListContainers(ctx context.Context) ([]container.Summary, error)
+	ListAllContainers(ctx context.Context) ([]container.Summary, error)
 	InspectContainer(ctx context.Context, id string) (container.InspectResponse, error)
 	StopContainer(ctx context.Context, id string, timeout int) error
 	RemoveContainer(ctx context.Context, id string) error

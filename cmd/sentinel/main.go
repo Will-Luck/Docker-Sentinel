@@ -69,17 +69,47 @@ func main() {
 		}
 	}
 
-	// Build notification chain.
+	// Build notification chain from persisted channels, with env var fallback.
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, notify.NewLogNotifier(log))
-	if cfg.GotifyURL != "" {
-		notifiers = append(notifiers, notify.NewGotify(cfg.GotifyURL, cfg.GotifyToken))
-		log.Info("gotify notifications enabled", "url", cfg.GotifyURL)
+
+	channels, err := db.GetNotificationChannels()
+	if err != nil {
+		log.Warn("failed to load notification channels", "error", err)
 	}
-	if cfg.WebhookURL != "" {
-		headers := parseHeaders(cfg.WebhookHeaders)
-		notifiers = append(notifiers, notify.NewWebhook(cfg.WebhookURL, headers))
-		log.Info("webhook notifications enabled", "url", cfg.WebhookURL)
+
+	if len(channels) == 0 {
+		// Env var fallback: synthesise channels from SENTINEL_GOTIFY_URL etc.
+		if cfg.GotifyURL != "" {
+			settings, _ := json.Marshal(notify.GotifySettings{URL: cfg.GotifyURL, Token: cfg.GotifyToken})
+			channels = append(channels, notify.Channel{
+				ID: notify.GenerateID(), Type: notify.ProviderGotify,
+				Name: "Gotify", Enabled: true, Settings: settings,
+			})
+			log.Info("gotify notifications enabled from env", "url", cfg.GotifyURL)
+		}
+		if cfg.WebhookURL != "" {
+			headers := parseHeaders(cfg.WebhookHeaders)
+			settings, _ := json.Marshal(notify.WebhookSettings{URL: cfg.WebhookURL, Headers: headers})
+			channels = append(channels, notify.Channel{
+				ID: notify.GenerateID(), Type: notify.ProviderWebhook,
+				Name: "Webhook", Enabled: true, Settings: settings,
+			})
+			log.Info("webhook notifications enabled from env", "url", cfg.WebhookURL)
+		}
+	}
+
+	for _, ch := range channels {
+		if !ch.Enabled {
+			continue
+		}
+		n, buildErr := notify.BuildNotifier(ch)
+		if buildErr != nil {
+			log.Warn("failed to build notifier", "channel", ch.Name, "error", buildErr)
+			continue
+		}
+		notifiers = append(notifiers, n)
+		log.Info("notification channel enabled", "name", ch.Name, "type", string(ch.Type))
 	}
 	notifier := notify.NewMulti(log, notifiers...)
 
@@ -92,23 +122,27 @@ func main() {
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
-			Store:           &storeAdapter{db},
-			Queue:           &queueAdapter{queue},
-			Docker:          &dockerAdapter{client},
-			Updater:         updater,
-			Config:          cfg,
-			EventBus:        bus,
-			Snapshots:       &snapshotAdapter{db},
-			Rollback:        &rollbackAdapter{d: client, s: db, log: log},
-			Restarter:       &restartAdapter{client},
-			Registry:        &registryAdapter{log: log},
-			RegistryChecker: &registryCheckerAdapter{checker: checker},
-			Policy:          &policyStoreAdapter{db},
-			EventLog:        &eventLogAdapter{db},
-			Scheduler:       scheduler,
-			SettingsStore:   &settingsStoreAdapter{db},
-			SelfUpdater:     &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
-			Log:             log.Logger,
+			Store:              &storeAdapter{db},
+			Queue:              &queueAdapter{queue},
+			Docker:             &dockerAdapter{client},
+			Updater:            updater,
+			Config:             cfg,
+			EventBus:           bus,
+			Snapshots:          &snapshotAdapter{db},
+			Rollback:           &rollbackAdapter{d: client, s: db, log: log},
+			Restarter:          &restartAdapter{client},
+			Registry:           &registryAdapter{log: log},
+			RegistryChecker:    &registryCheckerAdapter{checker: checker},
+			Policy:             &policyStoreAdapter{db},
+			EventLog:           &eventLogAdapter{db},
+			Scheduler:          scheduler,
+			SettingsStore:      &settingsStoreAdapter{db},
+			Stopper:            &stopAdapter{client},
+			Starter:            &startAdapter{client},
+			SelfUpdater:        &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
+			NotifyConfig:       &notifyConfigAdapter{db},
+			NotifyReconfigurer: notifier,
+			Log:                log.Logger,
 		})
 
 		go func() {
@@ -313,6 +347,24 @@ func (a *dockerAdapter) ListContainers(ctx context.Context) ([]web.ContainerSumm
 	return result, nil
 }
 
+func (a *dockerAdapter) ListAllContainers(ctx context.Context) ([]web.ContainerSummary, error) {
+	containers, err := a.c.ListAllContainers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.ContainerSummary, len(containers))
+	for i, c := range containers {
+		result[i] = web.ContainerSummary{
+			ID:     c.ID,
+			Names:  c.Names,
+			Image:  c.Image,
+			Labels: c.Labels,
+			State:  string(c.State),
+		}
+	}
+	return result, nil
+}
+
 func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.ContainerInspect, error) {
 	inspect, err := a.c.InspectContainer(ctx, id)
 	if err != nil {
@@ -460,4 +512,29 @@ type selfUpdateAdapter struct {
 
 func (a *selfUpdateAdapter) Update(ctx context.Context) error {
 	return a.updater.Update(ctx)
+}
+
+// stopAdapter bridges docker.Client to web.ContainerStopper.
+type stopAdapter struct{ c *docker.Client }
+
+func (a *stopAdapter) StopContainer(ctx context.Context, id string) error {
+	return a.c.StopContainer(ctx, id, 10)
+}
+
+// startAdapter bridges docker.Client to web.ContainerStarter.
+type startAdapter struct{ c *docker.Client }
+
+func (a *startAdapter) StartContainer(ctx context.Context, id string) error {
+	return a.c.StartContainer(ctx, id)
+}
+
+// notifyConfigAdapter bridges store.Store to web.NotificationConfigStore.
+type notifyConfigAdapter struct{ s *store.Store }
+
+func (a *notifyConfigAdapter) GetNotificationChannels() ([]notify.Channel, error) {
+	return a.s.GetNotificationChannels()
+}
+
+func (a *notifyConfigAdapter) SetNotificationChannels(channels []notify.Channel) error {
+	return a.s.SetNotificationChannels(channels)
 }

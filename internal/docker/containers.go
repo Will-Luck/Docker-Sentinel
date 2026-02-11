@@ -20,6 +20,15 @@ func (c *Client) ListContainers(ctx context.Context) ([]container.Summary, error
 	return result.Items, nil
 }
 
+// ListAllContainers returns all containers regardless of state.
+func (c *Client) ListAllContainers(ctx context.Context) ([]container.Summary, error) {
+	result, err := c.api.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
 // InspectContainer returns full container details by ID.
 func (c *Client) InspectContainer(ctx context.Context, id string) (container.InspectResponse, error) {
 	result, err := c.api.ContainerInspect(ctx, id, client.ContainerInspectOptions{})

@@ -101,7 +101,8 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 
 		name := containerName(c)
 		labels := c.Labels
-		resolved := ResolvePolicy(u.store, labels, name, u.cfg.DefaultPolicy)
+		tag := registry.ExtractTag(c.Image)
+		resolved := ResolvePolicy(u.store, labels, name, tag, u.cfg.DefaultPolicy)
 		policy := docker.Policy(resolved.Policy)
 
 		// Skip pinned containers.

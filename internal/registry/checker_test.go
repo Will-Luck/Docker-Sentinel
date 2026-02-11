@@ -31,6 +31,9 @@ func newMockRegistry() *mockDockerForRegistry {
 func (m *mockDockerForRegistry) ListContainers(_ context.Context) ([]container.Summary, error) {
 	return nil, nil
 }
+func (m *mockDockerForRegistry) ListAllContainers(_ context.Context) ([]container.Summary, error) {
+	return nil, nil
+}
 func (m *mockDockerForRegistry) InspectContainer(_ context.Context, _ string) (container.InspectResponse, error) {
 	return container.InspectResponse{}, nil
 }

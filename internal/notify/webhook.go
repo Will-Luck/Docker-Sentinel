@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// WebhookSettings holds configuration for a generic webhook notification channel.
+type WebhookSettings struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+}
+
 // Webhook sends the full Event as JSON to a configurable URL.
 type Webhook struct {
 	url     string

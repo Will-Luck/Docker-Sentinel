@@ -78,6 +78,40 @@ function initSettingsPage() {
             })
             .catch(function() {});
     }
+
+    // Tab navigation.
+    var tabBtns = document.querySelectorAll(".tab-btn");
+    var tabPanels = document.querySelectorAll(".tab-panel");
+    if (tabBtns.length > 0) {
+        var savedTab = localStorage.getItem("sentinel-settings-tab");
+        if (savedTab) {
+            for (var i = 0; i < tabBtns.length; i++) {
+                var isTarget = tabBtns[i].getAttribute("data-tab") === savedTab;
+                tabBtns[i].classList.toggle("active", isTarget);
+                tabBtns[i].setAttribute("aria-selected", isTarget ? "true" : "false");
+            }
+            for (var i = 0; i < tabPanels.length; i++) {
+                tabPanels[i].classList.toggle("active", tabPanels[i].id === "tab-" + savedTab);
+            }
+        }
+
+        for (var i = 0; i < tabBtns.length; i++) {
+            tabBtns[i].addEventListener("click", function() {
+                var tab = this.getAttribute("data-tab");
+                localStorage.setItem("sentinel-settings-tab", tab);
+                for (var j = 0; j < tabBtns.length; j++) {
+                    tabBtns[j].classList.toggle("active", tabBtns[j] === this);
+                    tabBtns[j].setAttribute("aria-selected", tabBtns[j] === this ? "true" : "false");
+                }
+                for (var j = 0; j < tabPanels.length; j++) {
+                    tabPanels[j].classList.toggle("active", tabPanels[j].id === "tab-" + tab);
+                }
+            });
+        }
+    }
+
+    // Load notification channels.
+    loadNotificationChannels();
 }
 
 function onPollIntervalChange(value) {
@@ -322,6 +356,9 @@ function applyBulkPolicy() {
 function onRowClick(e, name) {
     var tag = e.target.tagName;
     if (tag === "A" || tag === "BUTTON" || tag === "SELECT" || tag === "INPUT" || tag === "OPTION") {
+        return;
+    }
+    if (e.target.closest(".status-badge-wrap")) {
         return;
     }
     toggleAccordion(name);
@@ -594,6 +631,71 @@ function scheduleReload() {
     }, 800);
 }
 
+/* ------------------------------------------------------------
+   11a. Live Row Updates — targeted DOM patching via partial endpoint
+   ------------------------------------------------------------ */
+
+function updateContainerRow(name) {
+    var enc = encodeURIComponent(name);
+    fetch("/api/containers/" + enc + "/row")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.html) return;
+
+            // Update stats counters.
+            updateStats(data.total, data.running, data.pending);
+
+            // Parse the server-rendered HTML (from Go templates, not user input)
+            // into DOM nodes using a temporary tbody element.
+            var temp = document.createElement("tbody");
+            temp.innerHTML = data.html; // Safe: server-rendered Go template HTML, no user content
+
+            var oldRow = document.querySelector('tr.container-row[data-name="' + name + '"]');
+            var oldAccordion = document.getElementById("accordion-" + name);
+
+            if (oldRow) {
+                var newRow = temp.querySelector(".container-row");
+                var newAccordion = temp.querySelector(".accordion-panel");
+
+                if (newRow) {
+                    oldRow.replaceWith(newRow);
+                    newRow.classList.add("row-updated");
+                }
+                if (newAccordion && oldAccordion) {
+                    oldAccordion.replaceWith(newAccordion);
+                }
+            }
+
+            // Clear accordion cache for this container.
+            delete accordionCache[name];
+        })
+        .catch(function() {
+            // Fallback: full reload on error.
+            scheduleReload();
+        });
+}
+
+function updateStats(total, running, pending) {
+    var stats = document.getElementById("stats");
+    if (!stats) return;
+    var values = stats.querySelectorAll(".stat-value");
+    if (values[0]) values[0].textContent = total;
+    if (values[1]) values[1].textContent = running;
+    if (values[2]) values[2].textContent = pending;
+}
+
+function showBadgeSpinner(wrap) {
+    var defaultBadge = wrap.querySelector(".badge-default");
+    var hoverBadge = wrap.querySelector(".badge-hover");
+    if (defaultBadge) defaultBadge.style.display = "none";
+    if (hoverBadge) hoverBadge.style.display = "none";
+
+    var spinner = document.createElement("span");
+    spinner.className = "badge-loading";
+    wrap.appendChild(spinner);
+    wrap.style.pointerEvents = "none";
+}
+
 function setConnectionStatus(connected) {
     var dot = document.getElementById("sse-indicator");
     var label = document.getElementById("sse-label");
@@ -629,11 +731,22 @@ function initSSE() {
         try {
             var data = JSON.parse(e.data);
             showToast(data.message || ("Update: " + data.container_name), "info");
+            if (data.container_name) {
+                updateContainerRow(data.container_name);
+                return;
+            }
         } catch (_) {}
         scheduleReload();
     });
 
-    es.addEventListener("container_state", function () {
+    es.addEventListener("container_state", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            if (data.container_name) {
+                updateContainerRow(data.container_name);
+                return;
+            }
+        } catch (_) {}
         scheduleReload();
     });
 
@@ -653,6 +766,10 @@ function initSSE() {
         try {
             var data = JSON.parse(e.data);
             showToast(data.message || ("Policy changed: " + data.container_name), "info");
+            if (data.container_name) {
+                updateContainerRow(data.container_name);
+                return;
+            }
         } catch (_) {}
         scheduleReload();
     });
@@ -764,7 +881,7 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    // Restart badge click delegation.
+    // Stop/Start/Restart badge click delegation.
     document.addEventListener("click", function(e) {
         var badge = e.target.closest(".status-badge-wrap .badge-hover");
         if (!badge) return;
@@ -773,11 +890,331 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!wrap) return;
         var name = wrap.getAttribute("data-name");
         if (!name) return;
+        var action = wrap.getAttribute("data-action") || "restart";
+
+        // Show inline spinner immediately.
+        showBadgeSpinner(wrap);
+
+        var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
+        var label = action.charAt(0).toUpperCase() + action.slice(1);
         apiPost(
-            "/api/containers/" + encodeURIComponent(name) + "/restart",
+            endpoint,
             null,
-            "Restart initiated for " + name,
-            "Failed to restart " + name
+            label + " initiated for " + name,
+            "Failed to " + action + " " + name
         );
     });
 });
+
+/* ------------------------------------------------------------
+   13. Notification Configuration — Multi-channel System
+   ------------------------------------------------------------ */
+
+var PROVIDER_FIELDS = {
+    gotify: [
+        { key: "url", label: "Server URL", type: "text", placeholder: "http://gotify:80" },
+        { key: "token", label: "App Token", type: "password", placeholder: "Token" }
+    ],
+    webhook: [
+        { key: "url", label: "URL", type: "text", placeholder: "https://example.com/webhook" },
+        { key: "headers", label: "Headers (JSON)", type: "text", placeholder: '{"Authorization": "Bearer ..."}' }
+    ],
+    slack: [
+        { key: "webhook_url", label: "Webhook URL", type: "text", placeholder: "https://hooks.slack.com/services/..." }
+    ],
+    discord: [
+        { key: "webhook_url", label: "Webhook URL", type: "text", placeholder: "https://discord.com/api/webhooks/..." }
+    ],
+    ntfy: [
+        { key: "server", label: "Server", type: "text", placeholder: "https://ntfy.sh" },
+        { key: "topic", label: "Topic", type: "text", placeholder: "sentinel" },
+        { key: "priority", label: "Priority", type: "text", placeholder: "3" }
+    ],
+    telegram: [
+        { key: "bot_token", label: "Bot Token", type: "password", placeholder: "123456:ABC-DEF..." },
+        { key: "chat_id", label: "Chat ID", type: "text", placeholder: "-1001234567890" }
+    ],
+    pushover: [
+        { key: "app_token", label: "App Token", type: "password", placeholder: "Application token" },
+        { key: "user_key", label: "User Key", type: "password", placeholder: "User/group key" }
+    ]
+};
+
+var notificationChannels = [];
+
+function loadNotificationChannels() {
+    fetch("/api/settings/notifications")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (Array.isArray(data)) {
+                notificationChannels = data;
+            } else {
+                notificationChannels = [];
+            }
+            renderChannels();
+        })
+        .catch(function() {
+            notificationChannels = [];
+            renderChannels();
+        });
+}
+
+function renderChannels() {
+    var container = document.getElementById("channel-list");
+    if (!container) return;
+
+    while (container.firstChild) container.removeChild(container.firstChild);
+
+    if (notificationChannels.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.style.padding = "var(--sp-8) var(--sp-4)";
+        var emptyH = document.createElement("h3");
+        emptyH.textContent = "No notification channels";
+        var emptyP = document.createElement("p");
+        emptyP.textContent = "Add a channel using the dropdown below to receive update notifications.";
+        empty.appendChild(emptyH);
+        empty.appendChild(emptyP);
+        container.appendChild(empty);
+        return;
+    }
+
+    for (var i = 0; i < notificationChannels.length; i++) {
+        container.appendChild(buildChannelCard(i));
+    }
+}
+
+function buildChannelCard(index) {
+    var ch = notificationChannels[index];
+    var fields = PROVIDER_FIELDS[ch.type] || [];
+    var settings = {};
+    try { settings = JSON.parse(ch.settings || "{}"); } catch(e) { settings = ch.settings || {}; }
+
+    var card = document.createElement("div");
+    card.className = "channel-card";
+    card.setAttribute("data-index", index);
+
+    // Header: type badge + name input + enabled toggle + actions
+    var header = document.createElement("div");
+    header.className = "channel-card-header";
+
+    var badge = document.createElement("span");
+    badge.className = "channel-type-badge";
+    badge.textContent = ch.type;
+    header.appendChild(badge);
+
+    var nameInput = document.createElement("input");
+    nameInput.className = "channel-name-input";
+    nameInput.type = "text";
+    nameInput.value = ch.name || "";
+    nameInput.placeholder = "Channel name";
+    nameInput.setAttribute("data-field", "name");
+    header.appendChild(nameInput);
+
+    var actions = document.createElement("div");
+    actions.className = "channel-actions";
+
+    var toggleLabel = document.createElement("label");
+    toggleLabel.style.fontSize = "0.75rem";
+    toggleLabel.style.color = "var(--fg-secondary)";
+    toggleLabel.style.display = "flex";
+    toggleLabel.style.alignItems = "center";
+    toggleLabel.style.gap = "6px";
+
+    var toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.className = "channel-toggle";
+    toggle.checked = ch.enabled !== false;
+    toggle.setAttribute("data-field", "enabled");
+    toggleLabel.appendChild(toggle);
+    toggleLabel.appendChild(document.createTextNode("Enabled"));
+    actions.appendChild(toggleLabel);
+
+    var testBtn = document.createElement("button");
+    testBtn.className = "btn";
+    testBtn.textContent = "Test";
+    testBtn.setAttribute("data-index", index);
+    testBtn.onclick = function() { testChannel(parseInt(this.getAttribute("data-index"))); };
+    actions.appendChild(testBtn);
+
+    var delBtn = document.createElement("button");
+    delBtn.className = "btn btn-error";
+    delBtn.textContent = "Delete";
+    delBtn.setAttribute("data-index", index);
+    delBtn.onclick = function() { deleteChannel(parseInt(this.getAttribute("data-index"))); };
+    actions.appendChild(delBtn);
+
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    // Provider-specific fields
+    var fieldsDiv = document.createElement("div");
+    fieldsDiv.className = "channel-fields";
+
+    for (var f = 0; f < fields.length; f++) {
+        var field = fields[f];
+        var row = document.createElement("div");
+        row.className = "channel-field";
+
+        var label = document.createElement("div");
+        label.className = "channel-field-label";
+        label.textContent = field.label;
+        row.appendChild(label);
+
+        var input = document.createElement("input");
+        input.className = "channel-field-input";
+        input.type = field.type || "text";
+        input.placeholder = field.placeholder || "";
+        input.setAttribute("data-setting", field.key);
+
+        // Special handling for headers (object -> JSON string)
+        var val = settings[field.key];
+        if (field.key === "headers" && val && typeof val === "object") {
+            input.value = JSON.stringify(val);
+        } else if (field.key === "priority" && val !== undefined) {
+            input.value = String(val);
+        } else {
+            input.value = val || "";
+        }
+
+        row.appendChild(input);
+        fieldsDiv.appendChild(row);
+    }
+
+    card.appendChild(fieldsDiv);
+    return card;
+}
+
+function addChannel() {
+    var select = document.getElementById("channel-type-select");
+    if (!select || !select.value) return;
+
+    var type = select.value;
+    var name = type.charAt(0).toUpperCase() + type.slice(1);
+
+    notificationChannels.push({
+        id: "new-" + Date.now() + "-" + Math.random().toString(36).substr(2, 6),
+        type: type,
+        name: name,
+        enabled: true,
+        settings: "{}"
+    });
+
+    select.value = "";
+    renderChannels();
+    showToast("Added " + name + " channel — configure and save", "info");
+}
+
+function deleteChannel(index) {
+    if (index < 0 || index >= notificationChannels.length) return;
+    var name = notificationChannels[index].name || notificationChannels[index].type;
+    notificationChannels.splice(index, 1);
+    renderChannels();
+    showToast("Removed " + name + " — save to apply", "info");
+}
+
+function collectChannelsFromDOM() {
+    var cards = document.querySelectorAll(".channel-card");
+    for (var i = 0; i < cards.length; i++) {
+        var idx = parseInt(cards[i].getAttribute("data-index"));
+        if (idx < 0 || idx >= notificationChannels.length) continue;
+
+        var nameInput = cards[i].querySelector('[data-field="name"]');
+        if (nameInput) notificationChannels[idx].name = nameInput.value;
+
+        var toggle = cards[i].querySelector('[data-field="enabled"]');
+        if (toggle) notificationChannels[idx].enabled = toggle.checked;
+
+        var settings = {};
+        try { settings = JSON.parse(notificationChannels[idx].settings || "{}"); } catch(e) { settings = {}; }
+        if (typeof notificationChannels[idx].settings === "object" && notificationChannels[idx].settings !== null && !(notificationChannels[idx].settings instanceof String)) {
+            settings = notificationChannels[idx].settings;
+        }
+
+        var inputs = cards[i].querySelectorAll("[data-setting]");
+        for (var j = 0; j < inputs.length; j++) {
+            var key = inputs[j].getAttribute("data-setting");
+            var val = inputs[j].value;
+            if (key === "headers") {
+                try { settings[key] = JSON.parse(val); } catch(e) { settings[key] = {}; }
+            } else if (key === "priority") {
+                settings[key] = parseInt(val) || 3;
+            } else {
+                settings[key] = val;
+            }
+        }
+
+        notificationChannels[idx].settings = JSON.stringify(settings);
+    }
+}
+
+function saveNotificationChannels() {
+    collectChannelsFromDOM();
+
+    var btn = document.getElementById("notify-save-btn");
+    if (btn) { btn.classList.add("loading"); btn.disabled = true; }
+
+    // Parse settings strings back to objects for the API.
+    var payload = [];
+    for (var i = 0; i < notificationChannels.length; i++) {
+        var ch = {};
+        var keys = Object.keys(notificationChannels[i]);
+        for (var k = 0; k < keys.length; k++) {
+            ch[keys[k]] = notificationChannels[i][keys[k]];
+        }
+        if (typeof ch.settings === "string") {
+            try { ch.settings = JSON.parse(ch.settings); } catch(e) { ch.settings = {}; }
+        }
+        payload.push(ch);
+    }
+
+    fetch("/api/settings/notifications", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) { return { ok: resp.ok, data: data }; });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Notification settings saved", "success");
+                loadNotificationChannels();
+            } else {
+                showToast(result.data.error || "Failed to save notification settings", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not save notification settings", "error");
+        })
+        .finally(function() {
+            if (btn) { btn.classList.remove("loading"); btn.disabled = false; }
+        });
+}
+
+function testChannel(index) {
+    collectChannelsFromDOM();
+    var ch = notificationChannels[index];
+    if (!ch) return;
+
+    var btn = document.querySelectorAll('.channel-card[data-index="' + index + '"] .btn')[0];
+
+    apiPost(
+        "/api/settings/notifications/test",
+        { id: ch.id },
+        "Test sent to " + (ch.name || ch.type),
+        "Test failed for " + (ch.name || ch.type),
+        btn
+    );
+}
+
+function testNotification() {
+    var btn = document.getElementById("notify-test-btn");
+    apiPost(
+        "/api/settings/notifications/test",
+        null,
+        "Test notification sent to all channels",
+        "Failed to send test notification",
+        btn
+    );
+}

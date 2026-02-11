@@ -3,6 +3,7 @@ package notify
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -46,6 +47,7 @@ type Logger interface {
 // Multi fans out events to multiple notifiers.
 // It never returns errors — failures are logged but don't block updates.
 type Multi struct {
+	mu        sync.RWMutex
 	notifiers []Notifier
 	log       Logger
 }
@@ -58,7 +60,11 @@ func NewMulti(log Logger, notifiers ...Notifier) *Multi {
 // Notify sends an event to all registered notifiers.
 // Errors are logged but never propagated — notifications must not block updates.
 func (m *Multi) Notify(ctx context.Context, event Event) {
-	for _, n := range m.notifiers {
+	m.mu.RLock()
+	notifiers := m.notifiers
+	m.mu.RUnlock()
+
+	for _, n := range notifiers {
 		if err := n.Send(ctx, event); err != nil {
 			m.log.Error("notification failed",
 				"provider", n.Name(),
@@ -68,4 +74,11 @@ func (m *Multi) Notify(ctx context.Context, event Event) {
 			)
 		}
 	}
+}
+
+// Reconfigure replaces the notifier chain at runtime.
+func (m *Multi) Reconfigure(notifiers ...Notifier) {
+	m.mu.Lock()
+	m.notifiers = notifiers
+	m.mu.Unlock()
 }
