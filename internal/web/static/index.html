@@ -154,7 +154,14 @@
                                 </td>
                                 <td>
                                     <div class="btn-group">
-                                        {{if and .HasUpdate (ne .Policy "pinned") (not .IsSelf)}}
+                                        {{if .IsSelf}}
+                                            {{if .HasUpdate}}
+                                            <button class="btn btn-info"
+                                                    onclick="triggerSelfUpdate(event)">
+                                                Update Sentinel
+                                            </button>
+                                            {{end}}
+                                        {{else if and .HasUpdate (ne .Policy "pinned")}}
                                         <button class="btn btn-warning"
                                                 onclick="triggerUpdate('{{.Name}}', event)">
                                             Update

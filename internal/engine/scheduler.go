@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
@@ -14,6 +15,7 @@ type Scheduler struct {
 	cfg     *config.Config
 	log     *logging.Logger
 	clock   clock.Clock
+	resetCh chan struct{}
 }
 
 // NewScheduler creates a Scheduler.
@@ -23,6 +25,7 @@ func NewScheduler(u *Updater, cfg *config.Config, log *logging.Logger, clk clock
 		cfg:     cfg,
 		log:     log,
 		clock:   clk,
+		resetCh: make(chan struct{}, 1),
 	}
 }
 
@@ -39,6 +42,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.log.Info("starting scheduled scan")
 			result := s.updater.Scan(ctx)
 			s.logResult(result)
+		case <-s.resetCh:
+			s.log.Info("poll interval changed, resetting timer", "interval", s.cfg.PollInterval)
+			// Timer resets on next loop iteration
 		case <-ctx.Done():
 			s.log.Info("scheduler stopped")
 			return nil
@@ -56,4 +62,15 @@ func (s *Scheduler) logResult(r ScanResult) {
 		"failed", r.Failed,
 		"errors", len(r.Errors),
 	)
+}
+
+// SetPollInterval updates the poll interval at runtime and signals the scheduler to reset its timer.
+func (s *Scheduler) SetPollInterval(d time.Duration) {
+	s.cfg.SetPollInterval(d)
+	s.log.Info("poll interval updated", "interval", d)
+	// Non-blocking send to signal the run loop.
+	select {
+	case s.resetCh <- struct{}{}:
+	default:
+	}
 }

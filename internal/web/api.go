@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 // apiContainers returns all monitored containers with policy and maintenance status.
@@ -717,5 +718,69 @@ func (s *Server) logEvent(eventType, container, message string) {
 		Type:      eventType,
 		Message:   message,
 		Container: container,
+	})
+}
+
+// apiSetPollInterval updates the poll interval at runtime.
+func (s *Server) apiSetPollInterval(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Interval string `json:"interval"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	d, err := time.ParseDuration(body.Interval)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid duration format: "+body.Interval)
+		return
+	}
+
+	if d < 5*time.Minute {
+		writeError(w, http.StatusBadRequest, "poll interval must be at least 5 minutes")
+		return
+	}
+	if d > 24*time.Hour {
+		writeError(w, http.StatusBadRequest, "poll interval must be at most 24 hours")
+		return
+	}
+
+	if s.deps.Scheduler != nil {
+		s.deps.Scheduler.SetPollInterval(d)
+	}
+
+	// Persist to BoltDB.
+	if s.deps.SettingsStore != nil {
+		_ = s.deps.SettingsStore.SaveSetting("poll_interval", d.String())
+	}
+
+	s.logEvent("settings", "", "Poll interval changed to "+d.String())
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":   "ok",
+		"interval": d.String(),
+		"message":  "poll interval updated to " + d.String(),
+	})
+}
+
+// apiSelfUpdate triggers a self-update via an ephemeral helper container.
+func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.deps.SelfUpdater == nil {
+		writeError(w, http.StatusNotImplemented, "self-update not available")
+		return
+	}
+
+	go func() {
+		if err := s.deps.SelfUpdater.Update(context.Background()); err != nil {
+			s.deps.Log.Error("self-update failed", "error", err)
+		}
+	}()
+
+	s.logEvent("self_update", "sentinel", "Self-update initiated")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "started",
+		"message": "Self-update initiated — Sentinel will restart shortly",
 	})
 }

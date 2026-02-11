@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
@@ -60,6 +61,14 @@ func main() {
 	}
 	defer db.Close()
 
+	// Load persisted poll interval (overrides env default).
+	if saved, err := db.LoadSetting("poll_interval"); err == nil && saved != "" {
+		if d, err := time.ParseDuration(saved); err == nil && d >= 5*time.Minute {
+			cfg.SetPollInterval(d)
+			log.Info("loaded persisted poll interval", "interval", d)
+		}
+	}
+
 	// Build notification chain.
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, notify.NewLogNotifier(log))
@@ -96,6 +105,9 @@ func main() {
 			RegistryChecker: &registryCheckerAdapter{checker: checker},
 			Policy:          &policyStoreAdapter{db},
 			EventLog:        &eventLogAdapter{db},
+			Scheduler:       scheduler,
+			SettingsStore:   &settingsStoreAdapter{db},
+			SelfUpdater:     &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
 			Log:             log.Logger,
 		})
 
@@ -428,4 +440,24 @@ func (a *eventLogAdapter) ListLogs(limit int) ([]web.LogEntry, error) {
 		}
 	}
 	return result, nil
+}
+
+// settingsStoreAdapter bridges store.Store to web.SettingsStore.
+type settingsStoreAdapter struct{ s *store.Store }
+
+func (a *settingsStoreAdapter) SaveSetting(key, value string) error {
+	return a.s.SaveSetting(key, value)
+}
+
+func (a *settingsStoreAdapter) LoadSetting(key string) (string, error) {
+	return a.s.LoadSetting(key)
+}
+
+// selfUpdateAdapter bridges engine.SelfUpdater to web.SelfUpdater.
+type selfUpdateAdapter struct {
+	updater *engine.SelfUpdater
+}
+
+func (a *selfUpdateAdapter) Update(ctx context.Context) error {
+	return a.updater.Update(ctx)
 }

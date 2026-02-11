@@ -31,6 +31,9 @@ type Dependencies struct {
 	RegistryChecker RegistryChecker
 	Policy          PolicyStore
 	EventLog        EventLogger
+	Scheduler       SchedulerController
+	SettingsStore   SettingsStore
+	SelfUpdater     SelfUpdater
 	Log             *slog.Logger
 }
 
@@ -73,6 +76,22 @@ type PolicyStore interface {
 type EventLogger interface {
 	AppendLog(entry LogEntry) error
 	ListLogs(limit int) ([]LogEntry, error)
+}
+
+// SelfUpdater triggers self-update via an ephemeral helper container.
+type SelfUpdater interface {
+	Update(ctx context.Context) error
+}
+
+// SchedulerController controls the scheduler's poll interval.
+type SchedulerController interface {
+	SetPollInterval(d time.Duration)
+}
+
+// SettingsStore reads and writes settings in BoltDB.
+type SettingsStore interface {
+	SaveSetting(key, value string) error
+	LoadSetting(key string) (string, error)
 }
 
 // LogEntry mirrors store.LogEntry.
@@ -253,7 +272,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/check/{name}", s.apiCheck)
 	s.mux.HandleFunc("POST /api/containers/{name}/restart", s.apiRestart)
 	s.mux.HandleFunc("GET /api/settings", s.apiSettings)
+	s.mux.HandleFunc("POST /api/settings/poll-interval", s.apiSetPollInterval)
 	s.mux.HandleFunc("GET /api/logs", s.apiLogs)
+	s.mux.HandleFunc("POST /api/self-update", s.apiSelfUpdate)
 
 	// Per-container HTML page.
 	s.mux.HandleFunc("GET /container/{name}", s.handleContainerDetail)
