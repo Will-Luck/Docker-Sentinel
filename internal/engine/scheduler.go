@@ -23,6 +23,7 @@ type Scheduler struct {
 	clock    clock.Clock
 	settings SettingsReader
 	resetCh  chan struct{}
+	lastScan time.Time
 }
 
 // NewScheduler creates a Scheduler.
@@ -47,6 +48,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	if !s.isPaused() {
 		s.log.Info("starting initial scan")
 		result := s.updater.Scan(ctx)
+		s.lastScan = s.clock.Now()
 		s.logResult(result)
 	} else {
 		s.log.Info("scheduler is paused, skipping initial scan")
@@ -61,6 +63,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			}
 			s.log.Info("starting scheduled scan")
 			result := s.updater.Scan(ctx)
+			s.lastScan = s.clock.Now()
 			s.logResult(result)
 		case <-s.resetCh:
 			s.log.Info("poll interval changed, resetting timer", "interval", s.cfg.PollInterval())
@@ -93,6 +96,19 @@ func (s *Scheduler) SetPollInterval(d time.Duration) {
 	case s.resetCh <- struct{}{}:
 	default:
 	}
+}
+
+// TriggerScan runs an immediate scan cycle outside the normal timer.
+func (s *Scheduler) TriggerScan(ctx context.Context) {
+	s.log.Info("starting manual scan")
+	result := s.updater.Scan(ctx)
+	s.lastScan = s.clock.Now()
+	s.logResult(result)
+}
+
+// LastScanTime returns when the last scan completed.
+func (s *Scheduler) LastScanTime() time.Time {
+	return s.lastScan
 }
 
 // isPaused checks whether the scheduler is paused via a runtime setting.

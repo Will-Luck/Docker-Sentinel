@@ -1275,6 +1275,36 @@ func (s *Server) apiNotificationEventTypes(w http.ResponseWriter, _ *http.Reques
 	writeJSON(w, http.StatusOK, result)
 }
 
+// apiTriggerScan triggers an immediate scan cycle.
+func (s *Server) apiTriggerScan(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Scheduler == nil {
+		writeError(w, http.StatusServiceUnavailable, "scheduler not available")
+		return
+	}
+
+	go s.deps.Scheduler.TriggerScan(context.Background())
+
+	s.logEvent("scan", "", "Manual scan triggered")
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "Scan started",
+	})
+}
+
+// apiLastScan returns the time of the last completed scan.
+func (s *Server) apiLastScan(w http.ResponseWriter, _ *http.Request) {
+	if s.deps.Scheduler == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"last_scan": nil})
+		return
+	}
+
+	t := s.deps.Scheduler.LastScanTime()
+	if t.IsZero() {
+		writeJSON(w, http.StatusOK, map[string]any{"last_scan": nil})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"last_scan": t})
+}
+
 // webReplaceTag replaces the tag portion of an image reference.
 // e.g. webReplaceTag("dxflrs/garage:v2.1.0", "v2.2.0") → "dxflrs/garage:v2.2.0"
 func webReplaceTag(imageRef, newTag string) string {

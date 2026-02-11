@@ -100,9 +100,11 @@ type NotifierReconfigurer interface {
 	Reconfigure(notifiers ...notify.Notifier)
 }
 
-// SchedulerController controls the scheduler's poll interval.
+// SchedulerController controls the scheduler's poll interval and scan triggers.
 type SchedulerController interface {
 	SetPollInterval(d time.Duration)
+	TriggerScan(ctx context.Context)
+	LastScanTime() time.Time
 }
 
 // SettingsStore reads and writes settings in BoltDB.
@@ -321,6 +323,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("PUT /api/settings/notifications", s.apiSaveNotifications)
 	s.mux.HandleFunc("POST /api/settings/notifications/test", s.apiTestNotification)
 	s.mux.HandleFunc("GET /api/settings/notifications/event-types", s.apiNotificationEventTypes)
+	s.mux.HandleFunc("POST /api/scan", s.apiTriggerScan)
+	s.mux.HandleFunc("GET /api/last-scan", s.apiLastScan)
 
 	// Per-container HTML partial (for live row updates).
 	s.mux.HandleFunc("GET /api/containers/{name}/row", s.handleContainerRow)

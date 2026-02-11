@@ -48,10 +48,10 @@
                 <dt class="stat-label"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:inline;vertical-align:-2px;margin-right:4px"><path d="M6.5 12.5l-3-3 1.4-1.4L6.5 9.7l4.6-4.6 1.4 1.4z" fill="currentColor"/></svg>Running</dt>
                 <dd class="stat-value success">{{.RunningContainers}}</dd>
             </div>
-            <div class="stat-card">
+            <a href="/queue" class="stat-card stat-card-link">
                 <dt class="stat-label"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:inline;vertical-align:-2px;margin-right:4px"><path d="M8 1L1 14h14L8 1zm-.75 5h1.5v4h-1.5V6zm0 5h1.5v1.5h-1.5V11z" fill="currentColor"/></svg>Updates Pending</dt>
                 <dd class="stat-value warning">{{.PendingUpdates}}</dd>
-            </div>
+            </a>
         </dl>
 
         <div id="pause-banner" class="pause-banner" style="display:none">
@@ -67,7 +67,9 @@
                         <button class="btn" onclick="expandAllStacks()">Expand All</button>
                         <button class="btn" onclick="collapseAllStacks()">Collapse All</button>
                         <button class="btn" id="manage-btn" onclick="toggleManageMode()">Manage</button>
+                        <button class="btn btn-info" id="scan-btn" onclick="triggerScan(event)">Check for Updates</button>
                     </div>
+                    <span class="last-scan" id="last-scan"></span>
                 </div>
                 <div class="filter-bar" id="filter-bar">
                     <button class="filter-pill" data-filter="status" data-value="running" data-exclusive="status">Running</button>

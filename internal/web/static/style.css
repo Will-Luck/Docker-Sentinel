@@ -313,7 +313,15 @@ h1, h2, h3, h4 {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
     width: 100%;
+}
+
+.last-scan {
+    font-size: 0.72rem;
+    color: var(--fg-secondary);
+    margin-left: auto;
 }
 
 .filter-bar {
@@ -428,6 +436,8 @@ h1, h2, h3, h4 {
 .stat-card:nth-child(1) { border-left-color: var(--info); }
 .stat-card:nth-child(2) { border-left-color: var(--success); }
 .stat-card:nth-child(3) { border-left-color: var(--warning); }
+a.stat-card-link { text-decoration: none; color: inherit; cursor: pointer; }
+a.stat-card-link:hover { border-color: var(--warning); }
 
 .stat-value.success { color: var(--success); }
 .stat-value.warning { color: var(--warning); }

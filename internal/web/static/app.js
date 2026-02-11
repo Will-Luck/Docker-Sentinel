@@ -452,6 +452,35 @@ function checkPauseState() {
 }
 
 /* ------------------------------------------------------------
+   2c. Last Scan Timestamp
+   ------------------------------------------------------------ */
+
+function refreshLastScan() {
+    var el = document.getElementById("last-scan");
+    if (!el) return;
+
+    fetch("/api/last-scan")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.last_scan) {
+                el.textContent = "Last scan: never";
+                return;
+            }
+            var t = new Date(data.last_scan);
+            var now = new Date();
+            var diff = Math.floor((now - t) / 1000);
+            var ago;
+            if (diff < 60) ago = "just now";
+            else if (diff < 3600) ago = Math.floor(diff / 60) + "m ago";
+            else if (diff < 86400) ago = Math.floor(diff / 3600) + "h ago";
+            else ago = Math.floor(diff / 86400) + "d ago";
+            el.textContent = "Last scan: " + ago;
+            el.title = t.toLocaleString();
+        })
+        .catch(function() {});
+}
+
+/* ------------------------------------------------------------
    3. Toast System
    ------------------------------------------------------------ */
 
@@ -672,6 +701,17 @@ function changePolicy(name, newPolicy) {
         { policy: newPolicy },
         "Policy changed to " + newPolicy + " for " + name,
         "Failed to change policy"
+    );
+}
+
+function triggerScan(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    apiPost(
+        "/api/scan",
+        null,
+        "Scan started — results will appear shortly",
+        "Failed to trigger scan",
+        btn
     );
 }
 
@@ -1376,6 +1416,7 @@ function initSSE() {
     es.addEventListener("scan_complete", function () {
         // Re-check pause state on scan events.
         checkPauseState();
+        refreshLastScan();
         scheduleReload();
     });
 
@@ -1413,6 +1454,7 @@ document.addEventListener("DOMContentLoaded", function () {
     initSSE();
     initPauseBanner();
     initFilters();
+    refreshLastScan();
 
     // Apply stack default preference.
     var stackPref = localStorage.getItem("sentinel-stacks") || "collapsed";
