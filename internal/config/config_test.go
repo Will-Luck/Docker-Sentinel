@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -19,14 +20,14 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DockerSock != "/var/run/docker.sock" {
 		t.Errorf("DockerSock = %q, want /var/run/docker.sock", cfg.DockerSock)
 	}
-	if cfg.PollInterval != 6*time.Hour {
-		t.Errorf("PollInterval = %s, want 6h", cfg.PollInterval)
+	if cfg.PollInterval() != 6*time.Hour {
+		t.Errorf("PollInterval = %s, want 6h", cfg.PollInterval())
 	}
-	if cfg.GracePeriod != 30*time.Second {
-		t.Errorf("GracePeriod = %s, want 30s", cfg.GracePeriod)
+	if cfg.GracePeriod() != 30*time.Second {
+		t.Errorf("GracePeriod = %s, want 30s", cfg.GracePeriod())
 	}
-	if cfg.DefaultPolicy != "manual" {
-		t.Errorf("DefaultPolicy = %q, want manual", cfg.DefaultPolicy)
+	if cfg.DefaultPolicy() != "manual" {
+		t.Errorf("DefaultPolicy = %q, want manual", cfg.DefaultPolicy())
 	}
 	if cfg.DBPath != "/data/sentinel.db" {
 		t.Errorf("DBPath = %q, want /data/sentinel.db", cfg.DBPath)
@@ -43,14 +44,14 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("SENTINEL_LOG_JSON", "false")
 
 	cfg := Load()
-	if cfg.PollInterval != time.Hour {
-		t.Errorf("PollInterval = %s, want 1h", cfg.PollInterval)
+	if cfg.PollInterval() != time.Hour {
+		t.Errorf("PollInterval = %s, want 1h", cfg.PollInterval())
 	}
-	if cfg.GracePeriod != 10*time.Second {
-		t.Errorf("GracePeriod = %s, want 10s", cfg.GracePeriod)
+	if cfg.GracePeriod() != 10*time.Second {
+		t.Errorf("GracePeriod = %s, want 10s", cfg.GracePeriod())
 	}
-	if cfg.DefaultPolicy != "auto" {
-		t.Errorf("DefaultPolicy = %q, want auto", cfg.DefaultPolicy)
+	if cfg.DefaultPolicy() != "auto" {
+		t.Errorf("DefaultPolicy = %q, want auto", cfg.DefaultPolicy())
 	}
 	if cfg.LogJSON {
 		t.Error("LogJSON = true, want false")
@@ -64,20 +65,16 @@ func TestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid defaults", func(_ *Config) {}, false},
-		{"zero poll interval", func(c *Config) { c.PollInterval = 0 }, true},
-		{"negative grace period", func(c *Config) { c.GracePeriod = -1 }, true},
-		{"invalid policy", func(c *Config) { c.DefaultPolicy = "yolo" }, true},
-		{"pinned policy valid", func(c *Config) { c.DefaultPolicy = "pinned" }, false},
-		{"auto policy valid", func(c *Config) { c.DefaultPolicy = "auto" }, false},
+		{"zero poll interval", func(c *Config) { c.SetPollInterval(0) }, true},
+		{"negative grace period", func(c *Config) { c.SetGracePeriod(-1) }, true},
+		{"invalid policy", func(c *Config) { c.SetDefaultPolicy("yolo") }, true},
+		{"pinned policy valid", func(c *Config) { c.SetDefaultPolicy("pinned") }, false},
+		{"auto policy valid", func(c *Config) { c.SetDefaultPolicy("auto") }, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{
-				PollInterval:  6 * time.Hour,
-				GracePeriod:   30 * time.Second,
-				DefaultPolicy: "manual",
-			}
+			cfg := NewTestConfig()
 			tt.modify(cfg)
 			err := cfg.Validate()
 			if (err != nil) != tt.wantErr {
@@ -139,4 +136,60 @@ func TestEnvDuration(t *testing.T) {
 	if got := envDuration(key, time.Hour); got != time.Hour {
 		t.Errorf("got %s, want 1h (default on parse failure)", got)
 	}
+}
+
+func TestSettersAndGetters(t *testing.T) {
+	cfg := NewTestConfig()
+
+	cfg.SetPollInterval(15 * time.Minute)
+	if got := cfg.PollInterval(); got != 15*time.Minute {
+		t.Errorf("PollInterval = %s, want 15m", got)
+	}
+
+	cfg.SetGracePeriod(45 * time.Second)
+	if got := cfg.GracePeriod(); got != 45*time.Second {
+		t.Errorf("GracePeriod = %s, want 45s", got)
+	}
+
+	cfg.SetDefaultPolicy("auto")
+	if got := cfg.DefaultPolicy(); got != "auto" {
+		t.Errorf("DefaultPolicy = %q, want auto", got)
+	}
+}
+
+func TestConcurrentAccess(t *testing.T) {
+	cfg := NewTestConfig()
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+
+	// Writer goroutine for PollInterval.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			cfg.SetPollInterval(time.Duration(i) * time.Minute)
+		}
+	}()
+
+	// Writer goroutine for DefaultPolicy.
+	go func() {
+		defer wg.Done()
+		policies := []string{"auto", "manual", "pinned"}
+		for i := 0; i < 100; i++ {
+			cfg.SetDefaultPolicy(policies[i%3])
+		}
+	}()
+
+	// Reader goroutine.
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_ = cfg.PollInterval()
+			_ = cfg.GracePeriod()
+			_ = cfg.DefaultPolicy()
+			_ = cfg.Values()
+		}
+	}()
+
+	wg.Wait()
 }

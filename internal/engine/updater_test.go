@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -16,14 +17,13 @@ import (
 func newTestUpdater(t *testing.T, mock *mockDocker) (*Updater, *mockClock) {
 	t.Helper()
 	s := testStore(t)
-	q := NewQueue(s, nil)
+	q := NewQueue(s, nil, nil)
 	log := logging.New(false)
 	clk := newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	checker := registry.NewChecker(mock, log)
-	cfg := &config.Config{
-		DefaultPolicy: "manual",
-		GracePeriod:   1 * time.Second,
-	}
+	cfg := config.NewTestConfig()
+	cfg.SetDefaultPolicy("manual")
+	cfg.SetGracePeriod(1 * time.Second)
 	notifier := notify.NewMulti(log)
 	return NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil), clk
 }
@@ -139,7 +139,7 @@ func TestScanAutoUpdate(t *testing.T) {
 	}
 
 	u, _ := newTestUpdater(t, mock)
-	u.cfg.DefaultPolicy = "auto"
+	u.cfg.SetDefaultPolicy("auto")
 	result := u.Scan(context.Background())
 
 	if result.AutoCount != 1 {
@@ -305,5 +305,396 @@ func TestContainerName(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("containerName(%v) = %q, want %q", tt.names, got, tt.want)
 		}
+	}
+}
+
+func TestTryLockPreventsDoubleUpdate(t *testing.T) {
+	mock := newMockDocker()
+	u, _ := newTestUpdater(t, mock)
+
+	// First lock should succeed.
+	if !u.tryLock("nginx") {
+		t.Fatal("first tryLock should succeed")
+	}
+
+	// Second lock on the same container should fail.
+	if u.tryLock("nginx") {
+		t.Fatal("second tryLock on same container should fail")
+	}
+
+	// Different container should succeed.
+	if !u.tryLock("redis") {
+		t.Fatal("tryLock on different container should succeed")
+	}
+
+	// After unlock, the container should be lockable again.
+	u.unlock("nginx")
+	if !u.tryLock("nginx") {
+		t.Fatal("tryLock should succeed after unlock")
+	}
+
+	// Clean up.
+	u.unlock("nginx")
+	u.unlock("redis")
+}
+
+func TestIsUpdating(t *testing.T) {
+	mock := newMockDocker()
+	u, _ := newTestUpdater(t, mock)
+
+	// Not locked -- should report false.
+	if u.IsUpdating("nginx") {
+		t.Fatal("IsUpdating should be false for unlocked container")
+	}
+
+	// Lock it.
+	if !u.tryLock("nginx") {
+		t.Fatal("tryLock should succeed")
+	}
+
+	// Now should report true.
+	if !u.IsUpdating("nginx") {
+		t.Fatal("IsUpdating should be true for locked container")
+	}
+
+	// Different container still false.
+	if u.IsUpdating("redis") {
+		t.Fatal("IsUpdating should be false for different container")
+	}
+
+	// Unlock and verify.
+	u.unlock("nginx")
+	if u.IsUpdating("nginx") {
+		t.Fatal("IsUpdating should be false after unlock")
+	}
+}
+
+func TestUpdateContainerReturnsErrUpdateInProgress(t *testing.T) {
+	mock := newMockDocker()
+
+	mock.inspectResults["aaa"] = container.InspectResponse{
+		ID:   "aaa",
+		Name: "/nginx",
+		Config: &container.Config{
+			Image:  "nginx:latest",
+			Labels: map[string]string{},
+		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	u, _ := newTestUpdater(t, mock)
+
+	// Manually acquire the lock to simulate an in-progress update.
+	if !u.tryLock("nginx") {
+		t.Fatal("tryLock should succeed")
+	}
+
+	// Second call should return ErrUpdateInProgress.
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx")
+	if err != ErrUpdateInProgress {
+		t.Fatalf("expected ErrUpdateInProgress, got: %v", err)
+	}
+
+	// Clean up.
+	u.unlock("nginx")
+}
+
+// --- Stage-aware finalise error handling tests ---
+
+func TestFinaliseErrorType(t *testing.T) {
+	inner := fmt.Errorf("connection refused")
+	fErr := &finaliseError{stage: "create", err: inner}
+
+	if fErr.Error() != "finalise create: connection refused" {
+		t.Errorf("Error() = %q, want %q", fErr.Error(), "finalise create: connection refused")
+	}
+	if !errors.Is(fErr, inner) {
+		t.Error("Unwrap should return the inner error")
+	}
+}
+
+func TestFinaliseStageIsDestructive(t *testing.T) {
+	tests := []struct {
+		stage       string
+		destructive bool
+	}{
+		{"inspect", false},
+		{"stop", false},
+		{"remove", true},
+		{"create", true},
+		{"start", true},
+	}
+	for _, tt := range tests {
+		if got := finaliseStageIsDestructive(tt.stage); got != tt.destructive {
+			t.Errorf("finaliseStageIsDestructive(%q) = %v, want %v", tt.stage, got, tt.destructive)
+		}
+	}
+}
+
+// TestFinaliseContainerReturnsStageErrors verifies that each error return in
+// finaliseContainer is wrapped with the correct stage.
+func TestFinaliseContainerReturnsStageErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(*mockDocker)
+		wantStage string
+	}{
+		{
+			name: "inspect failure",
+			setup: func(m *mockDocker) {
+				m.inspectErr["cid"] = fmt.Errorf("not found")
+			},
+			wantStage: "inspect",
+		},
+		{
+			name: "stop failure",
+			setup: func(m *mockDocker) {
+				m.inspectResults["cid"] = container.InspectResponse{
+					ID: "cid",
+					Config: &container.Config{
+						Image:  "img:latest",
+						Labels: map[string]string{"sentinel.maintenance": "true"},
+					},
+					HostConfig:      &container.HostConfig{},
+					NetworkSettings: &container.NetworkSettings{},
+				}
+				m.stopErr["cid"] = fmt.Errorf("timeout")
+			},
+			wantStage: "stop",
+		},
+		{
+			name: "remove failure",
+			setup: func(m *mockDocker) {
+				m.inspectResults["cid"] = container.InspectResponse{
+					ID: "cid",
+					Config: &container.Config{
+						Image:  "img:latest",
+						Labels: map[string]string{"sentinel.maintenance": "true"},
+					},
+					HostConfig:      &container.HostConfig{},
+					NetworkSettings: &container.NetworkSettings{},
+				}
+				m.removeErr["cid"] = fmt.Errorf("device busy")
+			},
+			wantStage: "remove",
+		},
+		{
+			name: "create failure",
+			setup: func(m *mockDocker) {
+				m.inspectResults["cid"] = container.InspectResponse{
+					ID: "cid",
+					Config: &container.Config{
+						Image:  "img:latest",
+						Labels: map[string]string{"sentinel.maintenance": "true"},
+					},
+					HostConfig:      &container.HostConfig{},
+					NetworkSettings: &container.NetworkSettings{},
+				}
+				m.createErr["myapp"] = fmt.Errorf("image not found")
+			},
+			wantStage: "create",
+		},
+		{
+			name: "start failure",
+			setup: func(m *mockDocker) {
+				m.inspectResults["cid"] = container.InspectResponse{
+					ID: "cid",
+					Config: &container.Config{
+						Image:  "img:latest",
+						Labels: map[string]string{"sentinel.maintenance": "true"},
+					},
+					HostConfig:      &container.HostConfig{},
+					NetworkSettings: &container.NetworkSettings{},
+				}
+				m.startErr["new-myapp"] = fmt.Errorf("OCI error")
+			},
+			wantStage: "start",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := newMockDocker()
+			tt.setup(mock)
+
+			u, _ := newTestUpdater(t, mock)
+			_, err := u.finaliseContainer(context.Background(), "cid", "myapp")
+			if err == nil {
+				t.Fatal("expected error")
+			}
+
+			var fErr *finaliseError
+			if !errors.As(err, &fErr) {
+				t.Fatalf("expected *finaliseError, got %T: %v", err, err)
+			}
+			if fErr.stage != tt.wantStage {
+				t.Errorf("stage = %q, want %q", fErr.stage, tt.wantStage)
+			}
+		})
+	}
+}
+
+// setupUpdateMock sets up a mockDocker with inspect results for a standard
+// update lifecycle that reaches the finalise stage. The container "aaa" is the
+// original; "new-nginx" is the newly created one (with maintenance label) that
+// passes validation. Returns the mock and a configured Updater.
+func setupUpdateMock(t *testing.T) (*mockDocker, *Updater) {
+	t.Helper()
+	mock := newMockDocker()
+
+	// Original container.
+	mock.inspectResults["aaa"] = container.InspectResponse{
+		ID:   "aaa",
+		Name: "/nginx",
+		Config: &container.Config{
+			Image:  "nginx:latest",
+			Labels: map[string]string{},
+		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	// New container after step 5 create -- has maintenance label, passes validation.
+	mock.inspectResults["new-nginx"] = container.InspectResponse{
+		ID:   "new-nginx",
+		Name: "/nginx",
+		State: &container.State{
+			Running:    true,
+			Restarting: false,
+		},
+		Config: &container.Config{
+			Image:  "nginx:latest",
+			Labels: map[string]string{"sentinel.maintenance": "true"},
+		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	u, _ := newTestUpdater(t, mock)
+	return mock, u
+}
+
+// TestUpdateFinaliseStopFailureRecordsWarning tests the non-destructive path:
+// finalise stop fails, so the container is still running (with maintenance label).
+// Should record "finalise_warning" and NOT attempt rollback.
+func TestUpdateFinaliseStopFailureRecordsWarning(t *testing.T) {
+	mock, u := setupUpdateMock(t)
+
+	// Make finalise stop fail (non-destructive stage).
+	// Step 4 stops "aaa" (different ID), so stopErr only affects finalise.
+	mock.stopErr["new-nginx"] = fmt.Errorf("stop timeout")
+
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx")
+	if err == nil {
+		t.Fatal("expected error from finalise stop failure")
+	}
+
+	// Should be a finaliseError with stage "stop".
+	var fErr *finaliseError
+	if !errors.As(err, &fErr) {
+		t.Fatalf("expected *finaliseError, got %T: %v", err, err)
+	}
+	if fErr.stage != "stop" {
+		t.Errorf("stage = %q, want %q", fErr.stage, "stop")
+	}
+
+	// Should NOT have attempted rollback.
+	// createCalls: 1 (step 5 new container) + 0 (no rollback) = 1
+	if len(mock.createCalls) != 1 {
+		t.Errorf("createCalls = %d, want 1 (no rollback on non-destructive finalise failure)", len(mock.createCalls))
+	}
+
+	// Verify update was recorded as "finalise_warning" (not "success").
+	history, hErr := u.store.ListHistory(10)
+	if hErr != nil {
+		t.Fatalf("ListHistory: %v", hErr)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history len = %d, want 1", len(history))
+	}
+	if history[0].Outcome != "finalise_warning" {
+		t.Errorf("outcome = %q, want %q", history[0].Outcome, "finalise_warning")
+	}
+	if history[0].Error == "" {
+		t.Error("error field should be non-empty for finalise_warning")
+	}
+}
+
+// TestUpdateFinaliseRemoveFailureTriggersRollback tests the destructive path:
+// finalise remove fails after the container was stopped, so it is likely down.
+// Should trigger rollback and record "failed".
+func TestUpdateFinaliseRemoveFailureTriggersRollback(t *testing.T) {
+	mock, u := setupUpdateMock(t)
+
+	// Make finalise remove fail. Step 4 removes "aaa" (different ID), so
+	// removeErr["new-nginx"] only affects finalise.
+	mock.removeErr["new-nginx"] = fmt.Errorf("device busy")
+
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx")
+	if err == nil {
+		t.Fatal("expected error from finalise remove failure")
+	}
+
+	var fErr *finaliseError
+	if !errors.As(err, &fErr) {
+		t.Fatalf("expected *finaliseError, got %T: %v", err, err)
+	}
+	if fErr.stage != "remove" {
+		t.Errorf("stage = %q, want %q", fErr.stage, "remove")
+	}
+
+	// Destructive stage -- should have attempted rollback.
+	// createCalls: 1 (step 5 new) + 1 (rollback from snapshot) = 2
+	if len(mock.createCalls) < 2 {
+		t.Errorf("createCalls = %d, want >= 2 (step-5 + rollback)", len(mock.createCalls))
+	}
+
+	// History should record "failed", never "success".
+	// doRollback also records a "rollback" entry, so we may have 2 records.
+	history, hErr := u.store.ListHistory(10)
+	if hErr != nil {
+		t.Fatalf("ListHistory: %v", hErr)
+	}
+	foundFailed := false
+	for _, h := range history {
+		if h.Outcome == "success" {
+			t.Error("should never record 'success' when finalise failed at destructive stage")
+		}
+		if h.Outcome == "failed" {
+			foundFailed = true
+		}
+	}
+	if !foundFailed {
+		t.Error("expected a 'failed' outcome in history")
+	}
+}
+
+// TestUpdateFinaliseInspectFailureRecordsWarning tests that an inspect failure
+// during finalise (non-destructive) does not trigger rollback.
+func TestUpdateFinaliseInspectFailureRecordsWarning(t *testing.T) {
+	// Test the non-destructive path by calling finaliseContainer directly
+	// with an inspect error (the end-to-end mock cannot differentiate between
+	// validation inspect and finalise inspect on the same container ID).
+	mock2 := newMockDocker()
+	mock2.inspectErr["cid"] = fmt.Errorf("container not found")
+
+	u2, _ := newTestUpdater(t, mock2)
+	_, err := u2.finaliseContainer(context.Background(), "cid", "myapp")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var fErr *finaliseError
+	if !errors.As(err, &fErr) {
+		t.Fatalf("expected *finaliseError, got %T: %v", err, err)
+	}
+	if fErr.stage != "inspect" {
+		t.Errorf("stage = %q, want %q", fErr.stage, "inspect")
+	}
+
+	// Verify non-destructive classification.
+	if finaliseStageIsDestructive(fErr.stage) {
+		t.Error("inspect should not be classified as destructive")
 	}
 }
