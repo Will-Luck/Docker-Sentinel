@@ -18,6 +18,7 @@ type PendingUpdate struct {
 	CurrentDigest string    `json:"current_digest"`
 	RemoteDigest  string    `json:"remote_digest"`
 	DetectedAt    time.Time `json:"detected_at"`
+	NewerVersions []string  `json:"newer_versions,omitempty"` // Newer semver versions (newest first)
 }
 
 // Queue manages pending updates with BoltDB persistence.

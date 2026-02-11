@@ -118,9 +118,9 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			continue
 		}
 
-		// Check the registry for an update.
+		// Check the registry for an update (versioned check also finds newer semver tags).
 		imageRef := c.Image
-		check := u.checker.Check(ctx, imageRef)
+		check := u.checker.CheckVersioned(ctx, imageRef)
 
 		if check.Error != nil {
 			u.log.Warn("registry check failed", "name", name, "image", imageRef, "error", check.Error)
@@ -171,6 +171,7 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 				CurrentDigest: check.LocalDigest,
 				RemoteDigest:  check.RemoteDigest,
 				DetectedAt:    u.clock.Now(),
+				NewerVersions: check.NewerVersions,
 			})
 			u.log.Info("update queued for manual approval", "name", name)
 			u.publishEvent(events.EventQueueChange, name, "queued for approval")

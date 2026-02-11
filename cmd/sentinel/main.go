@@ -83,19 +83,20 @@ func main() {
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
-			Store:     &storeAdapter{db},
-			Queue:     &queueAdapter{queue},
-			Docker:    &dockerAdapter{client},
-			Updater:   updater,
-			Config:    cfg,
-			EventBus:  bus,
-			Snapshots: &snapshotAdapter{db},
-			Rollback:  &rollbackAdapter{d: client, s: db, log: log},
-			Restarter: &restartAdapter{client},
-			Registry:  &registryAdapter{log: log},
-			Policy:    &policyStoreAdapter{db},
-			EventLog:  &eventLogAdapter{db},
-			Log:       log.Logger,
+			Store:           &storeAdapter{db},
+			Queue:           &queueAdapter{queue},
+			Docker:          &dockerAdapter{client},
+			Updater:         updater,
+			Config:          cfg,
+			EventBus:        bus,
+			Snapshots:       &snapshotAdapter{db},
+			Rollback:        &rollbackAdapter{d: client, s: db, log: log},
+			Restarter:       &restartAdapter{client},
+			Registry:        &registryAdapter{log: log},
+			RegistryChecker: &registryCheckerAdapter{checker: checker},
+			Policy:          &policyStoreAdapter{db},
+			EventLog:        &eventLogAdapter{db},
+			Log:             log.Logger,
 		})
 
 		go func() {
@@ -237,6 +238,26 @@ func (a *queueAdapter) List() []web.PendingUpdate {
 	return result
 }
 
+func (a *queueAdapter) Add(update web.PendingUpdate) {
+	a.q.Add(engine.PendingUpdate{
+		ContainerID:   update.ContainerID,
+		ContainerName: update.ContainerName,
+		CurrentImage:  update.CurrentImage,
+		CurrentDigest: update.CurrentDigest,
+		RemoteDigest:  update.RemoteDigest,
+		DetectedAt:    update.DetectedAt,
+		NewerVersions: update.NewerVersions,
+	})
+}
+
+func (a *queueAdapter) Get(name string) (web.PendingUpdate, bool) {
+	item, ok := a.q.Get(name)
+	if !ok {
+		return web.PendingUpdate{}, false
+	}
+	return convertPendingUpdate(item), true
+}
+
 func (a *queueAdapter) Approve(name string) (web.PendingUpdate, bool) {
 	item, ok := a.q.Approve(name)
 	if !ok {
@@ -255,6 +276,7 @@ func convertPendingUpdate(item engine.PendingUpdate) web.PendingUpdate {
 		CurrentDigest: item.CurrentDigest,
 		RemoteDigest:  item.RemoteDigest,
 		DetectedAt:    item.DetectedAt,
+		NewerVersions: item.NewerVersions,
 	}
 }
 
@@ -342,6 +364,22 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 		versions[i] = sv.Raw
 	}
 	return versions, nil
+}
+
+// registryCheckerAdapter bridges registry.Checker to web.RegistryChecker.
+type registryCheckerAdapter struct {
+	checker *registry.Checker
+}
+
+func (a *registryCheckerAdapter) CheckForUpdate(ctx context.Context, imageRef string) (bool, []string, error) {
+	result := a.checker.CheckVersioned(ctx, imageRef)
+	if result.Error != nil {
+		return false, nil, result.Error
+	}
+	if result.IsLocal {
+		return false, nil, nil
+	}
+	return result.UpdateAvailable, result.NewerVersions, nil
 }
 
 // policyStoreAdapter bridges store.Store to web.PolicyStore.

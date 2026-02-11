@@ -3,6 +3,8 @@ package web
 import (
 	"net/http"
 	"sort"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
 // pageData is the common data structure passed to all page templates.
@@ -24,15 +26,17 @@ type pageData struct {
 
 // containerView is a container with computed display fields.
 type containerView struct {
-	ID          string
-	Name        string
-	Image       string
-	Policy      string
-	State       string
-	Maintenance bool
-	HasUpdate   bool
-	IsSelf      bool
-	Stack       string // com.docker.compose.project label, or "" for standalone
+	ID             string
+	Name           string
+	Image          string
+	Tag            string // Extracted tag from image ref (e.g. "latest", "v2.19.4")
+	NewestVersion  string // Newest available version if update pending (semver only)
+	Policy         string
+	State          string
+	Maintenance    bool
+	HasUpdate      bool
+	IsSelf         bool
+	Stack          string // com.docker.compose.project label, or "" for standalone
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -69,16 +73,30 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Extract tag for compact display; fall back to full image ref.
+		tag := registry.ExtractTag(c.Image)
+		if tag == "" {
+			tag = c.Image
+		}
+
+		// Get newest version from queue entry if available.
+		var newestVersion string
+		if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
+			newestVersion = pending.NewerVersions[0]
+		}
+
 		views = append(views, containerView{
-			ID:          c.ID,
-			Name:        name,
-			Image:       c.Image,
-			Policy:      policy,
-			State:       c.State,
-			Maintenance: maintenance,
-			HasUpdate:   pendingNames[name],
-			IsSelf:      c.Labels["sentinel.self"] == "true",
-			Stack:       c.Labels["com.docker.compose.project"],
+			ID:            c.ID,
+			Name:          name,
+			Image:         c.Image,
+			Tag:           tag,
+			NewestVersion: newestVersion,
+			Policy:        policy,
+			State:         c.State,
+			Maintenance:   maintenance,
+			HasUpdate:     pendingNames[name],
+			IsSelf:        c.Labels["sentinel.self"] == "true",
+			Stack:         c.Labels["com.docker.compose.project"],
 		})
 	}
 
@@ -281,10 +299,16 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	detailTag := registry.ExtractTag(found.Image)
+	if detailTag == "" {
+		detailTag = found.Image
+	}
+
 	view := containerView{
 		ID:          found.ID,
 		Name:        containerName(*found),
 		Image:       found.Image,
+		Tag:         detailTag,
 		Policy:      detailPolicy,
 		State:       found.State,
 		Maintenance: maintenance,

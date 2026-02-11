@@ -158,6 +158,17 @@ function triggerUpdate(name, event) {
     );
 }
 
+function triggerCheck(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    apiPost(
+        "/api/check/" + encodeURIComponent(name),
+        null,
+        "Checking for updates on " + name,
+        "Failed to check for updates",
+        btn
+    );
+}
+
 function triggerRollback(name, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(

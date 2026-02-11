@@ -182,6 +182,73 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apiCheck triggers a registry check for a single container.
+// If an update is found, it gets added to the queue (triggering SSE events).
+func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.isProtectedContainer(r.Context(), name) {
+		writeError(w, http.StatusForbidden, "cannot check sentinel itself")
+		return
+	}
+
+	if s.deps.RegistryChecker == nil {
+		writeError(w, http.StatusNotImplemented, "registry checker not available")
+		return
+	}
+
+	// Find the container to get its image reference and ID.
+	containers, err := s.deps.Docker.ListContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers for check", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var containerID, imageRef string
+	for _, c := range containers {
+		if containerName(c) == name {
+			containerID = c.ID
+			imageRef = c.Image
+			break
+		}
+	}
+	if containerID == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	// Run the check in a background goroutine — respond immediately.
+	go func() {
+		updateAvailable, newerVersions, err := s.deps.RegistryChecker.CheckForUpdate(context.Background(), imageRef)
+		if err != nil {
+			s.deps.Log.Warn("registry check failed", "name", name, "error", err)
+			return
+		}
+		if updateAvailable {
+			s.deps.Queue.Add(PendingUpdate{
+				ContainerID:   containerID,
+				ContainerName: name,
+				CurrentImage:  imageRef,
+				NewerVersions: newerVersions,
+			})
+			s.deps.Log.Info("update found via manual check", "name", name)
+		}
+	}()
+
+	s.logEvent("check", name, "Manual registry check triggered")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "checking",
+		"name":    name,
+		"message": "registry check started for " + name,
+	})
+}
+
 // apiSettings returns the current configuration values.
 func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.deps.Config.Values())
