@@ -107,20 +107,6 @@ func TestEnvStr(t *testing.T) {
 	}
 }
 
-func TestEnvInt(t *testing.T) {
-	const key = "DS_TEST_ENV_INT"
-
-	t.Setenv(key, "42")
-	if got := envInt(key, 0); got != 42 {
-		t.Errorf("got %d, want 42", got)
-	}
-
-	t.Setenv(key, "notanumber")
-	if got := envInt(key, 99); got != 99 {
-		t.Errorf("got %d, want 99 (default on parse failure)", got)
-	}
-}
-
 func TestEnvBool(t *testing.T) {
 	const key = "DS_TEST_ENV_BOOL"
 

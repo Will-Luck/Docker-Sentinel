@@ -103,6 +103,7 @@ func selfSignedIPs() []net.IP {
 	if err != nil {
 		return ips
 	}
+	seen := make(map[string]bool)
 	for _, addr := range addrs {
 		ipNet, ok := addr.(*net.IPNet)
 		if !ok {
@@ -111,6 +112,11 @@ func selfSignedIPs() []net.IP {
 		if ipNet.IP.IsLoopback() || !ipNet.IP.IsPrivate() {
 			continue
 		}
+		s := ipNet.IP.String()
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
 		ips = append(ips, ipNet.IP)
 	}
 	return ips

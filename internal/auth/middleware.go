@@ -37,7 +37,7 @@ func AuthMiddleware(svc *Service) func(http.Handler) http.Handler {
 					return
 				}
 				// Invalid bearer token.
-				http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "invalid or expired token")
 				return
 			}
 
@@ -58,7 +58,7 @@ func AuthMiddleware(svc *Service) func(http.Handler) http.Handler {
 
 			// Not authenticated.
 			if isAPIRequest(r) {
-				http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "authentication required")
 			} else {
 				http.Redirect(w, r, "/login", http.StatusSeeOther)
 			}
@@ -92,7 +92,7 @@ func CSRFMiddleware(next http.Handler) http.Handler {
 		// Validate CSRF double-submit.
 		if !ValidateCSRF(r) {
 			if isAPIRequest(r) {
-				http.Error(w, `{"error":"CSRF validation failed"}`, http.StatusForbidden)
+				writeJSONError(w, http.StatusForbidden, "CSRF validation failed")
 			} else {
 				http.Error(w, "CSRF validation failed", http.StatusForbidden)
 			}
@@ -109,12 +109,12 @@ func RequirePermission(perm Permission) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rc := GetRequestContext(r.Context())
 			if rc == nil {
-				http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+				writeJSONError(w, http.StatusUnauthorized, "authentication required")
 				return
 			}
 			if !rc.HasPermission(perm) {
 				if isAPIRequest(r) {
-					http.Error(w, `{"error":"insufficient permissions"}`, http.StatusForbidden)
+					writeJSONError(w, http.StatusForbidden, "insufficient permissions")
 				} else {
 					http.Error(w, "You don't have permission to access this page.", http.StatusForbidden)
 				}
@@ -149,4 +149,11 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request, secure bool) {
 		}
 		SetCSRFCookie(w, token, secure)
 	}
+}
+
+// writeJSONError writes a JSON error response with correct Content-Type.
+func writeJSONError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write([]byte(`{"error":"` + msg + `"}`))
 }

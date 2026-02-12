@@ -34,7 +34,43 @@ func NewRateLimiter() *RateLimiter {
 
 // Allow checks if a login attempt from the given IP is allowed.
 // Returns true if allowed, false if rate-limited.
+// This is a pure check — it does NOT increment the counter.
+// Use RecordFailure to record failed attempts.
 func (rl *RateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	a, ok := rl.attempts[ip]
+	if !ok {
+		return true
+	}
+
+	// If blocked, check if cooldown has expired.
+	if !a.BlockedAt.IsZero() {
+		if time.Now().Before(a.BlockedAt.Add(accountLockoutDur)) {
+			return false
+		}
+		// Cooldown expired — reset.
+		a.Count = 0
+		a.FirstAt = time.Time{}
+		a.BlockedAt = time.Time{}
+		return true
+	}
+
+	// Reset window if it's expired.
+	if time.Now().After(a.FirstAt.Add(loginWindow)) {
+		a.Count = 0
+		a.FirstAt = time.Time{}
+		return true
+	}
+
+	// Check if already at/above the limit.
+	return a.Count < maxLoginAttempts
+}
+
+// RecordFailure records a failed login for an IP.
+// This is the sole method that increments the attempt counter.
+func (rl *RateLimiter) RecordFailure(ip string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -42,49 +78,20 @@ func (rl *RateLimiter) Allow(ip string) bool {
 	a, ok := rl.attempts[ip]
 	if !ok {
 		rl.attempts[ip] = &LoginAttempt{Count: 1, FirstAt: now}
-		return true
+		return
 	}
 
-	// If blocked, check if cooldown has expired.
-	if !a.BlockedAt.IsZero() {
-		if now.Before(a.BlockedAt.Add(accountLockoutDur)) {
-			return false
-		}
-		// Cooldown expired — reset.
+	// If window expired, start a new one.
+	if a.FirstAt.IsZero() || now.After(a.FirstAt.Add(loginWindow)) {
 		a.Count = 1
 		a.FirstAt = now
 		a.BlockedAt = time.Time{}
-		return true
-	}
-
-	// Reset window if it's expired.
-	if now.After(a.FirstAt.Add(loginWindow)) {
-		a.Count = 1
-		a.FirstAt = now
-		return true
-	}
-
-	a.Count++
-	if a.Count > maxLoginAttempts {
-		a.BlockedAt = now
-		return false
-	}
-	return true
-}
-
-// RecordFailure records a failed login for an IP. Used for exponential backoff.
-func (rl *RateLimiter) RecordFailure(ip string) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	a, ok := rl.attempts[ip]
-	if !ok {
-		rl.attempts[ip] = &LoginAttempt{Count: 1, FirstAt: time.Now()}
 		return
 	}
+
 	a.Count++
 	if a.Count >= accountLockout {
-		a.BlockedAt = time.Now()
+		a.BlockedAt = now
 	}
 }
 
