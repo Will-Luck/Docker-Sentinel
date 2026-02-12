@@ -251,30 +251,37 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run the check in a background goroutine — respond immediately.
-	go func() {
-		updateAvailable, newerVersions, err := s.deps.RegistryChecker.CheckForUpdate(context.Background(), imageRef)
-		if err != nil {
-			s.deps.Log.Warn("registry check failed", "name", name, "error", err)
-			return
-		}
-		if updateAvailable {
-			s.deps.Queue.Add(PendingUpdate{
-				ContainerID:   containerID,
-				ContainerName: name,
-				CurrentImage:  imageRef,
-				NewerVersions: newerVersions,
-			})
-			s.deps.Log.Info("update found via manual check", "name", name)
-		}
-	}()
-
 	s.logEvent("check", name, "Manual registry check triggered")
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status":  "checking",
+	// Run the check synchronously so the client spinner stays active.
+	updateAvailable, newerVersions, checkErr := s.deps.RegistryChecker.CheckForUpdate(r.Context(), imageRef)
+	if checkErr != nil {
+		s.deps.Log.Warn("registry check failed", "name", name, "error", checkErr)
+		writeError(w, http.StatusBadGateway, "registry check failed: "+checkErr.Error())
+		return
+	}
+
+	if updateAvailable {
+		s.deps.Queue.Add(PendingUpdate{
+			ContainerID:   containerID,
+			ContainerName: name,
+			CurrentImage:  imageRef,
+			NewerVersions: newerVersions,
+		})
+		s.deps.Log.Info("update found via manual check", "name", name)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":          "update_available",
+			"name":            name,
+			"message":         "Update available for " + name,
+			"newer_versions":  newerVersions,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "up_to_date",
 		"name":    name,
-		"message": "registry check started for " + name,
+		"message": name + " is up to date",
 	})
 }
 

@@ -97,6 +97,38 @@
         }
         .login-btn:hover { opacity: 0.9; }
         .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .login-divider {
+            display: flex;
+            align-items: center;
+            gap: var(--sp-3);
+            margin: var(--sp-4) 0;
+            color: var(--fg-secondary);
+            font-size: 0.85rem;
+        }
+        .login-divider::before,
+        .login-divider::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+        .login-btn-passkey {
+            width: 100%;
+            padding: 12px;
+            font-size: 1rem;
+            font-weight: 500;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: opacity 150ms var(--md-motion-standard);
+            background: var(--bg-surface);
+            color: var(--fg-primary);
+            border: 1px solid var(--border);
+        }
+        .login-btn-passkey:hover {
+            background: var(--bg-hover);
+            opacity: 1;
+        }
+        .login-btn-passkey:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -122,8 +154,22 @@
                 </div>
                 <button class="login-btn" type="submit">Sign In</button>
             </form>
+            {{if .WebAuthnEnabled}}
+            <div id="passkey-login-section">
+                <div class="login-divider">
+                    <span>or</span>
+                </div>
+                <button class="login-btn-passkey" type="button" id="passkey-login-btn" onclick="loginWithPasskey()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:8px"><circle cx="12" cy="12" r="3"/><path d="M12 16v5"/><path d="M15 19l-3 2-3-2"/><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74"/><path d="M5 9a7 7 0 0 1 9.74-6.46"/></svg>
+                    Sign in with passkey
+                </button>
+            </div>
+            {{end}}
         </div>
     </div>
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+    <script src="/static/auth.js"></script>
     <script>
         // Focus management: if there is an error, focus the username field.
         (function() {
@@ -134,6 +180,7 @@
             }
         })();
     </script>
+    <script src="/static/webauthn.js"></script>
 </body>
 </html>
 {{end}}

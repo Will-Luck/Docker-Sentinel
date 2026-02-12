@@ -56,12 +56,14 @@ type SettingsReader interface {
 
 // Service aggregates all auth-related stores and configuration.
 type Service struct {
-	Users    UserStore
-	Sessions SessionStore
-	Roles    RoleStore
-	Tokens   APITokenStore
-	Settings SettingsReader
-	Log      *slog.Logger
+	Users         UserStore
+	Sessions      SessionStore
+	Roles         RoleStore
+	Tokens        APITokenStore
+	Settings      SettingsReader
+	WebAuthnCreds WebAuthnCredentialStore
+	Ceremonies    *CeremonyStore
+	Log           *slog.Logger
 
 	CookieSecure   bool
 	SessionExpiry  time.Duration
@@ -72,18 +74,23 @@ type Service struct {
 
 // NewService creates a new auth service.
 func NewService(cfg ServiceConfig) *Service {
-	return &Service{
+	s := &Service{
 		Users:          cfg.Users,
 		Sessions:       cfg.Sessions,
 		Roles:          cfg.Roles,
 		Tokens:         cfg.Tokens,
 		Settings:       cfg.Settings,
+		WebAuthnCreds:  cfg.WebAuthnCreds,
 		Log:            cfg.Log,
 		CookieSecure:   cfg.CookieSecure,
 		SessionExpiry:  cfg.SessionExpiry,
 		AuthEnabledEnv: cfg.AuthEnabledEnv,
 		rateLimiter:    NewRateLimiter(),
 	}
+	if cfg.WebAuthnCreds != nil {
+		s.Ceremonies = NewCeremonyStore()
+	}
+	return s
 }
 
 // ServiceConfig holds the configuration for creating a Service.
@@ -93,6 +100,7 @@ type ServiceConfig struct {
 	Roles          RoleStore
 	Tokens         APITokenStore
 	Settings       SettingsReader
+	WebAuthnCreds  WebAuthnCredentialStore
 	Log            *slog.Logger
 	CookieSecure   bool
 	SessionExpiry  time.Duration
@@ -191,6 +199,62 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	s.rateLimiter.Reset(ip)
 
 	// Create new session (session rotation — prevent fixation).
+	token, err := GenerateSessionToken()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate session token: %w", err)
+	}
+
+	session := Session{
+		Token:     token,
+		UserID:    user.ID,
+		IP:        ip,
+		UserAgent: userAgent,
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Now().UTC().Add(s.SessionExpiry),
+	}
+
+	if err := s.Sessions.CreateSession(session); err != nil {
+		return nil, nil, fmt.Errorf("create session: %w", err)
+	}
+
+	return &session, user, nil
+}
+
+// HasPasskeys returns whether the user has any WebAuthn credentials registered.
+func (s *Service) HasPasskeys(userID string) bool {
+	if s.WebAuthnCreds == nil {
+		return false
+	}
+	creds, err := s.WebAuthnCreds.ListWebAuthnCredentialsForUser(userID)
+	if err != nil {
+		return false
+	}
+	return len(creds) > 0
+}
+
+// LoginWithWebAuthn creates a session for a user authenticated via WebAuthn.
+func (s *Service) LoginWithWebAuthn(ctx context.Context, userID, ip, userAgent string) (*Session, *User, error) {
+	if !s.rateLimiter.Allow(ip) {
+		return nil, nil, ErrRateLimited
+	}
+
+	user, err := s.Users.GetUser(userID)
+	if err != nil || user == nil {
+		s.rateLimiter.RecordFailure(ip)
+		return nil, nil, ErrInvalidCredentials
+	}
+
+	if user.Locked && time.Now().Before(user.LockedUntil) {
+		return nil, nil, ErrAccountLocked
+	}
+
+	// Success — clear failure counters.
+	user.FailedLogins = 0
+	user.Locked = false
+	user.LockedUntil = time.Time{}
+	_ = s.Users.UpdateUser(*user)
+	s.rateLimiter.Reset(ip)
+
 	token, err := GenerateSessionToken()
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate session token: %w", err)

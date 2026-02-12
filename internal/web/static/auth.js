@@ -389,6 +389,54 @@ document.addEventListener("DOMContentLoaded", function() {
     initChangePassword();
     loadUsers();
 
+    // Intercept login form to handle suggest_passkey response.
+    var loginForm = document.getElementById("login-form");
+    if (loginForm) {
+        loginForm.addEventListener("submit", function(e) {
+            e.preventDefault();
+            var username = document.getElementById("username").value;
+            var password = document.getElementById("password").value;
+            var btn = loginForm.querySelector(".login-btn[type=submit]");
+            if (btn) { btn.disabled = true; btn.textContent = "Signing in..."; }
+
+            fetch("/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username: username, password: password })
+            })
+            .then(function(resp) {
+                return resp.json().then(function(data) { return { ok: resp.ok, status: resp.status, data: data }; });
+            })
+            .then(function(result) {
+                if (result.ok) {
+                    if (result.data.suggest_passkey) {
+                        sessionStorage.setItem("suggest_passkey", "1");
+                    }
+                    window.location.href = result.data.redirect || "/";
+                } else {
+                    var errDiv = document.querySelector(".login-error");
+                    if (!errDiv) {
+                        errDiv = document.createElement("div");
+                        errDiv.className = "login-error";
+                        loginForm.parentNode.insertBefore(errDiv, loginForm);
+                    }
+                    errDiv.textContent = result.data.error || "Invalid username or password";
+                    if (btn) { btn.disabled = false; btn.textContent = "Sign In"; }
+                }
+            })
+            .catch(function() {
+                var errDiv = document.querySelector(".login-error");
+                if (!errDiv) {
+                    errDiv = document.createElement("div");
+                    errDiv.className = "login-error";
+                    loginForm.parentNode.insertBefore(errDiv, loginForm);
+                }
+                errDiv.textContent = "Network error";
+                if (btn) { btn.disabled = false; btn.textContent = "Sign In"; }
+            });
+        });
+    }
+
     // Close user dropdown when clicking outside.
     document.addEventListener("click", function(e) {
         var navUser = document.querySelector(".nav-user");

@@ -70,6 +70,17 @@ func TestValidate(t *testing.T) {
 		{"invalid policy", func(c *Config) { c.SetDefaultPolicy("yolo") }, true},
 		{"pinned policy valid", func(c *Config) { c.SetDefaultPolicy("pinned") }, false},
 		{"auto policy valid", func(c *Config) { c.SetDefaultPolicy("auto") }, false},
+		{"TLS cert without key", func(c *Config) { c.TLSCert = "/tmp/cert.pem" }, true},
+		{"TLS key without cert", func(c *Config) { c.TLSKey = "/tmp/key.pem" }, true},
+		{"TLS cert and key both set", func(c *Config) { c.TLSCert = "/tmp/cert.pem"; c.TLSKey = "/tmp/key.pem" }, false},
+		{"TLS auto only", func(c *Config) { c.TLSAuto = true }, false},
+		{"WebAuthn RPID without origins", func(c *Config) { c.WebAuthnRPID = "example.com" }, true},
+		{"WebAuthn origins without RPID", func(c *Config) { c.WebAuthnOrigins = "https://example.com" }, true},
+		{"WebAuthn RPID and origins both set", func(c *Config) {
+			c.WebAuthnRPID = "example.com"
+			c.WebAuthnOrigins = "https://example.com"
+		}, false},
+		{"WebAuthn both empty", func(c *Config) {}, false},
 	}
 
 	for _, tt := range tests {
@@ -154,6 +165,32 @@ func TestSettersAndGetters(t *testing.T) {
 	cfg.SetDefaultPolicy("auto")
 	if got := cfg.DefaultPolicy(); got != "auto" {
 		t.Errorf("DefaultPolicy = %q, want auto", got)
+	}
+}
+
+func TestTLSEnabled(t *testing.T) {
+	tests := []struct {
+		name string
+		cert string
+		key  string
+		auto bool
+		want bool
+	}{
+		{"no TLS", "", "", false, false},
+		{"cert+key", "/cert.pem", "/key.pem", false, true},
+		{"auto", "", "", true, true},
+		{"cert+key+auto", "/cert.pem", "/key.pem", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NewTestConfig()
+			cfg.TLSCert = tt.cert
+			cfg.TLSKey = tt.key
+			cfg.TLSAuto = tt.auto
+			if got := cfg.TLSEnabled(); got != tt.want {
+				t.Errorf("TLSEnabled() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

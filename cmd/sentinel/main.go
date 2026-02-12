@@ -9,9 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
@@ -44,6 +47,10 @@ func main() {
 	fmt.Printf("SENTINEL_DB_PATH=%s\n", cfg.DBPath)
 	fmt.Printf("SENTINEL_WEB_ENABLED=%t\n", cfg.WebEnabled)
 	fmt.Printf("SENTINEL_WEB_PORT=%s\n", cfg.WebPort)
+	fmt.Printf("SENTINEL_TLS_CERT=%s\n", cfg.TLSCert)
+	fmt.Printf("SENTINEL_TLS_KEY=%s\n", cfg.TLSKey)
+	fmt.Printf("SENTINEL_TLS_AUTO=%t\n", cfg.TLSAuto)
+	fmt.Printf("SENTINEL_WEBAUTHN_RPID=%s\n", cfg.WebAuthnRPID)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -73,12 +80,17 @@ func main() {
 	}
 
 	// Create auth service.
+	var webAuthnCreds auth.WebAuthnCredentialStore
+	if cfg.WebAuthnEnabled() {
+		webAuthnCreds = db
+	}
 	authSvc := auth.NewService(auth.ServiceConfig{
 		Users:          db,
 		Sessions:       db,
 		Roles:          db,
 		Tokens:         db,
 		Settings:       db,
+		WebAuthnCreds:  webAuthnCreds,
 		Log:            log.Logger,
 		CookieSecure:   cfg.CookieSecure,
 		SessionExpiry:  cfg.SessionExpiry,
@@ -196,11 +208,45 @@ func main() {
 			Log:                log.Logger,
 		})
 
+		// Configure WebAuthn passkeys if RPID is set.
+		if cfg.WebAuthnEnabled() {
+			wa, waErr := webauthn.New(&webauthn.Config{
+				RPDisplayName: cfg.WebAuthnDisplayName,
+				RPID:          cfg.WebAuthnRPID,
+				RPOrigins:     cfg.WebAuthnOriginList(),
+			})
+			if waErr != nil {
+				log.Error("failed to create WebAuthn instance", "error", waErr)
+				os.Exit(1)
+			}
+			srv.SetWebAuthn(wa)
+			log.Info("webauthn passkeys enabled", "rpid", cfg.WebAuthnRPID, "origins", cfg.WebAuthnOrigins)
+		}
+
+		// Configure TLS if enabled.
+		if cfg.TLSCert != "" && cfg.TLSKey != "" {
+			srv.SetTLS(cfg.TLSCert, cfg.TLSKey)
+			log.Info("TLS enabled (user-provided certificate)")
+		} else if cfg.TLSAuto {
+			dataDir := filepath.Dir(cfg.DBPath)
+			certPath, keyPath, tlsErr := web.EnsureSelfSignedCert(dataDir)
+			if tlsErr != nil {
+				log.Error("failed to generate self-signed certificate", "error", tlsErr)
+				os.Exit(1)
+			}
+			srv.SetTLS(certPath, keyPath)
+			log.Info("TLS enabled (auto-generated self-signed certificate)", "cert", certPath)
+		}
+
 		// Set bootstrap token for first-run setup.
+		scheme := "http"
+		if cfg.TLSEnabled() {
+			scheme = "https"
+		}
 		if bootstrapToken != "" {
 			srv.SetBootstrapToken(bootstrapToken)
 			fmt.Println("=============================================")
-			fmt.Printf("Setup URL: http://0.0.0.0:%s/setup?token=%s\n", cfg.WebPort, bootstrapToken)
+			fmt.Printf("Setup URL: %s://localhost:%s/setup?token=%s\n", scheme, cfg.WebPort, bootstrapToken)
 			fmt.Println("=============================================")
 		}
 

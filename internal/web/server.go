@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -230,12 +232,26 @@ type Server struct {
 	mux            *http.ServeMux
 	tmpl           *template.Template
 	server         *http.Server
-	bootstrapToken string // one-time setup token, cleared after first user creation
+	bootstrapToken string             // one-time setup token, cleared after first user creation
+	webauthn       *webauthn.WebAuthn // nil when WebAuthn is not configured
+	tlsCert        string             // path to TLS certificate PEM (empty = plain HTTP)
+	tlsKey         string             // path to TLS private key PEM
 }
 
 // SetBootstrapToken sets the one-time setup token for first-run security.
 func (s *Server) SetBootstrapToken(token string) {
 	s.bootstrapToken = token
+}
+
+// SetTLS configures TLS certificate and key paths for HTTPS serving.
+func (s *Server) SetTLS(cert, key string) {
+	s.tlsCert = cert
+	s.tlsKey = key
+}
+
+// SetWebAuthn configures WebAuthn support. When wa is nil, passkey routes return 404.
+func (s *Server) SetWebAuthn(wa *webauthn.WebAuthn) {
+	s.webauthn = wa
 }
 
 // NewServer creates a Server with all routes registered.
@@ -263,6 +279,10 @@ func (s *Server) ListenAndServe(addr string) error {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 0, // SSE connections are long-lived; per-handler timeouts used instead.
 		IdleTimeout:  120 * time.Second,
+	}
+	if s.tlsCert != "" {
+		s.deps.Log.Info("web dashboard listening (TLS)", "addr", addr)
+		return s.server.ListenAndServeTLS(s.tlsCert, s.tlsKey)
 	}
 	s.deps.Log.Info("web dashboard listening", "addr", addr)
 	return s.server.ListenAndServe()
@@ -296,6 +316,7 @@ func (s *Server) parseTemplates() {
 		"fmtDuration":  formatDuration,
 		"fmtTime":      formatTime,
 		"fmtTimeAgo":   formatTimeAgo,
+		"fmtTimeUntil": formatTimeUntil,
 		"truncDigest":  truncateDigest,
 		"json":         marshalJSON,
 		"changelogURL": ChangelogURL,
@@ -320,6 +341,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /static/style.css", s.serveCSS)
 	s.mux.HandleFunc("GET /static/app.js", s.serveJS)
 	s.mux.HandleFunc("GET /static/auth.js", s.serveAuthJS)
+	s.mux.HandleFunc("GET /static/webauthn.js", s.serveWebAuthnJS)
 	s.mux.HandleFunc("GET /favicon.svg", s.serveFavicon)
 	s.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -329,6 +351,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /setup", s.handleSetup)
 	s.mux.HandleFunc("POST /setup", s.apiSetup)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
+	s.mux.HandleFunc("GET /logout", s.handleLogout)
+	s.mux.HandleFunc("POST /api/auth/passkeys/login/begin", s.apiPasskeyLoginBegin)
+	s.mux.HandleFunc("POST /api/auth/passkeys/login/finish", s.apiPasskeyLoginFinish)
+	s.mux.HandleFunc("GET /api/auth/passkeys/available", s.apiPasskeysAvailable)
 
 	// --- Auth-only routes (authenticated, no specific permission) ---
 	s.mux.Handle("GET /account", authed(s.handleAccount))
@@ -339,6 +365,10 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/auth/tokens", authed(s.apiCreateToken))
 	s.mux.Handle("DELETE /api/auth/tokens/{id}", authed(s.apiDeleteToken))
 	s.mux.Handle("GET /api/auth/me", authed(s.apiGetMe))
+	s.mux.Handle("POST /api/auth/passkeys/register/begin", authed(s.apiPasskeyRegisterBegin))
+	s.mux.Handle("POST /api/auth/passkeys/register/finish", authed(s.apiPasskeyRegisterFinish))
+	s.mux.Handle("GET /api/auth/passkeys", authed(s.apiListPasskeys))
+	s.mux.Handle("DELETE /api/auth/passkeys/{id}", authed(s.apiDeletePasskey))
 
 	// --- Permission-gated routes ---
 
@@ -435,6 +465,16 @@ func (s *Server) serveAuthJS(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 
+func (s *Server) serveWebAuthnJS(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFS.ReadFile("static/webauthn.js")
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	_, _ = w.Write(data)
+}
+
 func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
 	const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><style>circle{fill:#6750A4}text{fill:#fff}@media(prefers-color-scheme:dark){circle{fill:#D0BCFF}text{fill:#000}}</style><circle cx="16" cy="16" r="16"/><text x="16" y="22" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="20">S</text></svg>`
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -496,6 +536,38 @@ func formatTimeAgo(t time.Time) string {
 			return "1 day ago"
 		}
 		return fmt.Sprintf("%d days ago", days)
+	}
+}
+
+func formatTimeUntil(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	d := time.Until(t)
+	if d < 0 {
+		return "expired"
+	}
+	switch {
+	case d < time.Minute:
+		return "in less than a minute"
+	case d < time.Hour:
+		mins := int(d.Minutes())
+		if mins == 1 {
+			return "in 1 minute"
+		}
+		return fmt.Sprintf("in %d minutes", mins)
+	case d < 24*time.Hour:
+		hours := int(d.Hours())
+		if hours == 1 {
+			return "in 1 hour"
+		}
+		return fmt.Sprintf("in %d hours", hours)
+	default:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "in 1 day"
+		}
+		return fmt.Sprintf("in %d days", days)
 	}
 }
 
