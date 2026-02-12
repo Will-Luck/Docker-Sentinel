@@ -51,7 +51,8 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	var username, password string
 
 	ct := r.Header.Get("Content-Type")
-	if strings.Contains(ct, "application/json") {
+	isJSON := strings.Contains(ct, "application/json")
+	if isJSON {
 		var body struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
@@ -68,8 +69,16 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		password = r.FormValue("password")
 	}
 
+	loginError := func(code int, msg string) {
+		if isJSON {
+			writeError(w, code, msg)
+		} else {
+			http.Redirect(w, r, "/login?error="+msg, http.StatusSeeOther)
+		}
+	}
+
 	if username == "" || password == "" {
-		writeError(w, http.StatusBadRequest, "username and password required")
+		loginError(http.StatusBadRequest, "Username and password required")
 		return
 	}
 
@@ -78,11 +87,11 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch err {
 		case auth.ErrRateLimited:
-			writeError(w, http.StatusTooManyRequests, "too many login attempts, try again later")
+			loginError(http.StatusTooManyRequests, "Too many login attempts, try again later")
 		case auth.ErrAccountLocked:
-			writeError(w, http.StatusForbidden, "account is temporarily locked")
+			loginError(http.StatusForbidden, "Account is temporarily locked")
 		default:
-			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			loginError(http.StatusUnauthorized, "Invalid username or password")
 		}
 		return
 	}
@@ -91,7 +100,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.logEvent("auth", "", "User "+user.Username+" logged in from "+ip)
 
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+	if isJSON {
 		writeJSON(w, http.StatusOK, map[string]string{"redirect": "/"})
 	} else {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
