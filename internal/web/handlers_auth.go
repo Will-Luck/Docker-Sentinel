@@ -43,7 +43,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.renderTemplate(w, "login.html", map[string]any{"Error": r.URL.Query().Get("error")})
+	s.renderTemplate(w, "login.html", map[string]any{
+		"Error":           r.URL.Query().Get("error"),
+		"WebAuthnEnabled": s.webauthn != nil,
+	})
 }
 
 // apiLogin processes login form submission.
@@ -101,7 +104,11 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	s.logEvent("auth", "", "User "+user.Username+" logged in from "+ip)
 
 	if isJSON {
-		writeJSON(w, http.StatusOK, map[string]string{"redirect": "/"})
+		resp := map[string]any{"redirect": "/"}
+		if s.webauthn != nil && !s.deps.Auth.HasPasskeys(user.ID) {
+			resp["suggest_passkey"] = true
+		}
+		writeJSON(w, http.StatusOK, resp)
 	} else {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
@@ -245,16 +252,23 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 	sessions, _ := s.deps.Auth.Sessions.ListSessionsForUser(ad.CurrentUser.ID)
 	tokens, _ := s.deps.Auth.Tokens.ListAPITokensForUser(ad.CurrentUser.ID)
 
+	var passkeys []auth.WebAuthnCredential
+	if s.deps.Auth.WebAuthnCreds != nil {
+		passkeys, _ = s.deps.Auth.WebAuthnCreds.ListWebAuthnCredentialsForUser(ad.CurrentUser.ID)
+	}
+
 	currentToken := auth.GetSessionToken(r)
 
 	s.renderTemplate(w, "account.html", map[string]any{
-		"CurrentUser":  ad.CurrentUser,
-		"AuthEnabled":  ad.AuthEnabled,
-		"CSRFToken":    ad.CSRFToken,
-		"Sessions":     sessions,
-		"Tokens":       tokens,
-		"CurrentToken": currentToken,
-		"QueueCount":   len(s.deps.Queue.List()),
+		"CurrentUser":     ad.CurrentUser,
+		"AuthEnabled":     ad.AuthEnabled,
+		"CSRFToken":       ad.CSRFToken,
+		"Sessions":        sessions,
+		"Tokens":          tokens,
+		"Passkeys":        passkeys,
+		"WebAuthnEnabled": s.webauthn != nil,
+		"CurrentToken":    currentToken,
+		"QueueCount":      len(s.deps.Queue.List()),
 	})
 }
 

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -230,12 +232,18 @@ type Server struct {
 	mux            *http.ServeMux
 	tmpl           *template.Template
 	server         *http.Server
-	bootstrapToken string // one-time setup token, cleared after first user creation
+	bootstrapToken string             // one-time setup token, cleared after first user creation
+	webauthn       *webauthn.WebAuthn // nil when WebAuthn is not configured
 }
 
 // SetBootstrapToken sets the one-time setup token for first-run security.
 func (s *Server) SetBootstrapToken(token string) {
 	s.bootstrapToken = token
+}
+
+// SetWebAuthn configures WebAuthn support. When wa is nil, passkey routes return 404.
+func (s *Server) SetWebAuthn(wa *webauthn.WebAuthn) {
+	s.webauthn = wa
 }
 
 // NewServer creates a Server with all routes registered.
@@ -321,6 +329,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /static/style.css", s.serveCSS)
 	s.mux.HandleFunc("GET /static/app.js", s.serveJS)
 	s.mux.HandleFunc("GET /static/auth.js", s.serveAuthJS)
+	s.mux.HandleFunc("GET /static/webauthn.js", s.serveWebAuthnJS)
 	s.mux.HandleFunc("GET /favicon.svg", s.serveFavicon)
 	s.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -331,6 +340,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /setup", s.apiSetup)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
 	s.mux.HandleFunc("GET /logout", s.handleLogout)
+	s.mux.HandleFunc("POST /api/auth/passkeys/login/begin", s.apiPasskeyLoginBegin)
+	s.mux.HandleFunc("POST /api/auth/passkeys/login/finish", s.apiPasskeyLoginFinish)
+	s.mux.HandleFunc("GET /api/auth/passkeys/available", s.apiPasskeysAvailable)
 
 	// --- Auth-only routes (authenticated, no specific permission) ---
 	s.mux.Handle("GET /account", authed(s.handleAccount))
@@ -341,6 +353,10 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/auth/tokens", authed(s.apiCreateToken))
 	s.mux.Handle("DELETE /api/auth/tokens/{id}", authed(s.apiDeleteToken))
 	s.mux.Handle("GET /api/auth/me", authed(s.apiGetMe))
+	s.mux.Handle("POST /api/auth/passkeys/register/begin", authed(s.apiPasskeyRegisterBegin))
+	s.mux.Handle("POST /api/auth/passkeys/register/finish", authed(s.apiPasskeyRegisterFinish))
+	s.mux.Handle("GET /api/auth/passkeys", authed(s.apiListPasskeys))
+	s.mux.Handle("DELETE /api/auth/passkeys/{id}", authed(s.apiDeletePasskey))
 
 	// --- Permission-gated routes ---
 
@@ -429,6 +445,16 @@ func (s *Server) serveJS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveAuthJS(w http.ResponseWriter, r *http.Request) {
 	data, err := staticFS.ReadFile("static/auth.js")
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	_, _ = w.Write(data)
+}
+
+func (s *Server) serveWebAuthnJS(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFS.ReadFile("static/webauthn.js")
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

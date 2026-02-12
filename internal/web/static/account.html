@@ -63,6 +63,34 @@
             </div>
         </div>
 
+        {{if .WebAuthnEnabled}}
+        <!-- Passkeys -->
+        <div class="card" style="margin-bottom:var(--sp-4)" id="passkeys">
+            <div class="card-header"><h2>Passkeys</h2></div>
+            <div class="card-body">
+                <p style="font-size:0.875rem;color:var(--fg-secondary);margin:0 0 var(--sp-3) 0">Use passkeys for fast, phishing-resistant sign-in with your fingerprint, face, or screen lock.</p>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Created</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="passkey-list">
+                            <tr><td colspan="3" style="text-align:center;color:var(--fg-secondary)">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top:var(--sp-3);display:flex;gap:var(--sp-2);align-items:center">
+                    <input type="text" id="passkey-name" placeholder="Passkey name (optional)" class="setting-input" style="max-width:200px">
+                    <button class="btn btn-success" id="register-passkey-btn" onclick="registerPasskey()">Register Passkey</button>
+                </div>
+            </div>
+        </div>
+        {{end}}
+
         <!-- Active Sessions -->
         <div class="card" style="margin-bottom:var(--sp-4)">
             <div class="card-header"><h2>Active Sessions</h2></div>
@@ -144,6 +172,7 @@
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
+    <script src="/static/webauthn.js"></script>
 </body>
 </html>
 {{end}}

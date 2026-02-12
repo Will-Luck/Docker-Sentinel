@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
@@ -44,6 +46,7 @@ func main() {
 	fmt.Printf("SENTINEL_DB_PATH=%s\n", cfg.DBPath)
 	fmt.Printf("SENTINEL_WEB_ENABLED=%t\n", cfg.WebEnabled)
 	fmt.Printf("SENTINEL_WEB_PORT=%s\n", cfg.WebPort)
+	fmt.Printf("SENTINEL_WEBAUTHN_RPID=%s\n", cfg.WebAuthnRPID)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -73,12 +76,17 @@ func main() {
 	}
 
 	// Create auth service.
+	var webAuthnCreds auth.WebAuthnCredentialStore
+	if cfg.WebAuthnEnabled() {
+		webAuthnCreds = db
+	}
 	authSvc := auth.NewService(auth.ServiceConfig{
 		Users:          db,
 		Sessions:       db,
 		Roles:          db,
 		Tokens:         db,
 		Settings:       db,
+		WebAuthnCreds:  webAuthnCreds,
 		Log:            log.Logger,
 		CookieSecure:   cfg.CookieSecure,
 		SessionExpiry:  cfg.SessionExpiry,
@@ -195,6 +203,21 @@ func main() {
 			Auth:               authSvc,
 			Log:                log.Logger,
 		})
+
+		// Configure WebAuthn passkeys if RPID is set.
+		if cfg.WebAuthnEnabled() {
+			wa, waErr := webauthn.New(&webauthn.Config{
+				RPDisplayName: cfg.WebAuthnDisplayName,
+				RPID:          cfg.WebAuthnRPID,
+				RPOrigins:     cfg.WebAuthnOriginList(),
+			})
+			if waErr != nil {
+				log.Error("failed to create WebAuthn instance", "error", waErr)
+				os.Exit(1)
+			}
+			srv.SetWebAuthn(wa)
+			log.Info("webauthn passkeys enabled", "rpid", cfg.WebAuthnRPID, "origins", cfg.WebAuthnOrigins)
+		}
 
 		// Set bootstrap token for first-run setup.
 		if bootstrapToken != "" {
