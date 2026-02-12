@@ -155,13 +155,15 @@
                 <button class="login-btn" type="submit">Sign In</button>
             </form>
             {{if .WebAuthnEnabled}}
-            <div class="login-divider">
-                <span>or</span>
+            <div id="passkey-login-section">
+                <div class="login-divider">
+                    <span>or</span>
+                </div>
+                <button class="login-btn-passkey" type="button" id="passkey-login-btn" onclick="loginWithPasskey()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:8px"><circle cx="12" cy="12" r="3"/><path d="M12 16v5"/><path d="M15 19l-3 2-3-2"/><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74"/><path d="M5 9a7 7 0 0 1 9.74-6.46"/></svg>
+                    Sign in with passkey
+                </button>
             </div>
-            <button class="login-btn-passkey" type="button" id="passkey-login-btn" onclick="loginWithPasskey()">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:8px"><circle cx="12" cy="12" r="3"/><path d="M12 16v5"/><path d="M15 19l-3 2-3-2"/><path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74"/><path d="M5 9a7 7 0 0 1 9.74-6.46"/></svg>
-                Sign in with passkey
-            </button>
             {{end}}
         </div>
     </div>

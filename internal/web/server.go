@@ -234,11 +234,19 @@ type Server struct {
 	server         *http.Server
 	bootstrapToken string             // one-time setup token, cleared after first user creation
 	webauthn       *webauthn.WebAuthn // nil when WebAuthn is not configured
+	tlsCert        string             // path to TLS certificate PEM (empty = plain HTTP)
+	tlsKey         string             // path to TLS private key PEM
 }
 
 // SetBootstrapToken sets the one-time setup token for first-run security.
 func (s *Server) SetBootstrapToken(token string) {
 	s.bootstrapToken = token
+}
+
+// SetTLS configures TLS certificate and key paths for HTTPS serving.
+func (s *Server) SetTLS(cert, key string) {
+	s.tlsCert = cert
+	s.tlsKey = key
 }
 
 // SetWebAuthn configures WebAuthn support. When wa is nil, passkey routes return 404.
@@ -271,6 +279,10 @@ func (s *Server) ListenAndServe(addr string) error {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 0, // SSE connections are long-lived; per-handler timeouts used instead.
 		IdleTimeout:  120 * time.Second,
+	}
+	if s.tlsCert != "" {
+		s.deps.Log.Info("web dashboard listening (TLS)", "addr", addr)
+		return s.server.ListenAndServeTLS(s.tlsCert, s.tlsKey)
 	}
 	s.deps.Log.Info("web dashboard listening", "addr", addr)
 	return s.server.ListenAndServe()

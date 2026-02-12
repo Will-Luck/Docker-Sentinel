@@ -365,10 +365,26 @@ function initPasskeyPrompt() {
 }
 
 /* ------------------------------------------------------------
-   7. Init
+   7. Secure Context Detection
+   ------------------------------------------------------------ */
+
+function hidePasskeyUI() {
+    var ids = ["passkey-section", "passkey-login-section"];
+    for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById(ids[i]);
+        if (el) el.style.display = "none";
+    }
+}
+
+/* ------------------------------------------------------------
+   8. Init
    ------------------------------------------------------------ */
 
 document.addEventListener("DOMContentLoaded", function() {
+    if (window.isSecureContext === false) {
+        hidePasskeyUI();
+        return;
+    }
     loadPasskeys();
     initPasskeyPrompt();
 });

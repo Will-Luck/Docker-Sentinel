@@ -39,6 +39,11 @@ type Config struct {
 	SessionExpiry  time.Duration
 	CookieSecure   bool
 
+	// TLS
+	TLSCert string // path to TLS certificate PEM file
+	TLSKey  string // path to TLS private key PEM file
+	TLSAuto bool   // auto-generate self-signed certificate
+
 	// WebAuthn passkeys (all empty = disabled)
 	WebAuthnRPID        string // Relying Party ID (e.g. "192.168.1.57")
 	WebAuthnDisplayName string // RP display name shown by authenticators
@@ -79,6 +84,9 @@ func Load() *Config {
 		AuthEnabled:    envBoolPtr("SENTINEL_AUTH_ENABLED"),
 		SessionExpiry:  envDuration("SENTINEL_SESSION_EXPIRY", 720*time.Hour),
 		CookieSecure:       envBool("SENTINEL_COOKIE_SECURE", true),
+		TLSCert:            envStr("SENTINEL_TLS_CERT", ""),
+		TLSKey:             envStr("SENTINEL_TLS_KEY", ""),
+		TLSAuto:            envBool("SENTINEL_TLS_AUTO", false),
 		WebAuthnRPID:       envStr("SENTINEL_WEBAUTHN_RPID", ""),
 		WebAuthnDisplayName: envStr("SENTINEL_WEBAUTHN_DISPLAY_NAME", "Docker-Sentinel"),
 		WebAuthnOrigins:    envStr("SENTINEL_WEBAUTHN_ORIGINS", ""),
@@ -106,6 +114,16 @@ func (c *Config) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("SENTINEL_DEFAULT_POLICY must be auto, manual, or pinned, got %q", dp))
 	}
+	if (c.TLSCert == "") != (c.TLSKey == "") {
+		errs = append(errs, fmt.Errorf("SENTINEL_TLS_CERT and SENTINEL_TLS_KEY must both be set or both empty"))
+	}
+	// WebAuthn: RPID and origins must both be set or both empty.
+	if c.WebAuthnRPID != "" && c.WebAuthnOrigins == "" {
+		errs = append(errs, fmt.Errorf("SENTINEL_WEBAUTHN_ORIGINS is required when SENTINEL_WEBAUTHN_RPID is set"))
+	}
+	if c.WebAuthnRPID == "" && c.WebAuthnOrigins != "" {
+		errs = append(errs, fmt.Errorf("SENTINEL_WEBAUTHN_RPID is required when SENTINEL_WEBAUTHN_ORIGINS is set"))
+	}
 	return errors.Join(errs...)
 }
 
@@ -130,6 +148,9 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_WEB_ENABLED":    fmt.Sprintf("%t", c.WebEnabled),
 		"SENTINEL_SESSION_EXPIRY":          c.SessionExpiry.String(),
 		"SENTINEL_COOKIE_SECURE":           fmt.Sprintf("%t", c.CookieSecure),
+		"SENTINEL_TLS_CERT":                c.TLSCert,
+		"SENTINEL_TLS_KEY":                 redactPath(c.TLSKey),
+		"SENTINEL_TLS_AUTO":                fmt.Sprintf("%t", c.TLSAuto),
 		"SENTINEL_WEBAUTHN_RPID":           c.WebAuthnRPID,
 		"SENTINEL_WEBAUTHN_DISPLAY_NAME":   c.WebAuthnDisplayName,
 		"SENTINEL_WEBAUTHN_ORIGINS":        c.WebAuthnOrigins,
@@ -232,6 +253,19 @@ func (c *Config) SetDefaultPolicy(s string) {
 	c.mu.Lock()
 	c.defaultPolicy = s
 	c.mu.Unlock()
+}
+
+// redactPath returns "(set)" if the path is non-empty, empty string otherwise.
+func redactPath(s string) string {
+	if s != "" {
+		return "(set)"
+	}
+	return ""
+}
+
+// TLSEnabled returns true when TLS is configured (cert+key or auto).
+func (c *Config) TLSEnabled() bool {
+	return (c.TLSCert != "" && c.TLSKey != "") || c.TLSAuto
 }
 
 // WebAuthnEnabled returns true when WebAuthn passkeys are configured.
