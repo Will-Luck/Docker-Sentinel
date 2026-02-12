@@ -37,6 +37,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Auto-detect CookieSecure when not explicitly set: secure only if TLS is enabled.
+	if os.Getenv("SENTINEL_COOKIE_SECURE") == "" {
+		cfg.CookieSecure = cfg.TLSEnabled()
+	}
 	log := logging.New(cfg.LogJSON)
 
 	fmt.Println("Docker-Sentinel " + version)
