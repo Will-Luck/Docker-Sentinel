@@ -43,7 +43,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.renderTemplate(w, "login.html", map[string]any{"Error": r.URL.Query().Get("error")})
+	s.renderTemplate(w, "login.html", map[string]any{
+		"Error":           r.URL.Query().Get("error"),
+		"WebAuthnEnabled": s.webauthn != nil,
+	})
 }
 
 // apiLogin processes login form submission.
@@ -51,7 +54,8 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	var username, password string
 
 	ct := r.Header.Get("Content-Type")
-	if strings.Contains(ct, "application/json") {
+	isJSON := strings.Contains(ct, "application/json")
+	if isJSON {
 		var body struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
@@ -68,8 +72,16 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		password = r.FormValue("password")
 	}
 
+	loginError := func(code int, msg string) {
+		if isJSON {
+			writeError(w, code, msg)
+		} else {
+			http.Redirect(w, r, "/login?error="+msg, http.StatusSeeOther)
+		}
+	}
+
 	if username == "" || password == "" {
-		writeError(w, http.StatusBadRequest, "username and password required")
+		loginError(http.StatusBadRequest, "Username and password required")
 		return
 	}
 
@@ -78,11 +90,11 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch err {
 		case auth.ErrRateLimited:
-			writeError(w, http.StatusTooManyRequests, "too many login attempts, try again later")
+			loginError(http.StatusTooManyRequests, "Too many login attempts, try again later")
 		case auth.ErrAccountLocked:
-			writeError(w, http.StatusForbidden, "account is temporarily locked")
+			loginError(http.StatusForbidden, "Account is temporarily locked")
 		default:
-			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			loginError(http.StatusUnauthorized, "Invalid username or password")
 		}
 		return
 	}
@@ -91,8 +103,12 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.logEvent("auth", "", "User "+user.Username+" logged in from "+ip)
 
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		writeJSON(w, http.StatusOK, map[string]string{"redirect": "/"})
+	if isJSON {
+		resp := map[string]any{"redirect": "/"}
+		if s.webauthn != nil && !s.deps.Auth.HasPasskeys(user.ID) {
+			resp["suggest_passkey"] = true
+		}
+		writeJSON(w, http.StatusOK, resp)
 	} else {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
@@ -236,16 +252,23 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 	sessions, _ := s.deps.Auth.Sessions.ListSessionsForUser(ad.CurrentUser.ID)
 	tokens, _ := s.deps.Auth.Tokens.ListAPITokensForUser(ad.CurrentUser.ID)
 
+	var passkeys []auth.WebAuthnCredential
+	if s.deps.Auth.WebAuthnCreds != nil {
+		passkeys, _ = s.deps.Auth.WebAuthnCreds.ListWebAuthnCredentialsForUser(ad.CurrentUser.ID)
+	}
+
 	currentToken := auth.GetSessionToken(r)
 
 	s.renderTemplate(w, "account.html", map[string]any{
-		"CurrentUser":  ad.CurrentUser,
-		"AuthEnabled":  ad.AuthEnabled,
-		"CSRFToken":    ad.CSRFToken,
-		"Sessions":     sessions,
-		"Tokens":       tokens,
-		"CurrentToken": currentToken,
-		"QueueCount":   len(s.deps.Queue.List()),
+		"CurrentUser":     ad.CurrentUser,
+		"AuthEnabled":     ad.AuthEnabled,
+		"CSRFToken":       ad.CSRFToken,
+		"Sessions":        sessions,
+		"Tokens":          tokens,
+		"Passkeys":        passkeys,
+		"WebAuthnEnabled": s.webauthn != nil,
+		"CurrentToken":    currentToken,
+		"QueueCount":      len(s.deps.Queue.List()),
 	})
 }
 

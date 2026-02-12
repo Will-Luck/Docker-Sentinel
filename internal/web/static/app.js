@@ -744,13 +744,28 @@ function changePolicy(name, newPolicy) {
 
 function triggerScan(event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
-        "/api/scan",
-        null,
-        "Scan started — results will appear shortly",
-        "Failed to trigger scan",
-        btn
-    );
+    if (btn) {
+        btn.classList.add("loading");
+        btn.disabled = true;
+    }
+    var opts = { method: "POST" };
+    fetch("/api/scan", opts)
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function (result) {
+            if (!result.ok) {
+                showToast(result.data.error || "Failed to trigger scan", "error");
+                if (btn) { btn.classList.remove("loading"); btn.disabled = false; }
+            }
+            // On success, keep spinner — cleared by scan_complete SSE event.
+        })
+        .catch(function () {
+            showToast("Network error — failed to trigger scan", "error");
+            if (btn) { btn.classList.remove("loading"); btn.disabled = false; }
+        });
 }
 
 function triggerSelfUpdate(event) {
@@ -1452,6 +1467,9 @@ function initSSE() {
     });
 
     es.addEventListener("scan_complete", function () {
+        // Clear scan button spinner.
+        var scanBtn = document.getElementById("scan-btn");
+        if (scanBtn) { scanBtn.classList.remove("loading"); scanBtn.disabled = false; }
         // Re-check pause state on scan events.
         checkPauseState();
         refreshLastScan();

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"fmt"
 	"time"
 )
 
@@ -31,15 +33,30 @@ func AllPermissions() []Permission {
 
 // User represents an authenticated user.
 type User struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"password_hash"`
-	RoleID       string    `json:"role_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Locked       bool      `json:"locked"`        // locked after too many failed logins
-	LockedUntil  time.Time `json:"locked_until"`  // unlock time
-	FailedLogins int       `json:"failed_logins"` // consecutive failures
+	ID             string    `json:"id"`
+	Username       string    `json:"username"`
+	PasswordHash   string    `json:"password_hash"`
+	RoleID         string    `json:"role_id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Locked         bool      `json:"locked"`        // locked after too many failed logins
+	LockedUntil    time.Time `json:"locked_until"`  // unlock time
+	FailedLogins   int       `json:"failed_logins"` // consecutive failures
+	WebAuthnUserID []byte    `json:"webauthn_user_id,omitempty"` // stable opaque 64-byte random ID
+}
+
+// EnsureWebAuthnUserID generates a random WebAuthn user ID if one isn't set.
+// Returns true if a new ID was generated (caller should persist the user).
+func (u *User) EnsureWebAuthnUserID() (bool, error) {
+	if len(u.WebAuthnUserID) > 0 {
+		return false, nil
+	}
+	id := make([]byte, 64)
+	if _, err := rand.Read(id); err != nil {
+		return false, fmt.Errorf("generate webauthn user id: %w", err)
+	}
+	u.WebAuthnUserID = id
+	return true, nil
 }
 
 // Session represents an active login session.

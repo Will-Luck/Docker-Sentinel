@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/base64"
 	"fmt"
 	"sync"
 	"time"
@@ -272,6 +273,82 @@ func (m *mockSettingsReader) SaveSetting(key, value string) error {
 	return nil
 }
 
+// mockWebAuthnCredentialStore is an in-memory implementation of WebAuthnCredentialStore for testing.
+type mockWebAuthnCredentialStore struct {
+	mu    sync.Mutex
+	creds map[string]WebAuthnCredential // keyed by base64url(credID)
+	users *mockUserStore                // reference to user store for handle lookups
+}
+
+func newMockWebAuthnCredentialStore(users *mockUserStore) *mockWebAuthnCredentialStore {
+	return &mockWebAuthnCredentialStore{
+		creds: make(map[string]WebAuthnCredential),
+		users: users,
+	}
+}
+
+func (m *mockWebAuthnCredentialStore) credKey(id []byte) string {
+	return base64.RawURLEncoding.EncodeToString(id)
+}
+
+func (m *mockWebAuthnCredentialStore) CreateWebAuthnCredential(cred WebAuthnCredential) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.creds[m.credKey(cred.ID)] = cred
+	return nil
+}
+
+func (m *mockWebAuthnCredentialStore) GetWebAuthnCredential(credID []byte) (*WebAuthnCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.creds[m.credKey(credID)]
+	if !ok {
+		return nil, ErrCredentialNotFound
+	}
+	return &c, nil
+}
+
+func (m *mockWebAuthnCredentialStore) ListWebAuthnCredentialsForUser(userID string) ([]WebAuthnCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []WebAuthnCredential
+	for _, c := range m.creds {
+		if c.UserID == userID {
+			result = append(result, c)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockWebAuthnCredentialStore) DeleteWebAuthnCredential(credID []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.creds, m.credKey(credID))
+	return nil
+}
+
+func (m *mockWebAuthnCredentialStore) GetUserByWebAuthnHandle(handle []byte) (*User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.users == nil {
+		return nil, ErrCredentialNotFound
+	}
+	m.users.mu.Lock()
+	defer m.users.mu.Unlock()
+	for _, u := range m.users.users {
+		if len(u.WebAuthnUserID) > 0 && base64.RawURLEncoding.EncodeToString(u.WebAuthnUserID) == base64.RawURLEncoding.EncodeToString(handle) {
+			return &u, nil
+		}
+	}
+	return nil, ErrCredentialNotFound
+}
+
+func (m *mockWebAuthnCredentialStore) AnyWebAuthnCredentialsExist() (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.creds) > 0, nil
+}
+
 // newTestService creates a Service with mock stores for testing.
 func newTestService(authEnabled bool) *Service {
 	enabled := authEnabled
@@ -281,6 +358,23 @@ func newTestService(authEnabled bool) *Service {
 		Roles:          newMockRoleStore(),
 		Tokens:         newMockAPITokenStore(),
 		Settings:       newMockSettingsReader(),
+		CookieSecure:   false,
+		SessionExpiry:  24 * time.Hour,
+		AuthEnabledEnv: &enabled,
+	})
+}
+
+// newTestServiceWithWebAuthn creates a Service with mock stores including WebAuthn for testing.
+func newTestServiceWithWebAuthn(authEnabled bool) *Service {
+	enabled := authEnabled
+	users := newMockUserStore()
+	return NewService(ServiceConfig{
+		Users:          users,
+		Sessions:       newMockSessionStore(),
+		Roles:          newMockRoleStore(),
+		Tokens:         newMockAPITokenStore(),
+		Settings:       newMockSettingsReader(),
+		WebAuthnCreds:  newMockWebAuthnCredentialStore(users),
 		CookieSecure:   false,
 		SessionExpiry:  24 * time.Hour,
 		AuthEnabledEnv: &enabled,
