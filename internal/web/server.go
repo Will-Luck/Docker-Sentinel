@@ -8,8 +8,10 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
@@ -40,6 +42,7 @@ type Dependencies struct {
 	SelfUpdater        SelfUpdater
 	NotifyConfig       NotificationConfigStore
 	NotifyReconfigurer NotifierReconfigurer
+	Auth               *auth.Service
 	Log                *slog.Logger
 }
 
@@ -223,10 +226,16 @@ type ConfigWriter interface {
 
 // Server is the web dashboard HTTP server.
 type Server struct {
-	deps   Dependencies
-	mux    *http.ServeMux
-	tmpl   *template.Template
-	server *http.Server
+	deps           Dependencies
+	mux            *http.ServeMux
+	tmpl           *template.Template
+	server         *http.Server
+	bootstrapToken string // one-time setup token, cleared after first user creation
+}
+
+// SetBootstrapToken sets the one-time setup token for first-run security.
+func (s *Server) SetBootstrapToken(token string) {
+	s.bootstrapToken = token
 }
 
 // NewServer creates a Server with all routes registered.
@@ -243,15 +252,35 @@ func NewServer(deps Dependencies) *Server {
 
 // ListenAndServe starts the HTTP server on the given address.
 func (s *Server) ListenAndServe(addr string) error {
+	handler := http.Handler(s.mux)
+	// Wrap with setup redirect when auth is configured.
+	if s.deps.Auth != nil {
+		handler = s.setupRedirectHandler(s.mux)
+	}
 	s.server = &http.Server{
 		Addr:         addr,
-		Handler:      s.mux,
+		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 0, // SSE connections are long-lived; per-handler timeouts used instead.
 		IdleTimeout:  120 * time.Second,
 	}
 	s.deps.Log.Info("web dashboard listening", "addr", addr)
 	return s.server.ListenAndServe()
+}
+
+// setupRedirectHandler redirects all non-setup requests to /setup when first-run is needed.
+func (s *Server) setupRedirectHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.deps.Auth.NeedsSetup() {
+			p := r.URL.Path
+			if p != "/setup" && !strings.HasPrefix(p, "/static/") &&
+				p != "/favicon.svg" && p != "/favicon.ico" {
+				http.Redirect(w, r, "/setup", http.StatusSeeOther)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Shutdown gracefully shuts down the HTTP server.
@@ -276,61 +305,104 @@ func (s *Server) parseTemplates() {
 }
 
 func (s *Server) registerRoutes() {
-	// Static assets.
+	// Middleware helpers — wraps handlers with auth + CSRF + permission check.
+	authMw := auth.AuthMiddleware(s.deps.Auth)
+	csrfMw := auth.CSRFMiddleware
+
+	perm := func(p auth.Permission, h http.HandlerFunc) http.Handler {
+		return authMw(csrfMw(auth.RequirePermission(p)(h)))
+	}
+	authed := func(h http.HandlerFunc) http.Handler {
+		return authMw(csrfMw(h))
+	}
+
+	// --- Public routes (no auth required) ---
 	s.mux.HandleFunc("GET /static/style.css", s.serveCSS)
 	s.mux.HandleFunc("GET /static/app.js", s.serveJS)
+	s.mux.HandleFunc("GET /static/auth.js", s.serveAuthJS)
 	s.mux.HandleFunc("GET /favicon.svg", s.serveFavicon)
 	s.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
+	s.mux.HandleFunc("GET /login", s.handleLogin)
+	s.mux.HandleFunc("POST /login", s.apiLogin)
+	s.mux.HandleFunc("GET /setup", s.handleSetup)
+	s.mux.HandleFunc("POST /setup", s.apiSetup)
+	s.mux.HandleFunc("POST /logout", s.handleLogout)
 
-	// HTML pages.
-	s.mux.HandleFunc("GET /{$}", s.handleDashboard)
-	s.mux.HandleFunc("GET /queue", s.handleQueue)
-	s.mux.HandleFunc("GET /history", s.handleHistory)
-	s.mux.HandleFunc("GET /settings", s.handleSettings)
-	s.mux.HandleFunc("GET /logs", s.handleLogs)
+	// --- Auth-only routes (authenticated, no specific permission) ---
+	s.mux.Handle("GET /account", authed(s.handleAccount))
+	s.mux.Handle("POST /api/auth/change-password", authed(s.apiChangePassword))
+	s.mux.Handle("GET /api/auth/sessions", authed(s.apiListSessions))
+	s.mux.Handle("DELETE /api/auth/sessions/{token}", authed(s.apiRevokeSession))
+	s.mux.Handle("DELETE /api/auth/sessions", authed(s.apiRevokeAllSessions))
+	s.mux.Handle("POST /api/auth/tokens", authed(s.apiCreateToken))
+	s.mux.Handle("DELETE /api/auth/tokens/{id}", authed(s.apiDeleteToken))
+	s.mux.Handle("GET /api/auth/me", authed(s.apiGetMe))
 
-	// SSE event stream.
-	s.mux.HandleFunc("GET /api/events", s.apiSSE)
+	// --- Permission-gated routes ---
 
-	// JSON API.
-	s.mux.HandleFunc("GET /api/containers", s.apiContainers)
-	s.mux.HandleFunc("GET /api/containers/{name}", s.apiContainerDetail)
-	s.mux.HandleFunc("GET /api/containers/{name}/versions", s.apiContainerVersions)
-	s.mux.HandleFunc("POST /api/containers/{name}/rollback", s.apiRollback)
-	s.mux.HandleFunc("POST /api/containers/{name}/policy", s.apiChangePolicy)
-	s.mux.HandleFunc("DELETE /api/containers/{name}/policy", s.apiDeletePolicy)
-	s.mux.HandleFunc("POST /api/bulk/policy", s.apiBulkPolicy)
-	s.mux.HandleFunc("GET /api/history", s.apiHistory)
-	s.mux.HandleFunc("GET /api/queue", s.apiQueue)
-	s.mux.HandleFunc("POST /api/approve/{name}", s.apiApprove)
-	s.mux.HandleFunc("POST /api/reject/{name}", s.apiReject)
-	s.mux.HandleFunc("POST /api/update/{name}", s.apiUpdate)
-	s.mux.HandleFunc("POST /api/check/{name}", s.apiCheck)
-	s.mux.HandleFunc("POST /api/containers/{name}/restart", s.apiRestart)
-	s.mux.HandleFunc("GET /api/settings", s.apiSettings)
-	s.mux.HandleFunc("POST /api/settings/poll-interval", s.apiSetPollInterval)
-	s.mux.HandleFunc("POST /api/settings/default-policy", s.apiSetDefaultPolicy)
-	s.mux.HandleFunc("POST /api/settings/grace-period", s.apiSetGracePeriod)
-	s.mux.HandleFunc("POST /api/settings/pause", s.apiSetPause)
-	s.mux.HandleFunc("POST /api/settings/filters", s.apiSetFilters)
-	s.mux.HandleFunc("GET /api/logs", s.apiLogs)
-	s.mux.HandleFunc("POST /api/self-update", s.apiSelfUpdate)
-	s.mux.HandleFunc("POST /api/containers/{name}/stop", s.apiStop)
-	s.mux.HandleFunc("POST /api/containers/{name}/start", s.apiStart)
-	s.mux.HandleFunc("GET /api/settings/notifications", s.apiGetNotifications)
-	s.mux.HandleFunc("PUT /api/settings/notifications", s.apiSaveNotifications)
-	s.mux.HandleFunc("POST /api/settings/notifications/test", s.apiTestNotification)
-	s.mux.HandleFunc("GET /api/settings/notifications/event-types", s.apiNotificationEventTypes)
-	s.mux.HandleFunc("POST /api/scan", s.apiTriggerScan)
-	s.mux.HandleFunc("GET /api/last-scan", s.apiLastScan)
+	// containers.view
+	s.mux.Handle("GET /{$}", perm(auth.PermContainersView, s.handleDashboard))
+	s.mux.Handle("GET /queue", perm(auth.PermContainersView, s.handleQueue))
+	s.mux.Handle("GET /container/{name}", perm(auth.PermContainersView, s.handleContainerDetail))
+	s.mux.Handle("GET /api/containers", perm(auth.PermContainersView, s.apiContainers))
+	s.mux.Handle("GET /api/containers/{name}", perm(auth.PermContainersView, s.apiContainerDetail))
+	s.mux.Handle("GET /api/containers/{name}/versions", perm(auth.PermContainersView, s.apiContainerVersions))
+	s.mux.Handle("GET /api/containers/{name}/row", perm(auth.PermContainersView, s.handleContainerRow))
+	s.mux.Handle("GET /api/events", perm(auth.PermContainersView, s.apiSSE))
+	s.mux.Handle("GET /api/queue", perm(auth.PermContainersView, s.apiQueue))
+	s.mux.Handle("GET /api/last-scan", perm(auth.PermContainersView, s.apiLastScan))
 
-	// Per-container HTML partial (for live row updates).
-	s.mux.HandleFunc("GET /api/containers/{name}/row", s.handleContainerRow)
+	// containers.update
+	s.mux.Handle("POST /api/update/{name}", perm(auth.PermContainersUpdate, s.apiUpdate))
+	s.mux.Handle("POST /api/check/{name}", perm(auth.PermContainersUpdate, s.apiCheck))
+	s.mux.Handle("POST /api/scan", perm(auth.PermContainersUpdate, s.apiTriggerScan))
 
-	// Per-container HTML page.
-	s.mux.HandleFunc("GET /container/{name}", s.handleContainerDetail)
+	// containers.approve
+	s.mux.Handle("POST /api/approve/{name}", perm(auth.PermContainersApprove, s.apiApprove))
+	s.mux.Handle("POST /api/reject/{name}", perm(auth.PermContainersApprove, s.apiReject))
+
+	// containers.rollback
+	s.mux.Handle("POST /api/containers/{name}/rollback", perm(auth.PermContainersRollback, s.apiRollback))
+
+	// containers.manage
+	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))
+	s.mux.Handle("POST /api/containers/{name}/stop", perm(auth.PermContainersManage, s.apiStop))
+	s.mux.Handle("POST /api/containers/{name}/start", perm(auth.PermContainersManage, s.apiStart))
+	s.mux.Handle("POST /api/containers/{name}/policy", perm(auth.PermContainersManage, s.apiChangePolicy))
+	s.mux.Handle("DELETE /api/containers/{name}/policy", perm(auth.PermContainersManage, s.apiDeletePolicy))
+	s.mux.Handle("POST /api/bulk/policy", perm(auth.PermContainersManage, s.apiBulkPolicy))
+
+	// settings.view
+	s.mux.Handle("GET /settings", perm(auth.PermSettingsView, s.handleSettings))
+	s.mux.Handle("GET /api/settings", perm(auth.PermSettingsView, s.apiSettings))
+	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
+	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
+
+	// settings.modify
+	s.mux.Handle("POST /api/settings/poll-interval", perm(auth.PermSettingsModify, s.apiSetPollInterval))
+	s.mux.Handle("POST /api/settings/default-policy", perm(auth.PermSettingsModify, s.apiSetDefaultPolicy))
+	s.mux.Handle("POST /api/settings/grace-period", perm(auth.PermSettingsModify, s.apiSetGracePeriod))
+	s.mux.Handle("POST /api/settings/pause", perm(auth.PermSettingsModify, s.apiSetPause))
+	s.mux.Handle("POST /api/settings/filters", perm(auth.PermSettingsModify, s.apiSetFilters))
+	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
+	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
+	s.mux.Handle("POST /api/self-update", perm(auth.PermSettingsModify, s.apiSelfUpdate))
+
+	// users.manage
+	s.mux.Handle("GET /api/auth/users", perm(auth.PermUsersManage, s.apiListUsers))
+	s.mux.Handle("POST /api/auth/users", perm(auth.PermUsersManage, s.apiCreateUser))
+	s.mux.Handle("DELETE /api/auth/users/{id}", perm(auth.PermUsersManage, s.apiDeleteUser))
+	s.mux.Handle("POST /api/auth/settings", perm(auth.PermUsersManage, s.apiAuthSettings))
+
+	// logs.view
+	s.mux.Handle("GET /logs", perm(auth.PermLogsView, s.handleLogs))
+	s.mux.Handle("GET /api/logs", perm(auth.PermLogsView, s.apiLogs))
+
+	// history.view
+	s.mux.Handle("GET /history", perm(auth.PermHistoryView, s.handleHistory))
+	s.mux.Handle("GET /api/history", perm(auth.PermHistoryView, s.apiHistory))
 }
 
 func (s *Server) serveCSS(w http.ResponseWriter, r *http.Request) {
@@ -345,6 +417,16 @@ func (s *Server) serveCSS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveJS(w http.ResponseWriter, r *http.Request) {
 	data, err := staticFS.ReadFile("static/app.js")
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	_, _ = w.Write(data)
+}
+
+func (s *Server) serveAuthJS(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFS.ReadFile("static/auth.js")
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

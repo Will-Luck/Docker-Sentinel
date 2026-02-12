@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
@@ -24,6 +25,11 @@ type pageData struct {
 	RunningContainers int
 	PendingUpdates    int
 	QueueCount        int // sidebar badge: number of items in queue
+
+	// Auth context (populated by withAuth helper).
+	CurrentUser *auth.User
+	AuthEnabled bool
+	CSRFToken   string
 }
 
 // containerView is a container with computed display fields.
@@ -174,6 +180,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		PendingUpdates:    pending,
 		QueueCount:        len(s.deps.Queue.List()),
 	}
+	s.withAuth(r, &data)
 
 	s.renderTemplate(w, "index.html", data)
 }
@@ -190,6 +197,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		Queue:      items,
 		QueueCount: len(items),
 	}
+	s.withAuth(r, &data)
 
 	s.renderTemplate(w, "queue.html", data)
 }
@@ -212,6 +220,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		History:    records,
 		QueueCount: len(s.deps.Queue.List()),
 	}
+	s.withAuth(r, &data)
 
 	s.renderTemplate(w, "history.html", data)
 }
@@ -223,6 +232,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		Settings:   s.deps.Config.Values(),
 		QueueCount: len(s.deps.Queue.List()),
 	}
+	s.withAuth(r, &data)
 	s.renderTemplate(w, "settings.html", data)
 }
 
@@ -245,6 +255,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		Logs:       logs,
 		QueueCount: len(s.deps.Queue.List()),
 	}
+	s.withAuth(r, &data)
 	s.renderTemplate(w, "logs.html", data)
 }
 
@@ -362,6 +373,35 @@ type containerDetailData struct {
 	Versions     []string
 	HasSnapshot  bool
 	ChangelogURL string
+
+	// Auth context.
+	CurrentUser *auth.User
+	AuthEnabled bool
+	CSRFToken   string
+}
+
+// withAuth populates auth context fields on pageData from the request.
+func (s *Server) withAuth(r *http.Request, data *pageData) {
+	rc := auth.GetRequestContext(r.Context())
+	if rc != nil {
+		data.CurrentUser = rc.User
+		data.AuthEnabled = rc.AuthEnabled
+	}
+	if cookie, err := r.Cookie(auth.CSRFCookieName); err == nil {
+		data.CSRFToken = cookie.Value
+	}
+}
+
+// withAuthDetail populates auth context fields on containerDetailData from the request.
+func (s *Server) withAuthDetail(r *http.Request, data *containerDetailData) {
+	rc := auth.GetRequestContext(r.Context())
+	if rc != nil {
+		data.CurrentUser = rc.User
+		data.AuthEnabled = rc.AuthEnabled
+	}
+	if cookie, err := r.Cookie(auth.CSRFCookieName); err == nil {
+		data.CSRFToken = cookie.Value
+	}
 }
 
 // handleContainerDetail renders the per-container detail page.
@@ -461,6 +501,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		HasSnapshot:  len(snapshots) > 0,
 		ChangelogURL: ChangelogURL(found.Image),
 	}
+	s.withAuthDetail(r, &data)
 
 	s.renderTemplate(w, "container.html", data)
 }

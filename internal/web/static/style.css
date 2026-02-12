@@ -2423,7 +2423,117 @@ table.managing .td-checkbox {
 
 
 /* --------------------------------------------------------------------------
-   28. Transitions — global defaults for interactive states
+   28. Nav User Dropdown
+   -------------------------------------------------------------------------- */
+
+.nav-user {
+    display: flex;
+    align-items: center;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.nav-user-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-1) var(--sp-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--fg-secondary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 150ms, border-color 150ms;
+}
+
+.nav-user-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-strong);
+}
+
+.nav-user-role {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    line-height: 1.4;
+}
+
+.nav-user-chevron {
+    font-size: 0.6rem;
+    transition: transform 150ms;
+}
+
+.nav-user-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + var(--sp-2));
+    right: 0;
+    min-width: 160px;
+    background: var(--md-surface-container-high);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    z-index: 200;
+    overflow: hidden;
+}
+
+.nav-user-dropdown.open {
+    display: block;
+}
+
+.nav-user-dropdown a,
+.nav-user-dropdown button {
+    display: block;
+    width: 100%;
+    padding: var(--sp-2) var(--sp-3);
+    border: none;
+    background: transparent;
+    color: var(--fg-primary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 150ms;
+}
+
+.nav-user-dropdown a:hover,
+.nav-user-dropdown button:hover {
+    background: var(--bg-hover);
+}
+
+.nav-user-dropdown .dropdown-divider {
+    height: 1px;
+    margin: var(--sp-1) 0;
+    background: var(--border);
+}
+
+.nav-auth-off {
+    display: flex;
+    align-items: center;
+    padding: var(--sp-1) var(--sp-2);
+    font-size: 0.7rem;
+    color: var(--fg-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+@media (max-width: 480px) {
+    .nav-user-btn span:not(.nav-user-chevron):not(.nav-user-role) {
+        display: none;
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   29. Transitions — global defaults for interactive states
    -------------------------------------------------------------------------- */
 
 /* Catch-all for elements that should have smooth transitions but are not
