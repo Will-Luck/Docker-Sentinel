@@ -153,8 +153,8 @@ function createToken() {
                     value.textContent = result.data.token;
                 }
                 if (nameInput) nameInput.value = "";
-                // Reload after a delay to show the new token in the list.
-                setTimeout(function() { window.location.reload(); }, 5000);
+                // Add the new token to the table immediately.
+                addTokenRow(result.data);
             } else {
                 showToast(result.data.error || "Failed to create token", "error");
             }
@@ -196,6 +196,30 @@ function copyToken() {
             showToast("Copied to clipboard", "info");
         });
     }
+}
+
+function addTokenRow(data) {
+    var tbody = document.getElementById("token-list");
+    if (!tbody) return;
+    // Remove "No API tokens" placeholder if present.
+    var placeholder = tbody.querySelector("td[colspan]");
+    if (placeholder) placeholder.closest("tr").remove();
+
+    var tr = document.createElement("tr");
+    var cells = [data.name || "", "Just now", "Never", "Never"];
+    for (var i = 0; i < cells.length; i++) {
+        var td = document.createElement("td");
+        td.textContent = cells[i];
+        tr.appendChild(td);
+    }
+    var actionTd = document.createElement("td");
+    var btn = document.createElement("button");
+    btn.className = "btn btn-error";
+    btn.textContent = "Delete";
+    btn.onclick = function() { deleteToken(data.id || ""); };
+    actionTd.appendChild(btn);
+    tr.appendChild(actionTd);
+    tbody.appendChild(tr);
 }
 
 /* ------------------------------------------------------------
