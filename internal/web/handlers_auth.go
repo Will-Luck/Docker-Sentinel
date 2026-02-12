@@ -271,7 +271,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		"AuthEnabled":     ad.AuthEnabled,
 		"CSRFToken":       ad.CSRFToken,
 		"Sessions":        sessions,
-		"Tokens":          tokens,
+		"APITokens":       tokens,
 		"Passkeys":        passkeys,
 		"WebAuthnEnabled": s.webauthn != nil,
 		"CurrentToken":    currentToken,
