@@ -48,6 +48,11 @@ function base64urlDecode(str) {
    ------------------------------------------------------------ */
 
 function registerPasskey() {
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+        showToast("Passkeys require HTTPS. Access Sentinel via its HTTPS proxy URL.", "error");
+        return;
+    }
+
     var nameInput = document.getElementById("passkey-name");
     var name = nameInput ? nameInput.value.trim() : "";
     if (!name) name = "Passkey";
@@ -136,6 +141,11 @@ function registerPasskey() {
    ------------------------------------------------------------ */
 
 function loginWithPasskey() {
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+        showToast("Passkeys require HTTPS. Access Sentinel via its HTTPS proxy URL.", "error");
+        return;
+    }
+
     var btn = document.getElementById("passkey-login-btn");
     if (btn) {
         btn.disabled = true;
