@@ -33,6 +33,11 @@ type Config struct {
 	WebPort    string
 	WebEnabled bool
 
+	// Authentication
+	AuthEnabled    *bool         // nil = use DB default (true); non-nil = env override
+	SessionExpiry  time.Duration
+	CookieSecure   bool
+
 	// mu protects the mutable runtime fields below.
 	mu            sync.RWMutex
 	pollInterval  time.Duration // how often to scan for updates
@@ -65,6 +70,9 @@ func Load() *Config {
 		WebhookHeaders: envStr("SENTINEL_WEBHOOK_HEADERS", ""),
 		WebPort:        envStr("SENTINEL_WEB_PORT", "8080"),
 		WebEnabled:     envBool("SENTINEL_WEB_ENABLED", true),
+		AuthEnabled:    envBoolPtr("SENTINEL_AUTH_ENABLED"),
+		SessionExpiry:  envDuration("SENTINEL_SESSION_EXPIRY", 720*time.Hour),
+		CookieSecure:   envBool("SENTINEL_COOKIE_SECURE", true),
 	}
 }
 
@@ -111,6 +119,8 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_WEBHOOK_URL":    c.WebhookURL,
 		"SENTINEL_WEB_PORT":       c.WebPort,
 		"SENTINEL_WEB_ENABLED":    fmt.Sprintf("%t", c.WebEnabled),
+		"SENTINEL_SESSION_EXPIRY": c.SessionExpiry.String(),
+		"SENTINEL_COOKIE_SECURE":  fmt.Sprintf("%t", c.CookieSecure),
 	}
 }
 
@@ -131,6 +141,19 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envBoolPtr returns a *bool from env. Returns nil if unset (lets DB default apply).
+func envBoolPtr(key string) *bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return nil
+	}
+	return &b
 }
 
 func envBool(key string, def bool) bool {

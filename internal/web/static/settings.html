@@ -32,6 +32,25 @@
             <span id="sse-indicator" class="status-dot disconnected"></span>
             <span id="sse-label" class="nav-status-text">Disconnected</span>
         </div>
+        {{if .AuthEnabled}}{{if .CurrentUser}}
+        <div class="nav-user">
+            <button class="nav-user-btn" onclick="toggleUserDropdown(event)" aria-haspopup="true" aria-expanded="false">
+                <span>{{.CurrentUser.Username}}</span>
+                <span class="nav-user-role">{{.CurrentUser.RoleID}}</span>
+                <span class="nav-user-chevron">&#9662;</span>
+            </button>
+            <div class="nav-user-dropdown" id="user-dropdown">
+                <a href="/account">My Account</a>
+                <div class="dropdown-divider"></div>
+                <form method="POST" action="/logout" style="margin:0">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <button type="submit">Logout</button>
+                </form>
+            </div>
+        </div>
+        {{end}}{{else}}
+        <div class="nav-auth-off">Auth: Off</div>
+        {{end}}
     </nav>
 
     <main class="main-content" id="main-content">
@@ -46,6 +65,9 @@
             <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-general" data-tab="general">General</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-notifications" data-tab="notifications">Notifications</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
+            {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-security" data-tab="security">Security</button>
+            {{end}}{{end}}{{end}}
         </div>
 
         <!-- General tab -->
@@ -226,10 +248,86 @@
                 </div>
             </div>
         </div>
+
+        <!-- Security tab (admin only) -->
+        {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
+        <div class="tab-panel" id="tab-security" role="tabpanel">
+            <div class="settings-grid">
+                <div class="card">
+                    <div class="card-header"><h2>Authentication</h2></div>
+                    <div class="card-body">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Authentication</div>
+                                <div class="setting-desc">When disabled, all endpoints are accessible without login</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="auth-toggle" class="channel-toggle" checked onchange="confirmAuthToggle(this)">
+                                <span class="toggle-switch-text">Enabled</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h2>Users</h2></div>
+                    <div class="card-body">
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Username</th>
+                                        <th>Role</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="user-list">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h2>Create User</h2></div>
+                    <div class="card-body">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Username</div>
+                            </div>
+                            <input type="text" id="new-user-username" class="setting-select" placeholder="username" autocomplete="off">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Password</div>
+                                <div class="setting-desc">Min 8 characters, at least one letter and one digit</div>
+                            </div>
+                            <input type="password" id="new-user-password" class="setting-select" placeholder="password" autocomplete="new-password">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Role</div>
+                            </div>
+                            <select id="new-user-role" class="setting-select">
+                                <option value="viewer">viewer</option>
+                                <option value="operator">operator</option>
+                                <option value="admin">admin</option>
+                            </select>
+                        </div>
+                        <div class="setting-row" style="justify-content:flex-end">
+                            <button class="btn btn-success" onclick="createUser()">Create User</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {{end}}{{end}}{{end}}
     </main>
 
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
+    <script src="/static/auth.js"></script>
 </body>
 </html>
 {{end}}

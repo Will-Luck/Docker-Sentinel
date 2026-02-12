@@ -1,0 +1,149 @@
+{{define "account.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Account — Docker-Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <span class="nav-logo">S</span>
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">
+                Queue
+                {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
+            </a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/logs" class="nav-link">Logs</a>
+            <a href="/settings" class="nav-link">Settings</a>
+        </div>
+        {{if .AuthEnabled}}
+        <div class="nav-user" style="margin-left:auto;display:flex;align-items:center;gap:var(--sp-3)">
+            <span style="font-size:0.8rem;color:var(--fg-secondary)">{{.CurrentUser.Username}}</span>
+            <a href="/account" class="nav-link active" aria-current="page" style="height:auto;padding:0 var(--sp-2);border-bottom:none;font-size:0.8rem;color:var(--accent)">Account</a>
+            <a href="/logout" class="nav-link" style="height:auto;padding:0 var(--sp-2);border-bottom:none;font-size:0.8rem">Logout</a>
+        </div>
+        {{end}}
+    </nav>
+
+    <main class="main-content" id="main-content">
+        <div class="page-header">
+            <div>
+                <h1>My Account</h1>
+                <p class="subtitle">Manage your sessions and API tokens</p>
+            </div>
+        </div>
+
+        <!-- Change Password -->
+        <div class="card" style="margin-bottom:var(--sp-4)">
+            <div class="card-header"><h2>Change Password</h2></div>
+            <div class="card-body">
+                <form id="change-password-form" class="settings-grid" style="max-width:400px">
+                    <div style="margin-bottom:var(--sp-3)">
+                        <label style="display:block;font-size:0.875rem;font-weight:500;color:var(--fg-secondary);margin-bottom:var(--sp-1)" for="current-password">Current Password</label>
+                        <input class="setting-input" type="password" id="current-password" autocomplete="current-password" required style="width:100%">
+                    </div>
+                    <div style="margin-bottom:var(--sp-3)">
+                        <label style="display:block;font-size:0.875rem;font-weight:500;color:var(--fg-secondary);margin-bottom:var(--sp-1)" for="new-password">New Password</label>
+                        <input class="setting-input" type="password" id="new-password" autocomplete="new-password" required minlength="8" style="width:100%">
+                    </div>
+                    <button class="btn btn-success" type="submit">Update Password</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Active Sessions -->
+        <div class="card" style="margin-bottom:var(--sp-4)">
+            <div class="card-header"><h2>Active Sessions</h2></div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>IP</th>
+                                <th>User Agent</th>
+                                <th>Created</th>
+                                <th>Expires</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="session-list">
+                            {{range .Sessions}}
+                            <tr>
+                                <td class="mono">{{.IP}}</td>
+                                <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{.UserAgent}}">{{.UserAgent}}</td>
+                                <td>{{fmtTimeAgo .CreatedAt}}</td>
+                                <td>{{fmtTimeAgo .ExpiresAt}}</td>
+                                <td><button class="btn btn-error" onclick="revokeSession('{{.Token}}')">Revoke</button></td>
+                            </tr>
+                            {{else}}
+                            <tr><td colspan="5" style="text-align:center;color:var(--fg-secondary)">No active sessions</td></tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top:var(--sp-3)">
+                    <button class="btn btn-error" onclick="revokeAllSessions()">Revoke All Other Sessions</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Tokens -->
+        <div class="card">
+            <div class="card-header"><h2>API Tokens</h2></div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Created</th>
+                                <th>Last Used</th>
+                                <th>Expires</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="token-list">
+                            {{range .APITokens}}
+                            <tr>
+                                <td>{{.Name}}</td>
+                                <td>{{fmtTimeAgo .CreatedAt}}</td>
+                                <td>{{if .LastUsedAt.IsZero}}Never{{else}}{{fmtTimeAgo .LastUsedAt}}{{end}}</td>
+                                <td>{{if .ExpiresAt.IsZero}}Never{{else}}{{fmtTimeAgo .ExpiresAt}}{{end}}</td>
+                                <td><button class="btn btn-error" onclick="deleteToken('{{.ID}}')">Delete</button></td>
+                            </tr>
+                            {{else}}
+                            <tr><td colspan="5" style="text-align:center;color:var(--fg-secondary)">No API tokens</td></tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top:var(--sp-3);display:flex;gap:var(--sp-2);align-items:center">
+                    <input type="text" id="new-token-name" placeholder="Token name" class="setting-input" style="max-width:200px">
+                    <button class="btn btn-success" onclick="createToken()">Create Token</button>
+                </div>
+                <div id="new-token-display" style="display:none;margin-top:var(--sp-3);padding:var(--sp-3);background:var(--warning-bg);border:1px solid var(--warning);border-radius:var(--radius)">
+                    <strong>Copy this token now — it will not be shown again:</strong>
+                    <div class="mono" id="new-token-value" style="margin-top:var(--sp-2);word-break:break-all;cursor:pointer" onclick="copyToken()" title="Click to copy"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+    <script src="/static/auth.js"></script>
+</body>
+</html>
+{{end}}

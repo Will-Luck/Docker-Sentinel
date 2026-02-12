@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
@@ -60,6 +61,39 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Initialise auth buckets and seed built-in roles.
+	if err := db.EnsureAuthBuckets(); err != nil {
+		log.Error("failed to create auth buckets", "error", err)
+		os.Exit(1)
+	}
+	if err := db.SeedBuiltinRoles(); err != nil {
+		log.Error("failed to seed built-in roles", "error", err)
+		os.Exit(1)
+	}
+
+	// Create auth service.
+	authSvc := auth.NewService(auth.ServiceConfig{
+		Users:          db,
+		Sessions:       db,
+		Roles:          db,
+		Tokens:         db,
+		Settings:       db,
+		Log:            log.Logger,
+		CookieSecure:   cfg.CookieSecure,
+		SessionExpiry:  cfg.SessionExpiry,
+		AuthEnabledEnv: cfg.AuthEnabled,
+	})
+
+	// Generate bootstrap token for first-run setup if needed.
+	var bootstrapToken string
+	if authSvc.NeedsSetup() {
+		bootstrapToken, err = auth.GenerateBootstrapToken()
+		if err != nil {
+			log.Error("failed to generate bootstrap token", "error", err)
+			os.Exit(1)
+		}
+	}
 
 	// Load persisted runtime settings (override env defaults).
 	if saved, err := db.LoadSetting("poll_interval"); err == nil && saved != "" {
@@ -158,8 +192,17 @@ func main() {
 			SelfUpdater:        &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
 			NotifyConfig:       &notifyConfigAdapter{db},
 			NotifyReconfigurer: notifier,
+			Auth:               authSvc,
 			Log:                log.Logger,
 		})
+
+		// Set bootstrap token for first-run setup.
+		if bootstrapToken != "" {
+			srv.SetBootstrapToken(bootstrapToken)
+			fmt.Println("=============================================")
+			fmt.Printf("Setup URL: http://0.0.0.0:%s/setup?token=%s\n", cfg.WebPort, bootstrapToken)
+			fmt.Println("=============================================")
+		}
 
 		go func() {
 			addr := net.JoinHostPort("", cfg.WebPort)
@@ -171,6 +214,25 @@ func main() {
 		go func() {
 			<-ctx.Done()
 			_ = srv.Shutdown(context.Background())
+		}()
+
+		// Session cleanup goroutine — purge expired sessions hourly.
+		go func() {
+			ticker := time.NewTicker(1 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					n, cleanErr := authSvc.CleanupExpiredSessions()
+					if cleanErr != nil {
+						log.Warn("session cleanup failed", "error", cleanErr)
+					} else if n > 0 {
+						log.Info("cleaned up expired sessions", "count", n)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
 		}()
 	}
 
