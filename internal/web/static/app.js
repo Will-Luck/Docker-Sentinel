@@ -1203,10 +1203,16 @@ function initFilters() {
         var exclusive = pill.getAttribute("data-exclusive");
         var wasActive = pill.classList.contains("active");
 
-        // Deactivate exclusive siblings.
+        // Deactivate exclusive siblings and reset their filter state.
         if (exclusive) {
             var siblings = bar.querySelectorAll('.filter-pill[data-exclusive="' + exclusive + '"]');
-            for (var s = 0; s < siblings.length; s++) siblings[s].classList.remove("active");
+            for (var s = 0; s < siblings.length; s++) {
+                siblings[s].classList.remove("active");
+                var sibKey = siblings[s].getAttribute("data-filter");
+                if (sibKey !== key) {
+                    filterState[sibKey] = sibKey === "sort" ? "default" : "all";
+                }
+            }
         }
 
         // Toggle: if was active, deactivate (reset to default); if not, activate.
@@ -1507,7 +1513,11 @@ function initSSE() {
 
 document.addEventListener("DOMContentLoaded", function () {
     initTheme();
-    initSSE();
+    // Only init SSE on authenticated pages (skip login/setup).
+    var path = window.location.pathname;
+    if (path !== "/login" && path !== "/setup") {
+        initSSE();
+    }
     initPauseBanner();
     initFilters();
     refreshLastScan();
