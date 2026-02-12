@@ -165,7 +165,10 @@
                 </div>
                 <div id="new-token-display" style="display:none;margin-top:var(--sp-3);padding:var(--sp-3);background:var(--warning-bg);border:1px solid var(--warning);border-radius:var(--radius)">
                     <strong>Copy this token now — it will not be shown again:</strong>
-                    <div class="mono" id="new-token-value" style="margin-top:var(--sp-2);word-break:break-all;cursor:pointer" onclick="copyToken()" title="Click to copy"></div>
+                    <div style="margin-top:var(--sp-2);display:flex;align-items:center;gap:var(--sp-2)">
+                        <code id="new-token-value" style="flex:1;padding:var(--sp-2) var(--sp-3);background:var(--md-surface-container);border:1px solid var(--border);border-radius:var(--radius);word-break:break-all;font-size:0.85rem"></code>
+                        <button class="btn" onclick="copyToken()" title="Copy to clipboard" style="flex-shrink:0">Copy</button>
+                    </div>
                 </div>
             </div>
         </div>

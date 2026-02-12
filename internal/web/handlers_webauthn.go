@@ -313,7 +313,7 @@ func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, user, err := s.deps.Auth.LoginWithWebAuthn(r.Context(), resolvedUser.ID, r.RemoteAddr, r.UserAgent())
+	session, user, err := s.deps.Auth.LoginWithWebAuthn(r.Context(), resolvedUser.ID, clientIP(r), r.UserAgent())
 	if err != nil {
 		switch err {
 		case auth.ErrRateLimited:
@@ -328,7 +328,7 @@ func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 
 	auth.SetSessionCookie(w, session.Token, session.ExpiresAt, s.deps.Auth.CookieSecure)
 
-	s.logEvent("auth", "", "User "+user.Username+" logged in via passkey from "+r.RemoteAddr)
+	s.logEvent("auth", "", "User "+user.Username+" logged in via passkey from "+clientIP(r))
 
 	writeJSON(w, http.StatusOK, map[string]string{"redirect": "/"})
 }

@@ -1663,8 +1663,7 @@ table.managing .stack-select {
 }
 
 .table-readonly thead th:first-child::before {
-    content: "\1F512 ";
-    font-size: 0.65rem;
+    content: "";
 }
 
 .table-readonly {
@@ -2372,8 +2371,10 @@ table.managing .td-checkbox {
     }
 
     .nav-link {
-        padding: 0 var(--sp-3);
-        font-size: 0.8rem;
+        padding: 0 var(--sp-2);
+        font-size: 0.75rem;
+        flex-shrink: 0;
+        white-space: nowrap;
     }
 
     .nav-status-text {

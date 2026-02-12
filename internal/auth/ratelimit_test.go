@@ -12,30 +12,42 @@ func TestRateLimiter(t *testing.T) {
 		}
 	})
 
-	t.Run("allows up to maxLoginAttempts", func(t *testing.T) {
+	t.Run("allows up to maxLoginAttempts failures", func(t *testing.T) {
 		rl := NewRateLimiter()
 		ip := "10.0.0.1"
-		for i := 0; i < maxLoginAttempts; i++ {
+		// Record failures up to just under the limit.
+		for i := 0; i < maxLoginAttempts-1; i++ {
+			rl.RecordFailure(ip)
 			if !rl.Allow(ip) {
-				t.Errorf("expected Allow to return true on attempt %d", i+1)
+				t.Errorf("expected Allow to return true after %d failures", i+1)
 			}
 		}
 	})
 
-	t.Run("blocks after exceeding maxLoginAttempts", func(t *testing.T) {
+	t.Run("blocks after maxLoginAttempts failures", func(t *testing.T) {
 		rl := NewRateLimiter()
 		ip := "10.0.0.2"
-		// Use up the allowed attempts.
+		// Record exactly maxLoginAttempts failures.
 		for i := 0; i < maxLoginAttempts; i++ {
-			rl.Allow(ip)
+			rl.RecordFailure(ip)
 		}
-		// The next call should set blocked (count goes to maxLoginAttempts+1).
 		if rl.Allow(ip) {
-			t.Error("expected Allow to return false after exceeding maxLoginAttempts")
+			t.Error("expected Allow to return false after maxLoginAttempts failures")
 		}
-		// Subsequent calls should also be blocked.
-		if rl.Allow(ip) {
-			t.Error("expected Allow to remain false while blocked")
+	})
+
+	t.Run("Allow is a pure check and does not increment", func(t *testing.T) {
+		rl := NewRateLimiter()
+		ip := "10.0.0.5"
+		// Record maxLoginAttempts-1 failures.
+		for i := 0; i < maxLoginAttempts-1; i++ {
+			rl.RecordFailure(ip)
+		}
+		// Call Allow many times — should never block since no failures are being recorded.
+		for i := 0; i < 20; i++ {
+			if !rl.Allow(ip) {
+				t.Errorf("expected Allow to remain true on call %d (pure check)", i+1)
+			}
 		}
 	})
 
@@ -89,8 +101,8 @@ func TestRateLimiter(t *testing.T) {
 	t.Run("Cleanup removes expired entries", func(t *testing.T) {
 		rl := NewRateLimiter()
 		ip := "10.0.0.20"
-		// Create an entry.
-		rl.Allow(ip)
+		// Create an entry via RecordFailure.
+		rl.RecordFailure(ip)
 
 		rl.mu.Lock()
 		// Manually backdate the entry so it appears expired.
@@ -105,6 +117,25 @@ func TestRateLimiter(t *testing.T) {
 		rl.mu.Unlock()
 		if exists {
 			t.Error("expected expired entry to be cleaned up")
+		}
+	})
+
+	t.Run("login flow simulation: Allow then RecordFailure counts correctly", func(t *testing.T) {
+		rl := NewRateLimiter()
+		ip := "10.0.0.30"
+
+		// Simulate the real login flow: Allow() check, then RecordFailure() on failure.
+		// Should allow exactly maxLoginAttempts attempts.
+		for i := 0; i < maxLoginAttempts; i++ {
+			if !rl.Allow(ip) {
+				t.Errorf("expected Allow on attempt %d", i+1)
+			}
+			rl.RecordFailure(ip)
+		}
+
+		// The next attempt should be blocked.
+		if rl.Allow(ip) {
+			t.Errorf("expected blocked after %d failed login attempts", maxLoginAttempts)
 		}
 	})
 }
