@@ -84,7 +84,7 @@
                                 <td class="mono">{{.IP}}</td>
                                 <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{.UserAgent}}">{{.UserAgent}}</td>
                                 <td>{{fmtTimeAgo .CreatedAt}}</td>
-                                <td>{{fmtTimeAgo .ExpiresAt}}</td>
+                                <td title="{{fmtTime .ExpiresAt}}">{{fmtTimeUntil .ExpiresAt}}</td>
                                 <td><button class="btn btn-error" onclick="revokeSession('{{.Token}}')">Revoke</button></td>
                             </tr>
                             {{else}}
@@ -120,7 +120,7 @@
                                 <td>{{.Name}}</td>
                                 <td>{{fmtTimeAgo .CreatedAt}}</td>
                                 <td>{{if .LastUsedAt.IsZero}}Never{{else}}{{fmtTimeAgo .LastUsedAt}}{{end}}</td>
-                                <td>{{if .ExpiresAt.IsZero}}Never{{else}}{{fmtTimeAgo .ExpiresAt}}{{end}}</td>
+                                <td>{{if .ExpiresAt.IsZero}}Never{{else}}{{fmtTimeUntil .ExpiresAt}}{{end}}</td>
                                 <td><button class="btn btn-error" onclick="deleteToken('{{.ID}}')">Delete</button></td>
                             </tr>
                             {{else}}

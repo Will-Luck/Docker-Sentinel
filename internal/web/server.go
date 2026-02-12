@@ -296,6 +296,7 @@ func (s *Server) parseTemplates() {
 		"fmtDuration":  formatDuration,
 		"fmtTime":      formatTime,
 		"fmtTimeAgo":   formatTimeAgo,
+		"fmtTimeUntil": formatTimeUntil,
 		"truncDigest":  truncateDigest,
 		"json":         marshalJSON,
 		"changelogURL": ChangelogURL,
@@ -329,6 +330,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /setup", s.handleSetup)
 	s.mux.HandleFunc("POST /setup", s.apiSetup)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
+	s.mux.HandleFunc("GET /logout", s.handleLogout)
 
 	// --- Auth-only routes (authenticated, no specific permission) ---
 	s.mux.Handle("GET /account", authed(s.handleAccount))
@@ -496,6 +498,38 @@ func formatTimeAgo(t time.Time) string {
 			return "1 day ago"
 		}
 		return fmt.Sprintf("%d days ago", days)
+	}
+}
+
+func formatTimeUntil(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	d := time.Until(t)
+	if d < 0 {
+		return "expired"
+	}
+	switch {
+	case d < time.Minute:
+		return "in less than a minute"
+	case d < time.Hour:
+		mins := int(d.Minutes())
+		if mins == 1 {
+			return "in 1 minute"
+		}
+		return fmt.Sprintf("in %d minutes", mins)
+	case d < 24*time.Hour:
+		hours := int(d.Hours())
+		if hours == 1 {
+			return "in 1 hour"
+		}
+		return fmt.Sprintf("in %d hours", hours)
+	default:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "in 1 day"
+		}
+		return fmt.Sprintf("in %d days", days)
 	}
 }
 
