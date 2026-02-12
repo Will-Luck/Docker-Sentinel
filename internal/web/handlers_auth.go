@@ -85,7 +85,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := r.RemoteAddr
+	ip := clientIP(r)
 	session, user, err := s.deps.Auth.Login(r.Context(), username, password, ip, r.UserAgent())
 	if err != nil {
 		switch err {
@@ -211,16 +211,23 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 	s.bootstrapToken = ""
 
 	// Create session for the new admin.
-	sessionToken, _ := auth.GenerateSessionToken()
+	sessionToken, err := auth.GenerateSessionToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate session token")
+		return
+	}
 	session := auth.Session{
 		Token:     sessionToken,
 		UserID:    user.ID,
-		IP:        r.RemoteAddr,
+		IP:        clientIP(r),
 		UserAgent: r.UserAgent(),
 		CreatedAt: time.Now().UTC(),
 		ExpiresAt: time.Now().UTC().Add(s.deps.Auth.SessionExpiry),
 	}
-	_ = s.deps.Auth.Sessions.CreateSession(session)
+	if err := s.deps.Auth.Sessions.CreateSession(session); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create session")
+		return
+	}
 	auth.SetSessionCookie(w, sessionToken, session.ExpiresAt, s.deps.Auth.CookieSecure)
 
 	s.logEvent("auth", "", "Initial admin user "+username+" created via setup wizard")

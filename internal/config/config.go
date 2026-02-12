@@ -164,18 +164,6 @@ func envStr(key, def string) string {
 	return def
 }
 
-func envInt(key string, def int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
-}
-
 // envBoolPtr returns a *bool from env. Returns nil if unset (lets DB default apply).
 func envBoolPtr(key string) *bool {
 	v := os.Getenv(key)
