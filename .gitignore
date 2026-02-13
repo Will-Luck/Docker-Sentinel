@@ -1,4 +1,5 @@
 bin/
+docker-sentinel
 *.exe
 *.test
 *.out

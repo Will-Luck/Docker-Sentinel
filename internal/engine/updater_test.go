@@ -36,7 +36,7 @@ func TestScanSkipsPinned(t *testing.T) {
 	}
 
 	u, _ := newTestUpdater(t, mock)
-	result := u.Scan(context.Background())
+	result := u.Scan(context.Background(), ScanScheduled)
 
 	if result.Total != 1 {
 		t.Errorf("Total = %d, want 1", result.Total)
@@ -54,7 +54,7 @@ func TestScanSkipsSentinelSelf(t *testing.T) {
 	}
 
 	u, _ := newTestUpdater(t, mock)
-	result := u.Scan(context.Background())
+	result := u.Scan(context.Background(), ScanScheduled)
 
 	if result.Skipped != 1 {
 		t.Errorf("Skipped = %d, want 1 (sentinel self)", result.Skipped)
@@ -72,7 +72,7 @@ func TestScanSkipsUnresolvableImage(t *testing.T) {
 	mock.distErr["myapp:latest"] = fmt.Errorf("401 unauthorized")
 
 	u, _ := newTestUpdater(t, mock)
-	result := u.Scan(context.Background())
+	result := u.Scan(context.Background(), ScanScheduled)
 
 	// Should be skipped because distribution check fails (treated as local).
 	if result.Skipped != 1 {
@@ -90,7 +90,7 @@ func TestScanQueuesManualUpdate(t *testing.T) {
 	mock.distDigests["docker.io/library/nginx:1.25"] = "sha256:new"
 
 	u, _ := newTestUpdater(t, mock)
-	result := u.Scan(context.Background())
+	result := u.Scan(context.Background(), ScanScheduled)
 
 	if result.Queued != 1 {
 		t.Errorf("Queued = %d, want 1", result.Queued)
@@ -140,7 +140,7 @@ func TestScanAutoUpdate(t *testing.T) {
 
 	u, _ := newTestUpdater(t, mock)
 	u.cfg.SetDefaultPolicy("auto")
-	result := u.Scan(context.Background())
+	result := u.Scan(context.Background(), ScanScheduled)
 
 	if result.AutoCount != 1 {
 		t.Errorf("AutoCount = %d, want 1", result.AutoCount)

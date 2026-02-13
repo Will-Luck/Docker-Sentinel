@@ -350,6 +350,17 @@ h4 { font-size: 0.875rem; font-weight: 500; letter-spacing: 0.1px; line-height: 
     }
 }
 
+.queue-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.queue-table {
+    table-layout: fixed;
+}
+
+
 .card-header-top {
     display: flex;
     justify-content: space-between;
@@ -484,6 +495,14 @@ a.stat-card-link:hover { border-color: var(--warning); }
 .stat-value.warning { color: var(--warning); }
 .stat-value.error   { color: var(--error); }
 .stat-value.info    { color: var(--info); }
+.stat-value.stat-changed {
+    animation: statPulse 400ms var(--md-motion-emphasized-decelerate);
+}
+@keyframes statPulse {
+    0%   { transform: scale(1); }
+    40%  { transform: scale(1.15); }
+    100% { transform: scale(1); }
+}
 
 
 /* --------------------------------------------------------------------------
@@ -580,6 +599,8 @@ tbody td {
 .version-current { color: var(--fg-secondary); }
 .version-arrow { color: var(--warning); margin: 0 4px; }
 .version-new { color: var(--warning); font-weight: 600; }
+a.version-link { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+a.version-link:hover { border-bottom-style: solid; }
 
 .cell-digest {
     max-width: 200px;
@@ -805,6 +826,10 @@ tbody td {
     justify-content: center;
 }
 
+.btn-sm {
+    padding: 4px 10px;
+    font-size: 0.75rem;
+}
 
 /* --------------------------------------------------------------------------
    9. Policy Select — pill-shaped dropdown with coloured variants
@@ -2955,6 +2980,15 @@ input[type="checkbox"] {
     color: var(--md-on-tertiary-container);
     border-radius: var(--radius);
     gap: var(--sp-3);
+    transition: opacity 300ms ease, max-height 300ms ease, padding 300ms ease, margin 300ms ease;
+    overflow: hidden;
+}
+.digest-banner.banner-hidden {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
 }
 
 .digest-banner-content {
@@ -2964,3 +2998,51 @@ input[type="checkbox"] {
     font-size: 0.875rem;
     font-weight: 500;
 }
+
+
+/* --------------------------------------------------------------------------
+   31. Registry & Rate Limit Styles
+   -------------------------------------------------------------------------- */
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+    padding: var(--sp-2) var(--sp-3);
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+    font-weight: 600;
+    color: var(--fg-secondary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.data-table tbody tr:hover {
+    background: var(--bg-hover);
+}
+
+.text-error { color: var(--error); }
+.text-warning { color: var(--warning); }
+
+.alert {
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-bottom: var(--sp-2);
+}
+
+.alert-warning {
+    background: light-dark(#FFF3E0, rgba(255, 213, 79, 0.1));
+    border: 1px solid var(--warning);
+    color: var(--warning);
+}
+
+.stat-card:nth-child(4) { border-left-color: var(--accent); }

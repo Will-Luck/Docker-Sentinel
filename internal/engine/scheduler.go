@@ -47,7 +47,7 @@ func (s *Scheduler) SetSettingsReader(sr SettingsReader) {
 func (s *Scheduler) Run(ctx context.Context) error {
 	if !s.isPaused() {
 		s.log.Info("starting initial scan")
-		result := s.updater.Scan(ctx)
+		result := s.updater.Scan(ctx, ScanScheduled)
 		s.lastScan = s.clock.Now()
 		s.logResult(result)
 	} else {
@@ -62,7 +62,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 				continue
 			}
 			s.log.Info("starting scheduled scan")
-			result := s.updater.Scan(ctx)
+			result := s.updater.Scan(ctx, ScanScheduled)
 			s.lastScan = s.clock.Now()
 			s.logResult(result)
 		case <-s.resetCh:
@@ -101,7 +101,7 @@ func (s *Scheduler) SetPollInterval(d time.Duration) {
 // TriggerScan runs an immediate scan cycle outside the normal timer.
 func (s *Scheduler) TriggerScan(ctx context.Context) {
 	s.log.Info("starting manual scan")
-	result := s.updater.Scan(ctx)
+	result := s.updater.Scan(ctx, ScanManual)
 	s.lastScan = s.clock.Now()
 	s.logResult(result)
 }

@@ -43,15 +43,26 @@ func finaliseStageIsDestructive(stage string) bool {
 	return stage == "remove" || stage == "create" || stage == "start"
 }
 
+// ScanMode controls rate limit headroom during scans.
+type ScanMode int
+
+const (
+	// ScanScheduled keeps higher headroom (reserve 10) — silently skips rate-limited containers.
+	ScanScheduled ScanMode = iota
+	// ScanManual uses almost all quota (reserve 2) — stops scanning on exhaustion.
+	ScanManual
+)
+
 // ScanResult summarises a single scan cycle.
 type ScanResult struct {
-	Total     int
-	Skipped   int
-	AutoCount int
-	Queued    int
-	Updated   int
-	Failed    int
-	Errors    []error
+	Total        int
+	Skipped      int
+	AutoCount    int
+	Queued       int
+	Updated      int
+	Failed       int
+	RateLimited  int // containers skipped due to rate limits
+	Errors       []error
 }
 
 // Updater performs container scanning and update operations.
@@ -65,8 +76,9 @@ type Updater struct {
 	clock    clock.Clock
 	notifier *notify.Multi
 	events   *events.Bus
-	settings SettingsReader
-	updating sync.Map // map[string]*sync.Mutex — per-container update locks
+	settings    SettingsReader
+	rateTracker *registry.RateLimitTracker // optional: rate limit awareness
+	updating    sync.Map                   // map[string]*sync.Mutex — per-container update locks
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -87,6 +99,11 @@ func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queu
 // SetSettingsReader attaches a settings reader for runtime filter checks.
 func (u *Updater) SetSettingsReader(sr SettingsReader) {
 	u.settings = sr
+}
+
+// SetRateLimitTracker attaches a rate limit tracker for scan pacing.
+func (u *Updater) SetRateLimitTracker(t *registry.RateLimitTracker) {
+	u.rateTracker = t
 }
 
 // tryLock attempts to acquire the per-container update lock.
@@ -158,8 +175,8 @@ func (u *Updater) publishEvent(evtType events.EventType, name, message string) {
 }
 
 // Scan lists running containers, checks for updates, and processes them
-// according to each container's policy.
-func (u *Updater) Scan(ctx context.Context) ScanResult {
+// according to each container's policy. The mode controls rate limit headroom.
+func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	result := ScanResult{}
 
 	containers, err := u.docker.ListContainers(ctx)
@@ -169,6 +186,18 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 		return result
 	}
 	result.Total = len(containers)
+
+	// Discover registries from container images for rate limit tracking.
+	if u.rateTracker != nil {
+		counts := make(map[string]int)
+		for _, c := range containers {
+			host := registry.RegistryHost(c.Image)
+			counts[host]++
+		}
+		for host, n := range counts {
+			u.rateTracker.Discover(host, n)
+		}
+	}
 
 	// Prune queue entries for containers that no longer exist.
 	liveNames := make(map[string]bool, len(containers))
@@ -181,6 +210,12 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 
 	// Load filter patterns once per scan.
 	filters := u.loadFilters()
+
+	// Rate limit headroom depends on scan mode.
+	reserve := 10
+	if mode == ScanManual {
+		reserve = 2
+	}
 
 	for _, c := range containers {
 		if ctx.Err() != nil {
@@ -214,8 +249,24 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			continue
 		}
 
-		// Check the registry for an update (versioned check also finds newer semver tags).
+		// Rate limit check: skip if registry quota is too low.
 		imageRef := c.Image
+		if u.rateTracker != nil {
+			host := registry.RegistryHost(imageRef)
+			canProceed, wait := u.rateTracker.CanProceed(host, reserve)
+			if !canProceed {
+				if mode == ScanManual {
+					u.log.Warn("rate limit exhausted, stopping manual scan", "registry", host, "resets_in", wait)
+					result.RateLimited++
+					break // manual scan: stop entirely
+				}
+				u.log.Debug("rate limit low, skipping container", "name", name, "registry", host, "resets_in", wait)
+				result.RateLimited++
+				continue // scheduled scan: skip silently
+			}
+		}
+
+		// Check the registry for an update (versioned check also finds newer semver tags).
 		check := u.checker.CheckVersioned(ctx, imageRef)
 
 		if check.Error != nil {
@@ -235,6 +286,28 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			continue
 		}
 
+		// Filter out ignored versions so they don't trigger notifications or queuing.
+		if len(check.NewerVersions) > 0 {
+			ignored, _ := u.store.GetIgnoredVersions(name)
+			if len(ignored) > 0 {
+				ignoredSet := make(map[string]bool, len(ignored))
+				for _, v := range ignored {
+					ignoredSet[v] = true
+				}
+				var filtered []string
+				for _, v := range check.NewerVersions {
+					if !ignoredSet[v] {
+						filtered = append(filtered, v)
+					}
+				}
+				if len(filtered) == 0 {
+					u.log.Debug("all newer versions ignored", "name", name, "ignored", ignored)
+					continue
+				}
+				check.NewerVersions = filtered
+			}
+		}
+
 		u.log.Info("update available", "name", name, "image", imageRef,
 			"local_digest", check.LocalDigest, "remote_digest", check.RemoteDigest)
 		u.publishEvent(events.EventContainerUpdate, name, "update available")
@@ -249,14 +322,15 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			shouldNotify = false // digest scheduler handles it
 		default:
 			state, _ := u.store.GetNotifyState(name)
-			if state != nil && state.LastDigest == check.RemoteDigest {
+			if state != nil && state.LastDigest == check.RemoteDigest && !state.LastNotified.IsZero() {
 				shouldNotify = false
 				u.log.Debug("skipping duplicate notification", "name", name, "digest", check.RemoteDigest)
 			}
 		}
 
+		notifyOK := false
 		if shouldNotify {
-			u.notifier.Notify(ctx, notify.Event{
+			notifyOK = u.notifier.Notify(ctx, notify.Event{
 				Type:          notify.EventUpdateAvailable,
 				ContainerName: name,
 				OldImage:      imageRef,
@@ -266,16 +340,25 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			})
 		}
 
-		// Always track the notify state for digest compilation, regardless of mode.
+		// Track notify state for digest compilation.
+		// Only mark LastNotified when notification was actually delivered,
+		// so failed deliveries get retried on the next scan.
 		now := u.clock.Now()
 		existing, _ := u.store.GetNotifyState(name)
 		firstSeen := now
 		if existing != nil && existing.FirstSeen.After(time.Time{}) {
 			firstSeen = existing.FirstSeen
 		}
+		lastNotified := time.Time{}
+		if existing != nil {
+			lastNotified = existing.LastNotified
+		}
+		if notifyOK {
+			lastNotified = now
+		}
 		_ = u.store.SetNotifyState(name, &store.NotifyState{
 			LastDigest:   check.RemoteDigest,
-			LastNotified: now,
+			LastNotified: lastNotified,
 			FirstSeen:    firstSeen,
 		})
 
@@ -555,6 +638,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	// Clear notification state so re-detection gets a fresh notification.
 	_ = u.store.ClearNotifyState(name)
+
+	// Clear ignored versions — container moved past them.
+	_ = u.store.ClearIgnoredVersions(name)
 
 	// 9. Clean old snapshots — keep only the most recent one.
 	if err := u.store.DeleteOldSnapshots(name, 1); err != nil {
