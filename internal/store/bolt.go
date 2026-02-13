@@ -13,12 +13,12 @@ import (
 )
 
 var (
-	bucketSnapshots = []byte("snapshots")
-	bucketHistory   = []byte("history")
-	bucketState     = []byte("state")
-	bucketQueue     = []byte("queue")
-	bucketPolicies  = []byte("policies")
-	bucketLogs      = []byte("logs")
+	bucketSnapshots   = []byte("snapshots")
+	bucketHistory     = []byte("history")
+	bucketState       = []byte("state")
+	bucketQueue       = []byte("queue")
+	bucketPolicies    = []byte("policies")
+	bucketLogs        = []byte("logs")
 	bucketSettings    = []byte("settings")
 	bucketNotifyState = []byte("notify_state")
 	bucketNotifyPrefs = []byte("notify_prefs")
