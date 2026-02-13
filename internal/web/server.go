@@ -300,6 +300,7 @@ type ConfigReader interface {
 type ConfigWriter interface {
 	SetDefaultPolicy(s string)
 	SetGracePeriod(d time.Duration)
+	SetLatestAutoUpdate(b bool)
 }
 
 // Server is the web dashboard HTTP server.
@@ -503,6 +504,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/default-policy", perm(auth.PermSettingsModify, s.apiSetDefaultPolicy))
 	s.mux.Handle("POST /api/settings/grace-period", perm(auth.PermSettingsModify, s.apiSetGracePeriod))
 	s.mux.Handle("POST /api/settings/pause", perm(auth.PermSettingsModify, s.apiSetPause))
+	s.mux.Handle("POST /api/settings/latest-auto-update", perm(auth.PermSettingsModify, s.apiSetLatestAutoUpdate))
 	s.mux.Handle("POST /api/settings/filters", perm(auth.PermSettingsModify, s.apiSetFilters))
 	s.mux.Handle("POST /api/settings/stack-order", perm(auth.PermSettingsModify, s.apiSaveStackOrder))
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))

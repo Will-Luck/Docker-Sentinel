@@ -194,6 +194,14 @@ function initSettingsPage() {
                 }
             }
 
+            // Latest auto-update toggle.
+            var latestAutoToggle = document.getElementById("latest-auto-toggle");
+            if (latestAutoToggle) {
+                var latestAuto = settings["latest_auto_update"] !== "false";
+                latestAutoToggle.checked = latestAuto;
+                updateLatestAutoText(latestAuto);
+            }
+
             // Pause toggle.
             var pauseToggle = document.getElementById("pause-toggle");
             if (pauseToggle) {
@@ -467,6 +475,29 @@ function setPauseState(paused) {
         })
         .catch(function() {
             showToast("Network error — could not update pause state", "error");
+        });
+}
+
+function updateLatestAutoText(enabled) {
+    var text = document.getElementById("latest-auto-text");
+    if (text) {
+        text.textContent = enabled ? "On" : "Off";
+    }
+}
+
+function setLatestAutoUpdate(enabled) {
+    updateLatestAutoText(enabled);
+    fetch("/api/settings/latest-auto-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
         });
 }
 

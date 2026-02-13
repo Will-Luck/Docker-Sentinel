@@ -25,7 +25,7 @@ type ResolvedPolicy struct {
 
 // ResolvePolicy returns the effective policy for a container.
 // Precedence: DB override → Docker label → latest-tag auto → default.
-func ResolvePolicy(db *store.Store, labels map[string]string, name, imageTag, defaultPolicy string) ResolvedPolicy {
+func ResolvePolicy(db *store.Store, labels map[string]string, name, imageTag, defaultPolicy string, latestAutoUpdate bool) ResolvedPolicy {
 	if p, ok := db.GetPolicyOverride(name); ok {
 		switch p {
 		case "auto", "manual", "pinned":
@@ -38,8 +38,8 @@ func ResolvePolicy(db *store.Store, labels map[string]string, name, imageTag, de
 		return ResolvedPolicy{Policy: string(p), Source: SourceLabel}
 	}
 
-	// Images tagged :latest (or with no explicit tag) default to auto-update.
-	if imageTag == "latest" || imageTag == "" {
+	// Optionally auto-update :latest containers regardless of default policy.
+	if latestAutoUpdate && (imageTag == "latest" || imageTag == "") {
 		return ResolvedPolicy{Policy: "auto", Source: SourceLatest}
 	}
 

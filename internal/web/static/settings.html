@@ -122,6 +122,16 @@
                         </div>
                         <div class="setting-row">
                             <div class="setting-info">
+                                <div class="setting-label">Auto-update :latest containers</div>
+                                <div class="setting-desc">Containers using the :latest tag are set to auto-update, regardless of the default policy above</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="latest-auto-toggle" class="channel-toggle" onchange="setLatestAutoUpdate(this.checked)">
+                                <span id="latest-auto-text" class="toggle-switch-text">On</span>
+                            </label>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
                                 <div class="setting-label">Grace period</div>
                                 <div class="setting-desc">Time to wait after an update before checking container health</div>
                             </div>
