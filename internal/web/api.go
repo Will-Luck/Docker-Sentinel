@@ -297,7 +297,7 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 	s.logEvent("check", name, "Manual registry check triggered")
 
 	// Run the check synchronously so the client spinner stays active.
-	updateAvailable, newerVersions, checkErr := s.deps.RegistryChecker.CheckForUpdate(r.Context(), imageRef)
+	updateAvailable, newerVersions, resolvedCurrent, resolvedTarget, checkErr := s.deps.RegistryChecker.CheckForUpdate(r.Context(), imageRef)
 	if checkErr != nil {
 		s.deps.Log.Warn("registry check failed", "name", name, "error", checkErr)
 		writeError(w, http.StatusBadGateway, "registry check failed: "+checkErr.Error())
@@ -333,10 +333,12 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.deps.Queue.Add(PendingUpdate{
-			ContainerID:   containerID,
-			ContainerName: name,
-			CurrentImage:  imageRef,
-			NewerVersions: newerVersions,
+			ContainerID:            containerID,
+			ContainerName:          name,
+			CurrentImage:           imageRef,
+			NewerVersions:          newerVersions,
+			ResolvedCurrentVersion: resolvedCurrent,
+			ResolvedTargetVersion:  resolvedTarget,
 		})
 		s.deps.Log.Info("update found via manual check", "name", name)
 		writeJSON(w, http.StatusOK, map[string]any{

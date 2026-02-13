@@ -10,13 +10,15 @@ import (
 
 // CheckResult holds the outcome of a registry digest check.
 type CheckResult struct {
-	ImageRef        string
-	LocalDigest     string
-	RemoteDigest    string
-	UpdateAvailable bool
-	IsLocal         bool
-	Error           error
-	NewerVersions   []string // Newer semver versions available (newest first)
+	ImageRef               string
+	LocalDigest            string
+	RemoteDigest           string
+	UpdateAvailable        bool
+	IsLocal                bool
+	Error                  error
+	NewerVersions          []string // Newer semver versions available (newest first)
+	ResolvedCurrentVersion string   // Semver tag matching local digest (for latest-tagged images)
+	ResolvedTargetVersion  string   // Semver tag matching remote digest (for latest-tagged images)
 }
 
 // Checker queries the Docker daemon and remote registry to determine
