@@ -14,8 +14,9 @@ const maxManifestHEADs = 10
 
 // maxManifestHEADsExtended is the budget for the second pass when the target
 // was found but the current version wasn't (the local image may be several
-// versions behind).
-const maxManifestHEADsExtended = 20
+// versions behind). For images like Alpine, ~40 semver tags can separate
+// adjacent minor versions (3.23→3.18), so 50 gives comfortable headroom.
+const maxManifestHEADsExtended = 50
 
 // RepoPath extracts the repository path from an image reference, stripping
 // the registry host prefix. Unlike NormaliseRepo, this correctly handles
