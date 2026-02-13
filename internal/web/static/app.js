@@ -3241,6 +3241,27 @@ function renderRegistryCredentials() {
         });
 
         card.appendChild(fields);
+
+        // Registry-specific help text.
+        var helpDiv = document.createElement("div");
+        helpDiv.className = "registry-help";
+        helpDiv.style.padding = "0 var(--sp-4) var(--sp-4)";
+        helpDiv.style.fontSize = "var(--fs-xs)";
+        helpDiv.style.color = "var(--text-tertiary)";
+        helpDiv.style.lineHeight = "1.5";
+        function updateHelp(registry) {
+            var hints = {
+                "docker.io": "Create a Personal Access Token at hub.docker.com \u2192 Account Settings \u2192 Personal access tokens. Read-only scope is sufficient. Authenticated users get 200 pulls/6h (vs 100 anonymous).",
+                "ghcr.io": "Create a Personal Access Token at github.com \u2192 Settings \u2192 Developer settings \u2192 Personal access tokens (classic). Select the read:packages scope.",
+                "lscr.io": "LinuxServer images are also available via GHCR (ghcr.io/linuxserver/*). Use your LinuxServer Fleet credentials, or switch the registry to ghcr.io for simpler auth.",
+                "docker.gitea.com": "Use your Gitea account credentials. Gitea registries typically have no rate limits."
+            };
+            helpDiv.textContent = hints[registry] || "Use your registry login credentials or access token.";
+        }
+        updateHelp(cred.registry);
+        regSelect.addEventListener("change", function() { updateHelp(this.value); });
+        card.appendChild(helpDiv);
+
         container.appendChild(card);
     });
 }
@@ -3289,6 +3310,8 @@ function saveRegistryCredentials(event) {
         } else {
             showToast("Registry credentials saved", "success");
             loadRegistries();
+            // Probe runs server-side in background; re-fetch after it completes.
+            setTimeout(function() { loadRegistries(); }, 3000);
         }
     })
     .catch(function(err) {
@@ -3311,6 +3334,8 @@ function testRegistryCredential(index) {
     .then(function(data) {
         if (data.success) {
             showToast("Credentials valid for " + cred.registry, "success");
+            // Probe runs server-side in background; re-fetch after it completes.
+            setTimeout(function() { loadRegistries(); }, 3000);
         } else {
             showToast("Test failed: " + (data.error || "unknown error"), "error");
         }
