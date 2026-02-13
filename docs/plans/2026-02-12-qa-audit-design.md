@@ -1,7 +1,7 @@
 # QA Audit: Web Dashboard Deep Dive
 
 > Date: 2026-02-12
-> Method: Playwright live testing against https://sen.lucknet.uk
+> Method: Playwright live testing against the Sentinel dashboard
 > Approach: Flow-based walkthrough (every user journey end-to-end)
 
 ## Test Categories
