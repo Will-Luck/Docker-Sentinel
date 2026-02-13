@@ -3028,7 +3028,7 @@ function renderRegistryStatus() {
     table.className = "data-table";
     var thead = document.createElement("thead");
     var headRow = document.createElement("tr");
-    ["Registry", "Containers", "Remaining", "Resets", "Auth"].forEach(function(label) {
+    ["Registry", "Containers", "Used", "Resets", "Auth"].forEach(function(label) {
         var th = document.createElement("th");
         th.textContent = label;
         headRow.appendChild(th);
@@ -3046,16 +3046,17 @@ function renderRegistryStatus() {
         var cred = info.credential;
 
         var images = rl ? rl.container_count : 0;
-        var remainingText = "\u2014";
-        var remainingClass = "";
+        var usedText = "\u2014";
+        var usedClass = "";
         var resets = "\u2014";
 
         if (rl && rl.has_limits) {
-            remainingText = rl.remaining + "/" + rl.limit;
+            var used = rl.limit - rl.remaining;
+            usedText = used + " / " + rl.limit;
             if (rl.remaining <= 0) {
-                remainingClass = "text-error";
-            } else if (rl.limit > 0 && rl.remaining / rl.limit < 0.2) {
-                remainingClass = "text-warning";
+                usedClass = "text-error";
+            } else if (rl.limit > 0 && used / rl.limit >= 0.8) {
+                usedClass = "text-warning";
             }
             if (rl.reset_at && rl.reset_at !== "0001-01-01T00:00:00Z") {
                 var resetTime = new Date(rl.reset_at);
@@ -3070,9 +3071,9 @@ function renderRegistryStatus() {
                 }
             }
         } else if (rl && !rl.has_limits && rl.limit === -1 && rl.last_updated === "0001-01-01T00:00:00Z") {
-            remainingText = "\u2014";
+            usedText = "\u2014";
         } else if (rl && !rl.has_limits) {
-            remainingText = "No limits";
+            usedText = "No limits";
         }
 
         var tr = document.createElement("tr");
@@ -3087,16 +3088,16 @@ function renderRegistryStatus() {
         tdImages.textContent = images;
         tr.appendChild(tdImages);
 
-        var tdRemaining = document.createElement("td");
-        if (remainingClass) {
-            var remainSpan = document.createElement("span");
-            remainSpan.className = remainingClass;
-            remainSpan.textContent = remainingText;
-            tdRemaining.appendChild(remainSpan);
+        var tdUsed = document.createElement("td");
+        if (usedClass) {
+            var usedSpan = document.createElement("span");
+            usedSpan.className = usedClass;
+            usedSpan.textContent = usedText;
+            tdUsed.appendChild(usedSpan);
         } else {
-            tdRemaining.textContent = remainingText;
+            tdUsed.textContent = usedText;
         }
-        tr.appendChild(tdRemaining);
+        tr.appendChild(tdUsed);
 
         var tdResets = document.createElement("td");
         tdResets.textContent = resets;
@@ -3189,12 +3190,41 @@ function renderRegistryCredentials() {
         var fields = document.createElement("div");
         fields.className = "channel-fields";
 
-        var fieldDefs = [
-            { label: "Registry", field: "registry", type: "text", value: cred.registry },
+        // Registry dropdown (populated from detected registries).
+        var regFieldDiv = document.createElement("div");
+        regFieldDiv.className = "channel-field";
+        var regLabel = document.createElement("span");
+        regLabel.className = "channel-field-label";
+        regLabel.textContent = "Registry";
+        regFieldDiv.appendChild(regLabel);
+        var regSelect = document.createElement("select");
+        regSelect.className = "channel-field-input";
+        regSelect.setAttribute("data-field", "registry");
+        var detectedRegs = Object.keys(registryData).sort();
+        detectedRegs.forEach(function(reg) {
+            var opt = document.createElement("option");
+            opt.value = reg;
+            opt.textContent = reg;
+            if (reg === cred.registry) opt.selected = true;
+            regSelect.appendChild(opt);
+        });
+        // If current value isn't in the list (e.g. manually entered), add it.
+        if (cred.registry && detectedRegs.indexOf(cred.registry) === -1) {
+            var customOpt = document.createElement("option");
+            customOpt.value = cred.registry;
+            customOpt.textContent = cred.registry;
+            customOpt.selected = true;
+            regSelect.insertBefore(customOpt, regSelect.firstChild);
+        }
+        regFieldDiv.appendChild(regSelect);
+        fields.appendChild(regFieldDiv);
+
+        // Username and Password fields.
+        var textFieldDefs = [
             { label: "Username", field: "username", type: "text", value: cred.username },
             { label: "Password / Token", field: "secret", type: "password", value: cred.secret }
         ];
-        fieldDefs.forEach(function(def) {
+        textFieldDefs.forEach(function(def) {
             var fieldDiv = document.createElement("div");
             fieldDiv.className = "channel-field";
             var labelSpan = document.createElement("span");
