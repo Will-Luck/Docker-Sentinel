@@ -563,7 +563,7 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("fetch token: %w", err)
 	}
-	tagsResult, err := registry.ListTags(ctx, imageRef, token)
+	tagsResult, err := registry.ListTags(ctx, imageRef, token, "docker.io", nil)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
 	}

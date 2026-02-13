@@ -30,12 +30,19 @@ type TagsResult struct {
 	Headers http.Header // response headers for rate limit extraction
 }
 
-// ListTags fetches all tags for the given image reference from Docker Hub.
-// The imageRef should be a full reference like "library/nginx" or "gitea/gitea".
-// The token is a bearer token from FetchAnonymousToken or a registry credential.
-func ListTags(ctx context.Context, imageRef string, token string) (TagsResult, error) {
+// ListTags fetches all tags for the given image reference from a container registry.
+// For Docker Hub, it uses registry-1.docker.io. For other registries, it uses
+// the registry host extracted from the image reference.
+// The token is a bearer token for Docker Hub; for other registries, pass empty
+// token and provide credentials via the cred parameter for Basic auth.
+func ListTags(ctx context.Context, imageRef string, token string, host string, cred *RegistryCredential) (TagsResult, error) {
 	repo := NormaliseRepo(imageRef)
-	url := "https://registry-1.docker.io/v2/" + repo + "/tags/list"
+	var url string
+	if host != "" && host != "docker.io" {
+		url = "https://" + host + "/v2/" + repo + "/tags/list"
+	} else {
+		url = "https://registry-1.docker.io/v2/" + repo + "/tags/list"
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -43,6 +50,9 @@ func ListTags(ctx context.Context, imageRef string, token string) (TagsResult, e
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	} else if cred != nil {
+		// Non-Hub registries: use Basic auth directly
+		req.SetBasicAuth(cred.Username, cred.Secret)
 	}
 
 	resp, err := httpClient.Do(req)
