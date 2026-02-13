@@ -381,13 +381,15 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 
 		case docker.PolicyManual:
 			u.queue.Add(PendingUpdate{
-				ContainerID:   c.ID,
-				ContainerName: name,
-				CurrentImage:  imageRef,
-				CurrentDigest: check.LocalDigest,
-				RemoteDigest:  check.RemoteDigest,
-				DetectedAt:    u.clock.Now(),
-				NewerVersions: check.NewerVersions,
+				ContainerID:            c.ID,
+				ContainerName:          name,
+				CurrentImage:           imageRef,
+				CurrentDigest:          check.LocalDigest,
+				RemoteDigest:           check.RemoteDigest,
+				DetectedAt:             u.clock.Now(),
+				NewerVersions:          check.NewerVersions,
+				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+				ResolvedTargetVersion:  check.ResolvedTargetVersion,
 			})
 			u.log.Info("update queued for manual approval", "name", name)
 			u.publishEvent(events.EventQueueChange, name, "queued for approval")
