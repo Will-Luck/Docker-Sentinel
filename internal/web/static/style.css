@@ -1978,6 +1978,41 @@ table.managing .stack-select {
     margin-right: var(--sp-1);
 }
 
+/* Stack drag handle — hidden by default, shown in manage mode */
+.stack-drag-handle {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    cursor: grab;
+    color: var(--on-surface);
+    font-size: 1.1rem;
+    line-height: 1;
+    user-select: none;
+    transition: width 250ms ease, opacity 250ms ease, margin 250ms ease;
+}
+table.managing .stack-drag-handle {
+    width: 20px;
+    opacity: 0.5;
+    margin-right: var(--sp-1);
+}
+table.managing .stack-drag-handle:hover {
+    opacity: 1;
+}
+table.managing .stack-drag-handle:active {
+    cursor: grabbing;
+}
+
+/* Drag states */
+.stack-group.dragging {
+    opacity: 0.4;
+}
+.stack-group.drag-over-above {
+    box-shadow: inset 0 3px 0 0 var(--accent);
+}
+.stack-group.drag-over-below {
+    box-shadow: inset 0 -3px 0 0 var(--accent);
+}
+
 
 /* --------------------------------------------------------------------------
    19. Empty State

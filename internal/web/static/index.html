@@ -139,6 +139,7 @@
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
                                 <td colspan="6">
                                     <div class="stack-header-inner">
+                                        <span class="stack-drag-handle" title="Drag to reorder">&#10495;</span>
                                         <input type="checkbox" class="stack-select" data-stack="{{.Name}}" title="Select all in {{.Name}}" onclick="event.stopPropagation()">
                                         <span class="stack-chevron">&#9656;</span>
                                         <span class="stack-name">{{.Name}}</span>

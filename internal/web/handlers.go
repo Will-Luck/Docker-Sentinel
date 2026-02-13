@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -137,16 +138,54 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		stackMap[key] = append(stackMap[key], v)
 	}
-	// Named stacks alphabetically, standalone ("") last.
-	sort.Slice(stackOrder, func(i, j int) bool {
-		if stackOrder[i] == "" {
-			return false
+	// Apply saved stack order if available, falling back to alphabetical.
+	savedJSON, _ := s.deps.SettingsStore.LoadSetting("stack_order")
+	var savedOrder []string
+	if savedJSON != "" {
+		_ = json.Unmarshal([]byte(savedJSON), &savedOrder)
+	}
+	if len(savedOrder) > 0 {
+		rank := make(map[string]int, len(savedOrder))
+		for i, name := range savedOrder {
+			rank[name] = i
 		}
-		if stackOrder[j] == "" {
-			return true
-		}
-		return stackOrder[i] < stackOrder[j]
-	})
+		nextRank := len(savedOrder)
+		sort.SliceStable(stackOrder, func(i, j int) bool {
+			// Standalone ("") always last.
+			if stackOrder[i] == "" {
+				return false
+			}
+			if stackOrder[j] == "" {
+				return true
+			}
+			nameI := stackOrder[i]
+			nameJ := stackOrder[j]
+			ri, okI := rank[nameI]
+			rj, okJ := rank[nameJ]
+			if !okI {
+				ri = nextRank
+			}
+			if !okJ {
+				rj = nextRank
+			}
+			if ri != rj {
+				return ri < rj
+			}
+			// Both unsaved — alphabetical.
+			return nameI < nameJ
+		})
+	} else {
+		// Default: named stacks alphabetically, standalone ("") last.
+		sort.Slice(stackOrder, func(i, j int) bool {
+			if stackOrder[i] == "" {
+				return false
+			}
+			if stackOrder[j] == "" {
+				return true
+			}
+			return stackOrder[i] < stackOrder[j]
+		})
+	}
 	stacks := make([]stackGroup, 0, len(stackOrder))
 	for _, key := range stackOrder {
 		name := key

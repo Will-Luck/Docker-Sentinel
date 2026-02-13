@@ -1593,7 +1593,125 @@ function toggleManageMode() {
         btn.classList.remove("active");
         clearSelection();
     }
+
+    // Enable/disable drag on stack groups
+    var groups = table.querySelectorAll(".stack-group");
+    for (var i = 0; i < groups.length; i++) {
+        if (manageMode) {
+            groups[i].setAttribute("draggable", "true");
+        } else {
+            groups[i].removeAttribute("draggable");
+        }
+    }
 }
+
+/* ------------------------------------------------------------
+   Stack Drag Reordering
+   ------------------------------------------------------------ */
+
+(function () {
+    var dragSrc = null;
+
+    document.addEventListener("dragstart", function (e) {
+        var group = e.target.closest(".stack-group");
+        if (!group || !manageMode) return;
+        // Only start drag from the handle
+        if (!e.target.closest(".stack-drag-handle") && e.target !== group) {
+            // Allow drag from tbody (set via draggable attr) but only in manage mode
+        }
+        dragSrc = group;
+        group.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", group.getAttribute("data-stack"));
+    });
+
+    document.addEventListener("dragover", function (e) {
+        var group = e.target.closest(".stack-group");
+        if (!group || !dragSrc || group === dragSrc) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+
+        // Determine above/below by mouse Y relative to element midpoint
+        var rect = group.getBoundingClientRect();
+        var mid = rect.top + rect.height / 2;
+        clearDragClasses(group);
+        if (e.clientY < mid) {
+            group.classList.add("drag-over-above");
+        } else {
+            group.classList.add("drag-over-below");
+        }
+    });
+
+    document.addEventListener("dragleave", function (e) {
+        var group = e.target.closest(".stack-group");
+        if (group) clearDragClasses(group);
+    });
+
+    document.addEventListener("drop", function (e) {
+        var group = e.target.closest(".stack-group");
+        if (!group || !dragSrc || group === dragSrc) return;
+        e.preventDefault();
+
+        var rect = group.getBoundingClientRect();
+        var mid = rect.top + rect.height / 2;
+        var table = group.closest("table");
+
+        if (e.clientY < mid) {
+            table.insertBefore(dragSrc, group);
+        } else {
+            // Insert after: use nextElementSibling (next tbody)
+            var next = group.nextElementSibling;
+            if (next) {
+                table.insertBefore(dragSrc, next);
+            } else {
+                table.appendChild(dragSrc);
+            }
+        }
+
+        cleanupDrag();
+        saveStackOrder();
+    });
+
+    document.addEventListener("dragend", function () {
+        cleanupDrag();
+    });
+
+    function clearDragClasses(el) {
+        el.classList.remove("drag-over-above", "drag-over-below");
+    }
+
+    function cleanupDrag() {
+        if (dragSrc) {
+            dragSrc.classList.remove("dragging");
+            dragSrc = null;
+        }
+        var all = document.querySelectorAll(".drag-over-above, .drag-over-below");
+        for (var i = 0; i < all.length; i++) {
+            clearDragClasses(all[i]);
+        }
+    }
+
+    function saveStackOrder() {
+        var groups = document.querySelectorAll(".stack-group");
+        var order = [];
+        for (var i = 0; i < groups.length; i++) {
+            var name = groups[i].getAttribute("data-stack");
+            if (name) order.push(name);
+        }
+        fetch("/api/settings/stack-order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ order: order })
+        })
+        .then(function (res) {
+            if (!res.ok) throw new Error("save failed");
+            showToast("Stack order saved", "success");
+        })
+        .catch(function () {
+            showToast("Failed to save stack order", "error");
+        });
+    }
+})();
 
 /* ------------------------------------------------------------
    11. SSE Real-time Updates
