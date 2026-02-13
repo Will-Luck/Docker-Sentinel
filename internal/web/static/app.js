@@ -3097,7 +3097,8 @@ function updateRateLimitStatus() {
             var el = document.getElementById("rate-limit-status");
             if (!el) return;
             var health = data.health || "ok";
-            el.textContent = health.charAt(0).toUpperCase() + health.slice(1);
+            var labels = { ok: "Healthy", low: "Needs Attention", exhausted: "Exhausted" };
+            el.textContent = labels[health] || "Healthy";
             el.className = "stat-value";
             if (health === "ok") el.classList.add("success");
             else if (health === "low") el.classList.add("warning");
