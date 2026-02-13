@@ -35,9 +35,9 @@ type Config struct {
 	WebEnabled bool
 
 	// Authentication
-	AuthEnabled    *bool         // nil = use DB default (true); non-nil = env override
-	SessionExpiry  time.Duration
-	CookieSecure   bool
+	AuthEnabled   *bool // nil = use DB default (true); non-nil = env override
+	SessionExpiry time.Duration
+	CookieSecure  bool
 
 	// TLS
 	TLSCert string // path to TLS certificate PEM file
@@ -69,27 +69,27 @@ func NewTestConfig() *Config {
 // Load reads all configuration from environment variables with defaults.
 func Load() *Config {
 	return &Config{
-		DockerSock:     envStr("SENTINEL_DOCKER_SOCK", "/var/run/docker.sock"),
-		pollInterval:   envDuration("SENTINEL_POLL_INTERVAL", 6*time.Hour),
-		gracePeriod:    envDuration("SENTINEL_GRACE_PERIOD", 30*time.Second),
-		defaultPolicy:  envStr("SENTINEL_DEFAULT_POLICY", "manual"),
-		DBPath:         envStr("SENTINEL_DB_PATH", "/data/sentinel.db"),
-		LogJSON:        envBool("SENTINEL_LOG_JSON", true),
-		GotifyURL:      envStr("SENTINEL_GOTIFY_URL", ""),
-		GotifyToken:    envStr("SENTINEL_GOTIFY_TOKEN", ""),
-		WebhookURL:     envStr("SENTINEL_WEBHOOK_URL", ""),
-		WebhookHeaders: envStr("SENTINEL_WEBHOOK_HEADERS", ""),
-		WebPort:        envStr("SENTINEL_WEB_PORT", "8080"),
-		WebEnabled:     envBool("SENTINEL_WEB_ENABLED", true),
-		AuthEnabled:    envBoolPtr("SENTINEL_AUTH_ENABLED"),
-		SessionExpiry:  envDuration("SENTINEL_SESSION_EXPIRY", 720*time.Hour),
-		CookieSecure:       envBool("SENTINEL_COOKIE_SECURE", true),
-		TLSCert:            envStr("SENTINEL_TLS_CERT", ""),
-		TLSKey:             envStr("SENTINEL_TLS_KEY", ""),
-		TLSAuto:            envBool("SENTINEL_TLS_AUTO", false),
-		WebAuthnRPID:       envStr("SENTINEL_WEBAUTHN_RPID", ""),
+		DockerSock:          envStr("SENTINEL_DOCKER_SOCK", "/var/run/docker.sock"),
+		pollInterval:        envDuration("SENTINEL_POLL_INTERVAL", 6*time.Hour),
+		gracePeriod:         envDuration("SENTINEL_GRACE_PERIOD", 30*time.Second),
+		defaultPolicy:       envStr("SENTINEL_DEFAULT_POLICY", "manual"),
+		DBPath:              envStr("SENTINEL_DB_PATH", "/data/sentinel.db"),
+		LogJSON:             envBool("SENTINEL_LOG_JSON", true),
+		GotifyURL:           envStr("SENTINEL_GOTIFY_URL", ""),
+		GotifyToken:         envStr("SENTINEL_GOTIFY_TOKEN", ""),
+		WebhookURL:          envStr("SENTINEL_WEBHOOK_URL", ""),
+		WebhookHeaders:      envStr("SENTINEL_WEBHOOK_HEADERS", ""),
+		WebPort:             envStr("SENTINEL_WEB_PORT", "8080"),
+		WebEnabled:          envBool("SENTINEL_WEB_ENABLED", true),
+		AuthEnabled:         envBoolPtr("SENTINEL_AUTH_ENABLED"),
+		SessionExpiry:       envDuration("SENTINEL_SESSION_EXPIRY", 720*time.Hour),
+		CookieSecure:        envBool("SENTINEL_COOKIE_SECURE", true),
+		TLSCert:             envStr("SENTINEL_TLS_CERT", ""),
+		TLSKey:              envStr("SENTINEL_TLS_KEY", ""),
+		TLSAuto:             envBool("SENTINEL_TLS_AUTO", false),
+		WebAuthnRPID:        envStr("SENTINEL_WEBAUTHN_RPID", ""),
 		WebAuthnDisplayName: envStr("SENTINEL_WEBAUTHN_DISPLAY_NAME", "Docker-Sentinel"),
-		WebAuthnOrigins:    envStr("SENTINEL_WEBAUTHN_ORIGINS", ""),
+		WebAuthnOrigins:     envStr("SENTINEL_WEBAUTHN_ORIGINS", ""),
 	}
 }
 
@@ -136,24 +136,24 @@ func (c *Config) Values() map[string]string {
 	c.mu.RUnlock()
 
 	return map[string]string{
-		"SENTINEL_DOCKER_SOCK":    c.DockerSock,
-		"SENTINEL_POLL_INTERVAL":  pi.String(),
-		"SENTINEL_GRACE_PERIOD":   gp.String(),
-		"SENTINEL_DEFAULT_POLICY": dp,
-		"SENTINEL_DB_PATH":        c.DBPath,
-		"SENTINEL_LOG_JSON":       fmt.Sprintf("%t", c.LogJSON),
-		"SENTINEL_GOTIFY_URL":     c.GotifyURL,
-		"SENTINEL_WEBHOOK_URL":    c.WebhookURL,
-		"SENTINEL_WEB_PORT":       c.WebPort,
-		"SENTINEL_WEB_ENABLED":    fmt.Sprintf("%t", c.WebEnabled),
-		"SENTINEL_SESSION_EXPIRY":          c.SessionExpiry.String(),
-		"SENTINEL_COOKIE_SECURE":           fmt.Sprintf("%t", c.CookieSecure),
-		"SENTINEL_TLS_CERT":                c.TLSCert,
-		"SENTINEL_TLS_KEY":                 redactPath(c.TLSKey),
-		"SENTINEL_TLS_AUTO":                fmt.Sprintf("%t", c.TLSAuto),
-		"SENTINEL_WEBAUTHN_RPID":           c.WebAuthnRPID,
-		"SENTINEL_WEBAUTHN_DISPLAY_NAME":   c.WebAuthnDisplayName,
-		"SENTINEL_WEBAUTHN_ORIGINS":        c.WebAuthnOrigins,
+		"SENTINEL_DOCKER_SOCK":           c.DockerSock,
+		"SENTINEL_POLL_INTERVAL":         pi.String(),
+		"SENTINEL_GRACE_PERIOD":          gp.String(),
+		"SENTINEL_DEFAULT_POLICY":        dp,
+		"SENTINEL_DB_PATH":               c.DBPath,
+		"SENTINEL_LOG_JSON":              fmt.Sprintf("%t", c.LogJSON),
+		"SENTINEL_GOTIFY_URL":            c.GotifyURL,
+		"SENTINEL_WEBHOOK_URL":           c.WebhookURL,
+		"SENTINEL_WEB_PORT":              c.WebPort,
+		"SENTINEL_WEB_ENABLED":           fmt.Sprintf("%t", c.WebEnabled),
+		"SENTINEL_SESSION_EXPIRY":        c.SessionExpiry.String(),
+		"SENTINEL_COOKIE_SECURE":         fmt.Sprintf("%t", c.CookieSecure),
+		"SENTINEL_TLS_CERT":              c.TLSCert,
+		"SENTINEL_TLS_KEY":               redactPath(c.TLSKey),
+		"SENTINEL_TLS_AUTO":              fmt.Sprintf("%t", c.TLSAuto),
+		"SENTINEL_WEBAUTHN_RPID":         c.WebAuthnRPID,
+		"SENTINEL_WEBAUTHN_DISPLAY_NAME": c.WebAuthnDisplayName,
+		"SENTINEL_WEBAUTHN_ORIGINS":      c.WebAuthnOrigins,
 	}
 }
 

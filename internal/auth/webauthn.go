@@ -7,14 +7,14 @@ import (
 
 // WebAuthnCredential represents a stored WebAuthn passkey credential.
 type WebAuthnCredential struct {
-	ID              []byte                `json:"id"`               // credential ID (raw bytes)
-	PublicKey       []byte                `json:"public_key"`       // COSE-encoded public key
+	ID              []byte                `json:"id"`         // credential ID (raw bytes)
+	PublicKey       []byte                `json:"public_key"` // COSE-encoded public key
 	AttestationType string                `json:"attestation_type"`
 	Transport       []string              `json:"transport,omitempty"` // e.g. "usb", "ble", "internal"
 	Flags           WebAuthnFlags         `json:"flags"`
 	Authenticator   WebAuthnAuthenticator `json:"authenticator"`
-	UserID          string                `json:"user_id"`   // links to User.ID
-	Name            string                `json:"name"`      // user-friendly label (e.g. "MacBook Touch ID")
+	UserID          string                `json:"user_id"` // links to User.ID
+	Name            string                `json:"name"`    // user-friendly label (e.g. "MacBook Touch ID")
 	CreatedAt       time.Time             `json:"created_at"`
 }
 

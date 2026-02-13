@@ -39,9 +39,9 @@ type User struct {
 	RoleID         string    `json:"role_id"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
-	Locked         bool      `json:"locked"`        // locked after too many failed logins
-	LockedUntil    time.Time `json:"locked_until"`  // unlock time
-	FailedLogins   int       `json:"failed_logins"` // consecutive failures
+	Locked         bool      `json:"locked"`                     // locked after too many failed logins
+	LockedUntil    time.Time `json:"locked_until"`               // unlock time
+	FailedLogins   int       `json:"failed_logins"`              // consecutive failures
 	WebAuthnUserID []byte    `json:"webauthn_user_id,omitempty"` // stable opaque 64-byte random ID
 }
 
@@ -61,7 +61,7 @@ func (u *User) EnsureWebAuthnUserID() (bool, error) {
 
 // Session represents an active login session.
 type Session struct {
-	Token     string    `json:"token"`      // 64-char hex token (also the bucket key)
+	Token     string    `json:"token"` // 64-char hex token (also the bucket key)
 	UserID    string    `json:"user_id"`
 	IP        string    `json:"ip"`
 	UserAgent string    `json:"user_agent"`
@@ -79,13 +79,13 @@ type Role struct {
 
 // APIToken represents a bearer token for programmatic API access.
 type APIToken struct {
-	ID          string       `json:"id"`           // 16-char hex ID
-	Name        string       `json:"name"`         // user-friendly label
-	TokenHash   string       `json:"token_hash"`   // SHA-256 hex of the full token
+	ID          string       `json:"id"`         // 16-char hex ID
+	Name        string       `json:"name"`       // user-friendly label
+	TokenHash   string       `json:"token_hash"` // SHA-256 hex of the full token
 	UserID      string       `json:"user_id"`
-	Permissions []Permission `json:"permissions"`   // nil = inherit from user role
+	Permissions []Permission `json:"permissions"` // nil = inherit from user role
 	CreatedAt   time.Time    `json:"created_at"`
-	ExpiresAt   time.Time    `json:"expires_at"`    // zero = no expiry
+	ExpiresAt   time.Time    `json:"expires_at"` // zero = no expiry
 	LastUsedAt  time.Time    `json:"last_used_at"`
 }
 
