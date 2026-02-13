@@ -272,10 +272,10 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 		})
 		s.deps.Log.Info("update found via manual check", "name", name)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status":          "update_available",
-			"name":            name,
-			"message":         "Update available for " + name,
-			"newer_versions":  newerVersions,
+			"status":         "update_available",
+			"name":           name,
+			"message":        "Update available for " + name,
+			"newer_versions": newerVersions,
 		})
 		return
 	}

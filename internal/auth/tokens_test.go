@@ -70,7 +70,7 @@ func TestGenerateTokenID(t *testing.T) {
 
 func TestHashToken(t *testing.T) {
 	t.Run("is deterministic", func(t *testing.T) {
-		token := "stk_some-test-token"
+		token := "stk_some-test-token" //nolint:gosec // test value, not a real credential
 		h1 := HashToken(token)
 		h2 := HashToken(token)
 		if h1 != h2 {
