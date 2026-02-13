@@ -432,13 +432,15 @@ func (a *queueAdapter) List() []web.PendingUpdate {
 
 func (a *queueAdapter) Add(update web.PendingUpdate) {
 	a.q.Add(engine.PendingUpdate{
-		ContainerID:   update.ContainerID,
-		ContainerName: update.ContainerName,
-		CurrentImage:  update.CurrentImage,
-		CurrentDigest: update.CurrentDigest,
-		RemoteDigest:  update.RemoteDigest,
-		DetectedAt:    update.DetectedAt,
-		NewerVersions: update.NewerVersions,
+		ContainerID:            update.ContainerID,
+		ContainerName:          update.ContainerName,
+		CurrentImage:           update.CurrentImage,
+		CurrentDigest:          update.CurrentDigest,
+		RemoteDigest:           update.RemoteDigest,
+		DetectedAt:             update.DetectedAt,
+		NewerVersions:          update.NewerVersions,
+		ResolvedCurrentVersion: update.ResolvedCurrentVersion,
+		ResolvedTargetVersion:  update.ResolvedTargetVersion,
 	})
 }
 
@@ -462,13 +464,15 @@ func (a *queueAdapter) Remove(name string) { a.q.Remove(name) }
 
 func convertPendingUpdate(item engine.PendingUpdate) web.PendingUpdate {
 	return web.PendingUpdate{
-		ContainerID:   item.ContainerID,
-		ContainerName: item.ContainerName,
-		CurrentImage:  item.CurrentImage,
-		CurrentDigest: item.CurrentDigest,
-		RemoteDigest:  item.RemoteDigest,
-		DetectedAt:    item.DetectedAt,
-		NewerVersions: item.NewerVersions,
+		ContainerID:            item.ContainerID,
+		ContainerName:          item.ContainerName,
+		CurrentImage:           item.CurrentImage,
+		CurrentDigest:          item.CurrentDigest,
+		RemoteDigest:           item.RemoteDigest,
+		DetectedAt:             item.DetectedAt,
+		NewerVersions:          item.NewerVersions,
+		ResolvedCurrentVersion: item.ResolvedCurrentVersion,
+		ResolvedTargetVersion:  item.ResolvedTargetVersion,
 	}
 }
 
