@@ -10,12 +10,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
 </head>
 <body>
     <a href="#main-content" class="skip-link">Skip to main content</a>
     <nav class="nav">
         <a href="/" class="nav-brand">
-            <span class="nav-logo">S</span>
+            <img src="/favicon.svg" alt="S" class="nav-logo">
             <span class="nav-brand-text">Sentinel</span>
         </a>
         <div class="nav-links">
@@ -72,206 +74,338 @@
 
         <!-- General tab -->
         <div class="tab-panel active" id="tab-general" role="tabpanel">
-            <div class="settings-grid">
-                <div class="card">
-                    <div class="card-header"><h2>Scanning &amp; Behaviour</h2></div>
-                    <div class="card-body">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Poll interval</div>
-                                <div class="setting-desc">How often Sentinel checks for container updates</div>
-                            </div>
-                            <div class="poll-interval-control">
-                                <select id="poll-interval" class="setting-select" onchange="onPollIntervalChange(this.value)">
-                                    <option value="15m">15 minutes</option>
-                                    <option value="30m">30 minutes</option>
-                                    <option value="1h">1 hour</option>
-                                    <option value="6h">6 hours</option>
-                                    <option value="12h">12 hours</option>
-                                    <option value="24h">24 hours</option>
-                                    <option value="custom">Custom...</option>
-                                </select>
-                                <div id="poll-custom-wrap" class="custom-duration-wrap" style="display:none">
-                                    <select id="poll-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('poll')">
-                                        <option value="">Unit...</option>
-                                        <option value="s">Seconds</option>
-                                        <option value="m">Minutes</option>
-                                        <option value="h">Hours</option>
-                                    </select>
-                                    <input id="poll-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
-                                    <button id="poll-custom-btn" class="btn btn-success" onclick="applyCustomPollInterval()" disabled>Apply</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Default policy</div>
-                                <div class="setting-desc">Policy assigned to containers without a sentinel.policy label</div>
-                            </div>
-                            <select id="default-policy" class="setting-select" onchange="setDefaultPolicy(this.value)">
-                                <option value="auto">auto</option>
-                                <option value="manual">manual</option>
-                                <option value="pinned">pinned</option>
-                            </select>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Grace period</div>
-                                <div class="setting-desc">Time to wait after an update before checking container health</div>
-                            </div>
-                            <div class="poll-interval-control">
-                                <select id="grace-period" class="setting-select" onchange="onGracePeriodChange(this.value)">
-                                    <option value="10s">10 seconds</option>
-                                    <option value="15s">15 seconds</option>
-                                    <option value="30s">30 seconds</option>
-                                    <option value="1m0s">60 seconds</option>
-                                    <option value="2m0s">120 seconds</option>
-                                    <option value="custom">Custom...</option>
-                                </select>
-                                <div id="grace-custom-wrap" class="custom-duration-wrap" style="display:none">
-                                    <select id="grace-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('grace')">
-                                        <option value="">Unit...</option>
-                                        <option value="s">Seconds</option>
-                                        <option value="m">Minutes</option>
-                                        <option value="h">Hours</option>
-                                    </select>
-                                    <input id="grace-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
-                                    <button id="grace-custom-btn" class="btn btn-success" onclick="applyCustomGracePeriod()" disabled>Apply</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Pause scanning</div>
-                                <div class="setting-desc">Temporarily stop all automatic update checks</div>
-                            </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="pause-toggle" class="channel-toggle" onchange="setPauseState(this.checked)">
-                                <span id="pause-toggle-text" class="toggle-switch-text">Off</span>
-                            </label>
-                        </div>
-                        <div class="setting-row setting-row-top">
-                            <div class="setting-info">
-                                <div class="setting-label">Container filters</div>
-                                <div class="setting-desc">Exclude containers matching these patterns (one per line)</div>
-                            </div>
-                            <div class="setting-control-stack">
-                                <textarea id="container-filters" class="setting-textarea" placeholder="e.g. watchtower&#10;test-*"></textarea>
-                                <button class="btn btn-success" onclick="saveFilters()">Save Filters</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <div class="accordion-stack">
 
-                <!-- Collapsible Environment Variables -->
-                <div class="collapsible-section">
-                    <button class="collapsible-header" onclick="toggleCollapsible(this)" aria-expanded="false">
-                        <span class="collapsible-chevron">&#9656;</span>
-                        <span>Environment Variables</span>
-                        <span class="setting-desc" style="margin-left:var(--sp-2);margin-bottom:0">Read-only values set via environment</span>
-                    </button>
-                    <div class="collapsible-body" style="display:none">
-                        <div class="card" style="border-top-left-radius:0;border-top-right-radius:0">
-                            <div class="card-body">
-                                <div class="table-wrap">
-                                    <table class="table-readonly">
-                                        <thead><tr><th>Setting</th><th>Value</th></tr></thead>
-                                        <tbody>
-                                            {{range $k, $v := .Settings}}
-                                            <tr>
-                                                <td class="mono">{{$k}}</td>
-                                                <td class="mono">{{$v}}</td>
-                                            </tr>
-                                            {{end}}
-                                        </tbody>
-                                    </table>
+                <!-- Scanning & Behaviour -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Scanning &amp; Behaviour</h2>
+                        <span class="accordion-preview">Poll interval, policies, and filters</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Poll interval</div>
+                                    <div class="setting-desc">How often Sentinel checks for container updates</div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <select id="poll-interval" class="setting-select" onchange="onPollIntervalChange(this.value)">
+                                        <option value="15m">15 minutes</option>
+                                        <option value="30m">30 minutes</option>
+                                        <option value="1h">1 hour</option>
+                                        <option value="6h">6 hours</option>
+                                        <option value="12h">12 hours</option>
+                                        <option value="24h">24 hours</option>
+                                        <option value="custom">Custom...</option>
+                                    </select>
+                                    <div id="poll-custom-wrap" class="custom-duration-wrap" style="display:none">
+                                        <select id="poll-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('poll')">
+                                            <option value="">Unit...</option>
+                                            <option value="s">Seconds</option>
+                                            <option value="m">Minutes</option>
+                                            <option value="h">Hours</option>
+                                        </select>
+                                        <input id="poll-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
+                                        <button id="poll-custom-btn" class="btn btn-success" onclick="applyCustomPollInterval()" disabled>Apply</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Default policy</div>
+                                    <div class="setting-desc">Policy assigned to containers without a sentinel.policy label</div>
+                                </div>
+                                <select id="default-policy" class="setting-select" onchange="setDefaultPolicy(this.value)">
+                                    <option value="auto">auto</option>
+                                    <option value="manual">manual</option>
+                                    <option value="pinned">pinned</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Grace period</div>
+                                    <div class="setting-desc">Time to wait after an update before checking container health</div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <select id="grace-period" class="setting-select" onchange="onGracePeriodChange(this.value)">
+                                        <option value="10s">10 seconds</option>
+                                        <option value="15s">15 seconds</option>
+                                        <option value="30s">30 seconds</option>
+                                        <option value="1m0s">60 seconds</option>
+                                        <option value="2m0s">120 seconds</option>
+                                        <option value="custom">Custom...</option>
+                                    </select>
+                                    <div id="grace-custom-wrap" class="custom-duration-wrap" style="display:none">
+                                        <select id="grace-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('grace')">
+                                            <option value="">Unit...</option>
+                                            <option value="s">Seconds</option>
+                                            <option value="m">Minutes</option>
+                                            <option value="h">Hours</option>
+                                        </select>
+                                        <input id="grace-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
+                                        <button id="grace-custom-btn" class="btn btn-success" onclick="applyCustomGracePeriod()" disabled>Apply</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Pause scanning</div>
+                                    <div class="setting-desc">Temporarily stop all automatic update checks</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="pause-toggle" class="channel-toggle" onchange="setPauseState(this.checked)">
+                                    <span id="pause-toggle-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row setting-row-top">
+                                <div class="setting-info">
+                                    <div class="setting-label">Container filters</div>
+                                    <div class="setting-desc">Exclude containers matching these patterns (one per line)</div>
+                                </div>
+                                <div class="setting-control-stack">
+                                    <textarea id="container-filters" class="setting-textarea" placeholder="e.g. watchtower&#10;test-*"></textarea>
+                                    <button class="btn btn-success" onclick="saveFilters()">Save Filters</button>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
+                </details>
+
+                <!-- Environment Variables -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Environment Variables</h2>
+                        <span class="accordion-preview">Read-only values set via Docker environment</span>
+                    </summary>
+                    <div class="accordion-body accordion-body-flush">
+                        <div class="table-wrap">
+                            <table class="table-readonly">
+                                <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+                                <tbody>
+                                    {{range $k, $v := .Settings}}
+                                    <tr>
+                                        <td class="mono">{{$k}}</td>
+                                        <td class="mono">{{$v}}</td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </details>
+
             </div>
         </div>
 
         <!-- Notifications tab -->
         <div class="tab-panel" id="tab-notifications" role="tabpanel">
-            <div class="settings-grid">
-                <div id="channel-list"><!-- JS renders channel cards here --></div>
-                <div class="setting-actions">
-                    <div class="channel-add-wrap">
-                        <select id="channel-type-select" class="setting-select">
-                            <option value="">Add notification channel...</option>
-                            <option value="gotify">Gotify</option>
-                            <option value="webhook">Webhook</option>
-                            <option value="slack">Slack</option>
-                            <option value="discord">Discord</option>
-                            <option value="ntfy">Ntfy</option>
-                            <option value="telegram">Telegram</option>
-                            <option value="pushover">Pushover</option>
-                        </select>
-                        <button class="btn" onclick="addChannel()">Add</button>
+            <div class="accordion-stack">
+
+                <!-- Notification Channels -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Notification Channels</h2>
+                        <span class="accordion-preview">Where Sentinel sends alerts</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div id="channel-list"><!-- JS renders channel cards here --></div>
+                        <div class="setting-actions" style="margin-top: var(--sp-4)">
+                            <div class="channel-add-wrap">
+                                <select id="channel-type-select" class="setting-select">
+                                    <option value="">Add notification channel...</option>
+                                    <option value="gotify">Gotify</option>
+                                    <option value="webhook">Webhook</option>
+                                    <option value="slack">Slack</option>
+                                    <option value="discord">Discord</option>
+                                    <option value="ntfy">Ntfy</option>
+                                    <option value="telegram">Telegram</option>
+                                    <option value="pushover">Pushover</option>
+                                </select>
+                                <button class="btn" onclick="addChannel()">Add</button>
+                            </div>
+                            <button class="btn btn-success" id="notify-save-btn" onclick="saveNotificationChannels()">Save All</button>
+                            <button class="btn" id="notify-test-btn" onclick="testNotification()">Test All</button>
+                        </div>
                     </div>
-                    <button class="btn btn-success" id="notify-save-btn" onclick="saveNotificationChannels()">Save All</button>
-                    <button class="btn" id="notify-test-btn" onclick="testNotification()">Test All</button>
-                </div>
+                </details>
+
+                <!-- Notification Behaviour -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Notification Behaviour</h2>
+                        <span class="accordion-preview" id="notify-mode-preview">Loading...</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="accordion-intro">Choose how Sentinel notifies you when container updates are found. This applies to all containers unless overridden individually below.</p>
+
+                        <div class="notify-options" id="notify-mode-options">
+                            <label class="notify-option">
+                                <input type="radio" name="default-notify-mode" value="default" onchange="onNotifyModeChange(this.value)">
+                                <div class="notify-option-content">
+                                    <div class="notify-option-title">Notify immediately + daily summary</div>
+                                    <div class="notify-option-desc">Get an alert as soon as an update is detected. You also receive a scheduled summary of all pending updates.</div>
+                                </div>
+                            </label>
+                            <label class="notify-option">
+                                <input type="radio" name="default-notify-mode" value="every_scan" onchange="onNotifyModeChange(this.value)">
+                                <div class="notify-option-content">
+                                    <div class="notify-option-title">Notify on every scan</div>
+                                    <div class="notify-option-desc">Get an alert every time a scan finds updates, even if you were already notified about the same update. No scheduled summary.</div>
+                                </div>
+                            </label>
+                            <label class="notify-option">
+                                <input type="radio" name="default-notify-mode" value="digest_only" onchange="onNotifyModeChange(this.value)">
+                                <div class="notify-option-content">
+                                    <div class="notify-option-title">Summary only</div>
+                                    <div class="notify-option-desc">No immediate alerts. You only receive a scheduled summary listing all containers with pending updates.</div>
+                                </div>
+                            </label>
+                            <label class="notify-option">
+                                <input type="radio" name="default-notify-mode" value="muted" onchange="onNotifyModeChange(this.value)">
+                                <div class="notify-option-content">
+                                    <div class="notify-option-title">Silent</div>
+                                    <div class="notify-option-desc">No notifications of any kind. Check the dashboard manually to see pending updates.</div>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div id="digest-schedule-section" style="display:none">
+                            <h3 class="digest-schedule-heading">Summary schedule</h3>
+                            <div class="settings-rows">
+                                <div class="setting-row">
+                                    <div class="setting-info">
+                                        <div class="setting-label">Time of day</div>
+                                        <div class="setting-desc">When the summary is compiled and sent</div>
+                                    </div>
+                                    <input type="time" id="digest-time" class="setting-input" style="max-width:160px" value="09:00" onchange="saveDigestSettings()">
+                                </div>
+                                <div class="setting-row">
+                                    <div class="setting-info">
+                                        <div class="setting-label">Frequency</div>
+                                        <div class="setting-desc">How often the summary is sent</div>
+                                    </div>
+                                    <select id="digest-interval" class="setting-select" onchange="saveDigestSettings()">
+                                        <option value="12h">Every 12 hours</option>
+                                        <option value="24h" selected>Every 24 hours</option>
+                                        <option value="48h">Every 48 hours</option>
+                                        <option value="168h">Weekly</option>
+                                    </select>
+                                </div>
+                                <div class="setting-actions">
+                                    <button class="btn" onclick="triggerDigest()">Send Test Summary</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Per-Container Notification Overrides -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Per-Container Overrides</h2>
+                        <span class="accordion-preview">Customise notification behaviour for individual containers</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="accordion-intro">Override the default notification mode for specific containers. Containers not listed here use the default mode set above.</p>
+                        <div id="container-notify-prefs">
+                            <p class="text-muted">Loading...</p>
+                        </div>
+                    </div>
+                </details>
+
             </div>
         </div>
 
         <!-- Appearance tab -->
         <div class="tab-panel" id="tab-appearance" role="tabpanel">
-            <div class="settings-grid">
-                <div class="card">
-                    <div class="card-header"><h2>Appearance</h2></div>
-                    <div class="card-body">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Theme</div>
-                                <div class="setting-desc">Choose your colour scheme</div>
+            <div class="accordion-stack">
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Appearance</h2>
+                        <span class="accordion-preview">Theme and layout preferences</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Theme</div>
+                                    <div class="setting-desc">Choose your colour scheme</div>
+                                </div>
+                                <select id="theme-select" class="setting-select">
+                                    <option value="dark">Dark</option>
+                                    <!-- light theme disabled for now -->
+                                </select>
                             </div>
-                            <select id="theme-select" class="setting-select">
-                                <option value="auto">Auto (system)</option>
-                                <option value="dark">Dark</option>
-                                <option value="light">Light</option>
-                            </select>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Default stack view</div>
-                                <div class="setting-desc">Whether stacks start collapsed or expanded on the dashboard</div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Dashboard stacks</div>
+                                    <div class="setting-desc">Whether container stacks start collapsed or expanded on the dashboard</div>
+                                </div>
+                                <select id="stack-default" class="setting-select">
+                                    <option value="collapsed">Collapsed</option>
+                                    <option value="expanded">Expanded</option>
+                                </select>
                             </div>
-                            <select id="stack-default" class="setting-select">
-                                <option value="collapsed">Collapsed</option>
-                                <option value="expanded">Expanded</option>
-                            </select>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Default section view</div>
+                                    <div class="setting-desc">Whether page sections start collapsed or expanded (your manual changes are remembered)</div>
+                                </div>
+                                <select id="section-default" class="setting-select">
+                                    <option value="remember">Remember my choices</option>
+                                    <option value="collapsed">Always collapsed</option>
+                                    <option value="expanded">Always expanded</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
-                </div>
+                </details>
             </div>
         </div>
 
         <!-- Security tab (admin only) -->
         {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
         <div class="tab-panel" id="tab-security" role="tabpanel">
-            <div class="settings-grid">
-                <div class="card">
-                    <div class="card-header"><h2>Authentication</h2></div>
-                    <div class="card-body">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Authentication</div>
-                                <div class="setting-desc">When disabled, all endpoints are accessible without login</div>
+            <div class="accordion-stack">
+
+                <!-- Authentication -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Authentication</h2>
+                        <span class="accordion-preview">Login requirements and access control</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Require login</div>
+                                    <div class="setting-desc">When disabled, all endpoints are accessible without login</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="auth-toggle" class="channel-toggle" checked onchange="confirmAuthToggle(this)">
+                                    <span class="toggle-switch-text">Enabled</span>
+                                </label>
                             </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="auth-toggle" class="channel-toggle" checked onchange="confirmAuthToggle(this)">
-                                <span class="toggle-switch-text">Enabled</span>
-                            </label>
                         </div>
                     </div>
-                </div>
+                </details>
 
-                <div class="card">
-                    <div class="card-header"><h2>Users</h2></div>
-                    <div class="card-body">
+                <!-- User Management -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>User Management</h2>
+                        <span class="accordion-preview">Manage users and roles</span>
+                    </summary>
+                    <div class="accordion-body accordion-body-flush">
                         <div class="table-wrap">
                             <table>
                                 <thead>
@@ -287,39 +421,47 @@
                             </table>
                         </div>
                     </div>
-                </div>
+                </details>
 
-                <div class="card">
-                    <div class="card-header"><h2>Create User</h2></div>
-                    <div class="card-body">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Username</div>
+                <!-- Create User -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Create User</h2>
+                        <span class="accordion-preview">Add a new user account</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Username</div>
+                                </div>
+                                <input type="text" id="new-user-username" class="setting-select" placeholder="username" autocomplete="off">
                             </div>
-                            <input type="text" id="new-user-username" class="setting-select" placeholder="username" autocomplete="off">
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Password</div>
-                                <div class="setting-desc">Min 8 characters, at least one letter and one digit</div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Password</div>
+                                    <div class="setting-desc">Min 8 characters, at least one letter and one digit</div>
+                                </div>
+                                <input type="password" id="new-user-password" class="setting-select" placeholder="password" autocomplete="new-password">
                             </div>
-                            <input type="password" id="new-user-password" class="setting-select" placeholder="password" autocomplete="new-password">
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Role</div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Role</div>
+                                </div>
+                                <select id="new-user-role" class="setting-select">
+                                    <option value="viewer">viewer</option>
+                                    <option value="operator">operator</option>
+                                    <option value="admin">admin</option>
+                                </select>
                             </div>
-                            <select id="new-user-role" class="setting-select">
-                                <option value="viewer">viewer</option>
-                                <option value="operator">operator</option>
-                                <option value="admin">admin</option>
-                            </select>
-                        </div>
-                        <div class="setting-row" style="justify-content:flex-end">
-                            <button class="btn btn-success" onclick="createUser()">Create User</button>
+                            <div class="setting-row" style="justify-content:flex-end">
+                                <button class="btn btn-success" onclick="createUser()">Create User</button>
+                            </div>
                         </div>
                     </div>
-                </div>
+                </details>
+
             </div>
         </div>
         {{end}}{{end}}{{end}}

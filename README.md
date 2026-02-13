@@ -16,10 +16,13 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 - **Automatic rollback** — if a container fails health checks after updating, Sentinel rolls back to the snapshot
 - **Web dashboard** — real-time SSE updates, stack grouping, accordion detail panels, bulk policy management, update history and queue
 - **Registry intelligence** — digest comparison for mutable tags (`:latest`), semver tag discovery for versioned images
-- **Notifications** — Gotify, Slack, Discord, Ntfy, Telegram, Pushover, generic webhooks — with per-channel event filtering
-- **Runtime settings** — adjust poll interval, grace period, default policy, pause scanning, and container filters from the web UI without restart
+- **Smart notifications** — deduplicated alerts (never re-notify for the same update), per-container notification modes (immediate, every scan, summary only, silent), and a daily digest scheduler
+- **7 notification providers** — Gotify, Slack, Discord, Ntfy, Telegram, Pushover, generic webhooks — each with per-event filtering
+- **Runtime settings** — adjust poll interval, grace period, default policy, pause scanning, notification behaviour, and container filters from the web UI without restart
 - **Container controls** — start, stop, restart containers directly from the dashboard
-- **Live updates** — SSE-powered inline row updates with spinners, no full page reloads
+- **Live updates** — SSE-powered inline row updates with live ticking scan timer, no full page reloads
+- **Accordion UI** — collapsible sections across all pages with persistent open/close state remembered across reloads
+- **Authentication** — WebAuthn/passkey login, multi-user support with role-based access, built-in TLS
 - **Self-update** — Sentinel can check and update its own image (with opt-out via `sentinel.self` label)
 - **[Docker-Guardian](https://github.com/Will-Luck/Docker-Guardian) integration** — maintenance labels prevent restart conflicts during updates
 - **REST API** — all dashboard functionality exposed as JSON endpoints
@@ -74,9 +77,11 @@ All configuration is via environment variables. Settings marked with * can also 
 - **manual** — updates queued for approval in the dashboard
 - **pinned** — container is never checked or updated
 
-## Notification Channels
+## Notifications
 
-Notification channels are configured from the **Settings** page in the web UI. Each channel supports per-event filtering so you can, for example, send only failures to Slack while sending everything to a webhook.
+### Channels
+
+Notification channels are configured from the **Settings > Notification Channels** section in the web UI. Each channel supports per-event filtering so you can, for example, send only failures to Slack while sending everything to a webhook.
 
 | Provider | Required Settings |
 |----------|-------------------|
@@ -89,6 +94,21 @@ Notification channels are configured from the **Settings** page in the web UI. E
 | **Webhook** | URL, optional custom headers |
 
 Filterable event types: `update_available`, `update_started`, `update_succeeded`, `update_failed`, `rollback_succeeded`, `rollback_failed`, `container_state`.
+
+### Notification Modes
+
+Control how each container triggers notifications. Set a global default from **Settings > Notification Behaviour**, or override per-container from the container detail page or **Settings > Per-Container Overrides**.
+
+| Mode | Description |
+|------|-------------|
+| **Immediate + summary** | Alert as soon as an update is detected, plus a scheduled summary. Won't re-alert for the same update. |
+| **Every scan** | Alert every time a scan finds updates, even if already notified. No summary. |
+| **Summary only** | No immediate alerts — only the scheduled summary. |
+| **Silent** | No notifications of any kind. |
+
+### Daily Digest
+
+When using a mode that includes a summary (immediate + summary, or summary only), Sentinel compiles a consolidated report of all pending updates and sends it at a configurable time and frequency (default: daily at 09:00). The dashboard also shows a dismissible banner when updates are pending.
 
 Legacy environment variables (`SENTINEL_GOTIFY_*`, `SENTINEL_WEBHOOK_*`) are still supported but the web UI is recommended for new setups.
 
@@ -134,6 +154,8 @@ Requires Go 1.24+, Docker, and golangci-lint.
 | `POST` | `/api/containers/{name}/restart` | Restart container |
 | `POST` | `/api/containers/{name}/stop` | Stop container |
 | `POST` | `/api/containers/{name}/start` | Start container |
+| `GET` | `/api/containers/{name}/notify-pref` | Get per-container notification mode |
+| `POST` | `/api/containers/{name}/notify-pref` | Set per-container notification mode |
 | `POST` | `/api/check/{name}` | Manual registry check |
 | `POST` | `/api/update/{name}` | Trigger immediate update |
 | `POST` | `/api/approve/{name}` | Approve queued update |
@@ -168,6 +190,12 @@ Requires Go 1.24+, Docker, and golangci-lint.
 | `PUT` | `/api/settings/notifications` | Save notification channels |
 | `POST` | `/api/settings/notifications/test` | Send a test notification |
 | `GET` | `/api/settings/notifications/event-types` | List available event types |
+| `GET` | `/api/settings/digest` | Get digest scheduler config |
+| `POST` | `/api/settings/digest` | Save digest config (mode, time, interval) |
+| `GET` | `/api/settings/container-notify-prefs` | Get all per-container notification modes |
+| `POST` | `/api/digest/trigger` | Trigger an immediate digest |
+| `GET` | `/api/digest/banner` | Get pending updates for dashboard banner |
+| `POST` | `/api/digest/banner/dismiss` | Dismiss the digest banner |
 
 **Self-Update**
 

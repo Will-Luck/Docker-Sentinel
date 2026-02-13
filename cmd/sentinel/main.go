@@ -185,6 +185,8 @@ func main() {
 	updater.SetSettingsReader(db)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
+	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
+	digestSched.SetSettingsReader(db)
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
@@ -209,6 +211,8 @@ func main() {
 			SelfUpdater:        &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
 			NotifyConfig:       &notifyConfigAdapter{db},
 			NotifyReconfigurer: notifier,
+			NotifyState:        &notifyStateAdapter{db},
+			Digest:             digestSched,
 			Auth:               authSvc,
 			Log:                log.Logger,
 		})
@@ -265,6 +269,12 @@ func main() {
 		go func() {
 			<-ctx.Done()
 			_ = srv.Shutdown(context.Background())
+		}()
+
+		go func() {
+			if err := digestSched.Run(ctx); err != nil {
+				log.Error("digest scheduler error", "error", err)
+			}
 		}()
 
 		// Session cleanup goroutine — purge expired sessions hourly.
@@ -670,4 +680,51 @@ func (a *notifyConfigAdapter) GetNotificationChannels() ([]notify.Channel, error
 
 func (a *notifyConfigAdapter) SetNotificationChannels(channels []notify.Channel) error {
 	return a.s.SetNotificationChannels(channels)
+}
+
+// notifyStateAdapter bridges store.Store to web.NotifyStateStore.
+type notifyStateAdapter struct{ s *store.Store }
+
+func (a *notifyStateAdapter) GetNotifyPref(name string) (*web.NotifyPref, error) {
+	p, err := a.s.GetNotifyPref(name)
+	if err != nil || p == nil {
+		return nil, err
+	}
+	return &web.NotifyPref{Mode: p.Mode}, nil
+}
+
+func (a *notifyStateAdapter) SetNotifyPref(name string, pref *web.NotifyPref) error {
+	return a.s.SetNotifyPref(name, &store.NotifyPref{Mode: pref.Mode})
+}
+
+func (a *notifyStateAdapter) DeleteNotifyPref(name string) error {
+	return a.s.DeleteNotifyPref(name)
+}
+
+func (a *notifyStateAdapter) AllNotifyPrefs() (map[string]*web.NotifyPref, error) {
+	prefs, err := a.s.AllNotifyPrefs()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*web.NotifyPref, len(prefs))
+	for k, v := range prefs {
+		result[k] = &web.NotifyPref{Mode: v.Mode}
+	}
+	return result, nil
+}
+
+func (a *notifyStateAdapter) AllNotifyStates() (map[string]*web.NotifyState, error) {
+	states, err := a.s.AllNotifyStates()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*web.NotifyState, len(states))
+	for k, v := range states {
+		result[k] = &web.NotifyState{
+			LastDigest:   v.LastDigest,
+			LastNotified: v.LastNotified,
+			FirstSeen:    v.FirstSeen,
+		}
+	}
+	return result, nil
 }

@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,6 +45,8 @@ type Dependencies struct {
 	SelfUpdater        SelfUpdater
 	NotifyConfig       NotificationConfigStore
 	NotifyReconfigurer NotifierReconfigurer
+	NotifyState        NotifyStateStore
+	Digest             DigestController
 	Auth               *auth.Service
 	Log                *slog.Logger
 }
@@ -105,6 +108,22 @@ type NotifierReconfigurer interface {
 	Reconfigure(notifiers ...notify.Notifier)
 }
 
+// NotifyStateStore reads and writes per-container notification state and preferences.
+type NotifyStateStore interface {
+	GetNotifyPref(name string) (*NotifyPref, error)
+	SetNotifyPref(name string, pref *NotifyPref) error
+	DeleteNotifyPref(name string) error
+	AllNotifyPrefs() (map[string]*NotifyPref, error)
+	AllNotifyStates() (map[string]*NotifyState, error)
+}
+
+// DigestController controls the digest scheduler.
+type DigestController interface {
+	SetDigestConfig()
+	TriggerDigest(ctx context.Context)
+	LastRunTime() time.Time
+}
+
 // SchedulerController controls the scheduler's poll interval and scan triggers.
 type SchedulerController interface {
 	SetPollInterval(d time.Duration)
@@ -125,6 +144,18 @@ type LogEntry struct {
 	Type      string    `json:"type"`
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
+}
+
+// NotifyPref mirrors store.NotifyPref.
+type NotifyPref struct {
+	Mode string `json:"mode"`
+}
+
+// NotifyState mirrors store.NotifyState.
+type NotifyState struct {
+	LastDigest   string    `json:"last_digest"`
+	LastNotified time.Time `json:"last_notified"`
+	FirstSeen    time.Time `json:"first_seen"`
 }
 
 // UpdateRecord mirrors store.UpdateRecord to avoid importing store.
@@ -342,6 +373,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /static/app.js", s.serveJS)
 	s.mux.HandleFunc("GET /static/auth.js", s.serveAuthJS)
 	s.mux.HandleFunc("GET /static/webauthn.js", s.serveWebAuthnJS)
+	s.mux.HandleFunc("GET /static/", s.serveStaticFile)
 	s.mux.HandleFunc("GET /favicon.svg", s.serveFavicon)
 	s.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -410,6 +442,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
 
+	// Notification prefs & digest (read)
+	s.mux.Handle("GET /api/containers/{name}/notify-pref", perm(auth.PermSettingsView, s.apiGetNotifyPref))
+	s.mux.Handle("GET /api/settings/digest", perm(auth.PermSettingsView, s.apiGetDigestSettings))
+	s.mux.Handle("GET /api/settings/container-notify-prefs", perm(auth.PermSettingsView, s.apiGetAllNotifyPrefs))
+	s.mux.Handle("GET /api/digest/banner", perm(auth.PermContainersView, s.apiGetDigestBanner))
+
 	// settings.modify
 	s.mux.Handle("POST /api/settings/poll-interval", perm(auth.PermSettingsModify, s.apiSetPollInterval))
 	s.mux.Handle("POST /api/settings/default-policy", perm(auth.PermSettingsModify, s.apiSetDefaultPolicy))
@@ -419,6 +457,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
 	s.mux.Handle("POST /api/self-update", perm(auth.PermSettingsModify, s.apiSelfUpdate))
+
+	// Notification prefs & digest (write)
+	s.mux.Handle("POST /api/containers/{name}/notify-pref", perm(auth.PermSettingsModify, s.apiSetNotifyPref))
+	s.mux.Handle("POST /api/settings/digest", perm(auth.PermSettingsModify, s.apiSaveDigestSettings))
+	s.mux.Handle("POST /api/digest/trigger", perm(auth.PermSettingsModify, s.apiTriggerDigest))
+	s.mux.Handle("POST /api/digest/banner/dismiss", perm(auth.PermContainersView, s.apiDismissDigestBanner))
 
 	// users.manage
 	s.mux.Handle("GET /api/auth/users", perm(auth.PermUsersManage, s.apiListUsers))
@@ -476,10 +520,36 @@ func (s *Server) serveWebAuthnJS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
-	const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><style>circle{fill:#6750A4}text{fill:#fff}@media(prefers-color-scheme:dark){circle{fill:#D0BCFF}text{fill:#000}}</style><circle cx="16" cy="16" r="16"/><text x="16" y="22" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="20">S</text></svg>`
+	data, err := staticFS.ReadFile("static/favicon.svg")
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	_, _ = w.Write([]byte(favicon))
+	_, _ = w.Write(data)
+}
+
+func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
+	path := "static" + strings.TrimPrefix(r.URL.Path, "/static")
+	data, err := staticFS.ReadFile(path)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	ext := filepath.Ext(path)
+	switch ext {
+	case ".png":
+		w.Header().Set("Content-Type", "image/png")
+	case ".svg":
+		w.Header().Set("Content-Type", "image/svg+xml")
+	case ".ico":
+		w.Header().Set("Content-Type", "image/x-icon")
+	default:
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(data)
 }
 
 // writeJSON encodes v as JSON and writes it to the response.

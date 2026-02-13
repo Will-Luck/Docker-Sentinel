@@ -15,6 +15,8 @@ const (
 	EventQueueChange     EventType = "queue_change"
 	EventScanComplete    EventType = "scan_complete"
 	EventPolicyChange    EventType = "policy_change"
+	EventDigestReady     EventType = "digest_ready"
+	EventSettingsChange  EventType = "settings_change"
 )
 
 // SSEEvent is a single event published through the bus and streamed to SSE clients.
