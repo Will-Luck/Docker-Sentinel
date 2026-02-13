@@ -397,6 +397,10 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 
 	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf("total=%d updated=%d", result.Total, result.Updated))
 
+	if u.rateTracker != nil {
+		u.publishEvent(events.EventRateLimits, "", u.rateTracker.OverallHealth())
+	}
+
 	return result
 }
 

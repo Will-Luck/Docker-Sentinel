@@ -1759,6 +1759,21 @@ function initSSE() {
         }
     });
 
+    es.addEventListener("rate_limits", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            var health = data.message || "ok";
+            var el = document.getElementById("rate-limit-status");
+            if (!el) return;
+            var labels = { ok: "Healthy", low: "Needs Attention", exhausted: "Exhausted" };
+            el.textContent = labels[health] || "Healthy";
+            el.className = "stat-value";
+            if (health === "ok") el.classList.add("success");
+            else if (health === "low") el.classList.add("warning");
+            else if (health === "exhausted") el.classList.add("error");
+        } catch (_) {}
+    });
+
     es.addEventListener("settings_change", function () {
         checkPauseState();
     });
@@ -3107,8 +3122,7 @@ function updateRateLimitStatus() {
         .catch(function() {});
 }
 
-// Only poll if the rate-limit-status element exists (dashboard page).
+// Fetch on initial load; live updates arrive via SSE rate_limits event.
 if (document.getElementById("rate-limit-status")) {
-    setInterval(updateRateLimitStatus, 30000);
     updateRateLimitStatus();
 }
