@@ -26,7 +26,7 @@ func TestResolvePolicyOverride(t *testing.T) {
 	db := newTestStore(t)
 	_ = db.SetPolicyOverride("myapp", "pinned")
 
-	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "auto"}, "myapp", "v1.0", "manual")
+	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "auto"}, "myapp", "v1.0", "manual", true)
 	if r.Policy != "pinned" {
 		t.Fatalf("expected pinned, got %s", r.Policy)
 	}
@@ -38,7 +38,7 @@ func TestResolvePolicyOverride(t *testing.T) {
 func TestResolvePolicyLabel(t *testing.T) {
 	db := newTestStore(t)
 
-	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "auto"}, "myapp", "v1.0", "manual")
+	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "auto"}, "myapp", "v1.0", "manual", true)
 	if r.Policy != "auto" {
 		t.Fatalf("expected auto, got %s", r.Policy)
 	}
@@ -50,7 +50,7 @@ func TestResolvePolicyLabel(t *testing.T) {
 func TestResolvePolicyDefault(t *testing.T) {
 	db := newTestStore(t)
 
-	r := ResolvePolicy(db, map[string]string{}, "myapp", "v1.0", "manual")
+	r := ResolvePolicy(db, map[string]string{}, "myapp", "v1.0", "manual", true)
 	if r.Policy != "manual" {
 		t.Fatalf("expected manual, got %s", r.Policy)
 	}
@@ -64,7 +64,7 @@ func TestResolvePolicyOverrideTakesPrecedence(t *testing.T) {
 	_ = db.SetPolicyOverride("myapp", "auto")
 
 	// Label says pinned, override says auto — override wins.
-	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "pinned"}, "myapp", "v1.0", "manual")
+	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "pinned"}, "myapp", "v1.0", "manual", true)
 	if r.Policy != "auto" {
 		t.Fatalf("expected auto (override), got %s", r.Policy)
 	}
@@ -78,7 +78,7 @@ func TestResolvePolicyDeleteOverride(t *testing.T) {
 	_ = db.SetPolicyOverride("myapp", "pinned")
 	_ = db.DeletePolicyOverride("myapp")
 
-	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "auto"}, "myapp", "v1.0", "manual")
+	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "auto"}, "myapp", "v1.0", "manual", true)
 	if r.Policy != "auto" {
 		t.Fatalf("expected auto (label fallback), got %s", r.Policy)
 	}
@@ -91,7 +91,7 @@ func TestResolvePolicyLatestTagAutoPolicy(t *testing.T) {
 	db := newTestStore(t)
 
 	// :latest tag with no label should resolve to auto via SourceLatest.
-	r := ResolvePolicy(db, map[string]string{}, "myapp", "latest", "manual")
+	r := ResolvePolicy(db, map[string]string{}, "myapp", "latest", "manual", true)
 	if r.Policy != "auto" {
 		t.Fatalf("expected auto, got %s", r.Policy)
 	}
@@ -104,7 +104,7 @@ func TestResolvePolicyEmptyTagAutoPolicy(t *testing.T) {
 	db := newTestStore(t)
 
 	// Empty tag (implicit latest) with no label should resolve to auto via SourceLatest.
-	r := ResolvePolicy(db, map[string]string{}, "myapp", "", "manual")
+	r := ResolvePolicy(db, map[string]string{}, "myapp", "", "manual", true)
 	if r.Policy != "auto" {
 		t.Fatalf("expected auto, got %s", r.Policy)
 	}
@@ -117,7 +117,7 @@ func TestResolvePolicyLatestTagLabelWins(t *testing.T) {
 	db := newTestStore(t)
 
 	// :latest tag but explicit label "pinned" — label should win over latest-auto.
-	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "pinned"}, "myapp", "latest", "manual")
+	r := ResolvePolicy(db, map[string]string{"sentinel.policy": "pinned"}, "myapp", "latest", "manual", true)
 	if r.Policy != "pinned" {
 		t.Fatalf("expected pinned (label), got %s", r.Policy)
 	}
@@ -131,7 +131,7 @@ func TestResolvePolicyLatestTagOverrideWins(t *testing.T) {
 	_ = db.SetPolicyOverride("myapp", "pinned")
 
 	// :latest tag but DB override "pinned" — override should win.
-	r := ResolvePolicy(db, map[string]string{}, "myapp", "latest", "manual")
+	r := ResolvePolicy(db, map[string]string{}, "myapp", "latest", "manual", true)
 	if r.Policy != "pinned" {
 		t.Fatalf("expected pinned (override), got %s", r.Policy)
 	}
@@ -144,7 +144,7 @@ func TestResolvePolicyNonLatestUsesDefault(t *testing.T) {
 	db := newTestStore(t)
 
 	// Non-latest tag with no label should use global default.
-	r := ResolvePolicy(db, map[string]string{}, "myapp", "v2.1.0", "manual")
+	r := ResolvePolicy(db, map[string]string{}, "myapp", "v2.1.0", "manual", true)
 	if r.Policy != "manual" {
 		t.Fatalf("expected manual (default), got %s", r.Policy)
 	}

@@ -1031,6 +1031,47 @@ func (s *Server) apiSetPause(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apiSetLatestAutoUpdate enables/disables auto-update for :latest containers.
+func (s *Server) apiSetLatestAutoUpdate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("latest_auto_update", value); err != nil {
+		s.deps.Log.Error("failed to save latest_auto_update", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetLatestAutoUpdate(body.Enabled)
+	}
+
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent("settings", "", "Auto-update :latest containers "+label)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "latest auto-update " + label,
+	})
+}
+
 // apiSetFilters sets container name filter patterns for scan exclusion.
 func (s *Server) apiSetFilters(w http.ResponseWriter, r *http.Request) {
 	var body struct {

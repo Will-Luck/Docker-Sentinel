@@ -133,6 +133,11 @@ func main() {
 		}
 	}
 
+	if saved, err := db.LoadSetting("latest_auto_update"); err == nil && saved != "" {
+		cfg.SetLatestAutoUpdate(saved == "true")
+		log.Info("loaded persisted latest auto-update setting", "enabled", saved == "true")
+	}
+
 	// Build notification chain from persisted channels, with env var fallback.
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, notify.NewLogNotifier(log))
