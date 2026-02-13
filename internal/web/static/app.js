@@ -3195,10 +3195,10 @@ function collectRegistryCredentialsFromDOM() {
     });
 }
 
-function saveRegistryCredentials() {
+function saveRegistryCredentials(event) {
     collectRegistryCredentialsFromDOM();
-    var btn = event.target;
-    btn.classList.add("loading");
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    if (btn) btn.classList.add("loading");
 
     fetch("/api/settings/registries", {
         method: "PUT",
@@ -3207,7 +3207,7 @@ function saveRegistryCredentials() {
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-        btn.classList.remove("loading");
+        if (btn) btn.classList.remove("loading");
         if (data.error) {
             showToast("Failed: " + data.error, "error");
         } else {
@@ -3216,7 +3216,7 @@ function saveRegistryCredentials() {
         }
     })
     .catch(function(err) {
-        btn.classList.remove("loading");
+        if (btn) btn.classList.remove("loading");
         showToast("Save failed: " + err, "error");
     });
 }
