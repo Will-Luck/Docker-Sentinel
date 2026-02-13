@@ -126,7 +126,7 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 		return result
 	}
 
-	repo := NormaliseRepo(imageRef)
+	repo := RepoPath(imageRef)
 	host := RegistryHost(imageRef)
 
 	// Look up stored credentials for this registry.
@@ -182,7 +182,7 @@ func (c *Checker) resolveLatestVersions(ctx context.Context, imageRef string, re
 		}
 	}
 
-	repo := NormaliseRepo(imageRef)
+	repo := RepoPath(imageRef)
 	token, err := FetchToken(ctx, repo, cred, host)
 	if err != nil {
 		c.log.Debug("failed to fetch token for latest version resolve", "image", imageRef, "error", err)

@@ -27,8 +27,9 @@ func RepoPath(imageRef string) string {
 	if i := strings.Index(ref, "@"); i >= 0 {
 		ref = ref[:i]
 	}
-	// Strip tag.
-	if i := strings.Index(ref, ":"); i >= 0 {
+	// Strip tag. Use LastIndex to skip hostname:port colons and find
+	// the tag separator (the last colon in the reference).
+	if i := strings.LastIndex(ref, ":"); i >= 0 {
 		// Only strip if the colon is after the last slash (i.e. it's a tag
 		// separator, not part of a hostname:port).
 		if slash := strings.LastIndex(ref, "/"); i > slash {

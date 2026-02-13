@@ -25,6 +25,10 @@ func TestRepoPath(t *testing.T) {
 		{"docker.io/library/nginx", "library/nginx"},
 		{"registry-1.docker.io/library/nginx:latest", "library/nginx"},
 		{"nginx@sha256:abc123", "library/nginx"},
+		{"localhost:5000/myrepo:tag", "library/myrepo"},
+		{"localhost:5000/myrepo", "library/myrepo"},
+		{"localhost:5000/org/app:tag", "org/app"},
+		{"registry.example.com:443/org/app:v2.0", "org/app"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
