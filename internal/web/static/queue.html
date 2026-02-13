@@ -97,7 +97,11 @@
                                 <td><a href="/container/{{$q.ContainerName}}" class="container-link">{{$q.ContainerName}}</a></td>
                                 <td class="cell-image mono" title="{{$q.CurrentImage}}">
                                     {{if $q.NewerVersions}}
-                                        <span class="version-current">{{imageTag $q.CurrentImage}}</span>
+                                        {{if $q.ResolvedCurrentVersion}}
+                                            <span class="version-current">{{$q.ResolvedCurrentVersion}}</span>
+                                        {{else}}
+                                            <span class="version-current">{{imageTag $q.CurrentImage}}</span>
+                                        {{end}}
                                         <span class="version-arrow">&rarr;</span>
                                         {{with versionURL $q.CurrentImage (index $q.NewerVersions 0)}}
                                             <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{index $q.NewerVersions 0}}</a>
