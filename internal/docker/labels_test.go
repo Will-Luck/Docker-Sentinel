@@ -8,22 +8,26 @@ func TestContainerPolicy(t *testing.T) {
 		labels        map[string]string
 		defaultPolicy string
 		want          Policy
+		wantLabel     bool
 	}{
-		{"no label, default manual", map[string]string{}, "manual", PolicyManual},
-		{"no label, default auto", map[string]string{}, "auto", PolicyAuto},
-		{"explicit auto", map[string]string{"sentinel.policy": "auto"}, "manual", PolicyAuto},
-		{"explicit manual", map[string]string{"sentinel.policy": "manual"}, "auto", PolicyManual},
-		{"explicit pinned", map[string]string{"sentinel.policy": "pinned"}, "auto", PolicyPinned},
-		{"case insensitive", map[string]string{"sentinel.policy": "AUTO"}, "manual", PolicyAuto},
-		{"invalid label falls back", map[string]string{"sentinel.policy": "yolo"}, "manual", PolicyManual},
-		{"other labels ignored", map[string]string{"com.example.foo": "bar"}, "manual", PolicyManual},
+		{"no label, default manual", map[string]string{}, "manual", PolicyManual, false},
+		{"no label, default auto", map[string]string{}, "auto", PolicyAuto, false},
+		{"explicit auto", map[string]string{"sentinel.policy": "auto"}, "manual", PolicyAuto, true},
+		{"explicit manual", map[string]string{"sentinel.policy": "manual"}, "auto", PolicyManual, true},
+		{"explicit pinned", map[string]string{"sentinel.policy": "pinned"}, "auto", PolicyPinned, true},
+		{"case insensitive", map[string]string{"sentinel.policy": "AUTO"}, "manual", PolicyAuto, true},
+		{"invalid label falls back", map[string]string{"sentinel.policy": "yolo"}, "manual", PolicyManual, false},
+		{"other labels ignored", map[string]string{"com.example.foo": "bar"}, "manual", PolicyManual, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ContainerPolicy(tt.labels, tt.defaultPolicy)
+			got, fromLabel := ContainerPolicy(tt.labels, tt.defaultPolicy)
 			if got != tt.want {
-				t.Errorf("ContainerPolicy() = %q, want %q", got, tt.want)
+				t.Errorf("ContainerPolicy() policy = %q, want %q", got, tt.want)
+			}
+			if fromLabel != tt.wantLabel {
+				t.Errorf("ContainerPolicy() fromLabel = %v, want %v", fromLabel, tt.wantLabel)
 			}
 		})
 	}
