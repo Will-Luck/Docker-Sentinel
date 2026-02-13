@@ -2997,7 +2997,7 @@ function renderRegistryStatus() {
     table.className = "data-table";
     var thead = document.createElement("thead");
     var headRow = document.createElement("tr");
-    ["Registry", "Images", "Remaining", "Resets", "Auth"].forEach(function(label) {
+    ["Registry", "Containers", "Remaining", "Resets", "Auth"].forEach(function(label) {
         var th = document.createElement("th");
         th.textContent = label;
         headRow.appendChild(th);
