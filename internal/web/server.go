@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -342,6 +343,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /static/app.js", s.serveJS)
 	s.mux.HandleFunc("GET /static/auth.js", s.serveAuthJS)
 	s.mux.HandleFunc("GET /static/webauthn.js", s.serveWebAuthnJS)
+	s.mux.HandleFunc("GET /static/", s.serveStaticFile)
 	s.mux.HandleFunc("GET /favicon.svg", s.serveFavicon)
 	s.mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -476,10 +478,36 @@ func (s *Server) serveWebAuthnJS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
-	const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><style>circle{fill:#6750A4}text{fill:#fff}@media(prefers-color-scheme:dark){circle{fill:#D0BCFF}text{fill:#000}}</style><circle cx="16" cy="16" r="16"/><text x="16" y="22" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="20">S</text></svg>`
+	data, err := staticFS.ReadFile("static/favicon.svg")
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	w.Header().Set("Content-Type", "image/svg+xml")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	_, _ = w.Write([]byte(favicon))
+	_, _ = w.Write(data)
+}
+
+func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
+	path := "static" + strings.TrimPrefix(r.URL.Path, "/static")
+	data, err := staticFS.ReadFile(path)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	ext := filepath.Ext(path)
+	switch ext {
+	case ".png":
+		w.Header().Set("Content-Type", "image/png")
+	case ".svg":
+		w.Header().Set("Content-Type", "image/svg+xml")
+	case ".ico":
+		w.Header().Set("Content-Type", "image/x-icon")
+	default:
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(data)
 }
 
 // writeJSON encodes v as JSON and writes it to the response.
