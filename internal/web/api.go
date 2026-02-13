@@ -1933,6 +1933,19 @@ func (s *Server) apiTestRegistryCredential(w http.ResponseWriter, r *http.Reques
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
+		// Probe rate limits in the background now that we know the creds are valid.
+		if s.deps.RateTracker != nil {
+			go func() {
+				probeCtx, probeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer probeCancel()
+				cred := RegistryCredential{Registry: body.Registry, Username: body.Username, Secret: body.Secret}
+				if err := s.deps.RateTracker.ProbeAndRecord(probeCtx, body.Registry, cred); err != nil {
+					s.deps.Log.Warn("rate limit probe after test failed", "registry", body.Registry, "error", err)
+				} else {
+					s.deps.Log.Info("rate limit probe after test complete", "registry", body.Registry)
+				}
+			}()
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Credentials valid"})
 		return
 	}
