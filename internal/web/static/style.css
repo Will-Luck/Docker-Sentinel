@@ -1922,10 +1922,19 @@ details[open] > .accordion-header .accordion-chevron {
 .container-row.state-exited,
 .container-row.state-stopped,
 .container-row.state-dead,
-.container-row.state-created { border-left-color: var(--error); }
-.container-row.has-update { border-left-color: var(--warning); }
+.container-row.state-created {
+    border-left-color: var(--error);
+    background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
+}
+.container-row.has-update {
+    border-left-color: var(--warning);
+    background: light-dark(rgba(230, 81, 0, 0.06), rgba(255, 213, 79, 0.06));
+}
 .container-row.state-exited.has-update,
-.container-row.state-stopped.has-update { border-left-color: var(--error); }
+.container-row.state-stopped.has-update {
+    border-left-color: var(--error);
+    background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
+}
 
 .container-link {
     color: var(--accent);
