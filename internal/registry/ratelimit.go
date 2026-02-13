@@ -17,6 +17,7 @@ type RegistryState struct {
 	HasLimits      bool      `json:"has_limits"`      // false if registry doesn't return rate limit headers
 	ContainerCount int       `json:"container_count"` // how many monitored containers use this registry
 	LastUpdated    time.Time `json:"last_updated"`
+	requestCount   int       // requests made since last Record(); not serialised
 }
 
 // RegistryStatus is a snapshot of one registry's state for UI display.
@@ -96,6 +97,7 @@ func (t *RateLimitTracker) Record(registry string, headers http.Header) {
 		if window := parseRateLimitWindow(limit); window > 0 {
 			s.ResetAt = time.Now().Add(time.Duration(window) * time.Second)
 		}
+		s.requestCount = 0
 		return
 	}
 
@@ -111,6 +113,7 @@ func (t *RateLimitTracker) Record(registry string, headers http.Header) {
 				s.ResetAt = time.Unix(epoch, 0)
 			}
 		}
+		s.requestCount = 0
 		return
 	}
 
@@ -124,8 +127,8 @@ func (t *RateLimitTracker) Record(registry string, headers http.Header) {
 // reserve is the minimum remaining pulls to keep as headroom.
 // Returns (canProceed, waitDuration).
 func (t *RateLimitTracker) CanProceed(registry string, reserve int) (bool, time.Duration) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	registry = NormaliseRegistryHost(registry)
 
 	s, ok := t.registries[registry]
@@ -135,7 +138,8 @@ func (t *RateLimitTracker) CanProceed(registry string, reserve int) (bool, time.
 	if !s.HasLimits {
 		return true, 0 // no limits detected — allow
 	}
-	if s.Remaining > reserve {
+	if s.Remaining-s.requestCount > reserve {
+		s.requestCount++
 		return true, 0
 	}
 	// Rate limited — calculate wait duration

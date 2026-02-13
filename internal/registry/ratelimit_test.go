@@ -230,6 +230,55 @@ func TestCanProceedStaleReset(t *testing.T) {
 	}
 }
 
+func TestCanProceedDecrementsRemaining(t *testing.T) {
+	tracker := NewRateLimitTracker()
+
+	h := make(http.Header)
+	h.Set("RateLimit-Limit", "100;w=21600")
+	h.Set("RateLimit-Remaining", "12;w=21600")
+	tracker.Record("docker.io", h)
+
+	// First call with reserve=10: 12 > 10, should proceed
+	ok, _ := tracker.CanProceed("docker.io", 10)
+	if !ok {
+		t.Fatal("first CanProceed should succeed (12 > 10)")
+	}
+	// Second call: effective remaining is 11, still > 10
+	ok, _ = tracker.CanProceed("docker.io", 10)
+	if !ok {
+		t.Fatal("second CanProceed should succeed (11 > 10)")
+	}
+	// Third call: effective remaining is 10, not > 10 — blocked
+	ok, _ = tracker.CanProceed("docker.io", 10)
+	if ok {
+		t.Fatal("third CanProceed should fail (10 <= 10)")
+	}
+}
+
+func TestRecordResetsRequestCount(t *testing.T) {
+	tracker := NewRateLimitTracker()
+
+	h := make(http.Header)
+	h.Set("RateLimit-Limit", "100;w=21600")
+	h.Set("RateLimit-Remaining", "12;w=21600")
+	tracker.Record("docker.io", h)
+
+	// Use up some quota
+	tracker.CanProceed("docker.io", 10) // effective 11
+	tracker.CanProceed("docker.io", 10) // effective 10 — blocked
+
+	// Fresh Record should reset the counter
+	h2 := make(http.Header)
+	h2.Set("RateLimit-Limit", "100;w=21600")
+	h2.Set("RateLimit-Remaining", "50;w=21600")
+	tracker.Record("docker.io", h2)
+
+	ok, _ := tracker.CanProceed("docker.io", 10)
+	if !ok {
+		t.Fatal("after Record, CanProceed should succeed again (50 > 10)")
+	}
+}
+
 func TestSetAuth(t *testing.T) {
 	tracker := NewRateLimitTracker()
 	tracker.Discover("ghcr.io", 2)
