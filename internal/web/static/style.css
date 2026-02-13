@@ -220,17 +220,10 @@ h4 { font-size: 0.875rem; font-weight: 500; letter-spacing: 0.1px; line-height: 
 }
 
 .nav-logo {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     width: 28px;
     height: 28px;
-    border-radius: var(--radius-full);
-    background: var(--accent);
-    color: var(--md-on-primary);
-    font-weight: 700;
-    font-size: 0.8rem;
-    line-height: 1;
+    border-radius: 0;
+    background: none;
 }
 
 .nav-brand-text {
@@ -1422,6 +1415,117 @@ td:nth-child(6) {
    16. Container Detail Page
    -------------------------------------------------------------------------- */
 
+/* Container detail — overview bar */
+
+.detail-overview {
+    margin-bottom: var(--sp-4);
+}
+
+.detail-overview-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    padding: var(--sp-4) var(--sp-5);
+    flex-wrap: wrap;
+}
+
+.detail-overview-info {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    flex-wrap: wrap;
+}
+
+.detail-overview-image {
+    font-size: 0.9rem;
+    color: var(--fg-primary);
+}
+
+.detail-overview-actions {
+    display: flex;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+}
+
+/* Container detail — accordion sections */
+
+.accordion-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+}
+
+.accordion {
+    overflow: hidden;
+}
+
+.accordion-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-4) var(--sp-5);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: background 150ms;
+}
+
+.accordion-header:hover {
+    background: var(--md-hover-state);
+}
+
+.accordion-header::-webkit-details-marker {
+    display: none;
+}
+
+.accordion-header h2 {
+    font-size: 0.95rem;
+    font-weight: 500;
+    flex: 1;
+}
+
+.accordion-chevron {
+    flex-shrink: 0;
+    transition: transform 200ms var(--md-motion-standard);
+    color: var(--fg-secondary);
+}
+
+details[open] > .accordion-header .accordion-chevron {
+    transform: rotate(180deg);
+}
+
+.accordion-preview {
+    font-size: 0.75rem;
+    color: var(--fg-secondary);
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.accordion-body {
+    padding: 0 var(--sp-5) var(--sp-5);
+}
+
+.accordion-body-flush {
+    padding: 0 0 0;
+}
+
+.accordion-intro {
+    font-size: 0.85rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-4);
+    line-height: 1.5;
+}
+
+.accordion-empty {
+    padding: var(--sp-5);
+    text-align: center;
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+}
+
+/* Legacy detail grid (kept for other pages if used) */
+
 .detail-summary {
     margin-bottom: var(--sp-6);
 }
@@ -1452,8 +1556,52 @@ td:nth-child(6) {
     color: var(--fg-primary);
 }
 
+.detail-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 0 var(--sp-5) var(--sp-3);
+    border-top: 1px solid var(--border);
+    margin: 0 var(--sp-5);
+    padding-top: var(--sp-3);
+}
+
+.detail-meta-label {
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-muted);
+}
+
+.detail-meta-value {
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    color: var(--fg-secondary);
+    background: none;
+}
+
+.detail-meta-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: color 150ms, background 150ms;
+}
+
+.detail-meta-copy:hover {
+    color: var(--fg-primary);
+    background: var(--md-hover-state);
+}
+
 .detail-actions {
-    padding: 0 var(--sp-5) var(--sp-5);
+    padding: var(--sp-3) var(--sp-5) var(--sp-5);
     display: flex;
     gap: var(--sp-2);
     flex-wrap: wrap;
@@ -1461,6 +1609,224 @@ td:nth-child(6) {
 
 .detail-section {
     margin-bottom: var(--sp-6);
+}
+
+/* Notification preferences — radio card layout */
+
+.notify-intro {
+    font-size: 0.85rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-4);
+    line-height: 1.5;
+}
+
+.notify-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+}
+
+.notify-option {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: border-color 150ms, background 150ms;
+}
+
+.notify-option:hover {
+    background: var(--md-hover-state);
+    border-color: var(--border-strong);
+}
+
+.notify-option:has(input:checked) {
+    border-color: var(--accent);
+    background: light-dark(rgba(103,80,164,0.08), rgba(208,188,255,0.08));
+}
+
+.notify-option input[type="radio"] {
+    margin-top: 3px;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+}
+
+.notify-option-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.notify-option-title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--fg-primary);
+}
+
+.notify-option-desc {
+    font-size: 0.75rem;
+    color: var(--fg-secondary);
+    line-height: 1.4;
+}
+
+/* Digest schedule callout */
+
+#digest-schedule-section {
+    margin-top: var(--sp-4);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--accent);
+    background: light-dark(
+        rgba(103, 80, 164, 0.05),
+        rgba(208, 188, 255, 0.06)
+    );
+}
+
+.digest-schedule-heading {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    margin: 0 0 var(--sp-3) 0;
+}
+
+#digest-schedule-section .settings-rows {
+    gap: var(--sp-2);
+}
+
+#digest-schedule-section .setting-row {
+    padding: var(--sp-2) 0;
+}
+
+#digest-schedule-section .setting-actions {
+    padding-top: var(--sp-2);
+}
+
+/* Per-container notification preferences — checkbox list */
+
+.notify-prefs-summary {
+    font-size: 0.85rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-3);
+}
+
+.notify-prefs-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-3);
+    flex-wrap: wrap;
+}
+
+.notify-prefs-toolbar .btn {
+    font-size: 0.75rem;
+    padding: 4px 10px;
+}
+
+#notify-prefs-list {
+    padding: 2px;
+}
+
+.notify-prefs-group {
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: light-dark(
+        rgba(103, 80, 164, 0.03),
+        rgba(208, 188, 255, 0.03)
+    );
+    padding: var(--sp-3);
+    margin-bottom: var(--sp-2);
+}
+
+.notify-prefs-group-heading {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-secondary);
+    margin: 0 0 var(--sp-2) 2px;
+}
+
+.notify-prefs-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px;
+}
+
+.notify-pref-item {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    user-select: none;
+}
+
+.notify-pref-item:hover {
+    border-color: var(--fg-secondary);
+}
+
+.notify-pref-item.checked {
+    border-color: var(--accent);
+    background: light-dark(
+        rgba(103, 80, 164, 0.06),
+        rgba(208, 188, 255, 0.08)
+    );
+}
+
+.notify-pref-item input[type="checkbox"] {
+    accent-color: var(--accent);
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.notify-pref-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notify-pref-badge {
+    font-size: 0.65rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: light-dark(var(--surface-container), var(--surface-container));
+    color: var(--fg-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.notify-prefs-action-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-top: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--accent);
+    background: light-dark(
+        rgba(103, 80, 164, 0.05),
+        rgba(208, 188, 255, 0.06)
+    );
+    flex-wrap: wrap;
+}
+
+.notify-prefs-action-bar .action-count {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    white-space: nowrap;
+}
+
+.notify-prefs-action-bar .setting-select {
+    min-width: 160px;
 }
 
 /* Version picker */
@@ -1610,6 +1976,11 @@ table.managing .stack-select {
     max-width: 800px;
 }
 
+.settings-rows {
+    display: flex;
+    flex-direction: column;
+}
+
 .setting-row {
     display: flex;
     justify-content: space-between;
@@ -1620,6 +1991,19 @@ table.managing .stack-select {
 
 .setting-row:last-child {
     border-bottom: none;
+}
+
+.settings-section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    margin-bottom: var(--sp-1);
+}
+
+.settings-section-desc {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-4);
 }
 
 .setting-label {
@@ -2554,4 +2938,29 @@ input[type="checkbox"] {
 :focus-visible {
     outline: 2px solid var(--md-primary);
     outline-offset: 2px;
+}
+
+
+/* --------------------------------------------------------------------------
+   30. Digest Banner
+   -------------------------------------------------------------------------- */
+
+.digest-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-3) var(--sp-4);
+    margin-bottom: var(--sp-4);
+    background: var(--md-tertiary-container);
+    color: var(--md-on-tertiary-container);
+    border-radius: var(--radius);
+    gap: var(--sp-3);
+}
+
+.digest-banner-content {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: 0.875rem;
+    font-weight: 500;
 }

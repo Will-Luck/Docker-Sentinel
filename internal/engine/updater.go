@@ -239,13 +239,44 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			"local_digest", check.LocalDigest, "remote_digest", check.RemoteDigest)
 		u.publishEvent(events.EventContainerUpdate, name, "update available")
 
-		u.notifier.Notify(ctx, notify.Event{
-			Type:          notify.EventUpdateAvailable,
-			ContainerName: name,
-			OldImage:      imageRef,
-			OldDigest:     check.LocalDigest,
-			NewDigest:     check.RemoteDigest,
-			Timestamp:     u.clock.Now(),
+		// Notification dedup: skip if we already notified about this exact digest.
+		shouldNotify := true
+		notifyMode := u.effectiveNotifyMode(name)
+		switch notifyMode {
+		case "muted":
+			shouldNotify = false
+		case "digest_only":
+			shouldNotify = false // digest scheduler handles it
+		default:
+			state, _ := u.store.GetNotifyState(name)
+			if state != nil && state.LastDigest == check.RemoteDigest {
+				shouldNotify = false
+				u.log.Debug("skipping duplicate notification", "name", name, "digest", check.RemoteDigest)
+			}
+		}
+
+		if shouldNotify {
+			u.notifier.Notify(ctx, notify.Event{
+				Type:          notify.EventUpdateAvailable,
+				ContainerName: name,
+				OldImage:      imageRef,
+				OldDigest:     check.LocalDigest,
+				NewDigest:     check.RemoteDigest,
+				Timestamp:     u.clock.Now(),
+			})
+		}
+
+		// Always track the notify state for digest compilation, regardless of mode.
+		now := u.clock.Now()
+		existing, _ := u.store.GetNotifyState(name)
+		firstSeen := now
+		if existing != nil && existing.FirstSeen.After(time.Time{}) {
+			firstSeen = existing.FirstSeen
+		}
+		_ = u.store.SetNotifyState(name, &store.NotifyState{
+			LastDigest:   check.RemoteDigest,
+			LastNotified: now,
+			FirstSeen:    firstSeen,
 		})
 
 		// Build target image for semver version bumps.
@@ -522,6 +553,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		Timestamp:     u.clock.Now(),
 	})
 
+	// Clear notification state so re-detection gets a fresh notification.
+	_ = u.store.ClearNotifyState(name)
+
 	// 9. Clean old snapshots — keep only the most recent one.
 	if err := u.store.DeleteOldSnapshots(name, 1); err != nil {
 		u.log.Warn("failed to clean old snapshots", "name", name, "error", err)
@@ -713,4 +747,20 @@ func truncateID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// effectiveNotifyMode returns the notification mode for a container,
+// falling back to the global default_notify_mode setting.
+func (u *Updater) effectiveNotifyMode(name string) string {
+	pref, err := u.store.GetNotifyPref(name)
+	if err == nil && pref != nil && pref.Mode != "" && pref.Mode != "default" {
+		return pref.Mode
+	}
+	if u.settings != nil {
+		val, _ := u.settings.LoadSetting("default_notify_mode")
+		if val != "" {
+			return val
+		}
+	}
+	return "default"
 }

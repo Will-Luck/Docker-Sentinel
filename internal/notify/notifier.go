@@ -19,6 +19,7 @@ const (
 	EventRollbackFailed   EventType = "rollback_failed"
 	EventVersionAvailable EventType = "version_available"
 	EventContainerState   EventType = "container_state"
+	EventDigest           EventType = "digest"
 )
 
 // AllEventTypes returns all event types that can be filtered for notifications.
@@ -31,19 +32,21 @@ func AllEventTypes() []EventType {
 		EventRollbackOK,
 		EventRollbackFailed,
 		EventContainerState,
+		EventDigest,
 	}
 }
 
 // Event represents a notification event.
 type Event struct {
-	Type          EventType `json:"type"`
-	ContainerName string    `json:"container_name"`
-	OldImage      string    `json:"old_image,omitempty"`
-	NewImage      string    `json:"new_image,omitempty"`
-	OldDigest     string    `json:"old_digest,omitempty"`
-	NewDigest     string    `json:"new_digest,omitempty"`
-	Error         string    `json:"error,omitempty"`
-	Timestamp     time.Time `json:"timestamp"`
+	Type           EventType `json:"type"`
+	ContainerName  string    `json:"container_name"`
+	OldImage       string    `json:"old_image,omitempty"`
+	NewImage       string    `json:"new_image,omitempty"`
+	OldDigest      string    `json:"old_digest,omitempty"`
+	NewDigest      string    `json:"new_digest,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	ContainerNames []string  `json:"container_names,omitempty"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 // Notifier sends events to an external system.

@@ -13,7 +13,9 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
     <style>
+        /* Force dark palette on login — background is always dark */
         .login-wrap {
+            color-scheme: dark;
             display: flex;
             min-height: 100vh;
             align-items: center;
@@ -24,11 +26,13 @@
         .login-card {
             width: 100%;
             max-width: 400px;
-            background: var(--bg-surface);
+            background: rgba(33, 31, 38, 0.65);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
             border-radius: var(--radius-lg);
-            border: 1px solid var(--border);
+            border: 1px solid rgba(79, 55, 139, 0.25);
             padding: var(--sp-8);
-            box-shadow: var(--shadow-md);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
         }
         .login-logo {
             display: flex;
@@ -45,7 +49,7 @@
         .login-logo-text {
             font-size: 1.5rem;
             font-weight: 700;
-            color: var(--fg-primary);
+            color: #E6E0E9;
         }
         .login-form {
             display: flex;
@@ -60,30 +64,33 @@
         .form-label {
             font-size: 0.875rem;
             font-weight: 500;
-            color: var(--fg-secondary);
+            color: #CAC4D0;
         }
         .form-input {
             padding: 10px 14px;
-            border: 1px solid var(--border);
+            border: 1px solid #49454F;
             border-radius: var(--radius);
-            background: var(--bg-input);
-            color: var(--fg-primary);
+            background: rgba(15, 13, 19, 0.45);
+            color: #E6E0E9;
             font-size: 0.95rem;
             font-family: inherit;
             outline: none;
             transition: border-color 150ms var(--md-motion-standard);
         }
         .form-input:focus {
-            border-color: var(--accent);
-            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
+            border-color: #D0BCFF;
+            box-shadow: 0 0 0 2px rgba(208, 188, 255, 0.2);
+        }
+        .form-input::placeholder {
+            color: #938F99;
         }
         .login-error {
             padding: 10px 14px;
             border-radius: var(--radius);
-            background: var(--error-bg);
-            color: var(--error-fg);
+            background: rgba(242, 184, 181, 0.16);
+            color: #F2B8B5;
             font-size: 0.875rem;
-            border: 1px solid var(--error);
+            border: 1px solid rgba(242, 184, 181, 0.3);
             margin-bottom: var(--sp-4);
         }
         .login-btn {
@@ -92,19 +99,19 @@
             font-weight: 500;
             border: none;
             border-radius: var(--radius);
-            background: var(--accent);
-            color: var(--md-on-primary);
+            background: #D0BCFF;
+            color: #381E72;
             cursor: pointer;
-            transition: opacity 150ms var(--md-motion-standard);
+            transition: all 150ms var(--md-motion-standard);
         }
-        .login-btn:hover { opacity: 0.9; }
+        .login-btn:hover { background: #B69DF8; }
         .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .login-divider {
             display: flex;
             align-items: center;
             gap: var(--sp-3);
             margin: var(--sp-4) 0;
-            color: var(--fg-secondary);
+            color: #938F99;
             font-size: 0.85rem;
         }
         .login-divider::before,
@@ -112,7 +119,7 @@
             content: "";
             flex: 1;
             height: 1px;
-            background: var(--border);
+            background: #49454F;
         }
         .login-btn-passkey {
             width: 100%;
@@ -121,14 +128,14 @@
             font-weight: 500;
             border-radius: var(--radius);
             cursor: pointer;
-            transition: opacity 150ms var(--md-motion-standard);
-            background: var(--bg-surface);
-            color: var(--fg-primary);
-            border: 1px solid var(--border);
+            transition: all 150ms var(--md-motion-standard);
+            background: transparent;
+            color: #D0BCFF;
+            border: 1px solid #49454F;
         }
         .login-btn-passkey:hover {
-            background: var(--bg-hover);
-            opacity: 1;
+            background: rgba(208, 188, 255, 0.08);
+            border-color: #D0BCFF;
         }
         .login-btn-passkey:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
@@ -137,8 +144,9 @@
     <div class="login-wrap">
         <div class="login-card">
             <div class="login-logo">
-                <span class="nav-logo">S</span>
-                <span class="login-logo-text">Sentinel</span>
+                <svg width="240" height="48" viewBox="0 0 360 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sentinel">
+                    <text x="50%" y="44" text-anchor="middle" font-family="Inter, Roboto, Outfit, system-ui, sans-serif" font-weight="500" font-size="36" letter-spacing="0.01em" fill="#D0BCFF">Sentinel</text>
+                </svg>
             </div>
 
             {{if .Error}}
