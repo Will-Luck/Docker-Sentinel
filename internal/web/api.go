@@ -1856,7 +1856,8 @@ func (s *Server) apiTestRegistryCredential(w http.ResponseWriter, r *http.Reques
 	}
 	req.SetBasicAuth(body.Username, body.Secret)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
 		return
