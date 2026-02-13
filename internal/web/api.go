@@ -1776,6 +1776,7 @@ func (s *Server) apiDeleteRegistryCredential(w http.ResponseWriter, r *http.Requ
 // apiTestRegistryCredential validates a credential by making a lightweight v2 API call.
 func (s *Server) apiTestRegistryCredential(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		ID       string `json:"id"`
 		Registry string `json:"registry"`
 		Username string `json:"username"`
 		Secret   string `json:"secret"`
@@ -1792,10 +1793,24 @@ func (s *Server) apiTestRegistryCredential(w http.ResponseWriter, r *http.Reques
 	// If secret is masked, try to restore from saved credentials.
 	if strings.HasSuffix(body.Secret, "****") && s.deps.RegistryCredentials != nil {
 		existing, _ := s.deps.RegistryCredentials.GetRegistryCredentials()
-		for _, c := range existing {
-			if c.Registry == body.Registry {
-				body.Secret = c.Secret
-				break
+		restored := false
+		// Prefer lookup by ID (stable even if registry field was edited).
+		if body.ID != "" {
+			for _, c := range existing {
+				if c.ID == body.ID {
+					body.Secret = c.Secret
+					restored = true
+					break
+				}
+			}
+		}
+		// Fall back to registry name lookup.
+		if !restored {
+			for _, c := range existing {
+				if c.Registry == body.Registry {
+					body.Secret = c.Secret
+					break
+				}
 			}
 		}
 	}
