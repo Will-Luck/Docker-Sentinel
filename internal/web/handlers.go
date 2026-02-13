@@ -142,7 +142,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	savedJSON, _ := s.deps.SettingsStore.LoadSetting("stack_order")
 	var savedOrder []string
 	if savedJSON != "" {
-		_ = json.Unmarshal([]byte(savedJSON), &savedOrder)
+		if err := json.Unmarshal([]byte(savedJSON), &savedOrder); err != nil {
+			s.deps.Log.Warn("failed to parse saved stack order, using defaults", "error", err)
+			savedOrder = nil
+		}
 	}
 	if len(savedOrder) > 0 {
 		rank := make(map[string]int, len(savedOrder))
