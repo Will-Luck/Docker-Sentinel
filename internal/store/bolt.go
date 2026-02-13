@@ -19,7 +19,9 @@ var (
 	bucketQueue     = []byte("queue")
 	bucketPolicies  = []byte("policies")
 	bucketLogs      = []byte("logs")
-	bucketSettings  = []byte("settings")
+	bucketSettings    = []byte("settings")
+	bucketNotifyState = []byte("notify_state")
+	bucketNotifyPrefs = []byte("notify_prefs")
 )
 
 // UpdateRecord represents a completed (or failed) container update.
@@ -49,7 +51,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
