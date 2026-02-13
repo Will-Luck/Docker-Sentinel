@@ -1515,6 +1515,30 @@ func (s *Server) apiSaveDigestSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate all fields before saving any.
+	if body.Time != "" {
+		if _, err := time.Parse("15:04", body.Time); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid time format, use HH:MM")
+			return
+		}
+	}
+	if body.Interval != "" {
+		if _, err := time.ParseDuration(body.Interval); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid interval duration")
+			return
+		}
+	}
+	if body.DefaultNotifyMode != "" {
+		switch body.DefaultNotifyMode {
+		case "default", "every_scan", "digest_only", "muted":
+			// valid
+		default:
+			writeError(w, http.StatusBadRequest, "invalid default_notify_mode")
+			return
+		}
+	}
+
+	// All valid — save atomically.
 	if body.Enabled != nil {
 		val := "true"
 		if !*body.Enabled {
@@ -1523,27 +1547,13 @@ func (s *Server) apiSaveDigestSettings(w http.ResponseWriter, r *http.Request) {
 		_ = s.deps.SettingsStore.SaveSetting("digest_enabled", val)
 	}
 	if body.Time != "" {
-		if _, err := time.Parse("15:04", body.Time); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid time format, use HH:MM")
-			return
-		}
 		_ = s.deps.SettingsStore.SaveSetting("digest_time", body.Time)
 	}
 	if body.Interval != "" {
-		if _, err := time.ParseDuration(body.Interval); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid interval duration")
-			return
-		}
 		_ = s.deps.SettingsStore.SaveSetting("digest_interval", body.Interval)
 	}
 	if body.DefaultNotifyMode != "" {
-		switch body.DefaultNotifyMode {
-		case "default", "every_scan", "digest_only", "muted":
-			_ = s.deps.SettingsStore.SaveSetting("default_notify_mode", body.DefaultNotifyMode)
-		default:
-			writeError(w, http.StatusBadRequest, "invalid default_notify_mode")
-			return
-		}
+		_ = s.deps.SettingsStore.SaveSetting("default_notify_mode", body.DefaultNotifyMode)
 	}
 
 	// Signal digest scheduler to reconfigure.
