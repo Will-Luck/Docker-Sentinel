@@ -98,6 +98,12 @@ func extractHash(digest string) string {
 
 // CheckVersioned performs a digest check and, for versioned tags, also looks
 // for newer semver releases by listing remote tags.
+//
+// Note: Version detection (semver tag listing) currently supports Docker Hub
+// and registries with compatible v2 tag listing APIs. Rate limit headers are
+// only captured from the tag listing response, not from digest checks
+// (DistributionInspect uses the Docker daemon's internal client which does
+// not expose HTTP headers).
 func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResult {
 	result := c.Check(ctx, imageRef)
 
