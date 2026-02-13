@@ -1629,9 +1629,10 @@ function toggleManageMode() {
     document.addEventListener("dragstart", function (e) {
         var group = e.target.closest(".stack-group");
         if (!group || !manageMode) return;
-        // Only start drag from the handle
-        if (!e.target.closest(".stack-drag-handle") && e.target !== group) {
-            // Allow drag from tbody (set via draggable attr) but only in manage mode
+        // Only allow drag from the handle element.
+        if (!e.target.closest(".stack-drag-handle")) {
+            e.preventDefault();
+            return;
         }
         dragSrc = group;
         group.classList.add("dragging");
