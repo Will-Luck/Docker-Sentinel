@@ -146,6 +146,9 @@ type RegistryCredential struct {
 type RateLimitProvider interface {
 	Status() []RateLimitStatus
 	OverallHealth() string
+	// ProbeAndRecord makes a lightweight request to discover a registry's
+	// rate limits and records the result. Used after credential changes.
+	ProbeAndRecord(ctx context.Context, host string, cred RegistryCredential) error
 }
 
 // RateLimitStatus mirrors registry.RegistryStatus for the web layer.

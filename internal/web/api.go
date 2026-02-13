@@ -1801,6 +1801,21 @@ func (s *Server) apiSaveRegistryCredentials(w http.ResponseWriter, r *http.Reque
 
 	s.logEvent("settings", "", "Registry credentials updated")
 
+	// Probe each registry in the background to discover rate limits immediately.
+	if s.deps.RateTracker != nil {
+		for _, c := range creds {
+			go func(cred RegistryCredential) {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if err := s.deps.RateTracker.ProbeAndRecord(ctx, cred.Registry, cred); err != nil {
+					s.deps.Log.Warn("rate limit probe failed", "registry", cred.Registry, "error", err)
+				} else {
+					s.deps.Log.Info("rate limit probe complete", "registry", cred.Registry)
+				}
+			}(c)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
 		"message": "registry credentials saved",

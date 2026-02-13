@@ -822,3 +822,19 @@ func (a *rateLimitAdapter) Status() []web.RateLimitStatus {
 func (a *rateLimitAdapter) OverallHealth() string {
 	return a.t.OverallHealth()
 }
+
+func (a *rateLimitAdapter) ProbeAndRecord(ctx context.Context, host string, cred web.RegistryCredential) error {
+	regCred := &registry.RegistryCredential{
+		ID:       cred.ID,
+		Registry: cred.Registry,
+		Username: cred.Username,
+		Secret:   cred.Secret,
+	}
+	headers, err := registry.ProbeRateLimit(ctx, host, regCred)
+	if err != nil {
+		return err
+	}
+	a.t.Record(host, headers)
+	a.t.SetAuth(host, true)
+	return nil
+}
