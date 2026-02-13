@@ -8,9 +8,14 @@ import (
 	"strings"
 )
 
-// maxManifestHEADs is the maximum number of manifest HEAD requests per
-// ResolveVersions call to limit rate-limit consumption.
+// maxManifestHEADs is the maximum number of manifest HEAD requests for the
+// initial pass (finding the target version, which is usually near the top).
 const maxManifestHEADs = 10
+
+// maxManifestHEADsExtended is the budget for the second pass when the target
+// was found but the current version wasn't (the local image may be several
+// versions behind).
+const maxManifestHEADsExtended = 20
 
 // RepoPath extracts the repository path from an image reference, stripping
 // the registry host prefix. Unlike NormaliseRepo, this correctly handles
@@ -108,8 +113,10 @@ func ManifestDigest(ctx context.Context, repo, tag, token, host string, cred *Re
 // local and remote digests by performing manifest HEAD requests. It returns
 // the matched version strings, or empty strings if no match is found.
 //
-// Tags are sorted newest-first and capped at maxManifestHEADs to limit HTTP
-// overhead. The function short-circuits once both digests are matched.
+// Uses a two-pass strategy: the first pass checks the newest tags (up to
+// maxManifestHEADs) to find the target version quickly. If the target is
+// found but the current version isn't (the local image may be several
+// releases behind), a second pass continues deeper into the tag list.
 func ResolveVersions(ctx context.Context, imageRef, localDigest, remoteDigest string,
 	tags []string, token, host string, cred *RegistryCredential,
 	tracker *RateLimitTracker) (currentVersion, targetVersion string) {
@@ -128,24 +135,26 @@ func ResolveVersions(ctx context.Context, imageRef, localDigest, remoteDigest st
 		return semvers[j].LessThan(semvers[i])
 	})
 
-	// Cap at maxManifestHEADs.
-	limit := maxManifestHEADs
-	if len(semvers) < limit {
-		limit = len(semvers)
-	}
-
 	repo := RepoPath(imageRef)
 	localHash := extractHash(localDigest)
 	remoteHash := extractHash(remoteDigest)
 
-	for i := 0; i < limit; i++ {
+	// First pass: check newest tags to find the target (and current if close).
+	firstLimit := maxManifestHEADs
+	if len(semvers) < firstLimit {
+		firstLimit = len(semvers)
+	}
+
+	checked := 0
+	for i := 0; i < firstLimit; i++ {
 		sv := semvers[i]
 		digest, headers, err := ManifestDigest(ctx, repo, sv.Raw, token, host, cred)
 		if tracker != nil && headers != nil {
 			tracker.Record(host, headers)
 		}
+		checked++
 		if err != nil {
-			continue // skip tags we can't resolve
+			continue
 		}
 
 		hash := extractHash(digest)
@@ -156,7 +165,32 @@ func ResolveVersions(ctx context.Context, imageRef, localDigest, remoteDigest st
 			currentVersion = sv.Raw
 		}
 		if currentVersion != "" && targetVersion != "" {
-			break
+			return currentVersion, targetVersion
+		}
+	}
+
+	// Second pass: if we found the target but not the current, keep searching
+	// deeper into older tags to resolve the current version.
+	if targetVersion != "" && currentVersion == "" {
+		extLimit := checked + maxManifestHEADsExtended
+		if len(semvers) < extLimit {
+			extLimit = len(semvers)
+		}
+		for i := checked; i < extLimit; i++ {
+			sv := semvers[i]
+			digest, headers, err := ManifestDigest(ctx, repo, sv.Raw, token, host, cred)
+			if tracker != nil && headers != nil {
+				tracker.Record(host, headers)
+			}
+			if err != nil {
+				continue
+			}
+
+			hash := extractHash(digest)
+			if hash == localHash {
+				currentVersion = sv.Raw
+				break
+			}
 		}
 	}
 
