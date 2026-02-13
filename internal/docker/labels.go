@@ -13,18 +13,20 @@ const (
 
 // ContainerPolicy reads the sentinel.policy label from container labels
 // and returns the update policy. Falls back to defaultPolicy if not set.
-func ContainerPolicy(labels map[string]string, defaultPolicy string) Policy {
+// The fromLabel return value indicates whether the policy came from an
+// explicit Docker label (true) or the default fallback (false).
+func ContainerPolicy(labels map[string]string, defaultPolicy string) (policy Policy, fromLabel bool) {
 	if v, ok := labels["sentinel.policy"]; ok {
 		switch Policy(strings.ToLower(v)) {
 		case PolicyAuto:
-			return PolicyAuto
+			return PolicyAuto, true
 		case PolicyManual:
-			return PolicyManual
+			return PolicyManual, true
 		case PolicyPinned:
-			return PolicyPinned
+			return PolicyPinned, true
 		}
 	}
-	return Policy(defaultPolicy)
+	return Policy(defaultPolicy), false
 }
 
 // IsLocalImage returns true if the image reference looks like a locally built

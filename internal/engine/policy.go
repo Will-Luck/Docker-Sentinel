@@ -33,8 +33,8 @@ func ResolvePolicy(db *store.Store, labels map[string]string, name, imageTag, de
 		}
 	}
 
-	p := docker.ContainerPolicy(labels, defaultPolicy)
-	if string(p) != defaultPolicy {
+	p, fromLabel := docker.ContainerPolicy(labels, defaultPolicy)
+	if fromLabel {
 		return ResolvedPolicy{Policy: string(p), Source: SourceLabel}
 	}
 
