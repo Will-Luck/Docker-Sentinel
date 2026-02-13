@@ -925,14 +925,28 @@ function bulkQueueAction(actionFn, triggerBtn) {
         triggerBtn.disabled = true;
     }
     var delay = 0;
+    var total = rows.length;
+    var processed = 0;
     rows.forEach(function (row) {
         var link = row.querySelector(".container-link");
         var name = link ? link.textContent.trim() : null;
-        if (!name) return;
+        if (!name) { total--; return; }
         var btn = row.querySelector(".btn");
-        setTimeout(function () { actionFn(name, { target: btn }); }, delay);
+        setTimeout(function () {
+            actionFn(name, { target: btn });
+            processed++;
+            if (processed >= total && triggerBtn) {
+                triggerBtn.classList.remove("loading");
+                triggerBtn.disabled = false;
+            }
+        }, delay);
         delay += 150;
     });
+    // Handle edge case: no valid rows
+    if (total <= 0 && triggerBtn) {
+        triggerBtn.classList.remove("loading");
+        triggerBtn.disabled = false;
+    }
 }
 
 function approveAll(event) {
