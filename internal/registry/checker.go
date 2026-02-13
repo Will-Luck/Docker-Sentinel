@@ -125,13 +125,13 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 		}
 	}
 
-	token, err := FetchToken(ctx, repo, cred)
+	token, err := FetchToken(ctx, repo, cred, host)
 	if err != nil {
 		c.log.Debug("failed to fetch token for version check", "repo", repo, "error", err)
 		return result
 	}
 
-	tagsResult, err := ListTags(ctx, imageRef, token)
+	tagsResult, err := ListTags(ctx, imageRef, token, host, cred)
 	if err != nil {
 		c.log.Debug("failed to list tags for version check", "repo", repo, "error", err)
 		return result

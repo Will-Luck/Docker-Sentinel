@@ -20,12 +20,20 @@ type TokenResponse struct {
 // FetchAnonymousToken retrieves an anonymous bearer token from Docker Hub's
 // auth endpoint for the given repository (e.g. "library/nginx").
 func FetchAnonymousToken(ctx context.Context, repo string) (string, error) {
-	return FetchToken(ctx, repo, nil)
+	return FetchToken(ctx, repo, nil, "docker.io")
 }
 
-// FetchToken retrieves a bearer token from Docker Hub's auth endpoint.
-// When cred is non-nil, Basic auth is included for higher rate limits.
-func FetchToken(ctx context.Context, repo string, cred *RegistryCredential) (string, error) {
+// FetchToken retrieves a bearer token for the given registry.
+// For Docker Hub (host "docker.io" or ""), it uses auth.docker.io.
+// For other registries, credentials are used directly as Basic auth
+// by the caller — this function only handles Docker Hub token exchange.
+func FetchToken(ctx context.Context, repo string, cred *RegistryCredential, host string) (string, error) {
+	// Only Docker Hub uses the token exchange flow.
+	// Other registries use Basic auth directly on v2 API calls.
+	if host != "" && host != "docker.io" {
+		return "", nil // no token needed; caller uses Basic auth directly
+	}
+
 	url := "https://auth.docker.io/token?service=registry.docker.io&scope=repository:" + repo + ":pull"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
