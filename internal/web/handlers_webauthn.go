@@ -21,10 +21,10 @@ type webauthnUser struct {
 	creds []webauthn.Credential
 }
 
-func (wu *webauthnUser) WebAuthnID() []byte                          { return wu.user.WebAuthnUserID }
-func (wu *webauthnUser) WebAuthnName() string                        { return wu.user.Username }
-func (wu *webauthnUser) WebAuthnDisplayName() string                 { return wu.user.Username }
-func (wu *webauthnUser) WebAuthnCredentials() []webauthn.Credential  { return wu.creds }
+func (wu *webauthnUser) WebAuthnID() []byte                         { return wu.user.WebAuthnUserID }
+func (wu *webauthnUser) WebAuthnName() string                       { return wu.user.Username }
+func (wu *webauthnUser) WebAuthnDisplayName() string                { return wu.user.Username }
+func (wu *webauthnUser) WebAuthnCredentials() []webauthn.Credential { return wu.creds }
 
 // toWebAuthnCredentials converts auth.WebAuthnCredential slice to webauthn.Credential slice.
 func toWebAuthnCredentials(creds []auth.WebAuthnCredential) []webauthn.Credential {
@@ -444,4 +444,3 @@ func (s *Server) apiPasskeysAvailable(w http.ResponseWriter, r *http.Request) {
 		"available":  available,
 	})
 }
-
