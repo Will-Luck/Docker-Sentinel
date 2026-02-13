@@ -36,7 +36,7 @@ type TagsResult struct {
 // The token is a bearer token for Docker Hub; for other registries, pass empty
 // token and provide credentials via the cred parameter for Basic auth.
 func ListTags(ctx context.Context, imageRef string, token string, host string, cred *RegistryCredential) (TagsResult, error) {
-	repo := NormaliseRepo(imageRef)
+	repo := RepoPath(imageRef)
 	var url string
 	if host != "" && host != "docker.io" {
 		url = "https://" + host + "/v2/" + repo + "/tags/list"
