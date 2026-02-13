@@ -3229,7 +3229,7 @@ function testRegistryCredential(index) {
     fetch("/api/settings/registries/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ registry: cred.registry, username: cred.username, secret: cred.secret })
+        body: JSON.stringify({ id: cred.id, registry: cred.registry, username: cred.username, secret: cred.secret })
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
