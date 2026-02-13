@@ -12,6 +12,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
 // apiContainers returns all monitored containers with policy and maintenance status.
@@ -1714,6 +1715,29 @@ func (s *Server) apiSaveRegistryCredentials(w http.ResponseWriter, r *http.Reque
 				creds[i].Secret = old.Secret
 			}
 		}
+	}
+
+	// Validate credentials.
+	seen := make(map[string]bool, len(creds))
+	for _, c := range creds {
+		if strings.TrimSpace(c.Registry) == "" {
+			writeError(w, http.StatusBadRequest, "registry cannot be empty")
+			return
+		}
+		if strings.TrimSpace(c.Username) == "" {
+			writeError(w, http.StatusBadRequest, "username cannot be empty for "+c.Registry)
+			return
+		}
+		if strings.TrimSpace(c.Secret) == "" {
+			writeError(w, http.StatusBadRequest, "secret cannot be empty for "+c.Registry)
+			return
+		}
+		norm := registry.NormaliseRegistryHost(c.Registry)
+		if seen[norm] {
+			writeError(w, http.StatusBadRequest, "duplicate registry: "+c.Registry)
+			return
+		}
+		seen[norm] = true
 	}
 
 	if err := s.deps.RegistryCredentials.SetRegistryCredentials(creds); err != nil {
