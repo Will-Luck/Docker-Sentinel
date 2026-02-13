@@ -502,6 +502,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/grace-period", perm(auth.PermSettingsModify, s.apiSetGracePeriod))
 	s.mux.Handle("POST /api/settings/pause", perm(auth.PermSettingsModify, s.apiSetPause))
 	s.mux.Handle("POST /api/settings/filters", perm(auth.PermSettingsModify, s.apiSetFilters))
+	s.mux.Handle("POST /api/settings/stack-order", perm(auth.PermSettingsModify, s.apiSaveStackOrder))
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
 	s.mux.Handle("PUT /api/settings/registries", perm(auth.PermSettingsModify, s.apiSaveRegistryCredentials))

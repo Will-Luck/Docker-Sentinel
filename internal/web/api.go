@@ -1851,6 +1851,36 @@ func (s *Server) apiGetRateLimits(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apiSaveStackOrder persists the user's custom stack display order.
+func (s *Server) apiSaveStackOrder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	raw, err := json.Marshal(body.Order)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode order")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("stack_order", string(raw)); err != nil {
+		s.deps.Log.Error("failed to save stack order", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save stack order")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // restoreSecrets returns the saved settings if the incoming settings contain any
 // masked values (strings ending in "****"). This prevents overwriting real secrets
 // with their masked representations when the frontend sends back unchanged channels.
