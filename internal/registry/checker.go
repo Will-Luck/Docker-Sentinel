@@ -118,6 +118,11 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 
 	_, ok := ParseSemVer(tag)
 	if !ok {
+		// Non-semver tag (e.g. "latest") — resolve digest-to-version if
+		// an update was detected so the UI can show meaningful versions.
+		if result.UpdateAvailable && (tag == "latest" || tag == "") {
+			c.resolveLatestVersions(ctx, imageRef, &result)
+		}
 		return result
 	}
 
@@ -160,6 +165,51 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 	}
 
 	return result
+}
+
+// resolveLatestVersions fetches registry tags and performs manifest HEAD
+// requests to match the local and remote digests to semver tags. This is
+// used for "latest"-tagged containers where a digest change was detected
+// but no version context is available from the tag alone.
+func (c *Checker) resolveLatestVersions(ctx context.Context, imageRef string, result *CheckResult) {
+	host := RegistryHost(imageRef)
+
+	var cred *RegistryCredential
+	if c.creds != nil {
+		creds, err := c.creds.GetRegistryCredentials()
+		if err == nil {
+			cred = FindByRegistry(creds, host)
+		}
+	}
+
+	repo := NormaliseRepo(imageRef)
+	token, err := FetchToken(ctx, repo, cred, host)
+	if err != nil {
+		c.log.Debug("failed to fetch token for latest version resolve", "image", imageRef, "error", err)
+		return
+	}
+
+	tagsResult, err := ListTags(ctx, imageRef, token, host, cred)
+	if err != nil {
+		c.log.Debug("failed to list tags for latest version resolve", "image", imageRef, "error", err)
+		return
+	}
+
+	if c.tracker != nil {
+		c.tracker.Record(host, tagsResult.Headers)
+		c.tracker.SetAuth(host, cred != nil)
+	}
+
+	current, target := ResolveVersions(ctx, imageRef, result.LocalDigest, result.RemoteDigest,
+		tagsResult.Tags, token, host, cred, c.tracker)
+
+	result.ResolvedCurrentVersion = current
+	result.ResolvedTargetVersion = target
+
+	// Populate NewerVersions with the target so the Ignore button appears.
+	if target != "" {
+		result.NewerVersions = []string{target}
+	}
 }
 
 // ExtractTag returns the tag portion of an image reference, or empty string
