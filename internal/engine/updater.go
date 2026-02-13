@@ -282,8 +282,29 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 
 		if !check.UpdateAvailable {
+			// Prune stale queue entries: if this container is in the queue
+			// but the registry now reports it as up-to-date, remove it.
+			if _, queued := u.queue.Get(name); queued {
+				u.queue.Remove(name)
+				u.log.Info("removed stale queue entry (now up to date)", "name", name)
+			}
 			u.log.Debug("up to date", "name", name, "image", imageRef)
 			continue
+		}
+
+		// Enrich existing queue entries that lack resolved version data
+		// (e.g. entries created before version resolution was added).
+		if existing, queued := u.queue.Get(name); queued &&
+			existing.ResolvedCurrentVersion == "" && existing.ResolvedTargetVersion == "" &&
+			(check.ResolvedCurrentVersion != "" || check.ResolvedTargetVersion != "") {
+			existing.ResolvedCurrentVersion = check.ResolvedCurrentVersion
+			existing.ResolvedTargetVersion = check.ResolvedTargetVersion
+			if len(check.NewerVersions) > 0 && len(existing.NewerVersions) == 0 {
+				existing.NewerVersions = check.NewerVersions
+			}
+			u.queue.Add(existing)
+			u.log.Info("enriched queue entry with resolved versions", "name", name,
+				"current", check.ResolvedCurrentVersion, "target", check.ResolvedTargetVersion)
 		}
 
 		// Filter out ignored versions so they don't trigger notifications or queuing.
