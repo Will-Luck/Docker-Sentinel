@@ -1481,6 +1481,30 @@ function initFilters() {
     applyFiltersAndSort();
 }
 
+// activateFilter is called from stat card clicks to set a filter + expand all stacks.
+function activateFilter(key, value) {
+    // Reset all filters first.
+    filterState = { status: "all", updates: "all", sort: "default" };
+
+    // Set the requested filter.
+    filterState[key] = value;
+    localStorage.setItem("sentinel-filters", JSON.stringify(filterState));
+
+    // Update pill UI to match.
+    var pills = document.querySelectorAll(".filter-pill");
+    for (var i = 0; i < pills.length; i++) {
+        var p = pills[i];
+        if (p.getAttribute("data-filter") === key && p.getAttribute("data-value") === value) {
+            p.classList.add("active");
+        } else {
+            p.classList.remove("active");
+        }
+    }
+
+    expandAllStacks();
+    applyFiltersAndSort();
+}
+
 function applyFiltersAndSort() {
     var table = document.getElementById("container-table");
     if (!table) return;
