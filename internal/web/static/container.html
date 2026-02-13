@@ -17,7 +17,7 @@
     <a href="#main-content" class="skip-link">Skip to main content</a>
     <nav class="nav">
         <a href="/" class="nav-brand">
-            <span class="nav-logo">S</span>
+            <img src="/favicon.svg" alt="S" class="nav-logo">
             <span class="nav-brand-text">Sentinel</span>
         </a>
         <div class="nav-links">
@@ -57,140 +57,315 @@
             <a href="/">Dashboard</a> / <span class="breadcrumb-current">{{.Container.Name}}</span>
         </div>
 
-        <div class="card detail-summary">
-            <div class="detail-grid">
-                <div class="detail-item">
-                    <span class="detail-label">Image</span>
-                    <span class="detail-value mono">{{.Container.Image}}</span>
-                </div>
-                <div class="detail-item">
-                    <span class="detail-label">Status</span>
+        <!-- Overview — always visible -->
+        <div class="card detail-overview">
+            <div class="detail-overview-top">
+                <div class="detail-overview-info">
+                    <span class="detail-overview-image mono">{{.Container.Image}}</span>
                     <span class="badge {{if eq .Container.State "running"}}badge-success{{else}}badge-error{{end}}">{{.Container.State}}</span>
+                    {{if .ChangelogURL}}
+                    <a href="{{.ChangelogURL}}" target="_blank" rel="noopener" class="changelog-link">Changelog</a>
+                    {{end}}
                 </div>
-                <div class="detail-item">
-                    <span class="detail-label">Policy</span>
-                    <select class="policy-select" onchange="changePolicy('{{.Container.Name}}', this.value)">
-                        <option value="auto" {{if eq .Container.Policy "auto"}}selected{{end}}>auto</option>
-                        <option value="manual" {{if eq .Container.Policy "manual"}}selected{{end}}>manual</option>
-                        <option value="pinned" {{if eq .Container.Policy "pinned"}}selected{{end}}>pinned</option>
-                    </select>
+                <div class="detail-overview-actions">
+                    {{if and (ne .Container.Policy "pinned") (not .Container.IsSelf)}}
+                    <button class="btn" onclick="triggerCheck('{{.Container.Name}}', event)">Check for Updates</button>
+                    <button class="btn btn-warning" onclick="triggerUpdate('{{.Container.Name}}', event)">Update Now</button>
+                    {{end}}
+                    {{if .HasSnapshot}}
+                    <button class="btn btn-warning" onclick="triggerRollback('{{.Container.Name}}', event)">Rollback</button>
+                    {{end}}
                 </div>
-                <div class="detail-item">
-                    <span class="detail-label">Container ID</span>
-                    <span class="mono" title="{{.Container.ID}}">{{truncDigest .Container.ID}}</span>
-                </div>
-                {{if .ChangelogURL}}
-                <div class="detail-item">
-                    <span class="detail-label">Changelog</span>
-                    <a href="{{.ChangelogURL}}" target="_blank" rel="noopener" class="changelog-link">View releases</a>
-                </div>
-                {{end}}
             </div>
-            <div class="detail-actions">
-                {{if and (ne .Container.Policy "pinned") (not .Container.IsSelf)}}
-                <button class="btn" onclick="triggerCheck('{{.Container.Name}}', event)">Check for Updates</button>
-                <button class="btn btn-warning" onclick="triggerUpdate('{{.Container.Name}}', event)">Update Now</button>
-                {{end}}
-                {{if .HasSnapshot}}
-                <button class="btn btn-warning" onclick="triggerRollback('{{.Container.Name}}', event)">Rollback</button>
-                {{end}}
+            <div class="detail-meta">
+                <span class="detail-meta-label">Container ID</span>
+                <code class="detail-meta-value" id="container-id" title="{{.Container.ID}}">{{truncDigest .Container.ID}}</code>
+                <button class="detail-meta-copy" onclick="copyContainerID()" title="Copy full Container ID" aria-label="Copy container ID">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
             </div>
         </div>
 
-        {{if .Versions}}
-        <div class="card">
-            <div class="card-header">
-                <h2>Available Versions</h2>
-            </div>
-            <div class="card-body">
-                <div class="version-picker">
-                    <select id="version-select" class="policy-select">
-                        {{range .Versions}}
-                        <option value="{{.}}">{{.}}</option>
-                        {{end}}
-                    </select>
-                    <button class="btn btn-info" onclick="updateToVersion('{{.Container.Name}}')">Update to Version</button>
-                </div>
-            </div>
-        </div>
-        {{end}}
+        <!-- Accordion sections -->
+        <div class="accordion-stack">
 
-        <div class="card">
-            <div class="card-header">
-                <h2>Update History</h2>
-            </div>
-            {{if .History}}
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Old Image</th>
-                            <th>New Image</th>
-                            <th>Outcome</th>
-                            <th>Duration</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{range .History}}
-                        <tr>
-                            <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
-                            <td class="cell-image mono">{{.OldImage}}</td>
-                            <td class="cell-image mono">{{.NewImage}}</td>
-                            <td>
-                                {{if eq .Outcome "success"}}<span class="badge badge-success">Success</span>
-                                {{else if eq .Outcome "rollback"}}<span class="badge badge-error">Rollback</span>
-                                {{else}}<span class="badge badge-muted">{{.Outcome}}</span>{{end}}
-                            </td>
-                            <td class="mono">{{fmtDuration .Duration}}</td>
-                        </tr>
-                        {{end}}
-                    </tbody>
-                </table>
-            </div>
-            {{else}}
-            <div class="card-body">
-                <div class="empty-state"><p>No update history for this container.</p></div>
-            </div>
+            <!-- Update Policy -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Update Policy</h2>
+                    <span class="accordion-preview badge {{if eq .Container.Policy "auto"}}badge-success{{else if eq .Container.Policy "manual"}}badge-muted{{else}}badge-error{{end}}" data-policy-preview>{{.Container.Policy}}</span>
+                </summary>
+                <div class="accordion-body">
+                    <p class="accordion-intro">Controls how Sentinel handles updates for this container.</p>
+                    <div class="notify-options">
+                        <label class="notify-option">
+                            <input type="radio" name="policy" value="auto" {{if eq .Container.Policy "auto"}}checked{{end}}>
+                            <div class="notify-option-content">
+                                <span class="notify-option-title">Auto</span>
+                                <span class="notify-option-desc">Automatically pull and apply updates when detected. The container will be recreated with the new image.</span>
+                            </div>
+                        </label>
+                        <label class="notify-option">
+                            <input type="radio" name="policy" value="manual" {{if eq .Container.Policy "manual"}}checked{{end}}>
+                            <div class="notify-option-content">
+                                <span class="notify-option-title">Manual</span>
+                                <span class="notify-option-desc">Updates are detected and queued, but you must approve them before they're applied. Good for production containers.</span>
+                            </div>
+                        </label>
+                        <label class="notify-option">
+                            <input type="radio" name="policy" value="pinned" {{if eq .Container.Policy "pinned"}}checked{{end}}>
+                            <div class="notify-option-content">
+                                <span class="notify-option-title">Pinned</span>
+                                <span class="notify-option-desc">Skip this container entirely during scans. No update checks, no notifications. Use when you want to stay on a specific version.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Notification Preferences -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Notification Preferences</h2>
+                    <span class="accordion-preview" id="notify-preview">Default</span>
+                </summary>
+                <div class="accordion-body">
+                    <p class="accordion-intro">Choose how Sentinel notifies you when an update is available for this container.</p>
+                    <div class="notify-options" id="notify-options">
+                        <label class="notify-option">
+                            <input type="radio" name="notify-mode" value="default" checked>
+                            <div class="notify-option-content">
+                                <span class="notify-option-title">Immediate + summary</span>
+                                <span class="notify-option-desc">Get an alert as soon as an update is detected. Also included in the scheduled summary.</span>
+                            </div>
+                        </label>
+                        <label class="notify-option">
+                            <input type="radio" name="notify-mode" value="every_scan">
+                            <div class="notify-option-content">
+                                <span class="notify-option-title">Every scan</span>
+                                <span class="notify-option-desc">Get an alert every time a scan finds updates, even if already notified about the same update. No scheduled summary.</span>
+                            </div>
+                        </label>
+                        <label class="notify-option">
+                            <input type="radio" name="notify-mode" value="digest_only">
+                            <div class="notify-option-content">
+                                <span class="notify-option-title">Summary only</span>
+                                <span class="notify-option-desc">No immediate alerts. This container only appears in the scheduled summary.</span>
+                            </div>
+                        </label>
+                        <label class="notify-option">
+                            <input type="radio" name="notify-mode" value="muted">
+                            <div class="notify-option-content">
+                                <span class="notify-option-title">Silent</span>
+                                <span class="notify-option-desc">No notifications of any kind. Check the dashboard manually for updates.</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </details>
+
+            {{if .Versions}}
+            <!-- Available Versions -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Available Versions</h2>
+                    <span class="accordion-preview">{{len .Versions}} available</span>
+                </summary>
+                <div class="accordion-body">
+                    <div class="version-picker">
+                        <select id="version-select" class="policy-select">
+                            {{range .Versions}}
+                            <option value="{{.}}">{{.}}</option>
+                            {{end}}
+                        </select>
+                        <button class="btn btn-info" onclick="updateToVersion('{{.Container.Name}}')">Update to Version</button>
+                    </div>
+                </div>
+            </details>
             {{end}}
-        </div>
 
-        <div class="card">
-            <div class="card-header">
-                <h2>Snapshots (Rollback Targets)</h2>
-            </div>
-            {{if .Snapshots}}
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Taken</th>
-                            <th>Image</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{range .Snapshots}}
-                        <tr>
-                            <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
-                            <td class="cell-image mono">{{.ImageRef}}</td>
-                            <td><button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}', event)">Rollback</button></td>
-                        </tr>
-                        {{end}}
-                    </tbody>
-                </table>
-            </div>
-            {{else}}
-            <div class="card-body">
-                <div class="empty-state"><p>No snapshots available. A snapshot is saved before each update.</p></div>
-            </div>
-            {{end}}
+            <!-- Update History -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Update History</h2>
+                    <span class="accordion-preview">{{if .History}}{{len .History}} records{{else}}No history{{end}}</span>
+                </summary>
+                <div class="accordion-body accordion-body-flush">
+                    {{if .History}}
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Old Image</th>
+                                    <th>New Image</th>
+                                    <th>Outcome</th>
+                                    <th>Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .History}}
+                                <tr>
+                                    <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
+                                    <td class="cell-image mono">{{.OldImage}}</td>
+                                    <td class="cell-image mono">{{.NewImage}}</td>
+                                    <td>
+                                        {{if eq .Outcome "success"}}<span class="badge badge-success">Success</span>
+                                        {{else if eq .Outcome "rollback"}}<span class="badge badge-error">Rollback</span>
+                                        {{else}}<span class="badge badge-muted">{{.Outcome}}</span>{{end}}
+                                    </td>
+                                    <td class="mono">{{fmtDuration .Duration}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    {{else}}
+                    <div class="accordion-empty">No update history for this container.</div>
+                    {{end}}
+                </div>
+            </details>
+
+            <!-- Snapshots -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Snapshots</h2>
+                    <span class="accordion-preview">{{if .Snapshots}}{{len .Snapshots}} saved{{else}}None{{end}}</span>
+                </summary>
+                <div class="accordion-body accordion-body-flush">
+                    {{if .Snapshots}}
+                    <p class="accordion-intro" style="padding: 0 var(--sp-5); margin-bottom: 0;">A snapshot is saved before each update so you can roll back if something goes wrong.</p>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Taken</th>
+                                    <th>Image</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .Snapshots}}
+                                <tr>
+                                    <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
+                                    <td class="cell-image mono">{{.ImageRef}}</td>
+                                    <td><button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}', event)">Rollback</button></td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    {{else}}
+                    <div class="accordion-empty">No snapshots available. A snapshot is saved before each update.</div>
+                    {{end}}
+                </div>
+            </details>
+
         </div>
     </main>
 
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
+    <script>
+    var _containerName = "{{.Container.Name}}";
+    var _containerFullID = "{{.Container.ID}}";
+
+    var notifyLabels = {
+        "default": "Default",
+        "every_scan": "Every Scan",
+        "digest_only": "Digest Only",
+        "muted": "Muted"
+    };
+
+    var policyBadgeClass = {
+        "auto": "badge-success",
+        "manual": "badge-muted",
+        "pinned": "badge-error"
+    };
+
+    function changeNotifyPref(mode) {
+        fetch("/api/containers/" + encodeURIComponent(_containerName) + "/notify-pref", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({mode: mode})
+        })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (data.status === "ok") {
+                showToast("Notification mode updated", "success");
+                var preview = document.getElementById("notify-preview");
+                if (preview) preview.textContent = notifyLabels[mode] || mode;
+            }
+        })
+        .catch(function () { showToast("Failed to update notification mode", "error"); });
+    }
+
+    function changePolicyRadio(policy) {
+        changePolicy(_containerName, policy);
+        // Update the preview badge in the accordion header
+        var preview = document.querySelector('[data-policy-preview]');
+        if (preview) {
+            preview.textContent = policy;
+            preview.className = "accordion-preview badge " + (policyBadgeClass[policy] || "badge-muted");
+        }
+    }
+
+    function copyContainerID() {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(_containerFullID).then(function () {
+                showToast("Container ID copied", "success");
+            });
+        } else {
+            var t = document.createElement("textarea");
+            t.value = _containerFullID;
+            document.body.appendChild(t);
+            t.select();
+            document.execCommand("copy");
+            document.body.removeChild(t);
+            showToast("Container ID copied", "success");
+        }
+    }
+
+    (function() {
+        // Load current notification preference
+        fetch("/api/containers/" + encodeURIComponent(_containerName) + "/notify-pref", {credentials: "same-origin"})
+            .then(function (res) { return res.json(); })
+            .then(function (data) {
+                if (data.mode) {
+                    var radios = document.querySelectorAll('input[name="notify-mode"]');
+                    for (var i = 0; i < radios.length; i++) {
+                        radios[i].checked = (radios[i].value === data.mode);
+                    }
+                    var preview = document.getElementById("notify-preview");
+                    if (preview) preview.textContent = notifyLabels[data.mode] || data.mode;
+                }
+            })
+            .catch(function () {});
+
+        // Bind notification radio change events
+        var notifyRadios = document.querySelectorAll('input[name="notify-mode"]');
+        for (var i = 0; i < notifyRadios.length; i++) {
+            notifyRadios[i].addEventListener("change", function () {
+                changeNotifyPref(this.value);
+            });
+        }
+
+        // Bind policy radio change events
+        var policyRadios = document.querySelectorAll('input[name="policy"]');
+        for (var i = 0; i < policyRadios.length; i++) {
+            policyRadios[i].addEventListener("change", function () {
+                changePolicyRadio(this.value);
+            });
+        }
+    })();
+    </script>
 </body>
 </html>
 {{end}}

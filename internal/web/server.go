@@ -45,6 +45,8 @@ type Dependencies struct {
 	SelfUpdater        SelfUpdater
 	NotifyConfig       NotificationConfigStore
 	NotifyReconfigurer NotifierReconfigurer
+	NotifyState        NotifyStateStore
+	Digest             DigestController
 	Auth               *auth.Service
 	Log                *slog.Logger
 }
@@ -106,6 +108,22 @@ type NotifierReconfigurer interface {
 	Reconfigure(notifiers ...notify.Notifier)
 }
 
+// NotifyStateStore reads and writes per-container notification state and preferences.
+type NotifyStateStore interface {
+	GetNotifyPref(name string) (*NotifyPref, error)
+	SetNotifyPref(name string, pref *NotifyPref) error
+	DeleteNotifyPref(name string) error
+	AllNotifyPrefs() (map[string]*NotifyPref, error)
+	AllNotifyStates() (map[string]*NotifyState, error)
+}
+
+// DigestController controls the digest scheduler.
+type DigestController interface {
+	SetDigestConfig()
+	TriggerDigest(ctx context.Context)
+	LastRunTime() time.Time
+}
+
 // SchedulerController controls the scheduler's poll interval and scan triggers.
 type SchedulerController interface {
 	SetPollInterval(d time.Duration)
@@ -126,6 +144,18 @@ type LogEntry struct {
 	Type      string    `json:"type"`
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
+}
+
+// NotifyPref mirrors store.NotifyPref.
+type NotifyPref struct {
+	Mode string `json:"mode"`
+}
+
+// NotifyState mirrors store.NotifyState.
+type NotifyState struct {
+	LastDigest   string    `json:"last_digest"`
+	LastNotified time.Time `json:"last_notified"`
+	FirstSeen    time.Time `json:"first_seen"`
 }
 
 // UpdateRecord mirrors store.UpdateRecord to avoid importing store.
@@ -412,6 +442,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
 
+	// Notification prefs & digest (read)
+	s.mux.Handle("GET /api/containers/{name}/notify-pref", perm(auth.PermSettingsView, s.apiGetNotifyPref))
+	s.mux.Handle("GET /api/settings/digest", perm(auth.PermSettingsView, s.apiGetDigestSettings))
+	s.mux.Handle("GET /api/settings/container-notify-prefs", perm(auth.PermSettingsView, s.apiGetAllNotifyPrefs))
+	s.mux.Handle("GET /api/digest/banner", perm(auth.PermContainersView, s.apiGetDigestBanner))
+
 	// settings.modify
 	s.mux.Handle("POST /api/settings/poll-interval", perm(auth.PermSettingsModify, s.apiSetPollInterval))
 	s.mux.Handle("POST /api/settings/default-policy", perm(auth.PermSettingsModify, s.apiSetDefaultPolicy))
@@ -421,6 +457,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
 	s.mux.Handle("POST /api/self-update", perm(auth.PermSettingsModify, s.apiSelfUpdate))
+
+	// Notification prefs & digest (write)
+	s.mux.Handle("POST /api/containers/{name}/notify-pref", perm(auth.PermSettingsModify, s.apiSetNotifyPref))
+	s.mux.Handle("POST /api/settings/digest", perm(auth.PermSettingsModify, s.apiSaveDigestSettings))
+	s.mux.Handle("POST /api/digest/trigger", perm(auth.PermSettingsModify, s.apiTriggerDigest))
+	s.mux.Handle("POST /api/digest/banner/dismiss", perm(auth.PermContainersView, s.apiDismissDigestBanner))
 
 	// users.manage
 	s.mux.Handle("GET /api/auth/users", perm(auth.PermUsersManage, s.apiListUsers))

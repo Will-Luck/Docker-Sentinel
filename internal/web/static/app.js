@@ -46,7 +46,9 @@
    ------------------------------------------------------------ */
 
 function initTheme() {
-    var saved = localStorage.getItem("sentinel-theme") || "auto";
+    var saved = localStorage.getItem("sentinel-theme") || "dark";
+    // Light theme disabled — force dark if previously set to light or auto
+    if (saved === "light" || saved === "auto") saved = "dark";
     applyTheme(saved);
 }
 
@@ -65,16 +67,77 @@ function applyTheme(theme) {
 }
 
 /* ------------------------------------------------------------
+   1b. Accordion Persistence
+   ------------------------------------------------------------ */
+
+function getAccordionKey(details) {
+    var h2 = details.querySelector("h2");
+    if (!h2) return null;
+    var page = document.body.dataset.page || window.location.pathname;
+    return "sentinel-acc::" + page + "::" + h2.textContent.trim();
+}
+
+function saveAccordionState(details) {
+    var key = getAccordionKey(details);
+    if (!key) return;
+    localStorage.setItem(key, details.open ? "1" : "0");
+}
+
+function clearAccordionState() {
+    var keys = [];
+    for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf("sentinel-acc::") === 0) keys.push(k);
+    }
+    for (var j = 0; j < keys.length; j++) {
+        localStorage.removeItem(keys[j]);
+    }
+}
+
+function initAccordionPersistence() {
+    var mode = localStorage.getItem("sentinel-sections") || "remember";
+    var accordions = document.querySelectorAll("details.accordion");
+
+    for (var i = 0; i < accordions.length; i++) {
+        var details = accordions[i];
+
+        if (mode === "remember") {
+            // Restore saved state if available
+            var key = getAccordionKey(details);
+            if (key) {
+                var saved = localStorage.getItem(key);
+                if (saved === "1") details.open = true;
+                else if (saved === "0") details.open = false;
+                // If no saved state, keep the HTML default
+            }
+        } else if (mode === "collapsed") {
+            details.open = false;
+        } else if (mode === "expanded") {
+            details.open = true;
+        }
+
+        // Listen for toggle to persist user choices (always, regardless of mode)
+        details.addEventListener("toggle", function() {
+            if (localStorage.getItem("sentinel-sections") === "remember") {
+                saveAccordionState(this);
+            }
+        });
+    }
+}
+
+/* ------------------------------------------------------------
    2. Settings Page
    ------------------------------------------------------------ */
 
 function initSettingsPage() {
     var themeSelect = document.getElementById("theme-select");
     var stackSelect = document.getElementById("stack-default");
+    var sectionSelect = document.getElementById("section-default");
     if (!themeSelect) return;
 
-    themeSelect.value = localStorage.getItem("sentinel-theme") || "auto";
+    themeSelect.value = localStorage.getItem("sentinel-theme") || "dark";
     stackSelect.value = localStorage.getItem("sentinel-stacks") || "collapsed";
+    if (sectionSelect) sectionSelect.value = localStorage.getItem("sentinel-sections") || "remember";
 
     themeSelect.addEventListener("change", function() {
         applyTheme(themeSelect.value);
@@ -85,6 +148,16 @@ function initSettingsPage() {
         localStorage.setItem("sentinel-stacks", stackSelect.value);
         showToast("Stack default updated", "success");
     });
+    if (sectionSelect) {
+        sectionSelect.addEventListener("change", function() {
+            localStorage.setItem("sentinel-sections", sectionSelect.value);
+            if (sectionSelect.value !== "remember") {
+                // Clear saved accordion state when switching away from "remember"
+                clearAccordionState();
+            }
+            showToast("Section default updated", "success");
+        });
+    }
 
     // Fetch all settings and populate controls.
     fetch("/api/settings")
@@ -181,6 +254,10 @@ function initSettingsPage() {
 
     // Load notification channels.
     loadNotificationChannels();
+
+    // Load digest settings and per-container notification preferences.
+    loadDigestSettings();
+    loadContainerNotifyPrefs();
 }
 
 function onPollIntervalChange(value) {
@@ -493,6 +570,9 @@ function checkPauseState() {
    2c. Last Scan Timestamp
    ------------------------------------------------------------ */
 
+var lastScanTimestamp = null;
+var lastScanTimer = null;
+
 function refreshLastScan() {
     var el = document.getElementById("last-scan");
     if (!el) return;
@@ -502,20 +582,42 @@ function refreshLastScan() {
         .then(function(data) {
             if (!data.last_scan) {
                 el.textContent = "Last scan: never";
+                lastScanTimestamp = null;
                 return;
             }
-            var t = new Date(data.last_scan);
-            var now = new Date();
-            var diff = Math.floor((now - t) / 1000);
-            var ago;
-            if (diff < 60) ago = "just now";
-            else if (diff < 3600) ago = Math.floor(diff / 60) + "m ago";
-            else if (diff < 86400) ago = Math.floor(diff / 3600) + "h ago";
-            else ago = Math.floor(diff / 86400) + "d ago";
-            el.textContent = "Last scan: " + ago;
-            el.title = t.toLocaleString();
+            lastScanTimestamp = new Date(data.last_scan);
+            el.title = lastScanTimestamp.toLocaleString();
+            renderLastScanTicker();
+            if (!lastScanTimer) {
+                lastScanTimer = setInterval(renderLastScanTicker, 1000);
+            }
         })
         .catch(function() {});
+}
+
+function renderLastScanTicker() {
+    var el = document.getElementById("last-scan");
+    if (!el || !lastScanTimestamp) return;
+
+    var diff = Math.floor((Date.now() - lastScanTimestamp.getTime()) / 1000);
+    if (diff < 0) diff = 0;
+
+    var parts = [];
+    if (diff >= 86400) {
+        parts.push(Math.floor(diff / 86400) + "d");
+        diff %= 86400;
+    }
+    if (diff >= 3600) {
+        parts.push(Math.floor(diff / 3600) + "h");
+        diff %= 3600;
+    }
+    if (diff >= 60) {
+        parts.push(Math.floor(diff / 60) + "m");
+        diff %= 60;
+    }
+    parts.push(diff + "s");
+
+    el.textContent = "Last scan: " + parts.join(" ") + " ago";
 }
 
 /* ------------------------------------------------------------
@@ -1328,6 +1430,10 @@ function toggleManageMode() {
 var sseReloadTimer = null;
 
 function scheduleReload() {
+    // Only full-reload on pages that render the container table (dashboard).
+    // Other pages (settings, history, queue, etc.) don't need reloading
+    // and it destroys user state like open accordion sections.
+    if (!document.getElementById("container-table")) return;
     accordionCache = {};
     if (sseReloadTimer) clearTimeout(sseReloadTimer);
     sseReloadTimer = setTimeout(function () {
@@ -1498,6 +1604,14 @@ function initSSE() {
         scheduleReload();
     });
 
+    es.addEventListener("digest_ready", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            showToast(data.message || "Digest ready", "info");
+        } catch (_) {}
+        loadDigestBanner();
+    });
+
     es.onopen = function () {
         setConnectionStatus(true);
     };
@@ -1505,6 +1619,41 @@ function initSSE() {
     es.onerror = function () {
         setConnectionStatus(false);
     };
+}
+
+/* ------------------------------------------------------------
+   11b. Digest Banner
+   ------------------------------------------------------------ */
+
+function loadDigestBanner() {
+    var banner = document.getElementById("digest-banner");
+    if (!banner) return;
+
+    fetch("/api/digest/banner", {credentials: "same-origin"})
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (data.count > 0) {
+                var text = "Pending updates: " + data.pending.join(", ") +
+                    " (" + data.count + " container" + (data.count === 1 ? "" : "s") + " awaiting action)";
+                document.getElementById("digest-banner-text").textContent = text;
+                banner.style.display = "";
+            } else {
+                banner.style.display = "none";
+            }
+        })
+        .catch(function () { banner.style.display = "none"; });
+}
+
+function dismissDigestBanner() {
+    var banner = document.getElementById("digest-banner");
+    if (banner) banner.style.display = "none";
+
+    fetch("/api/digest/banner/dismiss", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: "{}"
+    });
 }
 
 /* ------------------------------------------------------------
@@ -1519,6 +1668,7 @@ document.addEventListener("DOMContentLoaded", function () {
         initSSE();
     }
     initPauseBanner();
+    loadDigestBanner();
     initFilters();
     refreshLastScan();
 
@@ -1529,6 +1679,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     initSettingsPage();
+    initAccordionPersistence();
 
     // Keyboard support for stack headers.
     var stackHeaders = document.querySelectorAll(".stack-header");
@@ -2054,4 +2205,354 @@ function testNotification() {
         "Failed to send test notification",
         btn
     );
+}
+
+/* ------------------------------------------------------------
+   14. Digest Settings
+   ------------------------------------------------------------ */
+
+var NOTIFY_MODE_LABELS = {
+    "default": "Immediate + summary",
+    "every_scan": "Every scan",
+    "digest_only": "Summary only",
+    "muted": "Silent"
+};
+
+function modeUsesDigest(mode) {
+    return mode === "default" || mode === "digest_only";
+}
+
+function updateDigestScheduleVisibility(mode) {
+    var section = document.getElementById("digest-schedule-section");
+    if (section) section.style.display = modeUsesDigest(mode) ? "" : "none";
+}
+
+function updateNotifyModePreview(mode) {
+    var preview = document.getElementById("notify-mode-preview");
+    if (preview) preview.textContent = NOTIFY_MODE_LABELS[mode] || mode;
+}
+
+function onNotifyModeChange(mode) {
+    updateDigestScheduleVisibility(mode);
+    updateNotifyModePreview(mode);
+    saveDigestSettings();
+}
+
+function getSelectedNotifyMode() {
+    var radios = document.querySelectorAll('input[name="default-notify-mode"]');
+    for (var i = 0; i < radios.length; i++) {
+        if (radios[i].checked) return radios[i].value;
+    }
+    return "default";
+}
+
+function loadDigestSettings() {
+    fetch("/api/settings/digest", {credentials: "same-origin"})
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            var mode = data.default_notify_mode || "default";
+            var radios = document.querySelectorAll('input[name="default-notify-mode"]');
+            for (var i = 0; i < radios.length; i++) {
+                radios[i].checked = (radios[i].value === mode);
+            }
+            updateDigestScheduleVisibility(mode);
+            updateNotifyModePreview(mode);
+            var el = document.getElementById("digest-time");
+            if (el) el.value = data.digest_time || "09:00";
+            el = document.getElementById("digest-interval");
+            if (el) el.value = data.digest_interval || "24h";
+        })
+        .catch(function () {});
+}
+
+function saveDigestSettings() {
+    var mode = getSelectedNotifyMode();
+    var body = {
+        default_notify_mode: mode,
+        digest_enabled: modeUsesDigest(mode)
+    };
+    var el = document.getElementById("digest-time");
+    if (el && el.value) body.digest_time = el.value;
+    el = document.getElementById("digest-interval");
+    if (el && el.value) body.digest_interval = el.value;
+
+    fetch("/api/settings/digest", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+        if (data.status === "ok") showToast("Settings saved", "success");
+    })
+    .catch(function () { showToast("Failed to save settings", "error"); });
+}
+
+function triggerDigest() {
+    fetch("/api/digest/trigger", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"}
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+        showToast(data.message || "Digest triggered", "info");
+    })
+    .catch(function () { showToast("Failed to trigger digest", "error"); });
+}
+
+function loadContainerNotifyPrefs() {
+    var container = document.getElementById("container-notify-prefs");
+    if (!container) return;
+
+    fetch("/api/settings/container-notify-prefs", {credentials: "same-origin"})
+        .then(function (res) { return res.json(); })
+        .then(function (prefs) {
+            fetch("/api/containers", {credentials: "same-origin"})
+                .then(function (res) { return res.json(); })
+                .then(function (containers) {
+                    renderContainerNotifyPrefs(container, containers, prefs);
+                });
+        })
+        .catch(function () {
+            while (container.firstChild) container.removeChild(container.firstChild);
+            var msg = document.createElement("p");
+            msg.className = "text-muted";
+            msg.textContent = "Failed to load preferences";
+            container.appendChild(msg);
+        });
+}
+
+function renderContainerNotifyPrefs(el, containers, prefs) {
+    while (el.firstChild) el.removeChild(el.firstChild);
+
+    if (!containers || containers.length === 0) {
+        var msg = document.createElement("p");
+        msg.className = "text-muted";
+        msg.textContent = "No containers found";
+        el.appendChild(msg);
+        return;
+    }
+
+    var allModes = [
+        {value: "default", label: "Immediate + summary"},
+        {value: "every_scan", label: "Every scan"},
+        {value: "digest_only", label: "Summary only"},
+        {value: "muted", label: "Silent"}
+    ];
+
+    // Build data with stack info
+    var items = [];
+    var overrideCount = 0;
+    for (var i = 0; i < containers.length; i++) {
+        var mode = (prefs[containers[i].name] && prefs[containers[i].name].mode) || "default";
+        if (mode !== "default") overrideCount++;
+        items.push({name: containers[i].name, mode: mode, stack: containers[i].stack || ""});
+    }
+
+    // Group by stack, sorted: named stacks alphabetically, standalone last
+    var stackMap = {};
+    var stackOrder = [];
+    for (var s = 0; s < items.length; s++) {
+        var key = items[s].stack;
+        if (!stackMap[key]) {
+            stackMap[key] = [];
+            stackOrder.push(key);
+        }
+        stackMap[key].push(items[s]);
+    }
+    stackOrder.sort(function(a, b) {
+        if (a === "") return 1;
+        if (b === "") return -1;
+        return a.localeCompare(b);
+    });
+    // Sort containers within each stack
+    for (var sk in stackMap) {
+        stackMap[sk].sort(function(a, b) { return a.name.localeCompare(b.name); });
+    }
+
+    // Summary
+    var summary = document.createElement("p");
+    summary.className = "notify-prefs-summary";
+    summary.textContent = overrideCount === 0
+        ? "All " + items.length + " containers use the default notification mode. Select containers below to set a different mode."
+        : overrideCount + " of " + items.length + " containers have custom settings. Select containers to change their mode.";
+    el.appendChild(summary);
+
+    // Toolbar
+    var toolbar = document.createElement("div");
+    toolbar.className = "notify-prefs-toolbar";
+
+    var selectAllBtn = document.createElement("button");
+    selectAllBtn.className = "btn";
+    selectAllBtn.textContent = "Select all";
+    selectAllBtn.addEventListener("click", function() { toggleAllPrefs(true); });
+    toolbar.appendChild(selectAllBtn);
+
+    var deselectBtn = document.createElement("button");
+    deselectBtn.className = "btn";
+    deselectBtn.textContent = "Deselect all";
+    deselectBtn.addEventListener("click", function() { toggleAllPrefs(false); });
+    toolbar.appendChild(deselectBtn);
+
+    el.appendChild(toolbar);
+
+    // Container list grouped by stack
+    var listWrap = document.createElement("div");
+    listWrap.id = "notify-prefs-list";
+
+    for (var g = 0; g < stackOrder.length; g++) {
+        var stackName = stackOrder[g];
+        var groupItems = stackMap[stackName];
+
+        // Card wrapper for this stack
+        var groupCard = document.createElement("div");
+        groupCard.className = "notify-prefs-group";
+
+        var heading = document.createElement("div");
+        heading.className = "notify-prefs-group-heading";
+        heading.textContent = stackName || "Standalone";
+        groupCard.appendChild(heading);
+
+        // Grid for this stack
+        var grid = document.createElement("div");
+        grid.className = "notify-prefs-list";
+
+        for (var j = 0; j < groupItems.length; j++) {
+            var item = groupItems[j];
+            var label = document.createElement("label");
+            label.className = "notify-pref-item" + (item.mode !== "default" ? " has-override" : "");
+            label.dataset.name = item.name;
+
+            var cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.value = item.name;
+            cb.addEventListener("change", function() {
+                this.closest(".notify-pref-item").classList.toggle("checked", this.checked);
+                updatePrefsActionBar();
+            });
+            label.appendChild(cb);
+
+            var nameSpan = document.createElement("span");
+            nameSpan.className = "notify-pref-name";
+            nameSpan.textContent = item.name;
+            label.appendChild(nameSpan);
+
+            if (item.mode !== "default") {
+                var badge = document.createElement("span");
+                badge.className = "notify-pref-badge";
+                badge.textContent = NOTIFY_MODE_LABELS[item.mode] || item.mode;
+                label.appendChild(badge);
+            }
+
+            grid.appendChild(label);
+        }
+        groupCard.appendChild(grid);
+        listWrap.appendChild(groupCard);
+    }
+    el.appendChild(listWrap);
+
+    // Action bar (hidden until selection)
+    var actionBar = document.createElement("div");
+    actionBar.className = "notify-prefs-action-bar";
+    actionBar.id = "notify-prefs-action-bar";
+    actionBar.style.display = "none";
+
+    var countSpan = document.createElement("span");
+    countSpan.className = "action-count";
+    countSpan.id = "notify-prefs-action-count";
+    countSpan.textContent = "0 selected";
+    actionBar.appendChild(countSpan);
+
+    var actionSel = document.createElement("select");
+    actionSel.className = "setting-select";
+    actionSel.id = "notify-prefs-action-mode";
+    for (var k = 0; k < allModes.length; k++) {
+        var opt = document.createElement("option");
+        opt.value = allModes[k].value;
+        opt.textContent = allModes[k].label;
+        actionSel.appendChild(opt);
+    }
+    actionBar.appendChild(actionSel);
+
+    var applyBtn = document.createElement("button");
+    applyBtn.className = "btn btn-success";
+    applyBtn.textContent = "Apply";
+    applyBtn.addEventListener("click", function() { applyPrefsToSelected(); });
+    actionBar.appendChild(applyBtn);
+
+    var resetBtn = document.createElement("button");
+    resetBtn.className = "btn";
+    resetBtn.textContent = "Reset to default";
+    resetBtn.addEventListener("click", function() { applyPrefsToSelected("default"); });
+    actionBar.appendChild(resetBtn);
+
+    el.appendChild(actionBar);
+}
+
+function toggleAllPrefs(checked) {
+    var cbs = document.querySelectorAll("#notify-prefs-list input[type=checkbox]");
+    for (var i = 0; i < cbs.length; i++) {
+        cbs[i].checked = checked;
+        cbs[i].closest(".notify-pref-item").classList.toggle("checked", checked);
+    }
+    updatePrefsActionBar();
+}
+
+function updatePrefsActionBar() {
+    var cbs = document.querySelectorAll("#notify-prefs-list input[type=checkbox]:checked");
+    var bar = document.getElementById("notify-prefs-action-bar");
+    var count = document.getElementById("notify-prefs-action-count");
+    if (!bar) return;
+    bar.style.display = cbs.length > 0 ? "" : "none";
+    if (count) count.textContent = cbs.length + " selected";
+}
+
+function applyPrefsToSelected(forceMode) {
+    var modeSel = document.getElementById("notify-prefs-action-mode");
+    var mode = forceMode || (modeSel ? modeSel.value : "default");
+    var cbs = document.querySelectorAll("#notify-prefs-list input[type=checkbox]:checked");
+    if (cbs.length === 0) return;
+
+    var label = NOTIFY_MODE_LABELS[mode] || mode;
+    var action = forceMode ? "Reset" : "Set";
+    if (!confirm(action + " " + cbs.length + " container" + (cbs.length > 1 ? "s" : "") + " to \"" + label + "\"?")) return;
+
+    var pending = cbs.length;
+    for (var i = 0; i < cbs.length; i++) {
+        (function(name) {
+            fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({mode: mode})
+            })
+            .then(function() {
+                pending--;
+                if (pending === 0) {
+                    showToast(action + " " + cbs.length + " containers to " + label, "success");
+                    loadContainerNotifyPrefs();
+                }
+            })
+            .catch(function() { pending--; });
+        })(cbs[i].value);
+    }
+}
+
+function setContainerNotifyPref(name, mode) {
+    fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({mode: mode})
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+        if (data.status === "ok") {
+            showToast("Notification mode updated for " + name, "success");
+            loadContainerNotifyPrefs();
+        }
+    })
+    .catch(function () { showToast("Failed to update notification mode", "error"); });
 }

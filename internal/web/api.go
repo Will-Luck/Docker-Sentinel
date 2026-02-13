@@ -29,6 +29,7 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 		Policy      string `json:"policy"`
 		State       string `json:"state"`
 		Maintenance bool   `json:"maintenance"`
+		Stack       string `json:"stack,omitempty"`
 	}
 
 	result := make([]containerInfo, 0, len(containers))
@@ -53,6 +54,7 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 			Policy:      policy,
 			State:       c.State,
 			Maintenance: maintenance,
+			Stack:       c.Labels["com.docker.compose.project"],
 		})
 	}
 
@@ -1324,20 +1326,269 @@ func webReplaceTag(imageRef, newTag string) string {
 	return imageRef + ":" + newTag
 }
 
+// apiGetNotifyPref returns the notification preference for a container.
+func (s *Server) apiGetNotifyPref(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+	if s.deps.NotifyState == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"mode": "default"})
+		return
+	}
+	pref, err := s.deps.NotifyState.GetNotifyPref(name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load notification preference")
+		return
+	}
+	if pref == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"mode": "default"})
+		return
+	}
+	writeJSON(w, http.StatusOK, pref)
+}
+
+// apiSetNotifyPref sets the notification preference for a container.
+func (s *Server) apiSetNotifyPref(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	switch body.Mode {
+	case "default", "every_scan", "digest_only", "muted":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "mode must be default, every_scan, digest_only, or muted")
+		return
+	}
+	if s.deps.NotifyState == nil {
+		writeError(w, http.StatusNotImplemented, "notification preferences not available")
+		return
+	}
+	if body.Mode == "default" {
+		// "default" means remove override — fall back to global setting.
+		if err := s.deps.NotifyState.DeleteNotifyPref(name); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete notification preference")
+			return
+		}
+	} else {
+		if err := s.deps.NotifyState.SetNotifyPref(name, &NotifyPref{Mode: body.Mode}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save notification preference")
+			return
+		}
+	}
+	s.logEvent("notify_pref", name, "Notification mode set to "+body.Mode)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "mode": body.Mode})
+}
+
+// apiGetDigestSettings returns the digest configuration.
+func (s *Server) apiGetDigestSettings(w http.ResponseWriter, r *http.Request) {
+	settings := map[string]string{
+		"digest_enabled":      "true",
+		"digest_time":         "09:00",
+		"digest_interval":     "24h",
+		"default_notify_mode": "default",
+	}
+	if s.deps.SettingsStore != nil {
+		for key := range settings {
+			if val, err := s.deps.SettingsStore.LoadSetting(key); err == nil && val != "" {
+				settings[key] = val
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+// apiSaveDigestSettings saves digest configuration and reconfigures the scheduler.
+func (s *Server) apiSaveDigestSettings(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled           *bool  `json:"digest_enabled,omitempty"`
+		Time              string `json:"digest_time,omitempty"`
+		Interval          string `json:"digest_interval,omitempty"`
+		DefaultNotifyMode string `json:"default_notify_mode,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	if body.Enabled != nil {
+		val := "true"
+		if !*body.Enabled {
+			val = "false"
+		}
+		_ = s.deps.SettingsStore.SaveSetting("digest_enabled", val)
+	}
+	if body.Time != "" {
+		if _, err := time.Parse("15:04", body.Time); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid time format, use HH:MM")
+			return
+		}
+		_ = s.deps.SettingsStore.SaveSetting("digest_time", body.Time)
+	}
+	if body.Interval != "" {
+		if _, err := time.ParseDuration(body.Interval); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid interval duration")
+			return
+		}
+		_ = s.deps.SettingsStore.SaveSetting("digest_interval", body.Interval)
+	}
+	if body.DefaultNotifyMode != "" {
+		switch body.DefaultNotifyMode {
+		case "default", "every_scan", "digest_only", "muted":
+			_ = s.deps.SettingsStore.SaveSetting("default_notify_mode", body.DefaultNotifyMode)
+		default:
+			writeError(w, http.StatusBadRequest, "invalid default_notify_mode")
+			return
+		}
+	}
+
+	// Signal digest scheduler to reconfigure.
+	if s.deps.Digest != nil {
+		s.deps.Digest.SetDigestConfig()
+	}
+
+	s.logEvent("settings", "", "Digest settings updated")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "digest settings saved"})
+}
+
+// apiGetAllNotifyPrefs returns all per-container notification preferences.
+func (s *Server) apiGetAllNotifyPrefs(w http.ResponseWriter, r *http.Request) {
+	if s.deps.NotifyState == nil {
+		writeJSON(w, http.StatusOK, map[string]*NotifyPref{})
+		return
+	}
+	prefs, err := s.deps.NotifyState.AllNotifyPrefs()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load notification preferences")
+		return
+	}
+	// Convert to web types.
+	result := make(map[string]map[string]string, len(prefs))
+	for name, p := range prefs {
+		result[name] = map[string]string{"mode": p.Mode}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// apiTriggerDigest triggers an immediate digest notification.
+func (s *Server) apiTriggerDigest(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Digest == nil {
+		writeError(w, http.StatusNotImplemented, "digest scheduler not available")
+		return
+	}
+	go s.deps.Digest.TriggerDigest(context.Background())
+	s.logEvent("digest", "", "Manual digest triggered")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "digest triggered"})
+}
+
+// apiGetDigestBanner returns pending update info for the dashboard banner.
+func (s *Server) apiGetDigestBanner(w http.ResponseWriter, r *http.Request) {
+	if s.deps.NotifyState == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"pending": []string{}, "count": 0})
+		return
+	}
+	states, err := s.deps.NotifyState.AllNotifyStates()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load notification states")
+		return
+	}
+
+	// Load dismissed state.
+	var dismissed []string
+	if s.deps.SettingsStore != nil {
+		if val, loadErr := s.deps.SettingsStore.LoadSetting("digest_banner_dismissed"); loadErr == nil && val != "" {
+			_ = json.Unmarshal([]byte(val), &dismissed)
+		}
+	}
+	dismissedSet := make(map[string]bool, len(dismissed))
+	for _, d := range dismissed {
+		dismissedSet[d] = true
+	}
+
+	var names []string
+	for name, state := range states {
+		key := name + "::" + state.LastDigest
+		if !dismissedSet[key] {
+			names = append(names, name)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pending": names,
+		"count":   len(names),
+	})
+}
+
+// apiDismissDigestBanner dismisses the digest banner for current updates.
+func (s *Server) apiDismissDigestBanner(w http.ResponseWriter, r *http.Request) {
+	if s.deps.NotifyState == nil || s.deps.SettingsStore == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	states, err := s.deps.NotifyState.AllNotifyStates()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load notification states")
+		return
+	}
+
+	dismissed := make([]string, 0, len(states))
+	for name, state := range states {
+		dismissed = append(dismissed, name+"::"+state.LastDigest)
+	}
+	data, _ := json.Marshal(dismissed)
+	_ = s.deps.SettingsStore.SaveSetting("digest_banner_dismissed", string(data))
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "banner dismissed"})
+}
+
 // restoreSecrets returns the saved settings if the incoming settings contain any
 // masked values (strings ending in "****"). This prevents overwriting real secrets
 // with their masked representations when the frontend sends back unchanged channels.
 func restoreSecrets(incoming, saved notify.Channel) json.RawMessage {
-	var fields map[string]interface{}
-	if err := json.Unmarshal(incoming.Settings, &fields); err != nil {
+	var inFields map[string]interface{}
+	if err := json.Unmarshal(incoming.Settings, &inFields); err != nil {
 		return incoming.Settings
 	}
 
-	for _, v := range fields {
+	var savedFields map[string]interface{}
+	if err := json.Unmarshal(saved.Settings, &savedFields); err != nil {
+		return incoming.Settings
+	}
+
+	// Only restore individual masked fields from the saved data,
+	// keeping all other fields from the incoming (user-edited) data.
+	changed := false
+	for k, v := range inFields {
 		s, ok := v.(string)
 		if ok && strings.HasSuffix(s, "****") {
-			return saved.Settings
+			if orig, exists := savedFields[k]; exists {
+				inFields[k] = orig
+				changed = true
+			}
 		}
 	}
-	return incoming.Settings
+
+	if !changed {
+		return incoming.Settings
+	}
+
+	merged, err := json.Marshal(inFields)
+	if err != nil {
+		return incoming.Settings
+	}
+	return merged
 }
