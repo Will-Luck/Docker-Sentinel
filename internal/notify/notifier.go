@@ -75,12 +75,18 @@ func NewMulti(log Logger, notifiers ...Notifier) *Multi {
 }
 
 // Notify sends an event to all registered notifiers.
+// Returns true if at least one notifier succeeded (or none are configured).
 // Errors are logged but never propagated — notifications must not block updates.
-func (m *Multi) Notify(ctx context.Context, event Event) {
+func (m *Multi) Notify(ctx context.Context, event Event) bool {
 	m.mu.RLock()
 	notifiers := m.notifiers
 	m.mu.RUnlock()
 
+	if len(notifiers) == 0 {
+		return true
+	}
+
+	anyOK := false
 	for _, n := range notifiers {
 		if err := n.Send(ctx, event); err != nil {
 			m.log.Error("notification failed",
@@ -89,8 +95,11 @@ func (m *Multi) Notify(ctx context.Context, event Event) {
 				"container", event.ContainerName,
 				"error", err.Error(),
 			)
+		} else {
+			anyOK = true
 		}
 	}
+	return anyOK
 }
 
 // Reconfigure replaces the notifier chain at runtime.

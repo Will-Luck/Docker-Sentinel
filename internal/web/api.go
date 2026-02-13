@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -131,6 +132,45 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		"status":  "approved",
 		"name":    name,
 		"message": "update started for " + name,
+	})
+}
+
+// apiIgnoreVersion ignores a specific version for a container and removes it from the queue.
+func (s *Server) apiIgnoreVersion(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	update, ok := s.deps.Queue.Get(name)
+	if !ok {
+		writeError(w, http.StatusNotFound, "no pending update for "+name)
+		return
+	}
+
+	if len(update.NewerVersions) == 0 {
+		writeError(w, http.StatusBadRequest, "no specific version to ignore (digest-only update)")
+		return
+	}
+
+	ignoredVersion := update.NewerVersions[0]
+	if s.deps.IgnoredVersions != nil {
+		if err := s.deps.IgnoredVersions.AddIgnoredVersion(name, ignoredVersion); err != nil {
+			s.deps.Log.Error("failed to save ignored version", "name", name, "version", ignoredVersion, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to save ignored version")
+			return
+		}
+	}
+
+	s.deps.Queue.Remove(name)
+	s.logEvent("ignore", name, "Ignored version "+ignoredVersion)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ignored",
+		"name":    name,
+		"version": ignoredVersion,
+		"message": "version " + ignoredVersion + " ignored for " + name,
 	})
 }
 
@@ -264,6 +304,33 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if updateAvailable {
+		// Filter out ignored versions before queuing.
+		if len(newerVersions) > 0 && s.deps.IgnoredVersions != nil {
+			ignored, _ := s.deps.IgnoredVersions.GetIgnoredVersions(name)
+			if len(ignored) > 0 {
+				ignoredSet := make(map[string]bool, len(ignored))
+				for _, v := range ignored {
+					ignoredSet[v] = true
+				}
+				var filtered []string
+				for _, v := range newerVersions {
+					if !ignoredSet[v] {
+						filtered = append(filtered, v)
+					}
+				}
+				newerVersions = filtered
+			}
+		}
+
+		if len(newerVersions) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":  "up_to_date",
+				"name":    name,
+				"message": name + " is up to date (newer versions ignored)",
+			})
+			return
+		}
+
 		s.deps.Queue.Add(PendingUpdate{
 			ContainerID:   containerID,
 			ContainerName: name,
@@ -1390,6 +1457,28 @@ func (s *Server) apiSetNotifyPref(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "mode": body.Mode})
 }
 
+// apiClearAllNotifyStates resets all notification dedup states, allowing
+// the next scan to re-trigger notifications for pending updates.
+func (s *Server) apiClearAllNotifyStates(w http.ResponseWriter, r *http.Request) {
+	if s.deps.NotifyState == nil {
+		writeError(w, http.StatusNotImplemented, "notification state not available")
+		return
+	}
+	states, err := s.deps.NotifyState.AllNotifyStates()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load notification states")
+		return
+	}
+	cleared := 0
+	for name := range states {
+		if err := s.deps.NotifyState.ClearNotifyState(name); err == nil {
+			cleared++
+		}
+	}
+	s.logEvent("notify_states_cleared", "", fmt.Sprintf("Cleared %d notification states", cleared))
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "cleared": cleared})
+}
+
 // apiGetDigestSettings returns the digest configuration.
 func (s *Server) apiGetDigestSettings(w http.ResponseWriter, r *http.Request) {
 	settings := map[string]string{
@@ -1553,6 +1642,213 @@ func (s *Server) apiDismissDigestBanner(w http.ResponseWriter, r *http.Request) 
 	_ = s.deps.SettingsStore.SaveSetting("digest_banner_dismissed", string(data))
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "banner dismissed"})
+}
+
+// apiGetRegistryCredentials returns stored credentials (masked) merged with rate limit status.
+func (s *Server) apiGetRegistryCredentials(w http.ResponseWriter, r *http.Request) {
+	type registryInfo struct {
+		Credential *RegistryCredential `json:"credential,omitempty"`
+		RateLimit  *RateLimitStatus    `json:"rate_limit,omitempty"`
+	}
+
+	result := make(map[string]*registryInfo)
+
+	// Load credentials.
+	if s.deps.RegistryCredentials != nil {
+		creds, err := s.deps.RegistryCredentials.GetRegistryCredentials()
+		if err != nil {
+			s.deps.Log.Error("failed to load registry credentials", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to load registry credentials")
+			return
+		}
+		for _, c := range creds {
+			masked := c
+			if len(c.Secret) > 4 {
+				masked.Secret = c.Secret[:4] + "****"
+			} else if c.Secret != "" {
+				masked.Secret = "****"
+			}
+			info := &registryInfo{Credential: &masked}
+			result[c.Registry] = info
+		}
+	}
+
+	// Merge rate limit status.
+	if s.deps.RateTracker != nil {
+		for _, st := range s.deps.RateTracker.Status() {
+			info, ok := result[st.Registry]
+			if !ok {
+				info = &registryInfo{}
+				result[st.Registry] = info
+			}
+			stCopy := RateLimitStatus(st)
+			info.RateLimit = &stCopy
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// apiSaveRegistryCredentials saves registry credentials.
+func (s *Server) apiSaveRegistryCredentials(w http.ResponseWriter, r *http.Request) {
+	if s.deps.RegistryCredentials == nil {
+		writeError(w, http.StatusNotImplemented, "registry credentials not available")
+		return
+	}
+
+	var creds []RegistryCredential
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	// Restore masked secrets from saved credentials.
+	existing, _ := s.deps.RegistryCredentials.GetRegistryCredentials()
+	savedMap := make(map[string]RegistryCredential, len(existing))
+	for _, c := range existing {
+		savedMap[c.ID] = c
+	}
+	for i, c := range creds {
+		if strings.HasSuffix(c.Secret, "****") {
+			if old, ok := savedMap[c.ID]; ok {
+				creds[i].Secret = old.Secret
+			}
+		}
+	}
+
+	if err := s.deps.RegistryCredentials.SetRegistryCredentials(creds); err != nil {
+		s.deps.Log.Error("failed to save registry credentials", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save registry credentials")
+		return
+	}
+
+	s.logEvent("settings", "", "Registry credentials updated")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"message": "registry credentials saved",
+	})
+}
+
+// apiDeleteRegistryCredential removes a single credential by ID.
+func (s *Server) apiDeleteRegistryCredential(w http.ResponseWriter, r *http.Request) {
+	if s.deps.RegistryCredentials == nil {
+		writeError(w, http.StatusNotImplemented, "registry credentials not available")
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "credential id required")
+		return
+	}
+
+	creds, err := s.deps.RegistryCredentials.GetRegistryCredentials()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load credentials")
+		return
+	}
+
+	found := false
+	filtered := make([]RegistryCredential, 0, len(creds))
+	for _, c := range creds {
+		if c.ID == id {
+			found = true
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+
+	if !found {
+		writeError(w, http.StatusNotFound, "credential not found")
+		return
+	}
+
+	if err := s.deps.RegistryCredentials.SetRegistryCredentials(filtered); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save credentials")
+		return
+	}
+
+	s.logEvent("settings", "", "Registry credential removed")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// apiTestRegistryCredential validates a credential by making a lightweight v2 API call.
+func (s *Server) apiTestRegistryCredential(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Registry string `json:"registry"`
+		Username string `json:"username"`
+		Secret   string `json:"secret"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Registry == "" || body.Username == "" || body.Secret == "" {
+		writeError(w, http.StatusBadRequest, "registry, username, and secret are required")
+		return
+	}
+
+	// If secret is masked, try to restore from saved credentials.
+	if strings.HasSuffix(body.Secret, "****") && s.deps.RegistryCredentials != nil {
+		existing, _ := s.deps.RegistryCredentials.GetRegistryCredentials()
+		for _, c := range existing {
+			if c.Registry == body.Registry {
+				body.Secret = c.Secret
+				break
+			}
+		}
+	}
+
+	// Test Docker Hub auth endpoint.
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	authURL := "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/alpine:pull"
+	if body.Registry != "docker.io" {
+		// For non-Docker Hub, try GET /v2/ with basic auth.
+		authURL = "https://" + body.Registry + "/v2/"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authURL, nil)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "invalid registry URL"})
+		return
+	}
+	req.SetBasicAuth(body.Username, body.Secret)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted {
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": "Credentials valid"})
+		return
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": "Invalid credentials (401 Unauthorized)"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": false, "error": fmt.Sprintf("Unexpected status: %d", resp.StatusCode)})
+}
+
+// apiGetRateLimits returns rate limit status for all registries (lower permission, for dashboard polling).
+func (s *Server) apiGetRateLimits(w http.ResponseWriter, r *http.Request) {
+	if s.deps.RateTracker == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"health":     "ok",
+			"registries": []RateLimitStatus{},
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"health":     s.deps.RateTracker.OverallHealth(),
+		"registries": s.deps.RateTracker.Status(),
+	})
 }
 
 // restoreSecrets returns the saved settings if the incoming settings contain any

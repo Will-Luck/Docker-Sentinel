@@ -22,13 +22,25 @@ type CheckResult struct {
 // Checker queries the Docker daemon and remote registry to determine
 // whether an image has an update available.
 type Checker struct {
-	docker docker.API
-	log    *logging.Logger
+	docker  docker.API
+	log     *logging.Logger
+	creds   CredentialStore   // optional: looks up creds by registry
+	tracker *RateLimitTracker // optional: records rate limit headers
 }
 
 // NewChecker creates a registry checker.
 func NewChecker(d docker.API, log *logging.Logger) *Checker {
 	return &Checker{docker: d, log: log}
+}
+
+// SetCredentialStore attaches a credential store for authenticated registry access.
+func (c *Checker) SetCredentialStore(cs CredentialStore) {
+	c.creds = cs
+}
+
+// SetRateLimitTracker attaches a rate limit tracker for header capture.
+func (c *Checker) SetRateLimitTracker(t *RateLimitTracker) {
+	c.tracker = t
 }
 
 // Check compares the local digest of an image to the remote registry digest.
@@ -102,19 +114,36 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 	}
 
 	repo := NormaliseRepo(imageRef)
-	token, err := FetchAnonymousToken(ctx, repo)
+	host := RegistryHost(imageRef)
+
+	// Look up stored credentials for this registry.
+	var cred *RegistryCredential
+	if c.creds != nil {
+		creds, err := c.creds.GetRegistryCredentials()
+		if err == nil {
+			cred = FindByRegistry(creds, host)
+		}
+	}
+
+	token, err := FetchToken(ctx, repo, cred)
 	if err != nil {
-		c.log.Debug("failed to fetch anonymous token for version check", "repo", repo, "error", err)
+		c.log.Debug("failed to fetch token for version check", "repo", repo, "error", err)
 		return result
 	}
 
-	tags, err := ListTags(ctx, imageRef, token)
+	tagsResult, err := ListTags(ctx, imageRef, token)
 	if err != nil {
 		c.log.Debug("failed to list tags for version check", "repo", repo, "error", err)
 		return result
 	}
 
-	newer := NewerVersions(tag, tags)
+	// Record rate limit headers if tracker is available.
+	if c.tracker != nil {
+		c.tracker.Record(host, tagsResult.Headers)
+		c.tracker.SetAuth(host, cred != nil)
+	}
+
+	newer := NewerVersions(tag, tagsResult.Tags)
 	for _, sv := range newer {
 		result.NewerVersions = append(result.NewerVersions, sv.Raw)
 	}

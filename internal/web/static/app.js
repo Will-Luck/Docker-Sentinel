@@ -258,6 +258,9 @@ function initSettingsPage() {
     // Load digest settings and per-container notification preferences.
     loadDigestSettings();
     loadContainerNotifyPrefs();
+
+    // Load registry credentials and rate limits.
+    loadRegistries();
 }
 
 function onPollIntervalChange(value) {
@@ -621,10 +624,18 @@ function renderLastScanTicker() {
 }
 
 /* ------------------------------------------------------------
-   3. Toast System
+   3. Toast System (with batching for scan bursts)
    ------------------------------------------------------------ */
 
+var _toastBatch = [];
+var _toastBatchTimer = null;
+var _toastBatchWindow = 1500; // ms to collect events before showing summary
+
 function showToast(message, type) {
+    _showToastImmediate(message, type);
+}
+
+function _showToastImmediate(message, type) {
     var container = document.getElementById("toast-container");
     if (!container) {
         container = document.createElement("div");
@@ -644,6 +655,40 @@ function showToast(message, type) {
             if (toast.parentNode) toast.parentNode.removeChild(toast);
         }, 300);
     }, 4000);
+}
+
+// Queue a toast for batching. If multiple arrive within the batch window,
+// they are collapsed into a single summary toast.
+function queueBatchToast(message, type) {
+    _toastBatch.push({message: message, type: type});
+    if (_toastBatchTimer) clearTimeout(_toastBatchTimer);
+    _toastBatchTimer = setTimeout(function () {
+        _flushBatchToasts();
+    }, _toastBatchWindow);
+}
+
+function _flushBatchToasts() {
+    var batch = _toastBatch;
+    _toastBatch = [];
+    _toastBatchTimer = null;
+    if (batch.length === 0) return;
+    if (batch.length === 1) {
+        _showToastImmediate(batch[0].message, batch[0].type);
+        return;
+    }
+    // Summarise: count updates and queue additions separately.
+    var updates = 0;
+    var queued = 0;
+    for (var i = 0; i < batch.length; i++) {
+        var msg = batch[i].message.toLowerCase();
+        if (msg.indexOf("update") !== -1 || msg.indexOf("available") !== -1) updates++;
+        else if (msg.indexOf("queue") !== -1 || msg.indexOf("added") !== -1) queued++;
+        else updates++; // fallback
+    }
+    var parts = [];
+    if (updates > 0) parts.push(updates + " update" + (updates === 1 ? "" : "s") + " detected");
+    if (queued > 0) parts.push(queued + " queued for approval");
+    _showToastImmediate(parts.join(", "), "info");
 }
 
 /* ------------------------------------------------------------
@@ -744,7 +789,7 @@ function showConfirm(title, bodyHTML) {
    5. API Actions
    ------------------------------------------------------------ */
 
-function apiPost(url, body, successMsg, errorMsg, triggerEl) {
+function apiPost(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
     var opts = { method: "POST" };
     if (body) {
         opts.headers = { "Content-Type": "application/json" };
@@ -769,6 +814,7 @@ function apiPost(url, body, successMsg, errorMsg, triggerEl) {
         .then(function (result) {
             if (result.ok) {
                 showToast(result.data.message || successMsg, "success");
+                if (onSuccess) onSuccess(result.data);
             } else {
                 showToast(result.data.error || errorMsg, "error");
             }
@@ -780,6 +826,60 @@ function apiPost(url, body, successMsg, errorMsg, triggerEl) {
         });
 }
 
+// Remove a queue row (and its accordion) from the DOM with animation.
+function removeQueueRow(btn) {
+    var row = btn ? btn.closest("tr") : null;
+    if (!row) return;
+    var accordion = row.nextElementSibling;
+    var hasAccordion = accordion && accordion.classList.contains("accordion-panel");
+
+    // Quick fade then remove — no height animation to avoid table layout shifts.
+    row.style.transition = "opacity 0.15s ease";
+    row.style.opacity = "0";
+    if (hasAccordion) {
+        accordion.style.transition = "opacity 0.15s ease";
+        accordion.style.opacity = "0";
+    }
+
+    setTimeout(function () {
+        if (hasAccordion) accordion.remove();
+        row.remove();
+
+        // Update "Pending Updates (N)" heading.
+        var tbody = document.querySelector(".table-wrap tbody");
+        var remaining = tbody ? tbody.querySelectorAll("tr.container-row").length : 0;
+        var heading = document.querySelector(".card-header h2");
+        if (heading) heading.textContent = "Pending Updates (" + remaining + ")";
+
+        updateQueueBadge();
+
+        // Show empty state if queue is now empty.
+        if (remaining === 0 && tbody) {
+            var emptyRow = document.createElement("tr");
+            var td = document.createElement("td");
+            td.setAttribute("colspan", "4");
+            var wrapper = document.createElement("div");
+            wrapper.className = "empty-state";
+            var h3 = document.createElement("h3");
+            h3.textContent = "No pending updates";
+            var p1 = document.createElement("p");
+            p1.textContent = "No containers are waiting for approval. Containers with a manual policy will appear here when updates are available.";
+            var p2 = document.createElement("p");
+            p2.style.marginTop = "var(--sp-2)";
+            var link = document.createElement("a");
+            link.href = "/settings";
+            link.textContent = "Manage default policies";
+            p2.appendChild(link);
+            wrapper.appendChild(h3);
+            wrapper.appendChild(p1);
+            wrapper.appendChild(p2);
+            td.appendChild(wrapper);
+            emptyRow.appendChild(td);
+            tbody.appendChild(emptyRow);
+        }
+    }, 180);
+}
+
 function approveUpdate(name, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
@@ -787,7 +887,20 @@ function approveUpdate(name, event) {
         null,
         "Approved update for " + name,
         "Failed to approve",
-        btn
+        btn,
+        function () { removeQueueRow(btn); }
+    );
+}
+
+function ignoreUpdate(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    apiPost(
+        "/api/ignore/" + encodeURIComponent(name),
+        null,
+        "Version ignored for " + name,
+        "Failed to ignore version",
+        btn,
+        function () { removeQueueRow(btn); }
     );
 }
 
@@ -798,8 +911,43 @@ function rejectUpdate(name, event) {
         null,
         "Rejected update for " + name,
         "Failed to reject",
-        btn
+        btn,
+        function () { removeQueueRow(btn); }
     );
+}
+
+// Bulk queue actions — fire each row's action with a staggered delay.
+function bulkQueueAction(actionFn, triggerBtn) {
+    var rows = document.querySelectorAll(".table-wrap tbody tr.container-row");
+    if (!rows.length) return;
+    if (triggerBtn) {
+        triggerBtn.classList.add("loading");
+        triggerBtn.disabled = true;
+    }
+    var delay = 0;
+    rows.forEach(function (row) {
+        var link = row.querySelector(".container-link");
+        var name = link ? link.textContent.trim() : null;
+        if (!name) return;
+        var btn = row.querySelector(".btn");
+        setTimeout(function () { actionFn(name, { target: btn }); }, delay);
+        delay += 150;
+    });
+}
+
+function approveAll(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    bulkQueueAction(approveUpdate, btn);
+}
+
+function ignoreAll(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    bulkQueueAction(ignoreUpdate, btn);
+}
+
+function rejectAll(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    bulkQueueAction(rejectUpdate, btn);
 }
 
 function triggerUpdate(name, event) {
@@ -1499,9 +1647,16 @@ function updateStats(total, running, pending) {
     var stats = document.getElementById("stats");
     if (!stats) return;
     var values = stats.querySelectorAll(".stat-value");
-    if (values[0]) values[0].textContent = total;
-    if (values[1]) values[1].textContent = running;
-    if (values[2]) values[2].textContent = pending;
+    var newVals = [total, running, pending];
+    for (var i = 0; i < values.length && i < newVals.length; i++) {
+        if (values[i] && String(values[i].textContent).trim() !== String(newVals[i])) {
+            values[i].textContent = newVals[i];
+            values[i].classList.remove("stat-changed");
+            // Force reflow to restart animation.
+            void values[i].offsetWidth;
+            values[i].classList.add("stat-changed");
+        }
+    }
 }
 
 function showBadgeSpinner(wrap) {
@@ -1550,7 +1705,8 @@ function initSSE() {
     es.addEventListener("container_update", function (e) {
         try {
             var data = JSON.parse(e.data);
-            showToast(data.message || ("Update: " + data.container_name), "info");
+            // Batch toasts to avoid spamming during scans.
+            queueBatchToast(data.message || ("Update: " + data.container_name), "info");
             if (data.container_name) {
                 updateContainerRow(data.container_name);
                 return;
@@ -1573,9 +1729,18 @@ function initSSE() {
     es.addEventListener("queue_change", function (e) {
         try {
             var data = JSON.parse(e.data);
-            showToast(data.message || "Queue updated", "info");
+            // Batch toasts to avoid spamming during scans.
+            queueBatchToast(data.message || "Queue updated", "info");
         } catch (_) {}
-        scheduleReload();
+        // On the dashboard, container_update already patches rows individually.
+        // Only update the digest banner and nav badge — no full reload needed.
+        if (document.getElementById("container-table")) {
+            scheduleDigestBannerRefresh();
+            updateQueueBadge();
+        } else {
+            // On other pages, just update the nav badge.
+            updateQueueBadge();
+        }
     });
 
     es.addEventListener("scan_complete", function () {
@@ -1585,7 +1750,13 @@ function initSSE() {
         // Re-check pause state on scan events.
         checkPauseState();
         refreshLastScan();
-        scheduleReload();
+        // On dashboard, rows are already patched by container_update events.
+        // Just refresh the banner — no full page reload needed.
+        if (document.getElementById("container-table")) {
+            scheduleDigestBannerRefresh();
+        } else {
+            scheduleReload();
+        }
     });
 
     es.addEventListener("settings_change", function () {
@@ -1637,16 +1808,46 @@ function loadDigestBanner() {
                     " (" + data.count + " container" + (data.count === 1 ? "" : "s") + " awaiting action)";
                 document.getElementById("digest-banner-text").textContent = text;
                 banner.style.display = "";
+                banner.classList.remove("banner-hidden");
             } else {
-                banner.style.display = "none";
+                banner.classList.add("banner-hidden");
             }
         })
-        .catch(function () { banner.style.display = "none"; });
+        .catch(function () { banner.classList.add("banner-hidden"); });
+}
+
+var _digestBannerTimer = null;
+
+// Debounced digest banner refresh — avoids flickering when multiple events fire.
+function scheduleDigestBannerRefresh() {
+    if (_digestBannerTimer) clearTimeout(_digestBannerTimer);
+    _digestBannerTimer = setTimeout(function () {
+        _digestBannerTimer = null;
+        loadDigestBanner();
+    }, 1500);
+}
+
+// Update the queue badge count in the nav without a full page reload.
+function updateQueueBadge() {
+    fetch("/api/queue", {credentials: "same-origin"})
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var badges = document.querySelectorAll(".nav-badge");
+            var count = Array.isArray(data) ? data.length : 0;
+            for (var i = 0; i < badges.length; i++) {
+                var link = badges[i].closest("a");
+                if (link && link.href && link.href.indexOf("/queue") !== -1) {
+                    badges[i].textContent = count;
+                    badges[i].style.display = count > 0 ? "" : "none";
+                }
+            }
+        })
+        .catch(function () {});
 }
 
 function dismissDigestBanner() {
     var banner = document.getElementById("digest-banner");
-    if (banner) banner.style.display = "none";
+    if (banner) banner.classList.add("banner-hidden");
 
     fetch("/api/digest/banner/dismiss", {
         method: "POST",
@@ -2555,4 +2756,358 @@ function setContainerNotifyPref(name, mode) {
         }
     })
     .catch(function () { showToast("Failed to update notification mode", "error"); });
+}
+
+
+/* ------------------------------------------------------------
+   14. HTML Escape Helper
+   ------------------------------------------------------------ */
+
+function escapeHtml(str) {
+    if (!str) return "";
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+
+/* ------------------------------------------------------------
+   15. Registry Credentials & Rate Limits
+   ------------------------------------------------------------ */
+
+var registryData = {};
+var registryCredentials = [];
+
+function loadRegistries() {
+    fetch("/api/settings/registries")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            registryData = data;
+            registryCredentials = [];
+            Object.keys(data).forEach(function(reg) {
+                if (data[reg].credential) {
+                    registryCredentials.push(data[reg].credential);
+                }
+            });
+            renderRegistryStatus();
+            renderRegistryCredentials();
+        })
+        .catch(function(err) { console.error("Failed to load registries:", err); });
+}
+
+function renderRegistryStatus() {
+    var container = document.getElementById("registry-status-table");
+    var warningsEl = document.getElementById("registry-warnings");
+    if (!container) return;
+
+    var registries = Object.keys(registryData);
+    if (registries.length === 0) {
+        container.textContent = "";
+        var emptyDiv = document.createElement("div");
+        emptyDiv.className = "empty-state";
+        emptyDiv.style.padding = "var(--sp-6) var(--sp-4)";
+        var emptyH3 = document.createElement("h3");
+        emptyH3.textContent = "No registries detected";
+        var emptyP = document.createElement("p");
+        emptyP.textContent = "Registries will appear here after the first scan.";
+        emptyDiv.appendChild(emptyH3);
+        emptyDiv.appendChild(emptyP);
+        container.appendChild(emptyDiv);
+        if (warningsEl) warningsEl.textContent = "";
+        return;
+    }
+
+    // Build the table using DOM methods for safety.
+    var table = document.createElement("table");
+    table.className = "data-table";
+    var thead = document.createElement("thead");
+    var headRow = document.createElement("tr");
+    ["Registry", "Images", "Remaining", "Resets", "Auth"].forEach(function(label) {
+        var th = document.createElement("th");
+        th.textContent = label;
+        headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement("tbody");
+    var warnings = [];
+    registries.sort();
+
+    registries.forEach(function(reg) {
+        var info = registryData[reg];
+        var rl = info.rate_limit;
+        var cred = info.credential;
+
+        var images = rl ? rl.container_count : 0;
+        var remainingText = "\u2014";
+        var remainingClass = "";
+        var resets = "\u2014";
+
+        if (rl && rl.has_limits) {
+            remainingText = rl.remaining + "/" + rl.limit;
+            if (rl.remaining <= 0) {
+                remainingClass = "text-error";
+            } else if (rl.limit > 0 && rl.remaining / rl.limit < 0.2) {
+                remainingClass = "text-warning";
+            }
+            if (rl.reset_at && rl.reset_at !== "0001-01-01T00:00:00Z") {
+                var resetTime = new Date(rl.reset_at);
+                var now = new Date();
+                var diffMs = resetTime - now;
+                if (diffMs > 0) {
+                    var hours = Math.floor(diffMs / 3600000);
+                    var mins = Math.floor((diffMs % 3600000) / 60000);
+                    resets = hours + "h " + mins + "m";
+                } else {
+                    resets = "expired";
+                }
+            }
+        } else if (rl && !rl.has_limits && rl.limit === -1 && rl.last_updated === "0001-01-01T00:00:00Z") {
+            remainingText = "\u2014";
+        } else if (rl && !rl.has_limits) {
+            remainingText = "No limits";
+        }
+
+        var tr = document.createElement("tr");
+
+        var tdReg = document.createElement("td");
+        var regStrong = document.createElement("strong");
+        regStrong.textContent = reg;
+        tdReg.appendChild(regStrong);
+        tr.appendChild(tdReg);
+
+        var tdImages = document.createElement("td");
+        tdImages.textContent = images;
+        tr.appendChild(tdImages);
+
+        var tdRemaining = document.createElement("td");
+        if (remainingClass) {
+            var remainSpan = document.createElement("span");
+            remainSpan.className = remainingClass;
+            remainSpan.textContent = remainingText;
+            tdRemaining.appendChild(remainSpan);
+        } else {
+            tdRemaining.textContent = remainingText;
+        }
+        tr.appendChild(tdRemaining);
+
+        var tdResets = document.createElement("td");
+        tdResets.textContent = resets;
+        tr.appendChild(tdResets);
+
+        var tdAuth = document.createElement("td");
+        var authBadge = document.createElement("span");
+        if (cred) {
+            authBadge.className = "badge badge-success";
+            authBadge.textContent = "\u2713 Yes";
+        } else {
+            authBadge.className = "badge badge-muted";
+            authBadge.textContent = "\u2717 None";
+        }
+        tdAuth.appendChild(authBadge);
+        tr.appendChild(tdAuth);
+
+        tbody.appendChild(tr);
+
+        if (rl && rl.has_limits && !cred) {
+            warnings.push(reg);
+        }
+    });
+
+    table.appendChild(tbody);
+    container.textContent = "";
+    container.appendChild(table);
+
+    if (warningsEl) {
+        warningsEl.textContent = "";
+        warnings.forEach(function(reg) {
+            var alertDiv = document.createElement("div");
+            alertDiv.className = "alert alert-warning";
+            alertDiv.textContent = "\u26a0 " + reg + ": No credentials. Unauthenticated rate limits apply.";
+            warningsEl.appendChild(alertDiv);
+        });
+    }
+}
+
+function renderRegistryCredentials() {
+    var container = document.getElementById("credential-list");
+    if (!container) return;
+    container.textContent = "";
+
+    if (registryCredentials.length === 0) {
+        var emptyDiv = document.createElement("div");
+        emptyDiv.className = "empty-state";
+        emptyDiv.style.padding = "var(--sp-6) var(--sp-4)";
+        var emptyH3 = document.createElement("h3");
+        emptyH3.textContent = "No credentials configured";
+        var emptyP = document.createElement("p");
+        emptyP.textContent = "Add credentials for registries that enforce rate limits (e.g. Docker Hub).";
+        emptyDiv.appendChild(emptyH3);
+        emptyDiv.appendChild(emptyP);
+        container.appendChild(emptyDiv);
+        return;
+    }
+
+    registryCredentials.forEach(function(cred, index) {
+        var card = document.createElement("div");
+        card.className = "channel-card";
+        card.setAttribute("data-index", index);
+
+        // Header
+        var header = document.createElement("div");
+        header.className = "channel-card-header";
+        var typeBadge = document.createElement("span");
+        typeBadge.className = "channel-type-badge";
+        typeBadge.textContent = cred.registry;
+        header.appendChild(typeBadge);
+
+        var actions = document.createElement("div");
+        actions.className = "channel-actions";
+        var testBtn = document.createElement("button");
+        testBtn.className = "btn btn-sm";
+        testBtn.textContent = "Test";
+        testBtn.setAttribute("data-index", index);
+        testBtn.addEventListener("click", function() { testRegistryCredential(parseInt(this.getAttribute("data-index"), 10)); });
+        actions.appendChild(testBtn);
+        var delBtn = document.createElement("button");
+        delBtn.className = "btn btn-sm btn-error";
+        delBtn.textContent = "Remove";
+        delBtn.setAttribute("data-index", index);
+        delBtn.addEventListener("click", function() { deleteRegistryCredential(parseInt(this.getAttribute("data-index"), 10)); });
+        actions.appendChild(delBtn);
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        // Fields
+        var fields = document.createElement("div");
+        fields.className = "channel-fields";
+
+        var fieldDefs = [
+            { label: "Registry", field: "registry", type: "text", value: cred.registry },
+            { label: "Username", field: "username", type: "text", value: cred.username },
+            { label: "Password / Token", field: "secret", type: "password", value: cred.secret }
+        ];
+        fieldDefs.forEach(function(def) {
+            var fieldDiv = document.createElement("div");
+            fieldDiv.className = "channel-field";
+            var labelSpan = document.createElement("span");
+            labelSpan.className = "channel-field-label";
+            labelSpan.textContent = def.label;
+            fieldDiv.appendChild(labelSpan);
+            var input = document.createElement("input");
+            input.type = def.type;
+            input.className = "channel-field-input";
+            input.value = def.value || "";
+            input.setAttribute("data-field", def.field);
+            fieldDiv.appendChild(input);
+            fields.appendChild(fieldDiv);
+        });
+
+        card.appendChild(fields);
+        container.appendChild(card);
+    });
+}
+
+function addRegistryCredential() {
+    var id = "reg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
+    registryCredentials.push({ id: id, registry: "docker.io", username: "", secret: "" });
+    renderRegistryCredentials();
+    showToast("New credential added \u2014 fill in details and save", "info");
+}
+
+function deleteRegistryCredential(index) {
+    registryCredentials.splice(index, 1);
+    renderRegistryCredentials();
+    showToast("Credential removed \u2014 save to persist", "info");
+}
+
+function collectRegistryCredentialsFromDOM() {
+    var cards = document.querySelectorAll("#credential-list .channel-card");
+    cards.forEach(function(card, i) {
+        if (i < registryCredentials.length) {
+            var inputs = card.querySelectorAll(".channel-field-input");
+            inputs.forEach(function(input) {
+                var field = input.getAttribute("data-field");
+                if (field) registryCredentials[i][field] = input.value;
+            });
+        }
+    });
+}
+
+function saveRegistryCredentials() {
+    collectRegistryCredentialsFromDOM();
+    var btn = event.target;
+    btn.classList.add("loading");
+
+    fetch("/api/settings/registries", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(registryCredentials)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.classList.remove("loading");
+        if (data.error) {
+            showToast("Failed: " + data.error, "error");
+        } else {
+            showToast("Registry credentials saved", "success");
+            loadRegistries();
+        }
+    })
+    .catch(function(err) {
+        btn.classList.remove("loading");
+        showToast("Save failed: " + err, "error");
+    });
+}
+
+function testRegistryCredential(index) {
+    collectRegistryCredentialsFromDOM();
+    var cred = registryCredentials[index];
+    if (!cred) return;
+
+    fetch("/api/settings/registries/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ registry: cred.registry, username: cred.username, secret: cred.secret })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            showToast("Credentials valid for " + cred.registry, "success");
+        } else {
+            showToast("Test failed: " + (data.error || "unknown error"), "error");
+        }
+    })
+    .catch(function(err) { showToast("Test failed: " + err, "error"); });
+}
+
+
+/* ------------------------------------------------------------
+   16. Rate Limit Status — Dashboard Polling
+   ------------------------------------------------------------ */
+
+function updateRateLimitStatus() {
+    fetch("/api/ratelimits")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var el = document.getElementById("rate-limit-status");
+            if (!el) return;
+            var health = data.health || "ok";
+            el.textContent = health.charAt(0).toUpperCase() + health.slice(1);
+            el.className = "stat-value";
+            if (health === "ok") el.classList.add("success");
+            else if (health === "low") el.classList.add("warning");
+            else if (health === "exhausted") el.classList.add("error");
+        })
+        .catch(function() {});
+}
+
+// Only poll if the rate-limit-status element exists (dashboard page).
+if (document.getElementById("rate-limit-status")) {
+    setInterval(updateRateLimitStatus, 30000);
+    updateRateLimitStatus();
 }

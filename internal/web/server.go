@@ -47,6 +47,9 @@ type Dependencies struct {
 	NotifyReconfigurer NotifierReconfigurer
 	NotifyState        NotifyStateStore
 	Digest             DigestController
+	IgnoredVersions    IgnoredVersionStore
+	RegistryCredentials RegistryCredentialStore
+	RateTracker         RateLimitProvider
 	Auth               *auth.Service
 	Log                *slog.Logger
 }
@@ -115,6 +118,46 @@ type NotifyStateStore interface {
 	DeleteNotifyPref(name string) error
 	AllNotifyPrefs() (map[string]*NotifyPref, error)
 	AllNotifyStates() (map[string]*NotifyState, error)
+	ClearNotifyState(name string) error
+}
+
+// IgnoredVersionStore reads and writes per-container ignored versions.
+type IgnoredVersionStore interface {
+	AddIgnoredVersion(containerName, version string) error
+	GetIgnoredVersions(containerName string) ([]string, error)
+	ClearIgnoredVersions(containerName string) error
+}
+
+// RegistryCredentialStore persists registry credentials.
+type RegistryCredentialStore interface {
+	GetRegistryCredentials() ([]RegistryCredential, error)
+	SetRegistryCredentials(creds []RegistryCredential) error
+}
+
+// RegistryCredential mirrors registry.RegistryCredential for the web layer.
+type RegistryCredential struct {
+	ID       string `json:"id"`
+	Registry string `json:"registry"`
+	Username string `json:"username"`
+	Secret   string `json:"secret"`
+}
+
+// RateLimitProvider returns rate limit status for display.
+type RateLimitProvider interface {
+	Status() []RateLimitStatus
+	OverallHealth() string
+}
+
+// RateLimitStatus mirrors registry.RegistryStatus for the web layer.
+type RateLimitStatus struct {
+	Registry       string    `json:"registry"`
+	Limit          int       `json:"limit"`
+	Remaining      int       `json:"remaining"`
+	ResetAt        time.Time `json:"reset_at"`
+	IsAuth         bool      `json:"is_auth"`
+	HasLimits      bool      `json:"has_limits"`
+	ContainerCount int       `json:"container_count"`
+	LastUpdated    time.Time `json:"last_updated"`
 }
 
 // DigestController controls the digest scheduler.
@@ -351,6 +394,8 @@ func (s *Server) parseTemplates() {
 		"truncDigest":  truncateDigest,
 		"json":         marshalJSON,
 		"changelogURL": ChangelogURL,
+		"versionURL":   VersionURL,
+		"imageTag":     ImageTag,
 	}
 
 	s.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(staticFS, "static/*.html"))
@@ -423,6 +468,7 @@ func (s *Server) registerRoutes() {
 
 	// containers.approve
 	s.mux.Handle("POST /api/approve/{name}", perm(auth.PermContainersApprove, s.apiApprove))
+	s.mux.Handle("POST /api/ignore/{name}", perm(auth.PermContainersApprove, s.apiIgnoreVersion))
 	s.mux.Handle("POST /api/reject/{name}", perm(auth.PermContainersApprove, s.apiReject))
 
 	// containers.rollback
@@ -441,6 +487,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings", perm(auth.PermSettingsView, s.apiSettings))
 	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
+	s.mux.Handle("GET /api/settings/registries", perm(auth.PermSettingsView, s.apiGetRegistryCredentials))
+	s.mux.Handle("GET /api/ratelimits", perm(auth.PermContainersView, s.apiGetRateLimits))
 
 	// Notification prefs & digest (read)
 	s.mux.Handle("GET /api/containers/{name}/notify-pref", perm(auth.PermSettingsView, s.apiGetNotifyPref))
@@ -456,10 +504,14 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/filters", perm(auth.PermSettingsModify, s.apiSetFilters))
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
+	s.mux.Handle("PUT /api/settings/registries", perm(auth.PermSettingsModify, s.apiSaveRegistryCredentials))
+	s.mux.Handle("POST /api/settings/registries/test", perm(auth.PermSettingsModify, s.apiTestRegistryCredential))
+	s.mux.Handle("DELETE /api/settings/registries/{id}", perm(auth.PermSettingsModify, s.apiDeleteRegistryCredential))
 	s.mux.Handle("POST /api/self-update", perm(auth.PermSettingsModify, s.apiSelfUpdate))
 
 	// Notification prefs & digest (write)
 	s.mux.Handle("POST /api/containers/{name}/notify-pref", perm(auth.PermSettingsModify, s.apiSetNotifyPref))
+	s.mux.Handle("DELETE /api/notify-states", perm(auth.PermSettingsModify, s.apiClearAllNotifyStates))
 	s.mux.Handle("POST /api/settings/digest", perm(auth.PermSettingsModify, s.apiSaveDigestSettings))
 	s.mux.Handle("POST /api/digest/trigger", perm(auth.PermSettingsModify, s.apiTriggerDigest))
 	s.mux.Handle("POST /api/digest/banner/dismiss", perm(auth.PermContainersView, s.apiDismissDigestBanner))

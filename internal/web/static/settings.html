@@ -23,7 +23,7 @@
         <div class="nav-links">
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/queue" class="nav-link">
-                Queue
+                Pending Updates
                 {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
             </a>
             <a href="/history" class="nav-link">History</a>
@@ -64,114 +64,116 @@
         </div>
 
         <div class="tab-nav" role="tablist">
-            <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-general" data-tab="general">General</button>
+            <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-scanning" data-tab="scanning">Scanning</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-notifications" data-tab="notifications">Notifications</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-registries" data-tab="registries">Registries</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-general" data-tab="general">General</button>
             {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-security" data-tab="security">Security</button>
             {{end}}{{end}}{{end}}
         </div>
 
-        <!-- General tab -->
-        <div class="tab-panel active" id="tab-general" role="tabpanel">
-            <div class="accordion-stack">
-
-                <!-- Scanning & Behaviour -->
-                <details class="accordion card">
-                    <summary class="accordion-header">
-                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                        <h2>Scanning &amp; Behaviour</h2>
-                        <span class="accordion-preview">Poll interval, policies, and filters</span>
-                    </summary>
-                    <div class="accordion-body">
-                        <div class="settings-rows">
-                            <div class="setting-row">
-                                <div class="setting-info">
-                                    <div class="setting-label">Poll interval</div>
-                                    <div class="setting-desc">How often Sentinel checks for container updates</div>
-                                </div>
-                                <div class="poll-interval-control">
-                                    <select id="poll-interval" class="setting-select" onchange="onPollIntervalChange(this.value)">
-                                        <option value="15m">15 minutes</option>
-                                        <option value="30m">30 minutes</option>
-                                        <option value="1h">1 hour</option>
-                                        <option value="6h">6 hours</option>
-                                        <option value="12h">12 hours</option>
-                                        <option value="24h">24 hours</option>
-                                        <option value="custom">Custom...</option>
-                                    </select>
-                                    <div id="poll-custom-wrap" class="custom-duration-wrap" style="display:none">
-                                        <select id="poll-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('poll')">
-                                            <option value="">Unit...</option>
-                                            <option value="s">Seconds</option>
-                                            <option value="m">Minutes</option>
-                                            <option value="h">Hours</option>
-                                        </select>
-                                        <input id="poll-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
-                                        <button id="poll-custom-btn" class="btn btn-success" onclick="applyCustomPollInterval()" disabled>Apply</button>
-                                    </div>
-                                </div>
+        <!-- Scanning tab -->
+        <div class="tab-panel active" id="tab-scanning" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Scanning &amp; Behaviour</h2>
+                </div>
+                <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Poll interval</div>
+                                <div class="setting-desc">How often Sentinel checks for container updates</div>
                             </div>
-                            <div class="setting-row">
-                                <div class="setting-info">
-                                    <div class="setting-label">Default policy</div>
-                                    <div class="setting-desc">Policy assigned to containers without a sentinel.policy label</div>
-                                </div>
-                                <select id="default-policy" class="setting-select" onchange="setDefaultPolicy(this.value)">
-                                    <option value="auto">auto</option>
-                                    <option value="manual">manual</option>
-                                    <option value="pinned">pinned</option>
+                            <div class="poll-interval-control">
+                                <select id="poll-interval" class="setting-select" onchange="onPollIntervalChange(this.value)">
+                                    <option value="15m">15 minutes</option>
+                                    <option value="30m">30 minutes</option>
+                                    <option value="1h">1 hour</option>
+                                    <option value="6h">6 hours</option>
+                                    <option value="12h">12 hours</option>
+                                    <option value="24h">24 hours</option>
+                                    <option value="custom">Custom...</option>
                                 </select>
-                            </div>
-                            <div class="setting-row">
-                                <div class="setting-info">
-                                    <div class="setting-label">Grace period</div>
-                                    <div class="setting-desc">Time to wait after an update before checking container health</div>
-                                </div>
-                                <div class="poll-interval-control">
-                                    <select id="grace-period" class="setting-select" onchange="onGracePeriodChange(this.value)">
-                                        <option value="10s">10 seconds</option>
-                                        <option value="15s">15 seconds</option>
-                                        <option value="30s">30 seconds</option>
-                                        <option value="1m0s">60 seconds</option>
-                                        <option value="2m0s">120 seconds</option>
-                                        <option value="custom">Custom...</option>
+                                <div id="poll-custom-wrap" class="custom-duration-wrap" style="display:none">
+                                    <select id="poll-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('poll')">
+                                        <option value="">Unit...</option>
+                                        <option value="s">Seconds</option>
+                                        <option value="m">Minutes</option>
+                                        <option value="h">Hours</option>
                                     </select>
-                                    <div id="grace-custom-wrap" class="custom-duration-wrap" style="display:none">
-                                        <select id="grace-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('grace')">
-                                            <option value="">Unit...</option>
-                                            <option value="s">Seconds</option>
-                                            <option value="m">Minutes</option>
-                                            <option value="h">Hours</option>
-                                        </select>
-                                        <input id="grace-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
-                                        <button id="grace-custom-btn" class="btn btn-success" onclick="applyCustomGracePeriod()" disabled>Apply</button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="setting-row">
-                                <div class="setting-info">
-                                    <div class="setting-label">Pause scanning</div>
-                                    <div class="setting-desc">Temporarily stop all automatic update checks</div>
-                                </div>
-                                <label class="toggle-switch-label">
-                                    <input type="checkbox" id="pause-toggle" class="channel-toggle" onchange="setPauseState(this.checked)">
-                                    <span id="pause-toggle-text" class="toggle-switch-text">Off</span>
-                                </label>
-                            </div>
-                            <div class="setting-row setting-row-top">
-                                <div class="setting-info">
-                                    <div class="setting-label">Container filters</div>
-                                    <div class="setting-desc">Exclude containers matching these patterns (one per line)</div>
-                                </div>
-                                <div class="setting-control-stack">
-                                    <textarea id="container-filters" class="setting-textarea" placeholder="e.g. watchtower&#10;test-*"></textarea>
-                                    <button class="btn btn-success" onclick="saveFilters()">Save Filters</button>
+                                    <input id="poll-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
+                                    <button id="poll-custom-btn" class="btn btn-success" onclick="applyCustomPollInterval()" disabled>Apply</button>
                                 </div>
                             </div>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Default policy</div>
+                                <div class="setting-desc">Policy assigned to containers without a sentinel.policy label</div>
+                            </div>
+                            <select id="default-policy" class="setting-select" onchange="setDefaultPolicy(this.value)">
+                                <option value="auto">auto</option>
+                                <option value="manual">manual</option>
+                                <option value="pinned">pinned</option>
+                            </select>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Grace period</div>
+                                <div class="setting-desc">Time to wait after an update before checking container health</div>
+                            </div>
+                            <div class="poll-interval-control">
+                                <select id="grace-period" class="setting-select" onchange="onGracePeriodChange(this.value)">
+                                    <option value="10s">10 seconds</option>
+                                    <option value="15s">15 seconds</option>
+                                    <option value="30s">30 seconds</option>
+                                    <option value="1m0s">60 seconds</option>
+                                    <option value="2m0s">120 seconds</option>
+                                    <option value="custom">Custom...</option>
+                                </select>
+                                <div id="grace-custom-wrap" class="custom-duration-wrap" style="display:none">
+                                    <select id="grace-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('grace')">
+                                        <option value="">Unit...</option>
+                                        <option value="s">Seconds</option>
+                                        <option value="m">Minutes</option>
+                                        <option value="h">Hours</option>
+                                    </select>
+                                    <input id="grace-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
+                                    <button id="grace-custom-btn" class="btn btn-success" onclick="applyCustomGracePeriod()" disabled>Apply</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Pause scanning</div>
+                                <div class="setting-desc">Temporarily stop all automatic update checks</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="pause-toggle" class="channel-toggle" onchange="setPauseState(this.checked)">
+                                <span id="pause-toggle-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
+                        <div class="setting-row setting-row-top">
+                            <div class="setting-info">
+                                <div class="setting-label">Container filters</div>
+                                <div class="setting-desc">Exclude containers matching these patterns (one per line)</div>
+                            </div>
+                            <div class="setting-control-stack">
+                                <textarea id="container-filters" class="setting-textarea" placeholder="e.g. watchtower&#10;test-*"></textarea>
+                                <button class="btn btn-success" onclick="saveFilters()">Save Filters</button>
+                            </div>
+                        </div>
                     </div>
-                </details>
+                </div>
+            </div>
+        </div>
+
+        <!-- General tab -->
+        <div class="tab-panel" id="tab-general" role="tabpanel">
+            <div class="accordion-stack">
 
                 <!-- Environment Variables -->
                 <details class="accordion card">
@@ -319,6 +321,38 @@
                     </div>
                 </details>
 
+            </div>
+        </div>
+
+        <!-- Registries tab -->
+        <div class="tab-panel" id="tab-registries" role="tabpanel">
+            <div class="accordion-stack">
+                <details class="accordion card" open>
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Detected Registries</h2>
+                        <span class="accordion-preview">Rate limits and authentication status</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="setting-desc" style="margin-bottom:var(--sp-4)">Auto-discovered from your container images. Add credentials for higher rate limits.</p>
+                        <div id="registry-status-table"></div>
+                        <div id="registry-warnings" style="margin-top:var(--sp-3)"></div>
+                    </div>
+                </details>
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Manage Credentials</h2>
+                        <span class="accordion-preview">Registry login credentials for authenticated pulls</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div id="credential-list"></div>
+                        <div class="setting-actions" style="margin-top:var(--sp-4)">
+                            <button class="btn btn-info" onclick="addRegistryCredential()">+ Add Credentials</button>
+                            <button class="btn btn-success" onclick="saveRegistryCredentials()">Save All</button>
+                        </div>
+                    </div>
+                </details>
             </div>
         </div>
 

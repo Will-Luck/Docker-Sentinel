@@ -22,7 +22,7 @@
         </a>
         <div class="nav-links">
             <a href="/" class="nav-link">Dashboard</a>
-            <a href="/queue" class="nav-link">Queue</a>
+            <a href="/queue" class="nav-link">Pending Updates</a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
             <a href="/settings" class="nav-link">Settings</a>
@@ -246,7 +246,7 @@
                                 <tr>
                                     <th>Taken</th>
                                     <th>Image</th>
-                                    <th>Action</th>
+                                    <th style="text-align:right">Action</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -254,7 +254,7 @@
                                 <tr>
                                     <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
                                     <td class="cell-image mono">{{.ImageRef}}</td>
-                                    <td><button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}', event)">Rollback</button></td>
+                                    <td style="text-align:right"><button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}', event)">Rollback</button></td>
                                 </tr>
                                 {{end}}
                             </tbody>

@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Update Queue — Docker-Sentinel</title>
+    <title>Pending Updates — Docker-Sentinel</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -23,7 +23,7 @@
         <div class="nav-links">
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/queue" class="nav-link active" aria-current="page">
-                Queue
+                Pending Updates
                 {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
             </a>
             <a href="/history" class="nav-link">History</a>
@@ -58,17 +58,30 @@
     <main class="main-content" id="main-content">
         <div class="page-header">
             <div>
-                <h1>Update Queue</h1>
-                <p class="subtitle">Containers awaiting manual approval for updates</p>
+                <h1>Pending Updates</h1>
+                <p class="subtitle">Containers awaiting manual approval</p>
             </div>
         </div>
 
         <div class="card">
-            <div class="card-header">
+            <div class="card-header queue-header">
                 <h2>Pending Updates ({{len .Queue}})</h2>
+                {{if .Queue}}
+                <div class="btn-group">
+                    <button class="btn btn-success btn-sm" onclick="approveAll(event)">Approve All</button>
+                    <button class="btn btn-warning btn-sm" onclick="ignoreAll(event)">Ignore All</button>
+                    <button class="btn btn-error btn-sm" onclick="rejectAll(event)">Reject All</button>
+                </div>
+                {{end}}
             </div>
             <div class="table-wrap">
-                <table>
+                <table class="queue-table">
+                    <colgroup>
+                        <col style="width:22%">
+                        <col style="width:25%">
+                        <col style="width:18%">
+                        <col style="width:35%">
+                    </colgroup>
                     <thead>
                         <tr>
                             <th>Container</th>
@@ -82,7 +95,19 @@
                             {{range $i, $q := .Queue}}
                             <tr class="container-row" onclick="onRowClick(event, 'queue-{{$i}}')">
                                 <td><a href="/container/{{$q.ContainerName}}" class="container-link">{{$q.ContainerName}}</a></td>
-                                <td class="cell-image mono">{{$q.CurrentImage}}</td>
+                                <td class="cell-image mono" title="{{$q.CurrentImage}}">
+                                    {{if $q.NewerVersions}}
+                                        <span class="version-current">{{imageTag $q.CurrentImage}}</span>
+                                        <span class="version-arrow">&rarr;</span>
+                                        {{with versionURL $q.CurrentImage (index $q.NewerVersions 0)}}
+                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{index $q.NewerVersions 0}}</a>
+                                        {{else}}
+                                            <span class="version-new">{{index $q.NewerVersions 0}}</span>
+                                        {{end}}
+                                    {{else}}
+                                        {{imageTag $q.CurrentImage}}
+                                    {{end}}
+                                </td>
                                 <td title="{{fmtTime $q.DetectedAt}}">{{fmtTimeAgo $q.DetectedAt}}</td>
                                 <td>
                                     <div class="btn-group">
@@ -90,6 +115,13 @@
                                                 onclick="approveUpdate('{{$q.ContainerName}}', event)">
                                             Approve
                                         </button>
+                                        {{if $q.NewerVersions}}
+                                        <button class="btn btn-warning"
+                                                onclick="ignoreUpdate('{{$q.ContainerName}}', event)"
+                                                title="Skip version {{index $q.NewerVersions 0}} — re-alerts when a newer version appears">
+                                            Ignore
+                                        </button>
+                                        {{end}}
                                         <button class="btn btn-error"
                                                 onclick="rejectUpdate('{{$q.ContainerName}}', event)">
                                             Reject
@@ -128,7 +160,7 @@
                             <tr>
                                 <td colspan="4">
                                     <div class="empty-state">
-                                        <h3>Queue is empty</h3>
+                                        <h3>No pending updates</h3>
                                         <p>No containers are waiting for approval. Containers with a <strong>manual</strong> policy will appear here when updates are available.</p>
                                         <p style="margin-top: var(--sp-2)"><a href="/settings">Manage default policies</a></p>
                                     </div>

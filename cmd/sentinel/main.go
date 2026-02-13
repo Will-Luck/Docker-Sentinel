@@ -179,10 +179,14 @@ func main() {
 
 	clk := clock.Real{}
 	checker := registry.NewChecker(client, log)
+	rateTracker := registry.NewRateLimitTracker()
+	checker.SetCredentialStore(db)
+	checker.SetRateLimitTracker(rateTracker)
 	bus := events.New()
 	queue := engine.NewQueue(db, bus, log.Logger)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
 	updater.SetSettingsReader(db)
+	updater.SetRateLimitTracker(rateTracker)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
@@ -212,9 +216,12 @@ func main() {
 			NotifyConfig:       &notifyConfigAdapter{db},
 			NotifyReconfigurer: notifier,
 			NotifyState:        &notifyStateAdapter{db},
-			Digest:             digestSched,
-			Auth:               authSvc,
-			Log:                log.Logger,
+			IgnoredVersions:     &ignoredVersionAdapter{db},
+			RegistryCredentials: &registryCredentialAdapter{db},
+			RateTracker:         &rateLimitAdapter{rateTracker},
+			Digest:              digestSched,
+			Auth:                authSvc,
+			Log:                 log.Logger,
 		})
 
 		// Configure WebAuthn passkeys if RPID is set.
@@ -556,12 +563,12 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("fetch token: %w", err)
 	}
-	tags, err := registry.ListTags(ctx, imageRef, token)
+	tagsResult, err := registry.ListTags(ctx, imageRef, token)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
 	}
 	// Filter to semver-parseable tags and return newest first.
-	newer := registry.NewerVersions(tag, tags)
+	newer := registry.NewerVersions(tag, tagsResult.Tags)
 	versions := make([]string, len(newer))
 	for i, sv := range newer {
 		versions[i] = sv.Raw
@@ -727,4 +734,82 @@ func (a *notifyStateAdapter) AllNotifyStates() (map[string]*web.NotifyState, err
 		}
 	}
 	return result, nil
+}
+
+func (a *notifyStateAdapter) ClearNotifyState(name string) error {
+	return a.s.ClearNotifyState(name)
+}
+
+// ignoredVersionAdapter bridges store.Store to web.IgnoredVersionStore.
+type ignoredVersionAdapter struct{ s *store.Store }
+
+func (a *ignoredVersionAdapter) AddIgnoredVersion(containerName, version string) error {
+	return a.s.AddIgnoredVersion(containerName, version)
+}
+
+func (a *ignoredVersionAdapter) GetIgnoredVersions(containerName string) ([]string, error) {
+	return a.s.GetIgnoredVersions(containerName)
+}
+
+func (a *ignoredVersionAdapter) ClearIgnoredVersions(containerName string) error {
+	return a.s.ClearIgnoredVersions(containerName)
+}
+
+// registryCredentialAdapter bridges store.Store (which returns registry.RegistryCredential)
+// to web.RegistryCredentialStore (which uses web.RegistryCredential).
+type registryCredentialAdapter struct{ s *store.Store }
+
+func (a *registryCredentialAdapter) GetRegistryCredentials() ([]web.RegistryCredential, error) {
+	creds, err := a.s.GetRegistryCredentials()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.RegistryCredential, len(creds))
+	for i, c := range creds {
+		result[i] = web.RegistryCredential{
+			ID:       c.ID,
+			Registry: c.Registry,
+			Username: c.Username,
+			Secret:   c.Secret,
+		}
+	}
+	return result, nil
+}
+
+func (a *registryCredentialAdapter) SetRegistryCredentials(creds []web.RegistryCredential) error {
+	regCreds := make([]registry.RegistryCredential, len(creds))
+	for i, c := range creds {
+		regCreds[i] = registry.RegistryCredential{
+			ID:       c.ID,
+			Registry: c.Registry,
+			Username: c.Username,
+			Secret:   c.Secret,
+		}
+	}
+	return a.s.SetRegistryCredentials(regCreds)
+}
+
+// rateLimitAdapter bridges registry.RateLimitTracker to web.RateLimitProvider.
+type rateLimitAdapter struct{ t *registry.RateLimitTracker }
+
+func (a *rateLimitAdapter) Status() []web.RateLimitStatus {
+	statuses := a.t.Status()
+	result := make([]web.RateLimitStatus, len(statuses))
+	for i, s := range statuses {
+		result[i] = web.RateLimitStatus{
+			Registry:       s.Registry,
+			Limit:          s.Limit,
+			Remaining:      s.Remaining,
+			ResetAt:        s.ResetAt,
+			IsAuth:         s.IsAuth,
+			HasLimits:      s.HasLimits,
+			ContainerCount: s.ContainerCount,
+			LastUpdated:    s.LastUpdated,
+		}
+	}
+	return result
+}
+
+func (a *rateLimitAdapter) OverallHealth() string {
+	return a.t.OverallHealth()
 }
