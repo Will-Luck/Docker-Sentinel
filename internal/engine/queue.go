@@ -13,13 +13,15 @@ import (
 
 // PendingUpdate represents a container with an available update awaiting approval.
 type PendingUpdate struct {
-	ContainerID   string    `json:"container_id"`
-	ContainerName string    `json:"container_name"`
-	CurrentImage  string    `json:"current_image"`
-	CurrentDigest string    `json:"current_digest"`
-	RemoteDigest  string    `json:"remote_digest"`
-	DetectedAt    time.Time `json:"detected_at"`
-	NewerVersions []string  `json:"newer_versions,omitempty"` // Newer semver versions (newest first)
+	ContainerID            string    `json:"container_id"`
+	ContainerName          string    `json:"container_name"`
+	CurrentImage           string    `json:"current_image"`
+	CurrentDigest          string    `json:"current_digest"`
+	RemoteDigest           string    `json:"remote_digest"`
+	DetectedAt             time.Time `json:"detected_at"`
+	NewerVersions          []string  `json:"newer_versions,omitempty"`
+	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
+	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
 }
 
 // Queue manages pending updates with BoltDB persistence.

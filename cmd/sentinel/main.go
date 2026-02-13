@@ -581,15 +581,15 @@ type registryCheckerAdapter struct {
 	checker *registry.Checker
 }
 
-func (a *registryCheckerAdapter) CheckForUpdate(ctx context.Context, imageRef string) (bool, []string, error) {
+func (a *registryCheckerAdapter) CheckForUpdate(ctx context.Context, imageRef string) (bool, []string, string, string, error) {
 	result := a.checker.CheckVersioned(ctx, imageRef)
 	if result.Error != nil {
-		return false, nil, result.Error
+		return false, nil, "", "", result.Error
 	}
 	if result.IsLocal {
-		return false, nil, nil
+		return false, nil, "", "", nil
 	}
-	return result.UpdateAvailable, result.NewerVersions, nil
+	return result.UpdateAvailable, result.NewerVersions, result.ResolvedCurrentVersion, result.ResolvedTargetVersion, nil
 }
 
 // policyStoreAdapter bridges store.Store to web.PolicyStore.

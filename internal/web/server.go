@@ -78,7 +78,7 @@ type RegistryVersionChecker interface {
 
 // RegistryChecker performs a full registry check for a single container.
 type RegistryChecker interface {
-	CheckForUpdate(ctx context.Context, imageRef string) (updateAvailable bool, newerVersions []string, err error)
+	CheckForUpdate(ctx context.Context, imageRef string) (updateAvailable bool, newerVersions []string, resolvedCurrent string, resolvedTarget string, err error)
 }
 
 // PolicyStore reads and writes policy overrides in BoltDB.
@@ -231,13 +231,15 @@ type UpdateQueue interface {
 
 // PendingUpdate mirrors engine.PendingUpdate.
 type PendingUpdate struct {
-	ContainerID   string    `json:"container_id"`
-	ContainerName string    `json:"container_name"`
-	CurrentImage  string    `json:"current_image"`
-	CurrentDigest string    `json:"current_digest"`
-	RemoteDigest  string    `json:"remote_digest"`
-	DetectedAt    time.Time `json:"detected_at"`
-	NewerVersions []string  `json:"newer_versions,omitempty"`
+	ContainerID            string    `json:"container_id"`
+	ContainerName          string    `json:"container_name"`
+	CurrentImage           string    `json:"current_image"`
+	CurrentDigest          string    `json:"current_digest"`
+	RemoteDigest           string    `json:"remote_digest"`
+	DetectedAt             time.Time `json:"detected_at"`
+	NewerVersions          []string  `json:"newer_versions,omitempty"`
+	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
+	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
 }
 
 // ContainerLister lists containers.
