@@ -3186,40 +3186,16 @@ function renderRegistryCredentials() {
         header.appendChild(actions);
         card.appendChild(header);
 
-        // Fields
+        // Hidden field to preserve registry value on collect.
+        var regHidden = document.createElement("input");
+        regHidden.type = "hidden";
+        regHidden.setAttribute("data-field", "registry");
+        regHidden.value = cred.registry;
+        card.appendChild(regHidden);
+
+        // Fields: username and password only (registry is fixed via badge).
         var fields = document.createElement("div");
         fields.className = "channel-fields";
-
-        // Registry dropdown (populated from detected registries).
-        var regFieldDiv = document.createElement("div");
-        regFieldDiv.className = "channel-field";
-        var regLabel = document.createElement("span");
-        regLabel.className = "channel-field-label";
-        regLabel.textContent = "Registry";
-        regFieldDiv.appendChild(regLabel);
-        var regSelect = document.createElement("select");
-        regSelect.className = "channel-field-input";
-        regSelect.setAttribute("data-field", "registry");
-        var detectedRegs = Object.keys(registryData).sort();
-        detectedRegs.forEach(function(reg) {
-            var opt = document.createElement("option");
-            opt.value = reg;
-            opt.textContent = reg;
-            if (reg === cred.registry) opt.selected = true;
-            regSelect.appendChild(opt);
-        });
-        // If current value isn't in the list (e.g. manually entered), add it.
-        if (cred.registry && detectedRegs.indexOf(cred.registry) === -1) {
-            var customOpt = document.createElement("option");
-            customOpt.value = cred.registry;
-            customOpt.textContent = cred.registry;
-            customOpt.selected = true;
-            regSelect.insertBefore(customOpt, regSelect.firstChild);
-        }
-        regFieldDiv.appendChild(regSelect);
-        fields.appendChild(regFieldDiv);
-
-        // Username and Password fields.
         var textFieldDefs = [
             { label: "Username", field: "username", type: "text", value: cred.username },
             { label: "Password / Token", field: "secret", type: "password", value: cred.secret }
@@ -3239,41 +3215,65 @@ function renderRegistryCredentials() {
             fieldDiv.appendChild(input);
             fields.appendChild(fieldDiv);
         });
-
         card.appendChild(fields);
 
         // Registry-specific help callout.
-        var helpDiv = document.createElement("div");
-        helpDiv.className = "alert alert-info";
-        helpDiv.style.margin = "var(--sp-3) var(--sp-4) var(--sp-4)";
-        var helpIcon = document.createElement("span");
-        helpIcon.className = "alert-info-icon";
-        helpIcon.textContent = "\u2139";
-        helpDiv.appendChild(helpIcon);
-        var helpText = document.createElement("span");
-        helpDiv.appendChild(helpText);
-        function updateHelp(registry) {
-            var hints = {
-                "docker.io": "Create a Personal Access Token at hub.docker.com \u2192 Account Settings \u2192 Personal access tokens. Read-only scope is sufficient. Authenticated users get 200 pulls/6h (vs 100 anonymous).",
-                "ghcr.io": "Create a Personal Access Token at github.com \u2192 Settings \u2192 Developer settings \u2192 Personal access tokens (classic). Select the read:packages scope.",
-                "lscr.io": "LinuxServer images are also available via GHCR (ghcr.io/linuxserver/*). Use your LinuxServer Fleet credentials, or switch the registry to ghcr.io for simpler auth.",
-                "docker.gitea.com": "Use your Gitea account credentials. Gitea registries typically have no rate limits."
-            };
-            helpText.textContent = hints[registry] || "Use your registry login credentials or access token.";
+        var hints = {
+            "docker.io": "Create a Personal Access Token at hub.docker.com \u2192 Account Settings \u2192 Personal access tokens. Read-only scope is sufficient. Authenticated users get 200 pulls/6h (vs 100 anonymous).",
+            "ghcr.io": "Create a Personal Access Token at github.com \u2192 Settings \u2192 Developer settings \u2192 Personal access tokens (classic). Select the read:packages scope.",
+            "lscr.io": "LinuxServer images are also available via GHCR (ghcr.io/linuxserver/*). Use your LinuxServer Fleet credentials, or switch the registry to ghcr.io for simpler auth.",
+            "docker.gitea.com": "Use your Gitea account credentials. Gitea registries typically have no rate limits."
+        };
+        var hintText = hints[cred.registry];
+        if (hintText) {
+            var helpDiv = document.createElement("div");
+            helpDiv.className = "alert alert-info";
+            helpDiv.style.margin = "var(--sp-3) var(--sp-4) var(--sp-4)";
+            var helpIcon = document.createElement("span");
+            helpIcon.className = "alert-info-icon";
+            helpIcon.textContent = "\u2139";
+            helpDiv.appendChild(helpIcon);
+            var helpSpan = document.createElement("span");
+            helpSpan.textContent = hintText;
+            helpDiv.appendChild(helpSpan);
+            card.appendChild(helpDiv);
         }
-        updateHelp(cred.registry);
-        regSelect.addEventListener("change", function() { updateHelp(this.value); });
-        card.appendChild(helpDiv);
 
         container.appendChild(card);
     });
+
+    // Populate the "Add" dropdown with registries that don't already have credentials.
+    var addSelect = document.getElementById("registry-type-select");
+    if (addSelect) {
+        while (addSelect.options.length > 1) addSelect.remove(1);
+        var usedRegs = {};
+        registryCredentials.forEach(function(c) { usedRegs[c.registry] = true; });
+        var allRegs = Object.keys(registryData).sort();
+        // Always include common registries even if not yet detected.
+        ["docker.io", "ghcr.io", "lscr.io", "docker.gitea.com"].forEach(function(r) {
+            if (allRegs.indexOf(r) === -1) allRegs.push(r);
+        });
+        allRegs.sort();
+        allRegs.forEach(function(reg) {
+            if (!usedRegs[reg]) {
+                var opt = document.createElement("option");
+                opt.value = reg;
+                opt.textContent = reg;
+                addSelect.appendChild(opt);
+            }
+        });
+    }
 }
 
 function addRegistryCredential() {
+    var select = document.getElementById("registry-type-select");
+    if (!select || !select.value) return;
+    var reg = select.value;
     var id = "reg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
-    registryCredentials.push({ id: id, registry: "docker.io", username: "", secret: "" });
+    registryCredentials.push({ id: id, registry: reg, username: "", secret: "" });
+    select.value = "";
     renderRegistryCredentials();
-    showToast("New credential added \u2014 fill in details and save", "info");
+    showToast("Added " + reg + " \u2014 enter credentials and save", "info");
 }
 
 function deleteRegistryCredential(index) {
@@ -3286,7 +3286,7 @@ function collectRegistryCredentialsFromDOM() {
     var cards = document.querySelectorAll("#credential-list .channel-card");
     cards.forEach(function(card, i) {
         if (i < registryCredentials.length) {
-            var inputs = card.querySelectorAll(".channel-field-input");
+            var inputs = card.querySelectorAll("[data-field]");
             inputs.forEach(function(input) {
                 var field = input.getAttribute("data-field");
                 if (field) registryCredentials[i][field] = input.value;

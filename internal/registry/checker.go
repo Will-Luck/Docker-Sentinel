@@ -40,6 +40,11 @@ func (c *Checker) SetCredentialStore(cs CredentialStore) {
 	c.creds = cs
 }
 
+// CredentialStore returns the attached credential store, or nil.
+func (c *Checker) CredentialStore() CredentialStore {
+	return c.creds
+}
+
 // SetRateLimitTracker attaches a rate limit tracker for header capture.
 func (c *Checker) SetRateLimitTracker(t *RateLimitTracker) {
 	c.tracker = t

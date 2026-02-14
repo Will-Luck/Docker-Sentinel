@@ -199,6 +199,29 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 	}
 
+	// Probe credentialed registries to capture fresh rate limit data.
+	// This ensures limits are known even when all containers are up to date
+	// (no ListTags calls would fire otherwise).
+	if u.rateTracker != nil {
+		if cs := u.checker.CredentialStore(); cs != nil {
+			if creds, err := cs.GetRegistryCredentials(); err == nil {
+				for _, cred := range creds {
+					host := registry.NormaliseRegistryHost(cred.Registry)
+					probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
+					headers, err := registry.ProbeRateLimit(probeCtx, host, &cred)
+					probeCancel()
+					if err != nil {
+						u.log.Warn("rate limit probe failed", "registry", host, "error", err)
+						continue
+					}
+					u.rateTracker.Record(host, headers)
+					u.rateTracker.SetAuth(host, true)
+					u.log.Debug("probed rate limits", "registry", host)
+				}
+			}
+		}
+	}
+
 	// Prune queue entries for containers that no longer exist.
 	liveNames := make(map[string]bool, len(containers))
 	for _, c := range containers {

@@ -358,7 +358,12 @@
                     <div class="accordion-body">
                         <div id="credential-list"></div>
                         <div class="setting-actions" style="margin-top:var(--sp-4)">
-                            <button class="btn btn-info" onclick="addRegistryCredential()">+ Add Credentials</button>
+                            <div class="channel-add-wrap">
+                                <select id="registry-type-select" class="setting-select">
+                                    <option value="">Add registry credentials...</option>
+                                </select>
+                                <button class="btn" onclick="addRegistryCredential()">Add</button>
+                            </div>
                             <button class="btn btn-success" onclick="saveRegistryCredentials(event)">Save All</button>
                         </div>
                     </div>
