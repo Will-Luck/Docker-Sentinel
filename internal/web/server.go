@@ -50,6 +50,7 @@ type Dependencies struct {
 	IgnoredVersions    IgnoredVersionStore
 	RegistryCredentials RegistryCredentialStore
 	RateTracker         RateLimitProvider
+	GHCRCache           GHCRAlternativeProvider
 	Auth               *auth.Service
 	Log                *slog.Logger
 }
@@ -161,6 +162,24 @@ type RateLimitStatus struct {
 	HasLimits      bool      `json:"has_limits"`
 	ContainerCount int       `json:"container_count"`
 	LastUpdated    time.Time `json:"last_updated"`
+}
+
+// GHCRAlternativeProvider returns GHCR alternative detection results.
+type GHCRAlternativeProvider interface {
+	Get(repo, tag string) (*GHCRAlternative, bool)
+	All() []GHCRAlternative
+}
+
+// GHCRAlternative mirrors registry.GHCRAlternative for the web layer.
+type GHCRAlternative struct {
+	DockerHubImage string    `json:"docker_hub_image"`
+	GHCRImage      string    `json:"ghcr_image"`
+	Tag            string    `json:"tag"`
+	Available      bool      `json:"available"`
+	DigestMatch    bool      `json:"digest_match"`
+	HubDigest      string    `json:"hub_digest,omitempty"`
+	GHCRDigest     string    `json:"ghcr_digest,omitempty"`
+	CheckedAt      time.Time `json:"checked_at"`
 }
 
 // DigestController controls the digest scheduler.
@@ -471,6 +490,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/update/{name}", perm(auth.PermContainersUpdate, s.apiUpdate))
 	s.mux.Handle("POST /api/check/{name}", perm(auth.PermContainersUpdate, s.apiCheck))
 	s.mux.Handle("POST /api/scan", perm(auth.PermContainersUpdate, s.apiTriggerScan))
+	s.mux.Handle("POST /api/containers/{name}/switch-ghcr", perm(auth.PermContainersUpdate, s.apiSwitchToGHCR))
 
 	// containers.approve
 	s.mux.Handle("POST /api/approve/{name}", perm(auth.PermContainersApprove, s.apiApprove))
@@ -495,6 +515,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
 	s.mux.Handle("GET /api/settings/registries", perm(auth.PermSettingsView, s.apiGetRegistryCredentials))
 	s.mux.Handle("GET /api/ratelimits", perm(auth.PermContainersView, s.apiGetRateLimits))
+	s.mux.Handle("GET /api/ghcr/alternatives", perm(auth.PermContainersView, s.apiGetGHCRAlternatives))
+	s.mux.Handle("GET /api/containers/{name}/ghcr", perm(auth.PermContainersView, s.apiGetContainerGHCR))
 
 	// Notification prefs & digest (read)
 	s.mux.Handle("GET /api/containers/{name}/notify-pref", perm(auth.PermSettingsView, s.apiGetNotifyPref))

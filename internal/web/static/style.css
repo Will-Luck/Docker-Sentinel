@@ -3106,3 +3106,50 @@ input[type="checkbox"] {
 }
 
 .stat-card:nth-child(4) { border-left-color: var(--accent); }
+
+
+/* --------------------------------------------------------------------------
+   32. GHCR Badge & Callout
+   -------------------------------------------------------------------------- */
+
+.ghcr-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.55rem;
+    font-weight: 500;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--info-bg);
+    color: var(--info-fg);
+    vertical-align: middle;
+    margin-left: 6px;
+    letter-spacing: 0.02em;
+}
+
+.ghcr-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    border-radius: var(--radius);
+    background: var(--info-bg);
+    color: var(--info-fg);
+    margin-top: var(--sp-3);
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+.ghcr-callout-icon {
+    flex-shrink: 0;
+    font-size: 1.1rem;
+    margin-top: 1px;
+}
+.ghcr-callout-body {
+    flex: 1;
+}
+.ghcr-callout-body strong {
+    display: block;
+    margin-bottom: 2px;
+}
+.ghcr-callout .btn {
+    margin-top: var(--sp-2);
+}

@@ -192,6 +192,14 @@ func main() {
 			log.Info("loaded persisted rate limits")
 		}
 	}
+	ghcrCache := registry.NewGHCRCache(24 * time.Hour)
+	if ghcrData, ghcrErr := db.LoadGHCRCache(); ghcrErr == nil && ghcrData != nil {
+		if importErr := ghcrCache.Import(ghcrData); importErr != nil {
+			log.Warn("failed to load persisted GHCR cache", "error", importErr)
+		} else {
+			log.Info("loaded persisted GHCR cache")
+		}
+	}
 	checker.SetCredentialStore(db)
 	checker.SetRateLimitTracker(rateTracker)
 	bus := events.New()
@@ -200,6 +208,8 @@ func main() {
 	updater.SetSettingsReader(db)
 	updater.SetRateLimitTracker(rateTracker)
 	updater.SetRateLimitSaver(db.SaveRateLimits)
+	updater.SetGHCRCache(ghcrCache)
+	updater.SetGHCRSaver(db.SaveGHCRCache)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
@@ -232,6 +242,7 @@ func main() {
 			IgnoredVersions:     &ignoredVersionAdapter{db},
 			RegistryCredentials: &registryCredentialAdapter{db},
 			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
+			GHCRCache:           &ghcrCacheAdapter{c: ghcrCache},
 			Digest:              digestSched,
 			Auth:                authSvc,
 			Log:                 log.Logger,
@@ -832,6 +843,44 @@ func (a *rateLimitAdapter) Status() []web.RateLimitStatus {
 
 func (a *rateLimitAdapter) OverallHealth() string {
 	return a.t.OverallHealth()
+}
+
+// ghcrCacheAdapter bridges registry.GHCRCache to web.GHCRAlternativeProvider.
+type ghcrCacheAdapter struct{ c *registry.GHCRCache }
+
+func (a *ghcrCacheAdapter) Get(repo, tag string) (*web.GHCRAlternative, bool) {
+	alt, ok := a.c.Get(repo, tag)
+	if !ok {
+		return nil, false
+	}
+	return &web.GHCRAlternative{
+		DockerHubImage: alt.DockerHubImage,
+		GHCRImage:      alt.GHCRImage,
+		Tag:            alt.Tag,
+		Available:      alt.Available,
+		DigestMatch:    alt.DigestMatch,
+		HubDigest:      alt.HubDigest,
+		GHCRDigest:     alt.GHCRDigest,
+		CheckedAt:      alt.CheckedAt,
+	}, true
+}
+
+func (a *ghcrCacheAdapter) All() []web.GHCRAlternative {
+	alts := a.c.All()
+	result := make([]web.GHCRAlternative, len(alts))
+	for i, alt := range alts {
+		result[i] = web.GHCRAlternative{
+			DockerHubImage: alt.DockerHubImage,
+			GHCRImage:      alt.GHCRImage,
+			Tag:            alt.Tag,
+			Available:      alt.Available,
+			DigestMatch:    alt.DigestMatch,
+			HubDigest:      alt.HubDigest,
+			GHCRDigest:     alt.GHCRDigest,
+			CheckedAt:      alt.CheckedAt,
+		}
+	}
+	return result
 }
 
 func (a *rateLimitAdapter) ProbeAndRecord(ctx context.Context, host string, cred web.RegistryCredential) error {
