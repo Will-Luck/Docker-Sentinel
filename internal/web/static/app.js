@@ -3245,7 +3245,7 @@ function renderRegistryCredentials() {
         // Registry-specific help callout.
         var helpDiv = document.createElement("div");
         helpDiv.className = "alert alert-info";
-        helpDiv.style.margin = "0 var(--sp-4) var(--sp-4)";
+        helpDiv.style.margin = "var(--sp-3) var(--sp-4) var(--sp-4)";
         var helpIcon = document.createElement("span");
         helpIcon.className = "alert-info-icon";
         helpIcon.textContent = "\u2139";
