@@ -50,7 +50,7 @@ type Config struct {
 	WebAuthnOrigins     string // comma-separated allowed origins
 
 	// mu protects the mutable runtime fields below.
-	mu            sync.RWMutex
+	mu               sync.RWMutex
 	pollInterval     time.Duration // how often to scan for updates
 	gracePeriod      time.Duration // wait after starting new container before health check
 	defaultPolicy    string        // "auto", "manual", or "pinned"
