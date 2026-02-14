@@ -3153,3 +3153,40 @@ input[type="checkbox"] {
 .ghcr-callout .btn {
     margin-top: var(--sp-2);
 }
+
+/* --------------------------------------------------------------------------
+   33. Registry Source Badges
+   -------------------------------------------------------------------------- */
+
+.registry-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.55rem;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 4px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.registry-badge-hub {
+    background: var(--bg-raised);
+    color: var(--md-on-surface-variant);
+}
+.registry-badge-ghcr {
+    background: var(--info-bg);
+    color: var(--info-fg);
+}
+.registry-badge-lscr {
+    background: var(--success-bg);
+    color: var(--success-fg);
+}
+.registry-badge-gitea {
+    background: var(--warning-bg);
+    color: var(--warning-fg);
+}
+.registry-badge-local {
+    background: var(--error-bg);
+    color: var(--error-fg);
+}

@@ -193,7 +193,7 @@
 {{end}}
 
 {{define "container-row"}}
-                            <tr class="container-row state-{{.State}}{{if .HasUpdate}} has-update{{end}}" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
+                            <tr class="container-row state-{{.State}}{{if .HasUpdate}} has-update{{end}}" data-name="{{.Name}}" data-registry="{{.Registry}}" onclick="onRowClick(event, '{{.Name}}')">
                                 <td class="td-checkbox">
                                     {{if not .IsSelf}}
                                         <input type="checkbox" class="row-select" value="{{.Name}}" id="select-{{.Name}}" aria-label="Select {{.Name}}">

@@ -46,6 +46,7 @@ type containerView struct {
 	HasUpdate     bool
 	IsSelf        bool
 	Stack         string // com.docker.compose.project label, or "" for standalone
+	Registry      string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -113,6 +114,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			HasUpdate:     pendingNames[name],
 			IsSelf:        c.Labels["sentinel.self"] == "true",
 			Stack:         c.Labels["com.docker.compose.project"],
+			Registry:      registry.RegistryHost(c.Image),
 		})
 	}
 
@@ -382,6 +384,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				HasUpdate:     pendingNames[n],
 				IsSelf:        c.Labels["sentinel.self"] == "true",
 				Stack:         c.Labels["com.docker.compose.project"],
+				Registry:      registry.RegistryHost(c.Image),
 			}
 			targetView = &v
 		}
@@ -501,6 +504,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		State:       found.State,
 		Maintenance: maintenance,
 		IsSelf:      found.Labels["sentinel.self"] == "true",
+		Registry:    registry.RegistryHost(found.Image),
 	}
 
 	// Gather history.
