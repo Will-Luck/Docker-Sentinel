@@ -55,33 +55,33 @@ const (
 
 // ScanResult summarises a single scan cycle.
 type ScanResult struct {
-	Total        int
-	Skipped      int
-	AutoCount    int
-	Queued       int
-	Updated      int
-	Failed       int
-	RateLimited  int // containers skipped due to rate limits
-	Errors       []error
+	Total       int
+	Skipped     int
+	AutoCount   int
+	Queued      int
+	Updated     int
+	Failed      int
+	RateLimited int // containers skipped due to rate limits
+	Errors      []error
 }
 
 // Updater performs container scanning and update operations.
 type Updater struct {
-	docker   docker.API
-	checker  *registry.Checker
-	store    *store.Store
-	queue    *Queue
-	cfg      *config.Config
-	log      *logging.Logger
-	clock    clock.Clock
-	notifier *notify.Multi
-	events   *events.Bus
-	settings      SettingsReader
-	rateTracker   *registry.RateLimitTracker // optional: rate limit awareness
-	rateSaver     func([]byte) error         // optional: persist rate limits after scan
-	ghcrCache     *registry.GHCRCache        // optional: GHCR alternative detection cache
-	ghcrSaver     func([]byte) error         // optional: persist GHCR cache after checks
-	updating      sync.Map                   // map[string]*sync.Mutex — per-container update locks
+	docker      docker.API
+	checker     *registry.Checker
+	store       *store.Store
+	queue       *Queue
+	cfg         *config.Config
+	log         *logging.Logger
+	clock       clock.Clock
+	notifier    *notify.Multi
+	events      *events.Bus
+	settings    SettingsReader
+	rateTracker *registry.RateLimitTracker // optional: rate limit awareness
+	rateSaver   func([]byte) error         // optional: persist rate limits after scan
+	ghcrCache   *registry.GHCRCache        // optional: GHCR alternative detection cache
+	ghcrSaver   func([]byte) error         // optional: persist GHCR cache after checks
+	updating    sync.Map                   // map[string]*sync.Mutex — per-container update locks
 }
 
 // NewUpdater creates an Updater with all dependencies.

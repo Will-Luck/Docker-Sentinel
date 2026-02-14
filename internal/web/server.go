@@ -24,37 +24,37 @@ var staticFS embed.FS
 
 // Dependencies defines what the web server needs from the rest of the application.
 type Dependencies struct {
-	Store              HistoryStore
-	Queue              UpdateQueue
-	Docker             ContainerLister
-	Updater            ContainerUpdater
-	Config             ConfigReader
-	ConfigWriter       ConfigWriter
-	EventBus           *events.Bus
-	Snapshots          SnapshotStore
-	Rollback           ContainerRollback
-	Restarter          ContainerRestarter
-	Stopper            ContainerStopper
-	Starter            ContainerStarter
-	Registry           RegistryVersionChecker
-	RegistryChecker    RegistryChecker
-	Policy             PolicyStore
-	EventLog           EventLogger
-	Scheduler          SchedulerController
-	SettingsStore      SettingsStore
-	SelfUpdater        SelfUpdater
-	NotifyConfig       NotificationConfigStore
-	NotifyReconfigurer NotifierReconfigurer
-	NotifyState        NotifyStateStore
-	Digest             DigestController
-	IgnoredVersions    IgnoredVersionStore
+	Store               HistoryStore
+	Queue               UpdateQueue
+	Docker              ContainerLister
+	Updater             ContainerUpdater
+	Config              ConfigReader
+	ConfigWriter        ConfigWriter
+	EventBus            *events.Bus
+	Snapshots           SnapshotStore
+	Rollback            ContainerRollback
+	Restarter           ContainerRestarter
+	Stopper             ContainerStopper
+	Starter             ContainerStarter
+	Registry            RegistryVersionChecker
+	RegistryChecker     RegistryChecker
+	Policy              PolicyStore
+	EventLog            EventLogger
+	Scheduler           SchedulerController
+	SettingsStore       SettingsStore
+	SelfUpdater         SelfUpdater
+	NotifyConfig        NotificationConfigStore
+	NotifyReconfigurer  NotifierReconfigurer
+	NotifyState         NotifyStateStore
+	Digest              DigestController
+	IgnoredVersions     IgnoredVersionStore
 	RegistryCredentials RegistryCredentialStore
 	RateTracker         RateLimitProvider
 	GHCRCache           GHCRAlternativeProvider
-	AboutStore         AboutStore
-	Auth               *auth.Service
-	Version            string
-	Log                *slog.Logger
+	AboutStore          AboutStore
+	Auth                *auth.Service
+	Version             string
+	Log                 *slog.Logger
 }
 
 // HistoryStore reads update history and maintenance state.

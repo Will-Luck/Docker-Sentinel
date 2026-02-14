@@ -2146,26 +2146,26 @@ func (s *Server) apiAbout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type aboutResponse struct {
-		Version       string        `json:"version"`
-		GoVersion     string        `json:"go_version"`
-		DataDirectory string        `json:"data_directory"`
-		Uptime        string        `json:"uptime"`
-		StartedAt     time.Time     `json:"started_at"`
-		PollInterval  string        `json:"poll_interval"`
-		LastScan      *time.Time    `json:"last_scan"`
-		Containers    int           `json:"containers"`
-		UpdatesApplied int          `json:"updates_applied"`
-		Snapshots     int           `json:"snapshots"`
-		Channels      []channelInfo `json:"channels"`
-		Registries    []string      `json:"registries"`
+		Version        string        `json:"version"`
+		GoVersion      string        `json:"go_version"`
+		DataDirectory  string        `json:"data_directory"`
+		Uptime         string        `json:"uptime"`
+		StartedAt      time.Time     `json:"started_at"`
+		PollInterval   string        `json:"poll_interval"`
+		LastScan       *time.Time    `json:"last_scan"`
+		Containers     int           `json:"containers"`
+		UpdatesApplied int           `json:"updates_applied"`
+		Snapshots      int           `json:"snapshots"`
+		Channels       []channelInfo `json:"channels"`
+		Registries     []string      `json:"registries"`
 	}
 
 	resp := aboutResponse{
-		Version:   s.deps.Version,
-		GoVersion: runtime.Version(),
-		Uptime:    formatUptime(time.Since(s.startTime)),
-		StartedAt: s.startTime,
-		Channels:  []channelInfo{},
+		Version:    s.deps.Version,
+		GoVersion:  runtime.Version(),
+		Uptime:     formatUptime(time.Since(s.startTime)),
+		StartedAt:  s.startTime,
+		Channels:   []channelInfo{},
 		Registries: []string{},
 	}
 

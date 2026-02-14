@@ -217,29 +217,29 @@ func main() {
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
-			Store:              &storeAdapter{db},
-			AboutStore:         &aboutStoreAdapter{db},
-			Queue:              &queueAdapter{queue},
-			Docker:             &dockerAdapter{client},
-			Updater:            updater,
-			Config:             cfg,
-			ConfigWriter:       cfg,
-			EventBus:           bus,
-			Snapshots:          &snapshotAdapter{db},
-			Rollback:           &rollbackAdapter{d: client, s: db, log: log},
-			Restarter:          &restartAdapter{client},
-			Registry:           &registryAdapter{log: log},
-			RegistryChecker:    &registryCheckerAdapter{checker: checker},
-			Policy:             &policyStoreAdapter{db},
-			EventLog:           &eventLogAdapter{db},
-			Scheduler:          scheduler,
-			SettingsStore:      &settingsStoreAdapter{db},
-			Stopper:            &stopAdapter{client},
-			Starter:            &startAdapter{client},
-			SelfUpdater:        &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
-			NotifyConfig:       &notifyConfigAdapter{db},
-			NotifyReconfigurer: notifier,
-			NotifyState:        &notifyStateAdapter{db},
+			Store:               &storeAdapter{db},
+			AboutStore:          &aboutStoreAdapter{db},
+			Queue:               &queueAdapter{queue},
+			Docker:              &dockerAdapter{client},
+			Updater:             updater,
+			Config:              cfg,
+			ConfigWriter:        cfg,
+			EventBus:            bus,
+			Snapshots:           &snapshotAdapter{db},
+			Rollback:            &rollbackAdapter{d: client, s: db, log: log},
+			Restarter:           &restartAdapter{client},
+			Registry:            &registryAdapter{log: log},
+			RegistryChecker:     &registryCheckerAdapter{checker: checker},
+			Policy:              &policyStoreAdapter{db},
+			EventLog:            &eventLogAdapter{db},
+			Scheduler:           scheduler,
+			SettingsStore:       &settingsStoreAdapter{db},
+			Stopper:             &stopAdapter{client},
+			Starter:             &startAdapter{client},
+			SelfUpdater:         &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
+			NotifyConfig:        &notifyConfigAdapter{db},
+			NotifyReconfigurer:  notifier,
+			NotifyState:         &notifyStateAdapter{db},
 			IgnoredVersions:     &ignoredVersionAdapter{db},
 			RegistryCredentials: &registryCredentialAdapter{db},
 			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
@@ -411,7 +411,7 @@ func (a *storeAdapter) GetMaintenance(name string) (bool, error) {
 // aboutStoreAdapter converts store.Store to web.AboutStore.
 type aboutStoreAdapter struct{ s *store.Store }
 
-func (a *aboutStoreAdapter) CountHistory() (int, error)  { return a.s.CountHistory() }
+func (a *aboutStoreAdapter) CountHistory() (int, error)   { return a.s.CountHistory() }
 func (a *aboutStoreAdapter) CountSnapshots() (int, error) { return a.s.CountSnapshots() }
 
 // snapshotAdapter converts store.Store to web.SnapshotStore.
