@@ -25,6 +25,7 @@ var (
 	bucketNotifyPrefs     = []byte("notify_prefs")
 	bucketIgnoredVersions = []byte("ignored_versions")
 	bucketRegistryCreds   = []byte("registry_credentials")
+	bucketRateLimits      = []byte("rate_limits")
 )
 
 // UpdateRecord represents a completed (or failed) container update.
@@ -54,7 +55,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -619,4 +620,28 @@ func (s *Store) SetRegistryCredentials(creds []registry.RegistryCredential) erro
 		b := tx.Bucket(bucketRegistryCreds)
 		return b.Put([]byte("credentials"), data)
 	})
+}
+
+// SaveRateLimits persists rate limit state for all registries.
+func (s *Store) SaveRateLimits(data []byte) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketRateLimits)
+		return b.Put([]byte("state"), data)
+	})
+}
+
+// LoadRateLimits loads persisted rate limit state.
+// Returns nil, nil if nothing is stored.
+func (s *Store) LoadRateLimits() ([]byte, error) {
+	var data []byte
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketRateLimits)
+		v := b.Get([]byte("state"))
+		if v != nil {
+			data = make([]byte, len(v))
+			copy(data, v)
+		}
+		return nil
+	})
+	return data, err
 }
