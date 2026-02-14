@@ -148,6 +148,12 @@ func ResolveVersions(ctx context.Context, imageRef, localDigest, remoteDigest st
 
 	checked := 0
 	for i := 0; i < firstLimit; i++ {
+		// Check rate limits before each manifest HEAD request.
+		if tracker != nil {
+			if ok, _ := tracker.CanProceed(host, 2); !ok {
+				break
+			}
+		}
 		sv := semvers[i]
 		digest, headers, err := ManifestDigest(ctx, repo, sv.Raw, token, host, cred)
 		if tracker != nil && headers != nil {
@@ -178,6 +184,12 @@ func ResolveVersions(ctx context.Context, imageRef, localDigest, remoteDigest st
 			extLimit = len(semvers)
 		}
 		for i := checked; i < extLimit; i++ {
+			// Check rate limits before each manifest HEAD request.
+			if tracker != nil {
+				if ok, _ := tracker.CanProceed(host, 2); !ok {
+					break
+				}
+			}
 			sv := semvers[i]
 			digest, headers, err := ManifestDigest(ctx, repo, sv.Raw, token, host, cred)
 			if tracker != nil && headers != nil {
