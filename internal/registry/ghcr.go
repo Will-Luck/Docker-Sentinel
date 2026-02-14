@@ -165,14 +165,15 @@ func CheckGHCRAlternative(ctx context.Context, imageRef string, hubCred, ghcrCre
 	}
 	alt.HubDigest = hubDigest
 
-	// Fetch GHCR digest.
-	ghcrToken, err := FetchGHCRToken(ctx, ghcrRepo)
+	// Fetch GHCR digest. Pass ghcrCred for authenticated token exchange
+	// (needed for private images; anonymous works for public).
+	ghcrToken, err := FetchGHCRToken(ctx, ghcrRepo, ghcrCred)
 	if err != nil {
 		alt.Available = false
 		return alt, nil
 	}
 
-	ghcrDigest, _, err := ManifestDigest(ctx, ghcrRepo, tag, ghcrToken, "ghcr.io", ghcrCred)
+	ghcrDigest, _, err := ManifestDigest(ctx, ghcrRepo, tag, ghcrToken, "ghcr.io", nil)
 	if err != nil {
 		alt.Available = false
 		return alt, nil

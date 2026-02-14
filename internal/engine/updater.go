@@ -474,8 +474,14 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 
 	// Launch background GHCR alternative check for Docker Hub containers.
+	// Use a detached context so the goroutine isn't cancelled when the
+	// scan context expires (the caller may cancel it after Scan returns).
 	if u.ghcrCache != nil {
-		go u.checkGHCRAlternatives(ctx, containers)
+		ghcrCtx, ghcrCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		go func() {
+			defer ghcrCancel()
+			u.checkGHCRAlternatives(ghcrCtx, containers)
+		}()
 	}
 
 	return result
@@ -521,6 +527,19 @@ func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []contai
 		// Skip if already cached and not expired.
 		if _, ok := u.ghcrCache.Get(repo, tag); ok {
 			continue
+		}
+
+		// Rate limit check: each GHCR alternative check makes ~2 requests
+		// to Docker Hub and ~2 to GHCR. Skip if either registry is low.
+		if u.rateTracker != nil {
+			if ok, _ := u.rateTracker.CanProceed("docker.io", 5); !ok {
+				u.log.Debug("GHCR check: Docker Hub rate limit low, stopping")
+				break
+			}
+			if ok, _ := u.rateTracker.CanProceed("ghcr.io", 5); !ok {
+				u.log.Debug("GHCR check: GHCR rate limit low, stopping")
+				break
+			}
 		}
 
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
