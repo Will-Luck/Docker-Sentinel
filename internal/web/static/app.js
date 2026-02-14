@@ -1889,7 +1889,8 @@ function updateContainerRow(name) {
             // Clear accordion cache for this container.
             delete accordionCache[name];
 
-            // Reapply filters after DOM patch.
+            // Reapply badges and filters after DOM patch.
+            applyRegistryBadges();
             applyFiltersAndSort();
         })
         .catch(function() {
@@ -2086,6 +2087,32 @@ function loadGHCRAlternatives() {
             applyGHCRBadges();
         })
         .catch(function() {});
+}
+
+var registryStyles = {
+    "docker.io":        { label: "Hub",   cls: "registry-badge-hub" },
+    "ghcr.io":          { label: "GHCR",  cls: "registry-badge-ghcr" },
+    "lscr.io":          { label: "LSCR",  cls: "registry-badge-lscr" },
+    "docker.gitea.com": { label: "Gitea", cls: "registry-badge-gitea" }
+};
+
+function applyRegistryBadges() {
+    var rows = document.querySelectorAll("tr.container-row");
+    rows.forEach(function(row) {
+        var imageCell = row.querySelector(".cell-image");
+        if (!imageCell) return;
+
+        // Skip if already badged.
+        if (imageCell.querySelector(".registry-badge")) return;
+
+        var reg = row.getAttribute("data-registry") || "docker.io";
+        var style = registryStyles[reg] || registryStyles["docker.io"];
+
+        var badge = document.createElement("span");
+        badge.className = "registry-badge " + style.cls;
+        badge.textContent = style.label;
+        imageCell.insertBefore(badge, imageCell.firstChild);
+    });
 }
 
 function applyGHCRBadges() {
@@ -2389,7 +2416,8 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
 
-        // Load GHCR alternatives for dashboard badges.
+        // Apply registry source badges and load GHCR alternatives.
+        applyRegistryBadges();
         loadGHCRAlternatives();
     }
 
