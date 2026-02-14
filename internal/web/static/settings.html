@@ -69,6 +69,7 @@
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-registries" data-tab="registries">Registries</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-general" data-tab="general">General</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-about" data-tab="about">About</button>
             {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-security" data-tab="security">Security</button>
             {{end}}{{end}}{{end}}
@@ -525,6 +526,17 @@
             </div>
         </div>
         {{end}}{{end}}{{end}}
+
+        <!-- About tab -->
+        <div class="tab-panel" id="tab-about" role="tabpanel">
+            <div class="card">
+                <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
+                    <div id="about-content">
+                        <p class="text-muted">Loading...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
 
     <div id="toast-container" class="toast-container"></div>

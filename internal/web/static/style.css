@@ -3190,3 +3190,42 @@ input[type="checkbox"] {
     background: var(--error-bg);
     color: var(--error-fg);
 }
+
+/* About tab */
+.about-section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-secondary);
+    padding-bottom: var(--sp-2);
+    border-bottom: 1px solid var(--border);
+    margin-top: var(--sp-5);
+    margin-bottom: 0;
+}
+.about-section-title:first-child {
+    margin-top: 0;
+}
+.about-value {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+.about-channels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+.about-channel-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    font-size: 0.8rem;
+}
+.about-channel-type {
+    color: var(--fg-secondary);
+    font-size: 0.75rem;
+}
