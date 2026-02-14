@@ -35,7 +35,7 @@
 - Queue badge accuracy
 
 ### 5. Settings Page
-- Tab switching (Containers, Notifications, Authentication)
+- Tab switching (Scanning, Notifications, Registries, Appearance, General, Security)
 - Poll interval, default policy, grace period changes (revert after)
 - Pause toggle
 - Notification channel list

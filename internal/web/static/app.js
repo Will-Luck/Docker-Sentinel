@@ -194,6 +194,14 @@ function initSettingsPage() {
                 }
             }
 
+            // Latest auto-update toggle.
+            var latestAutoToggle = document.getElementById("latest-auto-toggle");
+            if (latestAutoToggle) {
+                var latestAuto = settings["latest_auto_update"] !== "false";
+                latestAutoToggle.checked = latestAuto;
+                updateLatestAutoText(latestAuto);
+            }
+
             // Pause toggle.
             var pauseToggle = document.getElementById("pause-toggle");
             if (pauseToggle) {
@@ -258,6 +266,15 @@ function initSettingsPage() {
     // Load digest settings and per-container notification preferences.
     loadDigestSettings();
     loadContainerNotifyPrefs();
+
+    // Load registry credentials and rate limits.
+    loadRegistries();
+
+    // Load GHCR alternatives table on registries tab.
+    renderGHCRAlternatives();
+
+    // Load About info.
+    loadAboutInfo();
 }
 
 function onPollIntervalChange(value) {
@@ -467,6 +484,29 @@ function setPauseState(paused) {
         });
 }
 
+function updateLatestAutoText(enabled) {
+    var text = document.getElementById("latest-auto-text");
+    if (text) {
+        text.textContent = enabled ? "On" : "Off";
+    }
+}
+
+function setLatestAutoUpdate(enabled) {
+    updateLatestAutoText(enabled);
+    fetch("/api/settings/latest-auto-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
 function saveFilters() {
     var textarea = document.getElementById("container-filters");
     if (!textarea) return;
@@ -572,6 +612,7 @@ function checkPauseState() {
 
 var lastScanTimestamp = null;
 var lastScanTimer = null;
+var ghcrAlternatives = {};
 
 function refreshLastScan() {
     var el = document.getElementById("last-scan");
@@ -621,10 +662,18 @@ function renderLastScanTicker() {
 }
 
 /* ------------------------------------------------------------
-   3. Toast System
+   3. Toast System (with batching for scan bursts)
    ------------------------------------------------------------ */
 
+var _toastBatch = [];
+var _toastBatchTimer = null;
+var _toastBatchWindow = 1500; // ms to collect events before showing summary
+
 function showToast(message, type) {
+    _showToastImmediate(message, type);
+}
+
+function _showToastImmediate(message, type) {
     var container = document.getElementById("toast-container");
     if (!container) {
         container = document.createElement("div");
@@ -644,6 +693,40 @@ function showToast(message, type) {
             if (toast.parentNode) toast.parentNode.removeChild(toast);
         }, 300);
     }, 4000);
+}
+
+// Queue a toast for batching. If multiple arrive within the batch window,
+// they are collapsed into a single summary toast.
+function queueBatchToast(message, type) {
+    _toastBatch.push({message: message, type: type});
+    if (_toastBatchTimer) clearTimeout(_toastBatchTimer);
+    _toastBatchTimer = setTimeout(function () {
+        _flushBatchToasts();
+    }, _toastBatchWindow);
+}
+
+function _flushBatchToasts() {
+    var batch = _toastBatch;
+    _toastBatch = [];
+    _toastBatchTimer = null;
+    if (batch.length === 0) return;
+    if (batch.length === 1) {
+        _showToastImmediate(batch[0].message, batch[0].type);
+        return;
+    }
+    // Summarise: count updates and queue additions separately.
+    var updates = 0;
+    var queued = 0;
+    for (var i = 0; i < batch.length; i++) {
+        var msg = batch[i].message.toLowerCase();
+        if (msg.indexOf("update") !== -1 || msg.indexOf("available") !== -1) updates++;
+        else if (msg.indexOf("queue") !== -1 || msg.indexOf("added") !== -1) queued++;
+        else updates++; // fallback
+    }
+    var parts = [];
+    if (updates > 0) parts.push(updates + " update" + (updates === 1 ? "" : "s") + " detected");
+    if (queued > 0) parts.push(queued + " queued for approval");
+    _showToastImmediate(parts.join(", "), "info");
 }
 
 /* ------------------------------------------------------------
@@ -744,7 +827,7 @@ function showConfirm(title, bodyHTML) {
    5. API Actions
    ------------------------------------------------------------ */
 
-function apiPost(url, body, successMsg, errorMsg, triggerEl) {
+function apiPost(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
     var opts = { method: "POST" };
     if (body) {
         opts.headers = { "Content-Type": "application/json" };
@@ -769,6 +852,7 @@ function apiPost(url, body, successMsg, errorMsg, triggerEl) {
         .then(function (result) {
             if (result.ok) {
                 showToast(result.data.message || successMsg, "success");
+                if (onSuccess) onSuccess(result.data);
             } else {
                 showToast(result.data.error || errorMsg, "error");
             }
@@ -780,6 +864,60 @@ function apiPost(url, body, successMsg, errorMsg, triggerEl) {
         });
 }
 
+// Remove a queue row (and its accordion) from the DOM with animation.
+function removeQueueRow(btn) {
+    var row = btn ? btn.closest("tr") : null;
+    if (!row) return;
+    var accordion = row.nextElementSibling;
+    var hasAccordion = accordion && accordion.classList.contains("accordion-panel");
+
+    // Quick fade then remove — no height animation to avoid table layout shifts.
+    row.style.transition = "opacity 0.15s ease";
+    row.style.opacity = "0";
+    if (hasAccordion) {
+        accordion.style.transition = "opacity 0.15s ease";
+        accordion.style.opacity = "0";
+    }
+
+    setTimeout(function () {
+        if (hasAccordion) accordion.remove();
+        row.remove();
+
+        // Update "Pending Updates (N)" heading.
+        var tbody = document.querySelector(".table-wrap tbody");
+        var remaining = tbody ? tbody.querySelectorAll("tr.container-row").length : 0;
+        var heading = document.querySelector(".card-header h2");
+        if (heading) heading.textContent = "Pending Updates (" + remaining + ")";
+
+        updateQueueBadge();
+
+        // Show empty state if queue is now empty.
+        if (remaining === 0 && tbody) {
+            var emptyRow = document.createElement("tr");
+            var td = document.createElement("td");
+            td.setAttribute("colspan", "4");
+            var wrapper = document.createElement("div");
+            wrapper.className = "empty-state";
+            var h3 = document.createElement("h3");
+            h3.textContent = "No pending updates";
+            var p1 = document.createElement("p");
+            p1.textContent = "No containers are waiting for approval. Containers with a manual policy will appear here when updates are available.";
+            var p2 = document.createElement("p");
+            p2.style.marginTop = "var(--sp-2)";
+            var link = document.createElement("a");
+            link.href = "/settings";
+            link.textContent = "Manage default policies";
+            p2.appendChild(link);
+            wrapper.appendChild(h3);
+            wrapper.appendChild(p1);
+            wrapper.appendChild(p2);
+            td.appendChild(wrapper);
+            emptyRow.appendChild(td);
+            tbody.appendChild(emptyRow);
+        }
+    }, 180);
+}
+
 function approveUpdate(name, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
@@ -787,7 +925,20 @@ function approveUpdate(name, event) {
         null,
         "Approved update for " + name,
         "Failed to approve",
-        btn
+        btn,
+        function () { removeQueueRow(btn); }
+    );
+}
+
+function ignoreUpdate(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    apiPost(
+        "/api/ignore/" + encodeURIComponent(name),
+        null,
+        "Version ignored for " + name,
+        "Failed to ignore version",
+        btn,
+        function () { removeQueueRow(btn); }
     );
 }
 
@@ -798,8 +949,57 @@ function rejectUpdate(name, event) {
         null,
         "Rejected update for " + name,
         "Failed to reject",
-        btn
+        btn,
+        function () { removeQueueRow(btn); }
     );
+}
+
+// Bulk queue actions — fire each row's action with a staggered delay.
+function bulkQueueAction(actionFn, triggerBtn) {
+    var rows = document.querySelectorAll(".table-wrap tbody tr.container-row");
+    if (!rows.length) return;
+    if (triggerBtn) {
+        triggerBtn.classList.add("loading");
+        triggerBtn.disabled = true;
+    }
+    var delay = 0;
+    var total = rows.length;
+    var processed = 0;
+    rows.forEach(function (row) {
+        var link = row.querySelector(".container-link");
+        var name = link ? link.textContent.trim() : null;
+        if (!name) { total--; return; }
+        var btn = row.querySelector(".btn");
+        setTimeout(function () {
+            actionFn(name, { target: btn });
+            processed++;
+            if (processed >= total && triggerBtn) {
+                triggerBtn.classList.remove("loading");
+                triggerBtn.disabled = false;
+            }
+        }, delay);
+        delay += 150;
+    });
+    // Handle edge case: no valid rows
+    if (total <= 0 && triggerBtn) {
+        triggerBtn.classList.remove("loading");
+        triggerBtn.disabled = false;
+    }
+}
+
+function approveAll(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    bulkQueueAction(approveUpdate, btn);
+}
+
+function ignoreAll(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    bulkQueueAction(ignoreUpdate, btn);
+}
+
+function rejectAll(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    bulkQueueAction(rejectUpdate, btn);
 }
 
 function triggerUpdate(name, event) {
@@ -881,6 +1081,29 @@ function triggerSelfUpdate(event) {
             "Failed to trigger self-update",
             btn
         );
+    });
+}
+
+function switchToGHCR(name, ghcrImage) {
+    if (!confirm("Switch " + name + " to " + ghcrImage + "?\n\nThis will recreate the container with the GHCR image. A snapshot will be taken first for rollback.")) {
+        return;
+    }
+    var enc = encodeURIComponent(name);
+    fetch("/api/containers/" + enc + "/switch-ghcr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_image: ghcrImage })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.error) {
+            showToast(data.error, "error");
+        } else {
+            showToast("Switching " + name + " to GHCR image...", "success");
+        }
+    })
+    .catch(function() {
+        showToast("Failed to switch to GHCR", "error");
     });
 }
 
@@ -1201,6 +1424,46 @@ function renderAccordionContent(name, data) {
 
     grid.appendChild(actSection);
     contentEl.appendChild(grid);
+
+    // --- GHCR alternative section ---
+    var repo = parseDockerRepo(d.image || "");
+    var ghcrAlt = repo ? ghcrAlternatives[repo] : null;
+    if (ghcrAlt) {
+        var ghcrDiv = document.createElement("div");
+        ghcrDiv.className = "ghcr-callout";
+
+        var iconSpan = document.createElement("span");
+        iconSpan.className = "ghcr-callout-icon";
+        iconSpan.textContent = "\u2139\uFE0F";
+        ghcrDiv.appendChild(iconSpan);
+
+        var bodyDiv = document.createElement("div");
+        bodyDiv.className = "ghcr-callout-body";
+
+        var titleEl = document.createElement("strong");
+        titleEl.textContent = "Available on GHCR";
+        bodyDiv.appendChild(titleEl);
+
+        var descText = document.createElement("span");
+        descText.textContent = ghcrAlt.ghcr_image + ":" + ghcrAlt.tag;
+        if (ghcrAlt.digest_match) {
+            descText.textContent += " (identical build)";
+        } else {
+            descText.textContent += " (different build)";
+        }
+        bodyDiv.appendChild(descText);
+
+        var switchBtn = document.createElement("button");
+        switchBtn.className = "btn btn-info";
+        switchBtn.textContent = "Switch to GHCR";
+        switchBtn.addEventListener("click", function() {
+            switchToGHCR(name, ghcrAlt.ghcr_image + ":" + ghcrAlt.tag);
+        });
+        bodyDiv.appendChild(switchBtn);
+
+        ghcrDiv.appendChild(bodyDiv);
+        contentEl.appendChild(ghcrDiv);
+    }
 }
 
 /* ------------------------------------------------------------
@@ -1333,6 +1596,30 @@ function initFilters() {
     applyFiltersAndSort();
 }
 
+// activateFilter is called from stat card clicks to set a filter + expand all stacks.
+function activateFilter(key, value) {
+    // Reset all filters first.
+    filterState = { status: "all", updates: "all", sort: "default" };
+
+    // Set the requested filter.
+    filterState[key] = value;
+    localStorage.setItem("sentinel-filters", JSON.stringify(filterState));
+
+    // Update pill UI to match.
+    var pills = document.querySelectorAll(".filter-pill");
+    for (var i = 0; i < pills.length; i++) {
+        var p = pills[i];
+        if (p.getAttribute("data-filter") === key && p.getAttribute("data-value") === value) {
+            p.classList.add("active");
+        } else {
+            p.classList.remove("active");
+        }
+    }
+
+    expandAllStacks();
+    applyFiltersAndSort();
+}
+
 function applyFiltersAndSort() {
     var table = document.getElementById("container-table");
     if (!table) return;
@@ -1421,7 +1708,126 @@ function toggleManageMode() {
         btn.classList.remove("active");
         clearSelection();
     }
+
+    // Enable/disable drag on stack groups
+    var groups = table.querySelectorAll(".stack-group");
+    for (var i = 0; i < groups.length; i++) {
+        if (manageMode) {
+            groups[i].setAttribute("draggable", "true");
+        } else {
+            groups[i].removeAttribute("draggable");
+        }
+    }
 }
+
+/* ------------------------------------------------------------
+   Stack Drag Reordering
+   ------------------------------------------------------------ */
+
+(function () {
+    var dragSrc = null;
+
+    document.addEventListener("dragstart", function (e) {
+        var group = e.target.closest(".stack-group");
+        if (!group || !manageMode) return;
+        // Only allow drag from the handle element.
+        if (!e.target.closest(".stack-drag-handle")) {
+            e.preventDefault();
+            return;
+        }
+        dragSrc = group;
+        group.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", group.getAttribute("data-stack"));
+    });
+
+    document.addEventListener("dragover", function (e) {
+        var group = e.target.closest(".stack-group");
+        if (!group || !dragSrc || group === dragSrc) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+
+        // Determine above/below by mouse Y relative to element midpoint
+        var rect = group.getBoundingClientRect();
+        var mid = rect.top + rect.height / 2;
+        clearDragClasses(group);
+        if (e.clientY < mid) {
+            group.classList.add("drag-over-above");
+        } else {
+            group.classList.add("drag-over-below");
+        }
+    });
+
+    document.addEventListener("dragleave", function (e) {
+        var group = e.target.closest(".stack-group");
+        if (group) clearDragClasses(group);
+    });
+
+    document.addEventListener("drop", function (e) {
+        var group = e.target.closest(".stack-group");
+        if (!group || !dragSrc || group === dragSrc) return;
+        e.preventDefault();
+
+        var rect = group.getBoundingClientRect();
+        var mid = rect.top + rect.height / 2;
+        var table = group.closest("table");
+
+        if (e.clientY < mid) {
+            table.insertBefore(dragSrc, group);
+        } else {
+            // Insert after: use nextElementSibling (next tbody)
+            var next = group.nextElementSibling;
+            if (next) {
+                table.insertBefore(dragSrc, next);
+            } else {
+                table.appendChild(dragSrc);
+            }
+        }
+
+        cleanupDrag();
+        saveStackOrder();
+    });
+
+    document.addEventListener("dragend", function () {
+        cleanupDrag();
+    });
+
+    function clearDragClasses(el) {
+        el.classList.remove("drag-over-above", "drag-over-below");
+    }
+
+    function cleanupDrag() {
+        if (dragSrc) {
+            dragSrc.classList.remove("dragging");
+            dragSrc = null;
+        }
+        var all = document.querySelectorAll(".drag-over-above, .drag-over-below");
+        for (var i = 0; i < all.length; i++) {
+            clearDragClasses(all[i]);
+        }
+    }
+
+    function saveStackOrder() {
+        var groups = document.querySelectorAll(".stack-group");
+        var order = [];
+        for (var i = 0; i < groups.length; i++) {
+            var name = groups[i].getAttribute("data-stack");
+            if (name) order.push(name);
+        }
+        fetch("/api/settings/stack-order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ order: order })
+        })
+        .then(function (res) {
+            if (!res.ok) throw new Error("save failed");
+            showToast("Stack order saved", "success");
+        })
+        .catch(function () {
+            showToast("Failed to save stack order", "error");
+        });
+    }
+})();
 
 /* ------------------------------------------------------------
    11. SSE Real-time Updates
@@ -1486,7 +1892,8 @@ function updateContainerRow(name) {
             // Clear accordion cache for this container.
             delete accordionCache[name];
 
-            // Reapply filters after DOM patch.
+            // Reapply badges and filters after DOM patch.
+            applyRegistryBadges();
             applyFiltersAndSort();
         })
         .catch(function() {
@@ -1499,9 +1906,16 @@ function updateStats(total, running, pending) {
     var stats = document.getElementById("stats");
     if (!stats) return;
     var values = stats.querySelectorAll(".stat-value");
-    if (values[0]) values[0].textContent = total;
-    if (values[1]) values[1].textContent = running;
-    if (values[2]) values[2].textContent = pending;
+    var newVals = [total, running, pending];
+    for (var i = 0; i < values.length && i < newVals.length; i++) {
+        if (values[i] && String(values[i].textContent).trim() !== String(newVals[i])) {
+            values[i].textContent = newVals[i];
+            values[i].classList.remove("stat-changed");
+            // Force reflow to restart animation.
+            void values[i].offsetWidth;
+            values[i].classList.add("stat-changed");
+        }
+    }
 }
 
 function showBadgeSpinner(wrap) {
@@ -1550,7 +1964,8 @@ function initSSE() {
     es.addEventListener("container_update", function (e) {
         try {
             var data = JSON.parse(e.data);
-            showToast(data.message || ("Update: " + data.container_name), "info");
+            // Batch toasts to avoid spamming during scans.
+            queueBatchToast(data.message || ("Update: " + data.container_name), "info");
             if (data.container_name) {
                 updateContainerRow(data.container_name);
                 return;
@@ -1573,9 +1988,18 @@ function initSSE() {
     es.addEventListener("queue_change", function (e) {
         try {
             var data = JSON.parse(e.data);
-            showToast(data.message || "Queue updated", "info");
+            // Batch toasts to avoid spamming during scans.
+            queueBatchToast(data.message || "Queue updated", "info");
         } catch (_) {}
-        scheduleReload();
+        // On the dashboard, container_update already patches rows individually.
+        // Only update the digest banner and nav badge — no full reload needed.
+        if (document.getElementById("container-table")) {
+            scheduleDigestBannerRefresh();
+            updateQueueBadge();
+        } else {
+            // On other pages, just update the nav badge.
+            updateQueueBadge();
+        }
     });
 
     es.addEventListener("scan_complete", function () {
@@ -1585,7 +2009,28 @@ function initSSE() {
         // Re-check pause state on scan events.
         checkPauseState();
         refreshLastScan();
-        scheduleReload();
+        // On dashboard, rows are already patched by container_update events.
+        // Just refresh the banner — no full page reload needed.
+        if (document.getElementById("container-table")) {
+            scheduleDigestBannerRefresh();
+        } else {
+            scheduleReload();
+        }
+    });
+
+    es.addEventListener("rate_limits", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            var health = data.message || "ok";
+            var el = document.getElementById("rate-limit-status");
+            if (!el) return;
+            var labels = { ok: "Healthy", low: "Needs Attention", exhausted: "Exhausted" };
+            el.textContent = labels[health] || "Healthy";
+            el.className = "stat-value";
+            if (health === "ok") el.classList.add("success");
+            else if (health === "low") el.classList.add("warning");
+            else if (health === "exhausted") el.classList.add("error");
+        } catch (_) {}
     });
 
     es.addEventListener("settings_change", function () {
@@ -1612,6 +2057,10 @@ function initSSE() {
         loadDigestBanner();
     });
 
+    es.addEventListener("ghcr_check", function() {
+        loadGHCRAlternatives();
+    });
+
     es.onopen = function () {
         setConnectionStatus(true);
     };
@@ -1619,6 +2068,166 @@ function initSSE() {
     es.onerror = function () {
         setConnectionStatus(false);
     };
+}
+
+/* ------------------------------------------------------------
+   11a. GHCR Alternatives
+   ------------------------------------------------------------ */
+
+function loadGHCRAlternatives() {
+    fetch("/api/ghcr/alternatives")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            ghcrAlternatives = {};
+            if (data && data.length) {
+                for (var i = 0; i < data.length; i++) {
+                    var alt = data[i];
+                    if (alt.available) {
+                        ghcrAlternatives[alt.docker_hub_image] = alt;
+                    }
+                }
+            }
+            applyGHCRBadges();
+        })
+        .catch(function() {});
+}
+
+var registryStyles = {
+    "docker.io":        { label: "Hub",   cls: "registry-badge-hub" },
+    "ghcr.io":          { label: "GHCR",  cls: "registry-badge-ghcr" },
+    "lscr.io":          { label: "LSCR",  cls: "registry-badge-lscr" },
+    "docker.gitea.com": { label: "Gitea", cls: "registry-badge-gitea" }
+};
+
+function applyRegistryBadges() {
+    var rows = document.querySelectorAll("tr.container-row");
+    rows.forEach(function(row) {
+        var imageCell = row.querySelector(".cell-image");
+        if (!imageCell) return;
+
+        // Skip if already badged.
+        if (imageCell.querySelector(".registry-badge")) return;
+
+        var reg = row.getAttribute("data-registry") || "docker.io";
+        var style = registryStyles[reg] || registryStyles["docker.io"];
+
+        var badge = document.createElement("span");
+        badge.className = "registry-badge " + style.cls;
+        badge.textContent = style.label;
+        imageCell.insertBefore(badge, imageCell.firstChild);
+    });
+}
+
+function applyGHCRBadges() {
+    var rows = document.querySelectorAll("tr.container-row");
+    rows.forEach(function(row) {
+        // Remove existing GHCR badges first (avoid duplicates on refresh).
+        var existing = row.querySelector(".ghcr-badge");
+        if (existing) existing.remove();
+
+        var imageCell = row.querySelector(".cell-image");
+        if (!imageCell) return;
+
+        var title = imageCell.getAttribute("title") || "";
+        // Only for docker.io images (no dots in first segment, or explicit docker.io prefix).
+        // Skip library/* (official images like nginx, redis).
+        var repo = parseDockerRepo(title);
+        if (!repo || !ghcrAlternatives[repo]) return;
+
+        var badge = document.createElement("span");
+        badge.className = "ghcr-badge";
+        badge.textContent = "GHCR";
+        badge.title = "Also available on GitHub Container Registry";
+        imageCell.appendChild(badge);
+    });
+}
+
+function parseDockerRepo(imageRef) {
+    // Strip tag/digest
+    var ref = imageRef.split("@")[0].split(":")[0];
+    // Remove explicit docker.io/ prefix
+    ref = ref.replace(/^docker\.io\//, "");
+    // Skip non-docker.io registries (contain dots in first segment)
+    var firstSegment = ref.split("/")[0];
+    if (firstSegment.indexOf(".") !== -1) return null;
+    // Skip official library images (single segment like "nginx")
+    if (ref.indexOf("/") === -1) return null;
+    // Skip library/ prefix images
+    if (ref.indexOf("library/") === 0) return null;
+    return ref;
+}
+
+function renderGHCRAlternatives() {
+    var container = document.getElementById("ghcr-alternatives-table");
+    if (!container) return;
+
+    fetch("/api/ghcr/alternatives")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data || data.length === 0) {
+                while (container.firstChild) container.removeChild(container.firstChild);
+                var emptyP = document.createElement("p");
+                emptyP.className = "text-muted";
+                emptyP.textContent = "No GHCR alternatives detected yet. Alternatives are checked after each scan.";
+                container.appendChild(emptyP);
+                return;
+            }
+
+            var table = document.createElement("table");
+            table.className = "table-readonly";
+            var thead = document.createElement("thead");
+            var headRow = document.createElement("tr");
+            ["Docker Hub Image", "GHCR Equivalent", "Status"].forEach(function(label) {
+                var th = document.createElement("th");
+                th.textContent = label;
+                headRow.appendChild(th);
+            });
+            thead.appendChild(headRow);
+            table.appendChild(thead);
+
+            var tbody = document.createElement("tbody");
+            data.forEach(function(alt) {
+                var tr = document.createElement("tr");
+
+                var tdHub = document.createElement("td");
+                tdHub.className = "mono";
+                tdHub.textContent = alt.docker_hub_image + ":" + alt.tag;
+                tr.appendChild(tdHub);
+
+                var tdGHCR = document.createElement("td");
+                tdGHCR.className = "mono";
+                tdGHCR.textContent = alt.available ? alt.ghcr_image + ":" + alt.tag : "\u2014";
+                tr.appendChild(tdGHCR);
+
+                var tdStatus = document.createElement("td");
+                var statusBadge = document.createElement("span");
+                if (!alt.available) {
+                    statusBadge.className = "badge badge-muted";
+                    statusBadge.textContent = "Not available";
+                } else if (alt.digest_match) {
+                    statusBadge.className = "badge badge-success";
+                    statusBadge.textContent = "Identical";
+                } else {
+                    statusBadge.className = "badge badge-warning";
+                    statusBadge.textContent = "Different build";
+                }
+                tdStatus.appendChild(statusBadge);
+                tr.appendChild(tdStatus);
+
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+
+            while (container.firstChild) container.removeChild(container.firstChild);
+            container.appendChild(table);
+        })
+        .catch(function() {
+            while (container.firstChild) container.removeChild(container.firstChild);
+            var errP = document.createElement("p");
+            errP.className = "text-muted";
+            errP.textContent = "Failed to load GHCR alternatives.";
+            container.appendChild(errP);
+        });
 }
 
 /* ------------------------------------------------------------
@@ -1637,16 +2246,46 @@ function loadDigestBanner() {
                     " (" + data.count + " container" + (data.count === 1 ? "" : "s") + " awaiting action)";
                 document.getElementById("digest-banner-text").textContent = text;
                 banner.style.display = "";
+                banner.classList.remove("banner-hidden");
             } else {
-                banner.style.display = "none";
+                banner.classList.add("banner-hidden");
             }
         })
-        .catch(function () { banner.style.display = "none"; });
+        .catch(function () { banner.classList.add("banner-hidden"); });
+}
+
+var _digestBannerTimer = null;
+
+// Debounced digest banner refresh — avoids flickering when multiple events fire.
+function scheduleDigestBannerRefresh() {
+    if (_digestBannerTimer) clearTimeout(_digestBannerTimer);
+    _digestBannerTimer = setTimeout(function () {
+        _digestBannerTimer = null;
+        loadDigestBanner();
+    }, 1500);
+}
+
+// Update the queue badge count in the nav without a full page reload.
+function updateQueueBadge() {
+    fetch("/api/queue", {credentials: "same-origin"})
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var badges = document.querySelectorAll(".nav-badge");
+            var count = Array.isArray(data) ? data.length : 0;
+            for (var i = 0; i < badges.length; i++) {
+                var link = badges[i].closest("a");
+                if (link && link.href && link.href.indexOf("/queue") !== -1) {
+                    badges[i].textContent = count;
+                    badges[i].style.display = count > 0 ? "" : "none";
+                }
+            }
+        })
+        .catch(function () {});
 }
 
 function dismissDigestBanner() {
     var banner = document.getElementById("digest-banner");
-    if (banner) banner.style.display = "none";
+    if (banner) banner.classList.add("banner-hidden");
 
     fetch("/api/digest/banner/dismiss", {
         method: "POST",
@@ -1668,6 +2307,7 @@ document.addEventListener("DOMContentLoaded", function () {
         initSSE();
     }
     initPauseBanner();
+    loadFooterVersion();
     loadDigestBanner();
     initFilters();
     refreshLastScan();
@@ -1779,6 +2419,10 @@ document.addEventListener("DOMContentLoaded", function () {
                 e.stopPropagation();
             }
         });
+
+        // Apply registry source badges and load GHCR alternatives.
+        applyRegistryBadges();
+        loadGHCRAlternatives();
     }
 
     // Stop/Start/Restart badge click delegation.
@@ -2555,4 +3199,610 @@ function setContainerNotifyPref(name, mode) {
         }
     })
     .catch(function () { showToast("Failed to update notification mode", "error"); });
+}
+
+
+/* ------------------------------------------------------------
+   14. HTML Escape Helper
+   ------------------------------------------------------------ */
+
+function escapeHtml(str) {
+    if (!str) return "";
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+
+/* ------------------------------------------------------------
+   15. Registry Credentials & Rate Limits
+   ------------------------------------------------------------ */
+
+var registryData = {};
+var registryCredentials = [];
+
+function loadRegistries() {
+    fetch("/api/settings/registries")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            registryData = data;
+            registryCredentials = [];
+            Object.keys(data).forEach(function(reg) {
+                if (data[reg].credential) {
+                    registryCredentials.push(data[reg].credential);
+                }
+            });
+            renderRegistryStatus();
+            renderRegistryCredentials();
+        })
+        .catch(function(err) { console.error("Failed to load registries:", err); });
+}
+
+function renderRegistryStatus() {
+    var container = document.getElementById("registry-status-table");
+    var warningsEl = document.getElementById("registry-warnings");
+    if (!container) return;
+
+    var registries = Object.keys(registryData);
+    if (registries.length === 0) {
+        container.textContent = "";
+        var emptyDiv = document.createElement("div");
+        emptyDiv.className = "empty-state";
+        emptyDiv.style.padding = "var(--sp-6) var(--sp-4)";
+        var emptyH3 = document.createElement("h3");
+        emptyH3.textContent = "No registries detected";
+        var emptyP = document.createElement("p");
+        emptyP.textContent = "Registries will appear here after the first scan.";
+        emptyDiv.appendChild(emptyH3);
+        emptyDiv.appendChild(emptyP);
+        container.appendChild(emptyDiv);
+        if (warningsEl) warningsEl.textContent = "";
+        return;
+    }
+
+    // Build the table using DOM methods for safety.
+    var table = document.createElement("table");
+    table.className = "data-table";
+    var thead = document.createElement("thead");
+    var headRow = document.createElement("tr");
+    ["Registry", "Containers", "Used", "Resets", "Auth"].forEach(function(label) {
+        var th = document.createElement("th");
+        th.textContent = label;
+        headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement("tbody");
+    var warnings = [];
+    registries.sort();
+
+    registries.forEach(function(reg) {
+        var info = registryData[reg];
+        var rl = info.rate_limit;
+        var cred = info.credential;
+
+        var images = rl ? rl.container_count : 0;
+        var usedText = "\u2014";
+        var usedClass = "";
+        var resets = "\u2014";
+
+        if (rl && rl.has_limits) {
+            var used = rl.limit - rl.remaining;
+            usedText = used + " / " + rl.limit;
+            if (rl.remaining <= 0) {
+                usedClass = "text-error";
+            } else if (rl.limit > 0 && used / rl.limit >= 0.8) {
+                usedClass = "text-warning";
+            }
+            if (rl.reset_at && rl.reset_at !== "0001-01-01T00:00:00Z") {
+                var resetTime = new Date(rl.reset_at);
+                var now = new Date();
+                var diffMs = resetTime - now;
+                if (diffMs > 0) {
+                    var hours = Math.floor(diffMs / 3600000);
+                    var mins = Math.floor((diffMs % 3600000) / 60000);
+                    resets = hours + "h " + mins + "m";
+                } else {
+                    resets = "expired";
+                }
+            }
+        } else if (rl && !rl.has_limits && rl.limit === -1 && rl.last_updated === "0001-01-01T00:00:00Z") {
+            usedText = "\u2014";
+        } else if (rl && !rl.has_limits) {
+            usedText = "No limits";
+        }
+
+        var tr = document.createElement("tr");
+
+        var tdReg = document.createElement("td");
+        var regStrong = document.createElement("strong");
+        regStrong.textContent = reg;
+        tdReg.appendChild(regStrong);
+        tr.appendChild(tdReg);
+
+        var tdImages = document.createElement("td");
+        tdImages.textContent = images;
+        tr.appendChild(tdImages);
+
+        var tdUsed = document.createElement("td");
+        if (usedClass) {
+            var usedSpan = document.createElement("span");
+            usedSpan.className = usedClass;
+            usedSpan.textContent = usedText;
+            tdUsed.appendChild(usedSpan);
+        } else {
+            tdUsed.textContent = usedText;
+        }
+        tr.appendChild(tdUsed);
+
+        var tdResets = document.createElement("td");
+        tdResets.textContent = resets;
+        tr.appendChild(tdResets);
+
+        var tdAuth = document.createElement("td");
+        var authBadge = document.createElement("span");
+        if (cred) {
+            authBadge.className = "badge badge-success";
+            authBadge.textContent = "\u2713 Yes";
+        } else {
+            authBadge.className = "badge badge-muted";
+            authBadge.textContent = "\u2717 None";
+        }
+        tdAuth.appendChild(authBadge);
+        tr.appendChild(tdAuth);
+
+        tbody.appendChild(tr);
+
+        if (rl && rl.has_limits && !cred) {
+            warnings.push(reg);
+        }
+    });
+
+    table.appendChild(tbody);
+    container.textContent = "";
+    container.appendChild(table);
+
+    if (warningsEl) {
+        warningsEl.textContent = "";
+        warnings.forEach(function(reg) {
+            var alertDiv = document.createElement("div");
+            alertDiv.className = "alert alert-warning";
+            alertDiv.textContent = "\u26a0 " + reg + ": No credentials. Unauthenticated rate limits apply.";
+            warningsEl.appendChild(alertDiv);
+        });
+    }
+}
+
+function renderRegistryCredentials() {
+    var container = document.getElementById("credential-list");
+    if (!container) return;
+    container.textContent = "";
+
+    if (registryCredentials.length === 0) {
+        var emptyDiv = document.createElement("div");
+        emptyDiv.className = "empty-state";
+        emptyDiv.style.padding = "var(--sp-6) var(--sp-4)";
+        var emptyH3 = document.createElement("h3");
+        emptyH3.textContent = "No credentials configured";
+        var emptyP = document.createElement("p");
+        emptyP.textContent = "Add credentials for registries that enforce rate limits (e.g. Docker Hub).";
+        emptyDiv.appendChild(emptyH3);
+        emptyDiv.appendChild(emptyP);
+        container.appendChild(emptyDiv);
+        return;
+    }
+
+    registryCredentials.forEach(function(cred, index) {
+        var card = document.createElement("div");
+        card.className = "channel-card";
+        card.setAttribute("data-index", index);
+
+        // Header
+        var header = document.createElement("div");
+        header.className = "channel-card-header";
+        var typeBadge = document.createElement("span");
+        typeBadge.className = "channel-type-badge";
+        typeBadge.textContent = cred.registry;
+        header.appendChild(typeBadge);
+
+        var actions = document.createElement("div");
+        actions.className = "channel-actions";
+        var testBtn = document.createElement("button");
+        testBtn.className = "btn btn-sm";
+        testBtn.textContent = "Test";
+        testBtn.setAttribute("data-index", index);
+        testBtn.addEventListener("click", function() { testRegistryCredential(parseInt(this.getAttribute("data-index"), 10)); });
+        actions.appendChild(testBtn);
+        var delBtn = document.createElement("button");
+        delBtn.className = "btn btn-sm btn-error";
+        delBtn.textContent = "Remove";
+        delBtn.setAttribute("data-index", index);
+        delBtn.addEventListener("click", function() { deleteRegistryCredential(parseInt(this.getAttribute("data-index"), 10)); });
+        actions.appendChild(delBtn);
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        // Hidden field to preserve registry value on collect.
+        var regHidden = document.createElement("input");
+        regHidden.type = "hidden";
+        regHidden.setAttribute("data-field", "registry");
+        regHidden.value = cred.registry;
+        card.appendChild(regHidden);
+
+        // Fields: username and password only (registry is fixed via badge).
+        var fields = document.createElement("div");
+        fields.className = "channel-fields";
+        var textFieldDefs = [
+            { label: "Username", field: "username", type: "text", value: cred.username },
+            { label: "Password / Token", field: "secret", type: "password", value: cred.secret }
+        ];
+        textFieldDefs.forEach(function(def) {
+            var fieldDiv = document.createElement("div");
+            fieldDiv.className = "channel-field";
+            var labelSpan = document.createElement("span");
+            labelSpan.className = "channel-field-label";
+            labelSpan.textContent = def.label;
+            fieldDiv.appendChild(labelSpan);
+            var input = document.createElement("input");
+            input.type = def.type;
+            input.className = "channel-field-input";
+            input.value = def.value || "";
+            input.setAttribute("data-field", def.field);
+            fieldDiv.appendChild(input);
+            fields.appendChild(fieldDiv);
+        });
+        card.appendChild(fields);
+
+        // Registry-specific help callout.
+        var hints = {
+            "docker.io": "Create a Personal Access Token at hub.docker.com \u2192 Account Settings \u2192 Personal access tokens. Read-only scope is sufficient. Authenticated users get 200 pulls/6h (vs 100 anonymous).",
+            "ghcr.io": "Create a Personal Access Token at github.com \u2192 Settings \u2192 Developer settings \u2192 Personal access tokens (classic). Select the read:packages scope.",
+            "lscr.io": "LinuxServer images are also available via GHCR (ghcr.io/linuxserver/*). Use your LinuxServer Fleet credentials, or switch the registry to ghcr.io for simpler auth.",
+            "docker.gitea.com": "Use your Gitea account credentials. Gitea registries typically have no rate limits."
+        };
+        var hintText = hints[cred.registry];
+        if (hintText) {
+            var helpDiv = document.createElement("div");
+            helpDiv.className = "alert alert-info";
+            helpDiv.style.margin = "var(--sp-3) var(--sp-4) var(--sp-4)";
+            var helpIcon = document.createElement("span");
+            helpIcon.className = "alert-info-icon";
+            helpIcon.textContent = "\u2139";
+            helpDiv.appendChild(helpIcon);
+            var helpSpan = document.createElement("span");
+            helpSpan.textContent = hintText;
+            helpDiv.appendChild(helpSpan);
+            card.appendChild(helpDiv);
+        }
+
+        container.appendChild(card);
+    });
+
+    // Populate the "Add" dropdown with registries that don't already have credentials.
+    var addSelect = document.getElementById("registry-type-select");
+    if (addSelect) {
+        while (addSelect.options.length > 1) addSelect.remove(1);
+        var usedRegs = {};
+        registryCredentials.forEach(function(c) { usedRegs[c.registry] = true; });
+        var allRegs = Object.keys(registryData).sort();
+        // Always include common registries even if not yet detected.
+        ["docker.io", "ghcr.io", "lscr.io", "docker.gitea.com"].forEach(function(r) {
+            if (allRegs.indexOf(r) === -1) allRegs.push(r);
+        });
+        allRegs.sort();
+        allRegs.forEach(function(reg) {
+            if (!usedRegs[reg]) {
+                var opt = document.createElement("option");
+                opt.value = reg;
+                opt.textContent = reg;
+                addSelect.appendChild(opt);
+            }
+        });
+    }
+}
+
+function addRegistryCredential() {
+    var select = document.getElementById("registry-type-select");
+    if (!select || !select.value) return;
+    var reg = select.value;
+    var id = "reg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
+    registryCredentials.push({ id: id, registry: reg, username: "", secret: "" });
+    select.value = "";
+    renderRegistryCredentials();
+    showToast("Added " + reg + " \u2014 enter credentials and save", "info");
+}
+
+function deleteRegistryCredential(index) {
+    registryCredentials.splice(index, 1);
+    renderRegistryCredentials();
+    showToast("Credential removed \u2014 save to persist", "info");
+}
+
+function collectRegistryCredentialsFromDOM() {
+    var cards = document.querySelectorAll("#credential-list .channel-card");
+    cards.forEach(function(card, i) {
+        if (i < registryCredentials.length) {
+            var inputs = card.querySelectorAll("[data-field]");
+            inputs.forEach(function(input) {
+                var field = input.getAttribute("data-field");
+                if (field) registryCredentials[i][field] = input.value;
+            });
+        }
+    });
+}
+
+function saveRegistryCredentials(event) {
+    collectRegistryCredentialsFromDOM();
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    if (btn) btn.classList.add("loading");
+
+    fetch("/api/settings/registries", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(registryCredentials)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (btn) btn.classList.remove("loading");
+        if (data.error) {
+            showToast("Failed: " + data.error, "error");
+        } else {
+            showToast("Registry credentials saved", "success");
+            loadRegistries();
+            // Probe runs server-side in background; re-fetch after it completes.
+            setTimeout(function() { loadRegistries(); }, 3000);
+        }
+    })
+    .catch(function(err) {
+        if (btn) btn.classList.remove("loading");
+        showToast("Save failed: " + err, "error");
+    });
+}
+
+function testRegistryCredential(index) {
+    collectRegistryCredentialsFromDOM();
+    var cred = registryCredentials[index];
+    if (!cred) return;
+
+    fetch("/api/settings/registries/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: cred.id, registry: cred.registry, username: cred.username, secret: cred.secret })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            showToast("Credentials valid for " + cred.registry, "success");
+            // Probe runs server-side in background; re-fetch after it completes.
+            setTimeout(function() { loadRegistries(); }, 3000);
+        } else {
+            showToast("Test failed: " + (data.error || "unknown error"), "error");
+        }
+    })
+    .catch(function(err) { showToast("Test failed: " + err, "error"); });
+}
+
+
+/* ------------------------------------------------------------
+   16. Rate Limit Status — Dashboard Polling
+   ------------------------------------------------------------ */
+
+function updateRateLimitStatus() {
+    fetch("/api/ratelimits")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var el = document.getElementById("rate-limit-status");
+            if (!el) return;
+            var health = data.health || "ok";
+            var labels = { ok: "Healthy", low: "Needs Attention", exhausted: "Exhausted" };
+            el.textContent = labels[health] || "Healthy";
+            el.className = "stat-value";
+            if (health === "ok") el.classList.add("success");
+            else if (health === "low") el.classList.add("warning");
+            else if (health === "exhausted") el.classList.add("error");
+        })
+        .catch(function() {});
+}
+
+// Fetch on initial load; live updates arrive via SSE rate_limits event.
+if (document.getElementById("rate-limit-status")) {
+    updateRateLimitStatus();
+}
+
+// --- About tab ---
+// All dynamic values are sanitised through escapeHtml() before insertion.
+
+function loadFooterVersion() {
+    var el = document.getElementById("footer-version");
+    if (!el) return;
+    fetch("/api/about")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            el.textContent = "Docker-Sentinel " + (data.version || "dev");
+        })
+        .catch(function() {});
+}
+
+function loadAboutInfo() {
+    var container = document.getElementById("about-content");
+    if (!container) return;
+
+    fetch("/api/about")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var rows = document.createElement("div");
+            rows.className = "settings-rows";
+
+            appendAboutSection(rows, "Instance");
+            appendAboutRow(rows, "Version", data.version || "dev");
+            appendAboutRow(rows, "Go Version", data.go_version || "-");
+            appendAboutRow(rows, "Data Directory", data.data_directory || "-");
+            appendAboutRow(rows, "Uptime", data.uptime || "-");
+            appendAboutRow(rows, "Started", data.started_at ? formatAboutTime(data.started_at) : "-");
+
+            appendAboutSection(rows, "Runtime");
+            appendAboutRow(rows, "Poll Interval", data.poll_interval || "-");
+            appendAboutRow(rows, "Last Scan", data.last_scan ? formatAboutTimeAgo(data.last_scan) : "Never");
+            appendAboutRow(rows, "Containers Monitored", String(data.containers || 0));
+            appendAboutRow(rows, "Updates Applied", String(data.updates_applied || 0));
+            appendAboutRow(rows, "Snapshots Stored", String(data.snapshots || 0));
+
+            appendAboutSection(rows, "Integrations");
+
+            // Notification channels
+            if (data.channels && data.channels.length > 0) {
+                var chWrap = document.createElement("div");
+                chWrap.className = "about-channels";
+                for (var i = 0; i < data.channels.length; i++) {
+                    var badge = document.createElement("span");
+                    badge.className = "about-channel-badge";
+                    badge.textContent = data.channels[i].name;
+                    var typeSpan = document.createElement("span");
+                    typeSpan.className = "about-channel-type";
+                    typeSpan.textContent = data.channels[i].type;
+                    badge.appendChild(typeSpan);
+                    chWrap.appendChild(badge);
+                }
+                appendAboutRowEl(rows, "Notification Channels", chWrap);
+            } else {
+                appendAboutRow(rows, "Notification Channels", "None configured");
+            }
+
+            // Registry auth
+            if (data.registries && data.registries.length > 0) {
+                var regWrap = document.createElement("div");
+                regWrap.className = "about-channels";
+                for (var i = 0; i < data.registries.length; i++) {
+                    var regBadge = document.createElement("span");
+                    regBadge.className = "about-channel-badge";
+                    regBadge.textContent = data.registries[i];
+                    regWrap.appendChild(regBadge);
+                }
+                appendAboutRowEl(rows, "Registry Auth", regWrap);
+            } else {
+                appendAboutRow(rows, "Registry Auth", "None configured");
+            }
+
+            // Beta banner
+            var banner = document.createElement("div");
+            banner.className = "about-banner";
+            var bannerIcon = document.createElement("span");
+            bannerIcon.className = "about-banner-icon";
+            bannerIcon.textContent = "\u24D8";
+            banner.appendChild(bannerIcon);
+            var bannerText = document.createElement("span");
+            bannerText.textContent = "This is BETA software. Features may be broken and/or unstable. Please report any issues on ";
+            var bannerLink = document.createElement("a");
+            bannerLink.href = "https://github.com/Will-Luck/Docker-Sentinel/issues";
+            bannerLink.target = "_blank";
+            bannerLink.rel = "noopener";
+            bannerLink.textContent = "GitHub";
+            bannerText.appendChild(bannerLink);
+            bannerText.appendChild(document.createTextNode("!"));
+            banner.appendChild(bannerText);
+
+            // Links section
+            appendAboutSection(rows, "Links");
+            var linksWrap = document.createElement("div");
+            linksWrap.className = "about-links";
+            var links = [
+                { icon: "\uD83D\uDCC1", label: "GitHub", url: "https://github.com/Will-Luck/Docker-Sentinel" },
+                { icon: "\uD83D\uDC1B", label: "Report a Bug", url: "https://github.com/Will-Luck/Docker-Sentinel/issues/new?template=bug_report.md" },
+                { icon: "\uD83D\uDCA1", label: "Feature Request", url: "https://github.com/Will-Luck/Docker-Sentinel/issues/new?template=feature_request.md" },
+                { icon: "\uD83D\uDCC4", label: "Releases", url: "https://github.com/Will-Luck/Docker-Sentinel/releases" }
+            ];
+            for (var li = 0; li < links.length; li++) {
+                var a = document.createElement("a");
+                a.className = "about-link";
+                a.href = links[li].url;
+                a.target = "_blank";
+                a.rel = "noopener";
+                var ico = document.createElement("span");
+                ico.className = "about-link-icon";
+                ico.textContent = links[li].icon;
+                a.appendChild(ico);
+                a.appendChild(document.createTextNode(links[li].label));
+                linksWrap.appendChild(a);
+            }
+            var linksRow = document.createElement("div");
+            linksRow.className = "setting-row";
+            linksRow.appendChild(linksWrap);
+            rows.appendChild(linksRow);
+
+            container.textContent = "";
+            container.appendChild(banner);
+            container.appendChild(rows);
+        })
+        .catch(function() {
+            container.textContent = "Failed to load info";
+        });
+}
+
+function appendAboutSection(parent, title) {
+    var div = document.createElement("div");
+    div.className = "about-section-title";
+    div.textContent = title;
+    parent.appendChild(div);
+}
+
+function appendAboutRow(parent, label, value) {
+    var row = document.createElement("div");
+    row.className = "setting-row";
+    var info = document.createElement("div");
+    info.className = "setting-info";
+    var lbl = document.createElement("div");
+    lbl.className = "setting-label";
+    lbl.textContent = label;
+    info.appendChild(lbl);
+    row.appendChild(info);
+    var val = document.createElement("div");
+    val.className = "about-value";
+    val.textContent = value;
+    row.appendChild(val);
+    parent.appendChild(row);
+}
+
+function appendAboutRowEl(parent, label, valueEl) {
+    var row = document.createElement("div");
+    row.className = "setting-row";
+    var info = document.createElement("div");
+    info.className = "setting-info";
+    var lbl = document.createElement("div");
+    lbl.className = "setting-label";
+    lbl.textContent = label;
+    info.appendChild(lbl);
+    row.appendChild(info);
+    row.appendChild(valueEl);
+    parent.appendChild(row);
+}
+
+function formatAboutTime(iso) {
+    try {
+        var d = new Date(iso);
+        return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) +
+            " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    } catch(e) {
+        return iso;
+    }
+}
+
+function formatAboutTimeAgo(iso) {
+    try {
+        var d = new Date(iso);
+        var now = new Date();
+        var diff = now - d;
+        var mins = Math.floor(diff / 60000);
+        if (mins < 1) return "Just now";
+        if (mins < 60) return mins + "m ago";
+        var hours = Math.floor(mins / 60);
+        if (hours < 24) return hours + "h " + (mins % 60) + "m ago";
+        var days = Math.floor(hours / 24);
+        return days + "d " + (hours % 24) + "h ago";
+    } catch(e) {
+        return iso;
+    }
 }

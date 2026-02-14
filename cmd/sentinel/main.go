@@ -133,6 +133,11 @@ func main() {
 		}
 	}
 
+	if saved, err := db.LoadSetting("latest_auto_update"); err == nil && saved != "" {
+		cfg.SetLatestAutoUpdate(saved == "true")
+		log.Info("loaded persisted latest auto-update setting", "enabled", saved == "true")
+	}
+
 	// Build notification chain from persisted channels, with env var fallback.
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, notify.NewLogNotifier(log))
@@ -179,10 +184,32 @@ func main() {
 
 	clk := clock.Real{}
 	checker := registry.NewChecker(client, log)
+	rateTracker := registry.NewRateLimitTracker()
+	if rlData, rlErr := db.LoadRateLimits(); rlErr == nil && rlData != nil {
+		if importErr := rateTracker.Import(rlData); importErr != nil {
+			log.Warn("failed to load persisted rate limits", "error", importErr)
+		} else {
+			log.Info("loaded persisted rate limits")
+		}
+	}
+	ghcrCache := registry.NewGHCRCache(24 * time.Hour)
+	if ghcrData, ghcrErr := db.LoadGHCRCache(); ghcrErr == nil && ghcrData != nil {
+		if importErr := ghcrCache.Import(ghcrData); importErr != nil {
+			log.Warn("failed to load persisted GHCR cache", "error", importErr)
+		} else {
+			log.Info("loaded persisted GHCR cache")
+		}
+	}
+	checker.SetCredentialStore(db)
+	checker.SetRateLimitTracker(rateTracker)
 	bus := events.New()
 	queue := engine.NewQueue(db, bus, log.Logger)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
 	updater.SetSettingsReader(db)
+	updater.SetRateLimitTracker(rateTracker)
+	updater.SetRateLimitSaver(db.SaveRateLimits)
+	updater.SetGHCRCache(ghcrCache)
+	updater.SetGHCRSaver(db.SaveGHCRCache)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
@@ -191,6 +218,7 @@ func main() {
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
 			Store:              &storeAdapter{db},
+			AboutStore:         &aboutStoreAdapter{db},
 			Queue:              &queueAdapter{queue},
 			Docker:             &dockerAdapter{client},
 			Updater:            updater,
@@ -212,9 +240,14 @@ func main() {
 			NotifyConfig:       &notifyConfigAdapter{db},
 			NotifyReconfigurer: notifier,
 			NotifyState:        &notifyStateAdapter{db},
-			Digest:             digestSched,
-			Auth:               authSvc,
-			Log:                log.Logger,
+			IgnoredVersions:     &ignoredVersionAdapter{db},
+			RegistryCredentials: &registryCredentialAdapter{db},
+			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
+			GHCRCache:           &ghcrCacheAdapter{c: ghcrCache},
+			Digest:              digestSched,
+			Auth:                authSvc,
+			Version:             version,
+			Log:                 log.Logger,
 		})
 
 		// Configure WebAuthn passkeys if RPID is set.
@@ -375,6 +408,12 @@ func (a *storeAdapter) GetMaintenance(name string) (bool, error) {
 	return a.s.GetMaintenance(name)
 }
 
+// aboutStoreAdapter converts store.Store to web.AboutStore.
+type aboutStoreAdapter struct{ s *store.Store }
+
+func (a *aboutStoreAdapter) CountHistory() (int, error)  { return a.s.CountHistory() }
+func (a *aboutStoreAdapter) CountSnapshots() (int, error) { return a.s.CountSnapshots() }
+
 // snapshotAdapter converts store.Store to web.SnapshotStore.
 type snapshotAdapter struct{ s *store.Store }
 
@@ -425,13 +464,15 @@ func (a *queueAdapter) List() []web.PendingUpdate {
 
 func (a *queueAdapter) Add(update web.PendingUpdate) {
 	a.q.Add(engine.PendingUpdate{
-		ContainerID:   update.ContainerID,
-		ContainerName: update.ContainerName,
-		CurrentImage:  update.CurrentImage,
-		CurrentDigest: update.CurrentDigest,
-		RemoteDigest:  update.RemoteDigest,
-		DetectedAt:    update.DetectedAt,
-		NewerVersions: update.NewerVersions,
+		ContainerID:            update.ContainerID,
+		ContainerName:          update.ContainerName,
+		CurrentImage:           update.CurrentImage,
+		CurrentDigest:          update.CurrentDigest,
+		RemoteDigest:           update.RemoteDigest,
+		DetectedAt:             update.DetectedAt,
+		NewerVersions:          update.NewerVersions,
+		ResolvedCurrentVersion: update.ResolvedCurrentVersion,
+		ResolvedTargetVersion:  update.ResolvedTargetVersion,
 	})
 }
 
@@ -455,13 +496,15 @@ func (a *queueAdapter) Remove(name string) { a.q.Remove(name) }
 
 func convertPendingUpdate(item engine.PendingUpdate) web.PendingUpdate {
 	return web.PendingUpdate{
-		ContainerID:   item.ContainerID,
-		ContainerName: item.ContainerName,
-		CurrentImage:  item.CurrentImage,
-		CurrentDigest: item.CurrentDigest,
-		RemoteDigest:  item.RemoteDigest,
-		DetectedAt:    item.DetectedAt,
-		NewerVersions: item.NewerVersions,
+		ContainerID:            item.ContainerID,
+		ContainerName:          item.ContainerName,
+		CurrentImage:           item.CurrentImage,
+		CurrentDigest:          item.CurrentDigest,
+		RemoteDigest:           item.RemoteDigest,
+		DetectedAt:             item.DetectedAt,
+		NewerVersions:          item.NewerVersions,
+		ResolvedCurrentVersion: item.ResolvedCurrentVersion,
+		ResolvedTargetVersion:  item.ResolvedTargetVersion,
 	}
 }
 
@@ -556,12 +599,12 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("fetch token: %w", err)
 	}
-	tags, err := registry.ListTags(ctx, imageRef, token)
+	tagsResult, err := registry.ListTags(ctx, imageRef, token, "docker.io", nil)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
 	}
 	// Filter to semver-parseable tags and return newest first.
-	newer := registry.NewerVersions(tag, tags)
+	newer := registry.NewerVersions(tag, tagsResult.Tags)
 	versions := make([]string, len(newer))
 	for i, sv := range newer {
 		versions[i] = sv.Raw
@@ -574,15 +617,15 @@ type registryCheckerAdapter struct {
 	checker *registry.Checker
 }
 
-func (a *registryCheckerAdapter) CheckForUpdate(ctx context.Context, imageRef string) (bool, []string, error) {
+func (a *registryCheckerAdapter) CheckForUpdate(ctx context.Context, imageRef string) (bool, []string, string, string, error) {
 	result := a.checker.CheckVersioned(ctx, imageRef)
 	if result.Error != nil {
-		return false, nil, result.Error
+		return false, nil, "", "", result.Error
 	}
 	if result.IsLocal {
-		return false, nil, nil
+		return false, nil, "", "", nil
 	}
-	return result.UpdateAvailable, result.NewerVersions, nil
+	return result.UpdateAvailable, result.NewerVersions, result.ResolvedCurrentVersion, result.ResolvedTargetVersion, nil
 }
 
 // policyStoreAdapter bridges store.Store to web.PolicyStore.
@@ -727,4 +770,145 @@ func (a *notifyStateAdapter) AllNotifyStates() (map[string]*web.NotifyState, err
 		}
 	}
 	return result, nil
+}
+
+func (a *notifyStateAdapter) ClearNotifyState(name string) error {
+	return a.s.ClearNotifyState(name)
+}
+
+// ignoredVersionAdapter bridges store.Store to web.IgnoredVersionStore.
+type ignoredVersionAdapter struct{ s *store.Store }
+
+func (a *ignoredVersionAdapter) AddIgnoredVersion(containerName, version string) error {
+	return a.s.AddIgnoredVersion(containerName, version)
+}
+
+func (a *ignoredVersionAdapter) GetIgnoredVersions(containerName string) ([]string, error) {
+	return a.s.GetIgnoredVersions(containerName)
+}
+
+func (a *ignoredVersionAdapter) ClearIgnoredVersions(containerName string) error {
+	return a.s.ClearIgnoredVersions(containerName)
+}
+
+// registryCredentialAdapter bridges store.Store (which returns registry.RegistryCredential)
+// to web.RegistryCredentialStore (which uses web.RegistryCredential).
+type registryCredentialAdapter struct{ s *store.Store }
+
+func (a *registryCredentialAdapter) GetRegistryCredentials() ([]web.RegistryCredential, error) {
+	creds, err := a.s.GetRegistryCredentials()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.RegistryCredential, len(creds))
+	for i, c := range creds {
+		result[i] = web.RegistryCredential{
+			ID:       c.ID,
+			Registry: c.Registry,
+			Username: c.Username,
+			Secret:   c.Secret,
+		}
+	}
+	return result, nil
+}
+
+func (a *registryCredentialAdapter) SetRegistryCredentials(creds []web.RegistryCredential) error {
+	regCreds := make([]registry.RegistryCredential, len(creds))
+	for i, c := range creds {
+		regCreds[i] = registry.RegistryCredential{
+			ID:       c.ID,
+			Registry: c.Registry,
+			Username: c.Username,
+			Secret:   c.Secret,
+		}
+	}
+	return a.s.SetRegistryCredentials(regCreds)
+}
+
+// rateLimitAdapter bridges registry.RateLimitTracker to web.RateLimitProvider.
+type rateLimitAdapter struct {
+	t     *registry.RateLimitTracker
+	saver func([]byte) error // optional: persist after probe
+}
+
+func (a *rateLimitAdapter) Status() []web.RateLimitStatus {
+	statuses := a.t.Status()
+	result := make([]web.RateLimitStatus, len(statuses))
+	for i, s := range statuses {
+		result[i] = web.RateLimitStatus{
+			Registry:       s.Registry,
+			Limit:          s.Limit,
+			Remaining:      s.Remaining,
+			ResetAt:        s.ResetAt,
+			IsAuth:         s.IsAuth,
+			HasLimits:      s.HasLimits,
+			ContainerCount: s.ContainerCount,
+			LastUpdated:    s.LastUpdated,
+		}
+	}
+	return result
+}
+
+func (a *rateLimitAdapter) OverallHealth() string {
+	return a.t.OverallHealth()
+}
+
+// ghcrCacheAdapter bridges registry.GHCRCache to web.GHCRAlternativeProvider.
+type ghcrCacheAdapter struct{ c *registry.GHCRCache }
+
+func (a *ghcrCacheAdapter) Get(repo, tag string) (*web.GHCRAlternative, bool) {
+	alt, ok := a.c.Get(repo, tag)
+	if !ok {
+		return nil, false
+	}
+	return &web.GHCRAlternative{
+		DockerHubImage: alt.DockerHubImage,
+		GHCRImage:      alt.GHCRImage,
+		Tag:            alt.Tag,
+		Available:      alt.Available,
+		DigestMatch:    alt.DigestMatch,
+		HubDigest:      alt.HubDigest,
+		GHCRDigest:     alt.GHCRDigest,
+		CheckedAt:      alt.CheckedAt,
+	}, true
+}
+
+func (a *ghcrCacheAdapter) All() []web.GHCRAlternative {
+	alts := a.c.All()
+	result := make([]web.GHCRAlternative, len(alts))
+	for i, alt := range alts {
+		result[i] = web.GHCRAlternative{
+			DockerHubImage: alt.DockerHubImage,
+			GHCRImage:      alt.GHCRImage,
+			Tag:            alt.Tag,
+			Available:      alt.Available,
+			DigestMatch:    alt.DigestMatch,
+			HubDigest:      alt.HubDigest,
+			GHCRDigest:     alt.GHCRDigest,
+			CheckedAt:      alt.CheckedAt,
+		}
+	}
+	return result
+}
+
+func (a *rateLimitAdapter) ProbeAndRecord(ctx context.Context, host string, cred web.RegistryCredential) error {
+	regCred := &registry.RegistryCredential{
+		ID:       cred.ID,
+		Registry: cred.Registry,
+		Username: cred.Username,
+		Secret:   cred.Secret,
+	}
+	headers, err := registry.ProbeRateLimit(ctx, host, regCred)
+	if err != nil {
+		return err
+	}
+	a.t.Record(host, headers)
+	a.t.SetAuth(host, true)
+	// Persist updated rate limits to DB.
+	if a.saver != nil {
+		if data, exportErr := a.t.Export(); exportErr == nil {
+			_ = a.saver(data)
+		}
+	}
+	return nil
 }

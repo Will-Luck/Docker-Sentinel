@@ -24,37 +24,53 @@ type SemVer struct {
 	Raw   string // original tag string
 }
 
-// ListTags fetches all tags for the given image reference from Docker Hub.
-// The imageRef should be a full reference like "library/nginx" or "gitea/gitea".
-// The token is a bearer token from FetchAnonymousToken or a registry credential.
-func ListTags(ctx context.Context, imageRef string, token string) ([]string, error) {
-	repo := NormaliseRepo(imageRef)
-	url := "https://registry-1.docker.io/v2/" + repo + "/tags/list"
+// TagsResult holds the response from ListTags, including rate limit headers.
+type TagsResult struct {
+	Tags    []string
+	Headers http.Header // response headers for rate limit extraction
+}
+
+// ListTags fetches all tags for the given image reference from a container registry.
+// For Docker Hub, it uses registry-1.docker.io. For other registries, it uses
+// the registry host extracted from the image reference.
+// The token is a bearer token for Docker Hub; for other registries, pass empty
+// token and provide credentials via the cred parameter for Basic auth.
+func ListTags(ctx context.Context, imageRef string, token string, host string, cred *RegistryCredential) (TagsResult, error) {
+	repo := RepoPath(imageRef)
+	var url string
+	if host != "" && host != "docker.io" {
+		url = "https://" + host + "/v2/" + repo + "/tags/list"
+	} else {
+		url = "https://registry-1.docker.io/v2/" + repo + "/tags/list"
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("create tags request: %w", err)
+		return TagsResult{}, fmt.Errorf("create tags request: %w", err)
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	} else if cred != nil {
+		// Non-Hub registries: use Basic auth directly
+		req.SetBasicAuth(cred.Username, cred.Secret)
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch tags: %w", err)
+		return TagsResult{}, fmt.Errorf("fetch tags: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tags endpoint returned %d", resp.StatusCode)
+		return TagsResult{}, fmt.Errorf("tags endpoint returned %d", resp.StatusCode)
 	}
 
 	var tagList TagList
 	if err := json.NewDecoder(resp.Body).Decode(&tagList); err != nil {
-		return nil, fmt.Errorf("decode tags response: %w", err)
+		return TagsResult{}, fmt.Errorf("decode tags response: %w", err)
 	}
 
-	return tagList.Tags, nil
+	return TagsResult{Tags: tagList.Tags, Headers: resp.Header}, nil
 }
 
 // ParseSemVer attempts to parse a tag string as a semantic version.

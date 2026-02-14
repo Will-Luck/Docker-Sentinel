@@ -43,15 +43,26 @@ func finaliseStageIsDestructive(stage string) bool {
 	return stage == "remove" || stage == "create" || stage == "start"
 }
 
+// ScanMode controls rate limit headroom during scans.
+type ScanMode int
+
+const (
+	// ScanScheduled keeps higher headroom (reserve 10) — silently skips rate-limited containers.
+	ScanScheduled ScanMode = iota
+	// ScanManual uses almost all quota (reserve 2) — stops scanning on exhaustion.
+	ScanManual
+)
+
 // ScanResult summarises a single scan cycle.
 type ScanResult struct {
-	Total     int
-	Skipped   int
-	AutoCount int
-	Queued    int
-	Updated   int
-	Failed    int
-	Errors    []error
+	Total        int
+	Skipped      int
+	AutoCount    int
+	Queued       int
+	Updated      int
+	Failed       int
+	RateLimited  int // containers skipped due to rate limits
+	Errors       []error
 }
 
 // Updater performs container scanning and update operations.
@@ -65,8 +76,12 @@ type Updater struct {
 	clock    clock.Clock
 	notifier *notify.Multi
 	events   *events.Bus
-	settings SettingsReader
-	updating sync.Map // map[string]*sync.Mutex — per-container update locks
+	settings      SettingsReader
+	rateTracker   *registry.RateLimitTracker // optional: rate limit awareness
+	rateSaver     func([]byte) error         // optional: persist rate limits after scan
+	ghcrCache     *registry.GHCRCache        // optional: GHCR alternative detection cache
+	ghcrSaver     func([]byte) error         // optional: persist GHCR cache after checks
+	updating      sync.Map                   // map[string]*sync.Mutex — per-container update locks
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -87,6 +102,26 @@ func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queu
 // SetSettingsReader attaches a settings reader for runtime filter checks.
 func (u *Updater) SetSettingsReader(sr SettingsReader) {
 	u.settings = sr
+}
+
+// SetRateLimitTracker attaches a rate limit tracker for scan pacing.
+func (u *Updater) SetRateLimitTracker(t *registry.RateLimitTracker) {
+	u.rateTracker = t
+}
+
+// SetRateLimitSaver attaches a function to persist rate limits after each scan.
+func (u *Updater) SetRateLimitSaver(fn func([]byte) error) {
+	u.rateSaver = fn
+}
+
+// SetGHCRCache attaches a GHCR alternative detection cache.
+func (u *Updater) SetGHCRCache(c *registry.GHCRCache) {
+	u.ghcrCache = c
+}
+
+// SetGHCRSaver attaches a function to persist the GHCR cache after checks.
+func (u *Updater) SetGHCRSaver(fn func([]byte) error) {
+	u.ghcrSaver = fn
 }
 
 // tryLock attempts to acquire the per-container update lock.
@@ -158,8 +193,8 @@ func (u *Updater) publishEvent(evtType events.EventType, name, message string) {
 }
 
 // Scan lists running containers, checks for updates, and processes them
-// according to each container's policy.
-func (u *Updater) Scan(ctx context.Context) ScanResult {
+// according to each container's policy. The mode controls rate limit headroom.
+func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	result := ScanResult{}
 
 	containers, err := u.docker.ListContainers(ctx)
@@ -169,6 +204,41 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 		return result
 	}
 	result.Total = len(containers)
+
+	// Discover registries and probe for fresh rate limit data.
+	// Probes all discovered registries (credentialed or anonymous) so that
+	// rate limit info is always available, even when no containers have updates.
+	if u.rateTracker != nil {
+		counts := make(map[string]int)
+		for _, c := range containers {
+			host := registry.RegistryHost(c.Image)
+			counts[host]++
+		}
+		for host, n := range counts {
+			u.rateTracker.Discover(host, n)
+		}
+
+		var creds []registry.RegistryCredential
+		if cs := u.checker.CredentialStore(); cs != nil {
+			creds, _ = cs.GetRegistryCredentials()
+		}
+		for host := range counts {
+			host = registry.NormaliseRegistryHost(host)
+			cred := registry.FindByRegistry(creds, host)
+			probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
+			headers, err := registry.ProbeRateLimit(probeCtx, host, cred)
+			probeCancel()
+			if err != nil {
+				u.log.Debug("rate limit probe failed", "registry", host, "error", err)
+				continue
+			}
+			u.rateTracker.Record(host, headers)
+			if cred != nil {
+				u.rateTracker.SetAuth(host, true)
+			}
+			u.log.Debug("probed rate limits", "registry", host)
+		}
+	}
 
 	// Prune queue entries for containers that no longer exist.
 	liveNames := make(map[string]bool, len(containers))
@@ -182,6 +252,12 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 	// Load filter patterns once per scan.
 	filters := u.loadFilters()
 
+	// Rate limit headroom depends on scan mode.
+	reserve := 10
+	if mode == ScanManual {
+		reserve = 2
+	}
+
 	for _, c := range containers {
 		if ctx.Err() != nil {
 			return result
@@ -190,7 +266,7 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 		name := containerName(c)
 		labels := c.Labels
 		tag := registry.ExtractTag(c.Image)
-		resolved := ResolvePolicy(u.store, labels, name, tag, u.cfg.DefaultPolicy())
+		resolved := ResolvePolicy(u.store, labels, name, tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())
 		policy := docker.Policy(resolved.Policy)
 
 		// Skip pinned containers.
@@ -214,8 +290,24 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			continue
 		}
 
-		// Check the registry for an update (versioned check also finds newer semver tags).
+		// Rate limit check: skip if registry quota is too low.
 		imageRef := c.Image
+		if u.rateTracker != nil {
+			host := registry.RegistryHost(imageRef)
+			canProceed, wait := u.rateTracker.CanProceed(host, reserve)
+			if !canProceed {
+				if mode == ScanManual {
+					u.log.Warn("rate limit exhausted, stopping manual scan", "registry", host, "resets_in", wait)
+					result.RateLimited++
+					break // manual scan: stop entirely
+				}
+				u.log.Debug("rate limit low, skipping container", "name", name, "registry", host, "resets_in", wait)
+				result.RateLimited++
+				continue // scheduled scan: skip silently
+			}
+		}
+
+		// Check the registry for an update (versioned check also finds newer semver tags).
 		check := u.checker.CheckVersioned(ctx, imageRef)
 
 		if check.Error != nil {
@@ -231,8 +323,51 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 		}
 
 		if !check.UpdateAvailable {
+			// Prune stale queue entries: if this container is in the queue
+			// but the registry now reports it as up-to-date, remove it.
+			if _, queued := u.queue.Get(name); queued {
+				u.queue.Remove(name)
+				u.log.Info("removed stale queue entry (now up to date)", "name", name)
+			}
 			u.log.Debug("up to date", "name", name, "image", imageRef)
 			continue
+		}
+
+		// Enrich existing queue entries that lack resolved version data
+		// (e.g. entries created before version resolution was added).
+		if existing, queued := u.queue.Get(name); queued &&
+			existing.ResolvedCurrentVersion == "" && existing.ResolvedTargetVersion == "" &&
+			(check.ResolvedCurrentVersion != "" || check.ResolvedTargetVersion != "") {
+			existing.ResolvedCurrentVersion = check.ResolvedCurrentVersion
+			existing.ResolvedTargetVersion = check.ResolvedTargetVersion
+			if len(check.NewerVersions) > 0 && len(existing.NewerVersions) == 0 {
+				existing.NewerVersions = check.NewerVersions
+			}
+			u.queue.Add(existing)
+			u.log.Info("enriched queue entry with resolved versions", "name", name,
+				"current", check.ResolvedCurrentVersion, "target", check.ResolvedTargetVersion)
+		}
+
+		// Filter out ignored versions so they don't trigger notifications or queuing.
+		if len(check.NewerVersions) > 0 {
+			ignored, _ := u.store.GetIgnoredVersions(name)
+			if len(ignored) > 0 {
+				ignoredSet := make(map[string]bool, len(ignored))
+				for _, v := range ignored {
+					ignoredSet[v] = true
+				}
+				var filtered []string
+				for _, v := range check.NewerVersions {
+					if !ignoredSet[v] {
+						filtered = append(filtered, v)
+					}
+				}
+				if len(filtered) == 0 {
+					u.log.Debug("all newer versions ignored", "name", name, "ignored", ignored)
+					continue
+				}
+				check.NewerVersions = filtered
+			}
 		}
 
 		u.log.Info("update available", "name", name, "image", imageRef,
@@ -249,14 +384,15 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			shouldNotify = false // digest scheduler handles it
 		default:
 			state, _ := u.store.GetNotifyState(name)
-			if state != nil && state.LastDigest == check.RemoteDigest {
+			if state != nil && state.LastDigest == check.RemoteDigest && !state.LastNotified.IsZero() {
 				shouldNotify = false
 				u.log.Debug("skipping duplicate notification", "name", name, "digest", check.RemoteDigest)
 			}
 		}
 
+		notifyOK := false
 		if shouldNotify {
-			u.notifier.Notify(ctx, notify.Event{
+			notifyOK = u.notifier.Notify(ctx, notify.Event{
 				Type:          notify.EventUpdateAvailable,
 				ContainerName: name,
 				OldImage:      imageRef,
@@ -266,16 +402,25 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 			})
 		}
 
-		// Always track the notify state for digest compilation, regardless of mode.
+		// Track notify state for digest compilation.
+		// Only mark LastNotified when notification was actually delivered,
+		// so failed deliveries get retried on the next scan.
 		now := u.clock.Now()
 		existing, _ := u.store.GetNotifyState(name)
 		firstSeen := now
 		if existing != nil && existing.FirstSeen.After(time.Time{}) {
 			firstSeen = existing.FirstSeen
 		}
+		lastNotified := time.Time{}
+		if existing != nil {
+			lastNotified = existing.LastNotified
+		}
+		if notifyOK {
+			lastNotified = now
+		}
 		_ = u.store.SetNotifyState(name, &store.NotifyState{
 			LastDigest:   check.RemoteDigest,
-			LastNotified: now,
+			LastNotified: lastNotified,
 			FirstSeen:    firstSeen,
 		})
 
@@ -298,13 +443,15 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 
 		case docker.PolicyManual:
 			u.queue.Add(PendingUpdate{
-				ContainerID:   c.ID,
-				ContainerName: name,
-				CurrentImage:  imageRef,
-				CurrentDigest: check.LocalDigest,
-				RemoteDigest:  check.RemoteDigest,
-				DetectedAt:    u.clock.Now(),
-				NewerVersions: check.NewerVersions,
+				ContainerID:            c.ID,
+				ContainerName:          name,
+				CurrentImage:           imageRef,
+				CurrentDigest:          check.LocalDigest,
+				RemoteDigest:           check.RemoteDigest,
+				DetectedAt:             u.clock.Now(),
+				NewerVersions:          check.NewerVersions,
+				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+				ResolvedTargetVersion:  check.ResolvedTargetVersion,
 			})
 			u.log.Info("update queued for manual approval", "name", name)
 			u.publishEvent(events.EventQueueChange, name, "queued for approval")
@@ -314,7 +461,124 @@ func (u *Updater) Scan(ctx context.Context) ScanResult {
 
 	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf("total=%d updated=%d", result.Total, result.Updated))
 
+	if u.rateTracker != nil {
+		u.publishEvent(events.EventRateLimits, "", u.rateTracker.OverallHealth())
+		// Persist rate limit state to DB after each scan.
+		if u.rateSaver != nil {
+			if data, err := u.rateTracker.Export(); err == nil {
+				if err := u.rateSaver(data); err != nil {
+					u.log.Warn("failed to persist rate limits", "error", err)
+				}
+			}
+		}
+	}
+
+	// Launch background GHCR alternative check for Docker Hub containers.
+	// Use a detached context so the goroutine isn't cancelled when the
+	// scan context expires (the caller may cancel it after Scan returns).
+	if u.ghcrCache != nil {
+		ghcrCtx, ghcrCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		go func() {
+			defer ghcrCancel()
+			u.checkGHCRAlternatives(ghcrCtx, containers)
+		}()
+	}
+
 	return result
+}
+
+// checkGHCRAlternatives probes GHCR for alternatives to Docker Hub images.
+// Runs as a background goroutine after each scan. Skips images that already
+// have a valid (non-expired) cache entry.
+func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []container.Summary) {
+	// Check if GHCR detection is enabled (default: true).
+	if u.settings != nil {
+		val, _ := u.settings.LoadSetting("ghcr_check_enabled")
+		if val == "false" {
+			return
+		}
+	}
+
+	// Gather credentials for Docker Hub and GHCR.
+	var hubCred, ghcrCred *registry.RegistryCredential
+	if cs := u.checker.CredentialStore(); cs != nil {
+		creds, _ := cs.GetRegistryCredentials()
+		hubCred = registry.FindByRegistry(creds, "docker.io")
+		ghcrCred = registry.FindByRegistry(creds, "ghcr.io")
+	}
+
+	checked := 0
+	for _, c := range containers {
+		if ctx.Err() != nil {
+			break
+		}
+
+		host := registry.RegistryHost(c.Image)
+		if host != "docker.io" {
+			continue
+		}
+
+		repo := registry.RepoPath(c.Image)
+		tag := registry.ExtractTag(c.Image)
+		if tag == "" {
+			tag = "latest"
+		}
+
+		// Skip if already cached and not expired.
+		if _, ok := u.ghcrCache.Get(repo, tag); ok {
+			continue
+		}
+
+		// Rate limit check: each GHCR alternative check makes ~2 requests
+		// to Docker Hub and ~2 to GHCR. Skip if either registry is low.
+		if u.rateTracker != nil {
+			if ok, _ := u.rateTracker.CanProceed("docker.io", 5); !ok {
+				u.log.Debug("GHCR check: Docker Hub rate limit low, stopping")
+				break
+			}
+			if ok, _ := u.rateTracker.CanProceed("ghcr.io", 5); !ok {
+				u.log.Debug("GHCR check: GHCR rate limit low, stopping")
+				break
+			}
+		}
+
+		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		alt, err := registry.CheckGHCRAlternative(checkCtx, c.Image, hubCred, ghcrCred)
+		cancel()
+
+		if err != nil {
+			u.log.Debug("GHCR check failed", "image", c.Image, "error", err)
+			continue
+		}
+		if alt == nil {
+			continue // skipped (library image or non-docker.io)
+		}
+
+		u.ghcrCache.Set(repo, tag, *alt)
+		checked++
+
+		if alt.Available {
+			match := "different build"
+			if alt.DigestMatch {
+				match = "identical"
+			}
+			u.log.Info("GHCR alternative found", "image", c.Image, "ghcr", alt.GHCRImage, "digest", match)
+		}
+	}
+
+	// Persist cache to DB.
+	if u.ghcrSaver != nil && checked > 0 {
+		if data, err := u.ghcrCache.Export(); err == nil {
+			if err := u.ghcrSaver(data); err != nil {
+				u.log.Warn("failed to persist GHCR cache", "error", err)
+			}
+		}
+	}
+
+	// Emit SSE event so the UI refreshes.
+	if checked > 0 {
+		u.publishEvent(events.EventGHCRCheck, "", fmt.Sprintf("checked %d images", checked))
+	}
 }
 
 // UpdateContainer performs the full update lifecycle for a single container:
@@ -555,6 +819,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	// Clear notification state so re-detection gets a fresh notification.
 	_ = u.store.ClearNotifyState(name)
+
+	// Clear ignored versions — container moved past them.
+	_ = u.store.ClearIgnoredVersions(name)
 
 	// 9. Clean old snapshots — keep only the most recent one.
 	if err := u.store.DeleteOldSnapshots(name, 1); err != nil {

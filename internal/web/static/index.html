@@ -23,7 +23,7 @@
         <div class="nav-links">
             <a href="/" class="nav-link active" aria-current="page">Dashboard</a>
             <a href="/queue" class="nav-link">
-                Queue
+                Pending Updates
                 {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
             </a>
             <a href="/history" class="nav-link">History</a>
@@ -56,14 +56,6 @@
     </nav>
 
     <main class="main-content" id="main-content">
-        <div id="digest-banner" class="digest-banner" style="display:none">
-            <div class="digest-banner-content">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
-                <span id="digest-banner-text"></span>
-            </div>
-            <button onclick="dismissDigestBanner()" class="btn btn-sm">Dismiss</button>
-        </div>
-
         <div class="page-header">
             <div>
                 <h1>Containers</h1>
@@ -72,17 +64,23 @@
         </div>
 
         <dl class="stats" id="stats">
-            <div class="stat-card">
+            <div class="stat-card stat-card-link" style="cursor:pointer" onclick="activateFilter('sort','status')">
                 <dt class="stat-label"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:inline;vertical-align:-2px;margin-right:4px"><rect x="1" y="3" width="14" height="4" rx="1" fill="currentColor" opacity=".6"/><rect x="1" y="9" width="14" height="4" rx="1" fill="currentColor" opacity=".4"/></svg>Total</dt>
                 <dd class="stat-value info">{{.TotalContainers}}</dd>
             </div>
-            <div class="stat-card">
-                <dt class="stat-label"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:inline;vertical-align:-2px;margin-right:4px"><path d="M6.5 12.5l-3-3 1.4-1.4L6.5 9.7l4.6-4.6 1.4 1.4z" fill="currentColor"/></svg>Running</dt>
+            <div class="stat-card stat-card-link" style="cursor:pointer" onclick="activateFilter('status','running')">
+                <dt class="stat-label"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:inline;vertical-align:-2px;margin-right:4px"><path d="M13.65 2.35A7.96 7.96 0 008 0C3.58 0 0 3.58 0 8s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 018 14 6 6 0 012 8a6 6 0 016-6c1.66 0 3.14.69 4.22 1.78L9 7h7V0l-2.35 2.35z" fill="currentColor"/></svg>Running</dt>
                 <dd class="stat-value success">{{.RunningContainers}}</dd>
             </div>
             <a href="/queue" class="stat-card stat-card-link">
                 <dt class="stat-label"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:inline;vertical-align:-2px;margin-right:4px"><path d="M8 1L1 14h14L8 1zm-.75 5h1.5v4h-1.5V6zm0 5h1.5v1.5h-1.5V11z" fill="currentColor"/></svg>Updates Pending</dt>
                 <dd class="stat-value warning">{{.PendingUpdates}}</dd>
+            </a>
+            <a href="/settings" class="stat-card stat-card-link" onclick="localStorage.setItem('sentinel-settings-tab','registries')">
+                <dt class="stat-label">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:-2px;margin-right:4px"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Rate Limits
+                </dt>
+                <dd class="stat-value" id="rate-limit-status">Healthy</dd>
             </a>
         </dl>
 
@@ -141,6 +139,7 @@
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
                                 <td colspan="6">
                                     <div class="stack-header-inner">
+                                        <span class="stack-drag-handle" title="Drag to reorder">&#10495;</span>
                                         <input type="checkbox" class="stack-select" data-stack="{{.Name}}" title="Select all in {{.Name}}" onclick="event.stopPropagation()">
                                         <span class="stack-chevron">&#9656;</span>
                                         <span class="stack-name">{{.Name}}</span>
@@ -186,6 +185,14 @@
         <button class="btn" onclick="clearSelection()">Cancel</button>
     </div>
 
+    <footer class="app-footer" id="app-footer">
+        <span class="footer-version" id="footer-version"></span>
+        <span class="footer-beta">
+            This is BETA software.
+            <a href="https://github.com/Will-Luck/Docker-Sentinel/issues" target="_blank" rel="noopener">Report issues on GitHub</a>
+        </span>
+    </footer>
+
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
@@ -194,7 +201,7 @@
 {{end}}
 
 {{define "container-row"}}
-                            <tr class="container-row state-{{.State}}{{if .HasUpdate}} has-update{{end}}" data-name="{{.Name}}" onclick="onRowClick(event, '{{.Name}}')">
+                            <tr class="container-row state-{{.State}}{{if .HasUpdate}} has-update{{end}}" data-name="{{.Name}}" data-registry="{{.Registry}}" onclick="onRowClick(event, '{{.Name}}')">
                                 <td class="td-checkbox">
                                     {{if not .IsSelf}}
                                         <input type="checkbox" class="row-select" value="{{.Name}}" id="select-{{.Name}}" aria-label="Select {{.Name}}">
@@ -205,12 +212,21 @@
                                     {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
                                 </td>
                                 <td class="cell-image mono" title="{{.Image}}">
+                                    {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}
                                     {{if .NewestVersion}}
-                                        <span class="version-current">{{.Tag}}</span>
+                                        <span class="version-current">{{$tag}}</span>
                                         <span class="version-arrow">&rarr;</span>
-                                        <span class="version-new">{{.NewestVersion}}</span>
+                                        {{with versionURL $img $ver}}
+                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{$ver}}</a>
+                                        {{else}}
+                                            <span class="version-new">{{$ver}}</span>
+                                        {{end}}
                                     {{else}}
-                                        {{.Tag}}
+                                        {{with changelogURL $img}}
+                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}</a>
+                                        {{else}}
+                                            {{$tag}}
+                                        {{end}}
                                     {{end}}
                                 </td>
                                 <td>

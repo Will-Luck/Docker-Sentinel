@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -45,6 +46,7 @@ type containerView struct {
 	HasUpdate     bool
 	IsSelf        bool
 	Stack         string // com.docker.compose.project label, or "" for standalone
+	Registry      string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -112,6 +114,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			HasUpdate:     pendingNames[name],
 			IsSelf:        c.Labels["sentinel.self"] == "true",
 			Stack:         c.Labels["com.docker.compose.project"],
+			Registry:      registry.RegistryHost(c.Image),
 		})
 	}
 
@@ -137,16 +140,57 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		stackMap[key] = append(stackMap[key], v)
 	}
-	// Named stacks alphabetically, standalone ("") last.
-	sort.Slice(stackOrder, func(i, j int) bool {
-		if stackOrder[i] == "" {
-			return false
+	// Apply saved stack order if available, falling back to alphabetical.
+	savedJSON, _ := s.deps.SettingsStore.LoadSetting("stack_order")
+	var savedOrder []string
+	if savedJSON != "" {
+		if err := json.Unmarshal([]byte(savedJSON), &savedOrder); err != nil {
+			s.deps.Log.Warn("failed to parse saved stack order, using defaults", "error", err)
+			savedOrder = nil
 		}
-		if stackOrder[j] == "" {
-			return true
+	}
+	if len(savedOrder) > 0 {
+		rank := make(map[string]int, len(savedOrder))
+		for i, name := range savedOrder {
+			rank[name] = i
 		}
-		return stackOrder[i] < stackOrder[j]
-	})
+		nextRank := len(savedOrder)
+		sort.SliceStable(stackOrder, func(i, j int) bool {
+			// Standalone ("") always last.
+			if stackOrder[i] == "" {
+				return false
+			}
+			if stackOrder[j] == "" {
+				return true
+			}
+			nameI := stackOrder[i]
+			nameJ := stackOrder[j]
+			ri, okI := rank[nameI]
+			rj, okJ := rank[nameJ]
+			if !okI {
+				ri = nextRank
+			}
+			if !okJ {
+				rj = nextRank
+			}
+			if ri != rj {
+				return ri < rj
+			}
+			// Both unsaved — alphabetical.
+			return nameI < nameJ
+		})
+	} else {
+		// Default: named stacks alphabetically, standalone ("") last.
+		sort.Slice(stackOrder, func(i, j int) bool {
+			if stackOrder[i] == "" {
+				return false
+			}
+			if stackOrder[j] == "" {
+				return true
+			}
+			return stackOrder[i] < stackOrder[j]
+		})
+	}
 	stacks := make([]stackGroup, 0, len(stackOrder))
 	for _, key := range stackOrder {
 		name := key
@@ -340,6 +384,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				HasUpdate:     pendingNames[n],
 				IsSelf:        c.Labels["sentinel.self"] == "true",
 				Stack:         c.Labels["com.docker.compose.project"],
+				Registry:      registry.RegistryHost(c.Image),
 			}
 			targetView = &v
 		}
@@ -459,6 +504,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		State:       found.State,
 		Maintenance: maintenance,
 		IsSelf:      found.Labels["sentinel.self"] == "true",
+		Registry:    registry.RegistryHost(found.Image),
 	}
 
 	// Gather history.

@@ -51,18 +51,20 @@ type Config struct {
 
 	// mu protects the mutable runtime fields below.
 	mu            sync.RWMutex
-	pollInterval  time.Duration // how often to scan for updates
-	gracePeriod   time.Duration // wait after starting new container before health check
-	defaultPolicy string        // "auto", "manual", or "pinned"
+	pollInterval     time.Duration // how often to scan for updates
+	gracePeriod      time.Duration // wait after starting new container before health check
+	defaultPolicy    string        // "auto", "manual", or "pinned"
+	latestAutoUpdate bool          // auto-update :latest containers regardless of default policy
 }
 
 // NewTestConfig creates a Config with sensible defaults for testing.
 // Use the setter methods to override specific values.
 func NewTestConfig() *Config {
 	return &Config{
-		pollInterval:  6 * time.Hour,
-		gracePeriod:   30 * time.Second,
-		defaultPolicy: "manual",
+		pollInterval:     6 * time.Hour,
+		gracePeriod:      30 * time.Second,
+		defaultPolicy:    "manual",
+		latestAutoUpdate: true,
 	}
 }
 
@@ -73,6 +75,7 @@ func Load() *Config {
 		pollInterval:        envDuration("SENTINEL_POLL_INTERVAL", 6*time.Hour),
 		gracePeriod:         envDuration("SENTINEL_GRACE_PERIOD", 30*time.Second),
 		defaultPolicy:       envStr("SENTINEL_DEFAULT_POLICY", "manual"),
+		latestAutoUpdate:    envBool("SENTINEL_LATEST_AUTO_UPDATE", true),
 		DBPath:              envStr("SENTINEL_DB_PATH", "/data/sentinel.db"),
 		LogJSON:             envBool("SENTINEL_LOG_JSON", true),
 		GotifyURL:           envStr("SENTINEL_GOTIFY_URL", ""),
@@ -240,6 +243,20 @@ func (c *Config) DefaultPolicy() string {
 func (c *Config) SetDefaultPolicy(s string) {
 	c.mu.Lock()
 	c.defaultPolicy = s
+	c.mu.Unlock()
+}
+
+// LatestAutoUpdate returns whether :latest containers auto-update (thread-safe).
+func (c *Config) LatestAutoUpdate() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.latestAutoUpdate
+}
+
+// SetLatestAutoUpdate updates the :latest auto-update setting at runtime (thread-safe).
+func (c *Config) SetLatestAutoUpdate(b bool) {
+	c.mu.Lock()
+	c.latestAutoUpdate = b
 	c.mu.Unlock()
 }
 

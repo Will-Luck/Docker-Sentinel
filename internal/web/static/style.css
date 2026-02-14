@@ -350,6 +350,17 @@ h4 { font-size: 0.875rem; font-weight: 500; letter-spacing: 0.1px; line-height: 
     }
 }
 
+.queue-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.queue-table {
+    table-layout: fixed;
+}
+
+
 .card-header-top {
     display: flex;
     justify-content: space-between;
@@ -484,6 +495,14 @@ a.stat-card-link:hover { border-color: var(--warning); }
 .stat-value.warning { color: var(--warning); }
 .stat-value.error   { color: var(--error); }
 .stat-value.info    { color: var(--info); }
+.stat-value.stat-changed {
+    animation: statPulse 400ms var(--md-motion-emphasized-decelerate);
+}
+@keyframes statPulse {
+    0%   { transform: scale(1); }
+    40%  { transform: scale(1.15); }
+    100% { transform: scale(1); }
+}
 
 
 /* --------------------------------------------------------------------------
@@ -580,6 +599,8 @@ tbody td {
 .version-current { color: var(--fg-secondary); }
 .version-arrow { color: var(--warning); margin: 0 4px; }
 .version-new { color: var(--warning); font-weight: 600; }
+a.version-link { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+a.version-link:hover { border-bottom-style: solid; }
 
 .cell-digest {
     max-width: 200px;
@@ -805,6 +826,10 @@ tbody td {
     justify-content: center;
 }
 
+.btn-sm {
+    padding: 4px 10px;
+    font-size: 0.75rem;
+}
 
 /* --------------------------------------------------------------------------
    9. Policy Select — pill-shaped dropdown with coloured variants
@@ -1897,10 +1922,19 @@ details[open] > .accordion-header .accordion-chevron {
 .container-row.state-exited,
 .container-row.state-stopped,
 .container-row.state-dead,
-.container-row.state-created { border-left-color: var(--error); }
-.container-row.has-update { border-left-color: var(--warning); }
+.container-row.state-created {
+    border-left-color: var(--error);
+    background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
+}
+.container-row.has-update {
+    border-left-color: var(--warning);
+    background: light-dark(rgba(230, 81, 0, 0.06), rgba(255, 213, 79, 0.06));
+}
 .container-row.state-exited.has-update,
-.container-row.state-stopped.has-update { border-left-color: var(--error); }
+.container-row.state-stopped.has-update {
+    border-left-color: var(--error);
+    background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
+}
 
 .container-link {
     color: var(--accent);
@@ -1942,6 +1976,41 @@ table.managing .stack-select {
     width: 18px;
     opacity: 1;
     margin-right: var(--sp-1);
+}
+
+/* Stack drag handle — hidden by default, shown in manage mode */
+.stack-drag-handle {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    cursor: grab;
+    color: var(--on-surface);
+    font-size: 1.1rem;
+    line-height: 1;
+    user-select: none;
+    transition: width 250ms ease, opacity 250ms ease, margin 250ms ease;
+}
+table.managing .stack-drag-handle {
+    width: 20px;
+    opacity: 0.5;
+    margin-right: var(--sp-1);
+}
+table.managing .stack-drag-handle:hover {
+    opacity: 1;
+}
+table.managing .stack-drag-handle:active {
+    cursor: grabbing;
+}
+
+/* Drag states */
+.stack-group.dragging {
+    opacity: 0.4;
+}
+.stack-group.drag-over-above {
+    box-shadow: inset 0 3px 0 0 var(--accent);
+}
+.stack-group.drag-over-below {
+    box-shadow: inset 0 -3px 0 0 var(--accent);
 }
 
 
@@ -2955,6 +3024,15 @@ input[type="checkbox"] {
     color: var(--md-on-tertiary-container);
     border-radius: var(--radius);
     gap: var(--sp-3);
+    transition: opacity 300ms ease, max-height 300ms ease, padding 300ms ease, margin 300ms ease;
+    overflow: hidden;
+}
+.digest-banner.banner-hidden {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
 }
 
 .digest-banner-content {
@@ -2963,4 +3041,267 @@ input[type="checkbox"] {
     gap: var(--sp-2);
     font-size: 0.875rem;
     font-weight: 500;
+}
+
+
+/* --------------------------------------------------------------------------
+   31. Registry & Rate Limit Styles
+   -------------------------------------------------------------------------- */
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+    padding: var(--sp-2) var(--sp-3);
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+    font-weight: 600;
+    color: var(--fg-secondary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.data-table tbody tr:hover {
+    background: var(--bg-hover);
+}
+
+.text-error { color: var(--error); }
+.text-warning { color: var(--warning); }
+
+.alert {
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-bottom: var(--sp-2);
+}
+
+.alert-warning {
+    background: light-dark(#FFF3E0, rgba(255, 213, 79, 0.1));
+    border: 1px solid var(--warning);
+    color: var(--warning);
+}
+
+.alert-info {
+    background: light-dark(#E3F2FD, rgba(100, 181, 246, 0.08));
+    border: 1px solid light-dark(#90CAF9, rgba(100, 181, 246, 0.25));
+    color: var(--text-secondary);
+    display: flex;
+    gap: var(--sp-2);
+    align-items: flex-start;
+    line-height: 1.5;
+}
+
+.alert-info-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+    margin-top: 1px;
+}
+
+.stat-card:nth-child(4) { border-left-color: var(--accent); }
+
+
+/* --------------------------------------------------------------------------
+   32. GHCR Badge & Callout
+   -------------------------------------------------------------------------- */
+
+.ghcr-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.55rem;
+    font-weight: 500;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--info-bg);
+    color: var(--info-fg);
+    vertical-align: middle;
+    margin-left: 6px;
+    letter-spacing: 0.02em;
+}
+
+.ghcr-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    border-radius: var(--radius);
+    background: var(--info-bg);
+    color: var(--info-fg);
+    margin-top: var(--sp-3);
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+.ghcr-callout-icon {
+    flex-shrink: 0;
+    font-size: 1.1rem;
+    margin-top: 1px;
+}
+.ghcr-callout-body {
+    flex: 1;
+}
+.ghcr-callout-body strong {
+    display: block;
+    margin-bottom: 2px;
+}
+.ghcr-callout .btn {
+    margin-top: var(--sp-2);
+}
+
+/* --------------------------------------------------------------------------
+   33. Registry Source Badges
+   -------------------------------------------------------------------------- */
+
+.registry-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.55rem;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 4px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.registry-badge-hub {
+    background: var(--bg-raised);
+    color: var(--md-on-surface-variant);
+}
+.registry-badge-ghcr {
+    background: var(--info-bg);
+    color: var(--info-fg);
+}
+.registry-badge-lscr {
+    background: var(--success-bg);
+    color: var(--success-fg);
+}
+.registry-badge-gitea {
+    background: var(--warning-bg);
+    color: var(--warning-fg);
+}
+.registry-badge-local {
+    background: var(--error-bg);
+    color: var(--error-fg);
+}
+
+/* About tab */
+.about-section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-secondary);
+    padding-bottom: var(--sp-2);
+    border-bottom: 1px solid var(--border);
+    margin-top: var(--sp-5);
+    margin-bottom: 0;
+}
+.about-section-title:first-child {
+    margin-top: 0;
+}
+.about-value {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+.about-channels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+.about-channel-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    font-size: 0.8rem;
+}
+.about-channel-type {
+    color: var(--fg-secondary);
+    font-size: 0.75rem;
+}
+.about-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    background: var(--warning-bg);
+    border: 1px solid color-mix(in srgb, var(--warning-fg) 30%, transparent);
+    margin-bottom: var(--sp-5);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--fg-primary);
+}
+.about-banner-icon {
+    flex-shrink: 0;
+    font-size: 1.1rem;
+    margin-top: 1px;
+}
+.about-banner a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.about-banner a:hover {
+    color: var(--accent-hover);
+}
+.about-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+.about-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--fg-primary);
+    font-size: 0.85rem;
+    text-decoration: none;
+    transition: border-color 150ms, background 150ms;
+}
+.about-link:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+}
+.about-link-icon {
+    font-size: 1rem;
+    line-height: 1;
+}
+
+/* Dashboard footer */
+.app-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-3) var(--sp-5);
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+    border-top: 1px solid var(--border);
+    margin-top: var(--sp-5);
+}
+.footer-version {
+    font-family: var(--font-mono);
+    font-weight: 500;
+}
+.footer-beta a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.footer-beta a:hover {
+    color: var(--accent-hover);
 }

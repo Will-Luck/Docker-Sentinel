@@ -47,7 +47,13 @@ type Dependencies struct {
 	NotifyReconfigurer NotifierReconfigurer
 	NotifyState        NotifyStateStore
 	Digest             DigestController
+	IgnoredVersions    IgnoredVersionStore
+	RegistryCredentials RegistryCredentialStore
+	RateTracker         RateLimitProvider
+	GHCRCache           GHCRAlternativeProvider
+	AboutStore         AboutStore
 	Auth               *auth.Service
+	Version            string
 	Log                *slog.Logger
 }
 
@@ -75,7 +81,7 @@ type RegistryVersionChecker interface {
 
 // RegistryChecker performs a full registry check for a single container.
 type RegistryChecker interface {
-	CheckForUpdate(ctx context.Context, imageRef string) (updateAvailable bool, newerVersions []string, err error)
+	CheckForUpdate(ctx context.Context, imageRef string) (updateAvailable bool, newerVersions []string, resolvedCurrent string, resolvedTarget string, err error)
 }
 
 // PolicyStore reads and writes policy overrides in BoltDB.
@@ -115,6 +121,73 @@ type NotifyStateStore interface {
 	DeleteNotifyPref(name string) error
 	AllNotifyPrefs() (map[string]*NotifyPref, error)
 	AllNotifyStates() (map[string]*NotifyState, error)
+	ClearNotifyState(name string) error
+}
+
+// IgnoredVersionStore reads and writes per-container ignored versions.
+type IgnoredVersionStore interface {
+	AddIgnoredVersion(containerName, version string) error
+	GetIgnoredVersions(containerName string) ([]string, error)
+	ClearIgnoredVersions(containerName string) error
+}
+
+// RegistryCredentialStore persists registry credentials.
+type RegistryCredentialStore interface {
+	GetRegistryCredentials() ([]RegistryCredential, error)
+	SetRegistryCredentials(creds []RegistryCredential) error
+}
+
+// RegistryCredential mirrors registry.RegistryCredential for the web layer.
+type RegistryCredential struct {
+	ID       string `json:"id"`
+	Registry string `json:"registry"`
+	Username string `json:"username"`
+	Secret   string `json:"secret"`
+}
+
+// RateLimitProvider returns rate limit status for display.
+type RateLimitProvider interface {
+	Status() []RateLimitStatus
+	OverallHealth() string
+	// ProbeAndRecord makes a lightweight request to discover a registry's
+	// rate limits and records the result. Used after credential changes.
+	ProbeAndRecord(ctx context.Context, host string, cred RegistryCredential) error
+}
+
+// RateLimitStatus mirrors registry.RegistryStatus for the web layer.
+type RateLimitStatus struct {
+	Registry       string    `json:"registry"`
+	Limit          int       `json:"limit"`
+	Remaining      int       `json:"remaining"`
+	ResetAt        time.Time `json:"reset_at"`
+	IsAuth         bool      `json:"is_auth"`
+	HasLimits      bool      `json:"has_limits"`
+	ContainerCount int       `json:"container_count"`
+	LastUpdated    time.Time `json:"last_updated"`
+}
+
+// GHCRAlternativeProvider returns GHCR alternative detection results.
+type GHCRAlternativeProvider interface {
+	Get(repo, tag string) (*GHCRAlternative, bool)
+	All() []GHCRAlternative
+}
+
+// GHCRAlternative mirrors registry.GHCRAlternative for the web layer.
+type GHCRAlternative struct {
+	DockerHubImage string    `json:"docker_hub_image"`
+	GHCRImage      string    `json:"ghcr_image"`
+	Tag            string    `json:"tag"`
+	Available      bool      `json:"available"`
+	DigestMatch    bool      `json:"digest_match"`
+	HubDigest      string    `json:"hub_digest,omitempty"`
+	GHCRDigest     string    `json:"ghcr_digest,omitempty"`
+	CheckedAt      time.Time `json:"checked_at"`
+}
+
+// AboutStore provides aggregate counts for the About page.
+type AboutStore interface {
+	CountHistory() (int, error)
+	CountSnapshots() (int, error)
 }
 
 // DigestController controls the digest scheduler.
@@ -188,13 +261,15 @@ type UpdateQueue interface {
 
 // PendingUpdate mirrors engine.PendingUpdate.
 type PendingUpdate struct {
-	ContainerID   string    `json:"container_id"`
-	ContainerName string    `json:"container_name"`
-	CurrentImage  string    `json:"current_image"`
-	CurrentDigest string    `json:"current_digest"`
-	RemoteDigest  string    `json:"remote_digest"`
-	DetectedAt    time.Time `json:"detected_at"`
-	NewerVersions []string  `json:"newer_versions,omitempty"`
+	ContainerID            string    `json:"container_id"`
+	ContainerName          string    `json:"container_name"`
+	CurrentImage           string    `json:"current_image"`
+	CurrentDigest          string    `json:"current_digest"`
+	RemoteDigest           string    `json:"remote_digest"`
+	DetectedAt             time.Time `json:"detected_at"`
+	NewerVersions          []string  `json:"newer_versions,omitempty"`
+	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
+	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
 }
 
 // ContainerLister lists containers.
@@ -255,6 +330,7 @@ type ConfigReader interface {
 type ConfigWriter interface {
 	SetDefaultPolicy(s string)
 	SetGracePeriod(d time.Duration)
+	SetLatestAutoUpdate(b bool)
 }
 
 // Server is the web dashboard HTTP server.
@@ -263,6 +339,7 @@ type Server struct {
 	mux            *http.ServeMux
 	tmpl           *template.Template
 	server         *http.Server
+	startTime      time.Time          // when the server was created
 	bootstrapToken string             // one-time setup token, cleared after first user creation
 	webauthn       *webauthn.WebAuthn // nil when WebAuthn is not configured
 	tlsCert        string             // path to TLS certificate PEM (empty = plain HTTP)
@@ -288,8 +365,9 @@ func (s *Server) SetWebAuthn(wa *webauthn.WebAuthn) {
 // NewServer creates a Server with all routes registered.
 func NewServer(deps Dependencies) *Server {
 	s := &Server{
-		deps: deps,
-		mux:  http.NewServeMux(),
+		deps:      deps,
+		mux:       http.NewServeMux(),
+		startTime: time.Now(),
 	}
 
 	s.parseTemplates()
@@ -351,6 +429,8 @@ func (s *Server) parseTemplates() {
 		"truncDigest":  truncateDigest,
 		"json":         marshalJSON,
 		"changelogURL": ChangelogURL,
+		"versionURL":   VersionURL,
+		"imageTag":     ImageTag,
 	}
 
 	s.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(staticFS, "static/*.html"))
@@ -420,9 +500,11 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/update/{name}", perm(auth.PermContainersUpdate, s.apiUpdate))
 	s.mux.Handle("POST /api/check/{name}", perm(auth.PermContainersUpdate, s.apiCheck))
 	s.mux.Handle("POST /api/scan", perm(auth.PermContainersUpdate, s.apiTriggerScan))
+	s.mux.Handle("POST /api/containers/{name}/switch-ghcr", perm(auth.PermContainersUpdate, s.apiSwitchToGHCR))
 
 	// containers.approve
 	s.mux.Handle("POST /api/approve/{name}", perm(auth.PermContainersApprove, s.apiApprove))
+	s.mux.Handle("POST /api/ignore/{name}", perm(auth.PermContainersApprove, s.apiIgnoreVersion))
 	s.mux.Handle("POST /api/reject/{name}", perm(auth.PermContainersApprove, s.apiReject))
 
 	// containers.rollback
@@ -441,6 +523,11 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings", perm(auth.PermSettingsView, s.apiSettings))
 	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
+	s.mux.Handle("GET /api/settings/registries", perm(auth.PermSettingsView, s.apiGetRegistryCredentials))
+	s.mux.Handle("GET /api/ratelimits", perm(auth.PermContainersView, s.apiGetRateLimits))
+	s.mux.Handle("GET /api/about", perm(auth.PermSettingsView, s.apiAbout))
+	s.mux.Handle("GET /api/ghcr/alternatives", perm(auth.PermContainersView, s.apiGetGHCRAlternatives))
+	s.mux.Handle("GET /api/containers/{name}/ghcr", perm(auth.PermContainersView, s.apiGetContainerGHCR))
 
 	// Notification prefs & digest (read)
 	s.mux.Handle("GET /api/containers/{name}/notify-pref", perm(auth.PermSettingsView, s.apiGetNotifyPref))
@@ -453,13 +540,19 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/default-policy", perm(auth.PermSettingsModify, s.apiSetDefaultPolicy))
 	s.mux.Handle("POST /api/settings/grace-period", perm(auth.PermSettingsModify, s.apiSetGracePeriod))
 	s.mux.Handle("POST /api/settings/pause", perm(auth.PermSettingsModify, s.apiSetPause))
+	s.mux.Handle("POST /api/settings/latest-auto-update", perm(auth.PermSettingsModify, s.apiSetLatestAutoUpdate))
 	s.mux.Handle("POST /api/settings/filters", perm(auth.PermSettingsModify, s.apiSetFilters))
+	s.mux.Handle("POST /api/settings/stack-order", perm(auth.PermSettingsModify, s.apiSaveStackOrder))
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
+	s.mux.Handle("PUT /api/settings/registries", perm(auth.PermSettingsModify, s.apiSaveRegistryCredentials))
+	s.mux.Handle("POST /api/settings/registries/test", perm(auth.PermSettingsModify, s.apiTestRegistryCredential))
+	s.mux.Handle("DELETE /api/settings/registries/{id}", perm(auth.PermSettingsModify, s.apiDeleteRegistryCredential))
 	s.mux.Handle("POST /api/self-update", perm(auth.PermSettingsModify, s.apiSelfUpdate))
 
 	// Notification prefs & digest (write)
 	s.mux.Handle("POST /api/containers/{name}/notify-pref", perm(auth.PermSettingsModify, s.apiSetNotifyPref))
+	s.mux.Handle("DELETE /api/notify-states", perm(auth.PermSettingsModify, s.apiClearAllNotifyStates))
 	s.mux.Handle("POST /api/settings/digest", perm(auth.PermSettingsModify, s.apiSaveDigestSettings))
 	s.mux.Handle("POST /api/digest/trigger", perm(auth.PermSettingsModify, s.apiTriggerDigest))
 	s.mux.Handle("POST /api/digest/banner/dismiss", perm(auth.PermContainersView, s.apiDismissDigestBanner))

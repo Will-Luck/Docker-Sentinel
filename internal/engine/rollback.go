@@ -24,6 +24,25 @@ func rollback(ctx context.Context, d docker.API, name string, snapshotData []byt
 
 	log.Info("rolling back container", "name", name, "image", inspect.Config.Image)
 
+	// Stop and remove the existing container to free the name.
+	containers, err := d.ListAllContainers(ctx)
+	if err != nil {
+		return fmt.Errorf("list containers for rollback: %w", err)
+	}
+	for _, c := range containers {
+		cName := containerName(c)
+		if cName == name {
+			log.Info("stopping existing container before rollback", "name", name, "id", truncateID(c.ID))
+			if err := d.StopContainer(ctx, c.ID, 30); err != nil {
+				log.Warn("stop failed, proceeding with force remove", "name", name, "error", err)
+			}
+			if err := d.RemoveContainer(ctx, c.ID); err != nil {
+				return fmt.Errorf("remove existing container before rollback: %w", err)
+			}
+			break
+		}
+	}
+
 	cfg := cloneConfig(inspect.Config)
 	hostConfig := inspect.HostConfig
 	netConfig := rebuildNetworkingConfig(inspect.NetworkSettings)
