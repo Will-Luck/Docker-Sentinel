@@ -76,9 +76,10 @@ type Updater struct {
 	clock    clock.Clock
 	notifier *notify.Multi
 	events   *events.Bus
-	settings    SettingsReader
-	rateTracker *registry.RateLimitTracker // optional: rate limit awareness
-	updating    sync.Map                   // map[string]*sync.Mutex — per-container update locks
+	settings      SettingsReader
+	rateTracker   *registry.RateLimitTracker // optional: rate limit awareness
+	rateSaver     func([]byte) error         // optional: persist rate limits after scan
+	updating      sync.Map                   // map[string]*sync.Mutex — per-container update locks
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -104,6 +105,11 @@ func (u *Updater) SetSettingsReader(sr SettingsReader) {
 // SetRateLimitTracker attaches a rate limit tracker for scan pacing.
 func (u *Updater) SetRateLimitTracker(t *registry.RateLimitTracker) {
 	u.rateTracker = t
+}
+
+// SetRateLimitSaver attaches a function to persist rate limits after each scan.
+func (u *Updater) SetRateLimitSaver(fn func([]byte) error) {
+	u.rateSaver = fn
 }
 
 // tryLock attempts to acquire the per-container update lock.
@@ -187,7 +193,9 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 	result.Total = len(containers)
 
-	// Discover registries from container images for rate limit tracking.
+	// Discover registries and probe for fresh rate limit data.
+	// Probes all discovered registries (credentialed or anonymous) so that
+	// rate limit info is always available, even when no containers have updates.
 	if u.rateTracker != nil {
 		counts := make(map[string]int)
 		for _, c := range containers {
@@ -197,28 +205,26 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		for host, n := range counts {
 			u.rateTracker.Discover(host, n)
 		}
-	}
 
-	// Probe credentialed registries to capture fresh rate limit data.
-	// This ensures limits are known even when all containers are up to date
-	// (no ListTags calls would fire otherwise).
-	if u.rateTracker != nil {
+		var creds []registry.RegistryCredential
 		if cs := u.checker.CredentialStore(); cs != nil {
-			if creds, err := cs.GetRegistryCredentials(); err == nil {
-				for _, cred := range creds {
-					host := registry.NormaliseRegistryHost(cred.Registry)
-					probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
-					headers, err := registry.ProbeRateLimit(probeCtx, host, &cred)
-					probeCancel()
-					if err != nil {
-						u.log.Warn("rate limit probe failed", "registry", host, "error", err)
-						continue
-					}
-					u.rateTracker.Record(host, headers)
-					u.rateTracker.SetAuth(host, true)
-					u.log.Debug("probed rate limits", "registry", host)
-				}
+			creds, _ = cs.GetRegistryCredentials()
+		}
+		for host := range counts {
+			host = registry.NormaliseRegistryHost(host)
+			cred := registry.FindByRegistry(creds, host)
+			probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
+			headers, err := registry.ProbeRateLimit(probeCtx, host, cred)
+			probeCancel()
+			if err != nil {
+				u.log.Debug("rate limit probe failed", "registry", host, "error", err)
+				continue
 			}
+			u.rateTracker.Record(host, headers)
+			if cred != nil {
+				u.rateTracker.SetAuth(host, true)
+			}
+			u.log.Debug("probed rate limits", "registry", host)
 		}
 	}
 
@@ -445,6 +451,14 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 
 	if u.rateTracker != nil {
 		u.publishEvent(events.EventRateLimits, "", u.rateTracker.OverallHealth())
+		// Persist rate limit state to DB after each scan.
+		if u.rateSaver != nil {
+			if data, err := u.rateTracker.Export(); err == nil {
+				if err := u.rateSaver(data); err != nil {
+					u.log.Warn("failed to persist rate limits", "error", err)
+				}
+			}
+		}
 	}
 
 	return result

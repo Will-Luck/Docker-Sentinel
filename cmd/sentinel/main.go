@@ -185,6 +185,13 @@ func main() {
 	clk := clock.Real{}
 	checker := registry.NewChecker(client, log)
 	rateTracker := registry.NewRateLimitTracker()
+	if rlData, rlErr := db.LoadRateLimits(); rlErr == nil && rlData != nil {
+		if importErr := rateTracker.Import(rlData); importErr != nil {
+			log.Warn("failed to load persisted rate limits", "error", importErr)
+		} else {
+			log.Info("loaded persisted rate limits")
+		}
+	}
 	checker.SetCredentialStore(db)
 	checker.SetRateLimitTracker(rateTracker)
 	bus := events.New()
@@ -192,6 +199,7 @@ func main() {
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
 	updater.SetSettingsReader(db)
 	updater.SetRateLimitTracker(rateTracker)
+	updater.SetRateLimitSaver(db.SaveRateLimits)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
@@ -223,7 +231,7 @@ func main() {
 			NotifyState:        &notifyStateAdapter{db},
 			IgnoredVersions:     &ignoredVersionAdapter{db},
 			RegistryCredentials: &registryCredentialAdapter{db},
-			RateTracker:         &rateLimitAdapter{rateTracker},
+			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
 			Digest:              digestSched,
 			Auth:                authSvc,
 			Log:                 log.Logger,
@@ -799,7 +807,10 @@ func (a *registryCredentialAdapter) SetRegistryCredentials(creds []web.RegistryC
 }
 
 // rateLimitAdapter bridges registry.RateLimitTracker to web.RateLimitProvider.
-type rateLimitAdapter struct{ t *registry.RateLimitTracker }
+type rateLimitAdapter struct {
+	t     *registry.RateLimitTracker
+	saver func([]byte) error // optional: persist after probe
+}
 
 func (a *rateLimitAdapter) Status() []web.RateLimitStatus {
 	statuses := a.t.Status()
@@ -836,5 +847,11 @@ func (a *rateLimitAdapter) ProbeAndRecord(ctx context.Context, host string, cred
 	}
 	a.t.Record(host, headers)
 	a.t.SetAuth(host, true)
+	// Persist updated rate limits to DB.
+	if a.saver != nil {
+		if data, exportErr := a.t.Export(); exportErr == nil {
+			_ = a.saver(data)
+		}
+	}
 	return nil
 }

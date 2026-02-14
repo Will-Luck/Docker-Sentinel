@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -227,4 +228,27 @@ func parseRateLimitWindow(val string) int {
 		return n
 	}
 	return 0
+}
+
+// Export serialises the tracker state to JSON for persistence.
+func (t *RateLimitTracker) Export() ([]byte, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return json.Marshal(t.registries)
+}
+
+// Import restores tracker state from persisted JSON.
+// Existing entries are preserved if not in the loaded data;
+// loaded entries overwrite any in-memory state.
+func (t *RateLimitTracker) Import(data []byte) error {
+	var loaded map[string]*RegistryState
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		return err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for host, state := range loaded {
+		t.registries[host] = state
+	}
+	return nil
 }
