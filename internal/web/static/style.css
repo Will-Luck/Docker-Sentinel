@@ -3089,4 +3089,20 @@ input[type="checkbox"] {
     color: var(--warning);
 }
 
+.alert-info {
+    background: light-dark(#E3F2FD, rgba(100, 181, 246, 0.08));
+    border: 1px solid light-dark(#90CAF9, rgba(100, 181, 246, 0.25));
+    color: var(--text-secondary);
+    display: flex;
+    gap: var(--sp-2);
+    align-items: flex-start;
+    line-height: 1.5;
+}
+
+.alert-info-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+    margin-top: 1px;
+}
+
 .stat-card:nth-child(4) { border-left-color: var(--accent); }

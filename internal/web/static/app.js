@@ -3242,13 +3242,16 @@ function renderRegistryCredentials() {
 
         card.appendChild(fields);
 
-        // Registry-specific help text.
+        // Registry-specific help callout.
         var helpDiv = document.createElement("div");
-        helpDiv.className = "registry-help";
-        helpDiv.style.padding = "0 var(--sp-4) var(--sp-4)";
-        helpDiv.style.fontSize = "var(--fs-xs)";
-        helpDiv.style.color = "var(--text-tertiary)";
-        helpDiv.style.lineHeight = "1.5";
+        helpDiv.className = "alert alert-info";
+        helpDiv.style.margin = "0 var(--sp-4) var(--sp-4)";
+        var helpIcon = document.createElement("span");
+        helpIcon.className = "alert-info-icon";
+        helpIcon.textContent = "\u2139";
+        helpDiv.appendChild(helpIcon);
+        var helpText = document.createElement("span");
+        helpDiv.appendChild(helpText);
         function updateHelp(registry) {
             var hints = {
                 "docker.io": "Create a Personal Access Token at hub.docker.com \u2192 Account Settings \u2192 Personal access tokens. Read-only scope is sufficient. Authenticated users get 200 pulls/6h (vs 100 anonymous).",
@@ -3256,7 +3259,7 @@ function renderRegistryCredentials() {
                 "lscr.io": "LinuxServer images are also available via GHCR (ghcr.io/linuxserver/*). Use your LinuxServer Fleet credentials, or switch the registry to ghcr.io for simpler auth.",
                 "docker.gitea.com": "Use your Gitea account credentials. Gitea registries typically have no rate limits."
             };
-            helpDiv.textContent = hints[registry] || "Use your registry login credentials or access token.";
+            helpText.textContent = hints[registry] || "Use your registry login credentials or access token.";
         }
         updateHelp(cred.registry);
         regSelect.addEventListener("change", function() { updateHelp(this.value); });
