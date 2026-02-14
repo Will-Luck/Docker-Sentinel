@@ -2307,6 +2307,7 @@ document.addEventListener("DOMContentLoaded", function () {
         initSSE();
     }
     initPauseBanner();
+    loadFooterVersion();
     loadDigestBanner();
     initFilters();
     refreshLastScan();
@@ -3615,6 +3616,17 @@ if (document.getElementById("rate-limit-status")) {
 // --- About tab ---
 // All dynamic values are sanitised through escapeHtml() before insertion.
 
+function loadFooterVersion() {
+    var el = document.getElementById("footer-version");
+    if (!el) return;
+    fetch("/api/about")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            el.textContent = "Docker-Sentinel " + (data.version || "dev");
+        })
+        .catch(function() {});
+}
+
 function loadAboutInfo() {
     var container = document.getElementById("about-content");
     if (!container) return;
@@ -3675,7 +3687,54 @@ function loadAboutInfo() {
                 appendAboutRow(rows, "Registry Auth", "None configured");
             }
 
+            // Beta banner
+            var banner = document.createElement("div");
+            banner.className = "about-banner";
+            var bannerIcon = document.createElement("span");
+            bannerIcon.className = "about-banner-icon";
+            bannerIcon.textContent = "\u24D8";
+            banner.appendChild(bannerIcon);
+            var bannerText = document.createElement("span");
+            bannerText.textContent = "This is BETA software. Features may be broken and/or unstable. Please report any issues on ";
+            var bannerLink = document.createElement("a");
+            bannerLink.href = "https://github.com/Will-Luck/Docker-Sentinel/issues";
+            bannerLink.target = "_blank";
+            bannerLink.rel = "noopener";
+            bannerLink.textContent = "GitHub";
+            bannerText.appendChild(bannerLink);
+            bannerText.appendChild(document.createTextNode("!"));
+            banner.appendChild(bannerText);
+
+            // Links section
+            appendAboutSection(rows, "Links");
+            var linksWrap = document.createElement("div");
+            linksWrap.className = "about-links";
+            var links = [
+                { icon: "\uD83D\uDCC1", label: "GitHub", url: "https://github.com/Will-Luck/Docker-Sentinel" },
+                { icon: "\uD83D\uDC1B", label: "Report a Bug", url: "https://github.com/Will-Luck/Docker-Sentinel/issues/new?template=bug_report.md" },
+                { icon: "\uD83D\uDCA1", label: "Feature Request", url: "https://github.com/Will-Luck/Docker-Sentinel/issues/new?template=feature_request.md" },
+                { icon: "\uD83D\uDCC4", label: "Releases", url: "https://github.com/Will-Luck/Docker-Sentinel/releases" }
+            ];
+            for (var li = 0; li < links.length; li++) {
+                var a = document.createElement("a");
+                a.className = "about-link";
+                a.href = links[li].url;
+                a.target = "_blank";
+                a.rel = "noopener";
+                var ico = document.createElement("span");
+                ico.className = "about-link-icon";
+                ico.textContent = links[li].icon;
+                a.appendChild(ico);
+                a.appendChild(document.createTextNode(links[li].label));
+                linksWrap.appendChild(a);
+            }
+            var linksRow = document.createElement("div");
+            linksRow.className = "setting-row";
+            linksRow.appendChild(linksWrap);
+            rows.appendChild(linksRow);
+
             container.textContent = "";
+            container.appendChild(banner);
             container.appendChild(rows);
         })
         .catch(function() {
