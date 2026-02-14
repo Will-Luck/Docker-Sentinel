@@ -269,6 +269,9 @@ function initSettingsPage() {
 
     // Load registry credentials and rate limits.
     loadRegistries();
+
+    // Load GHCR alternatives table on registries tab.
+    renderGHCRAlternatives();
 }
 
 function onPollIntervalChange(value) {
@@ -606,6 +609,7 @@ function checkPauseState() {
 
 var lastScanTimestamp = null;
 var lastScanTimer = null;
+var ghcrAlternatives = {};
 
 function refreshLastScan() {
     var el = document.getElementById("last-scan");
@@ -1077,6 +1081,29 @@ function triggerSelfUpdate(event) {
     });
 }
 
+function switchToGHCR(name, ghcrImage) {
+    if (!confirm("Switch " + name + " to " + ghcrImage + "?\n\nThis will recreate the container with the GHCR image. A snapshot will be taken first for rollback.")) {
+        return;
+    }
+    var enc = encodeURIComponent(name);
+    fetch("/api/containers/" + enc + "/switch-ghcr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_image: ghcrImage })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.error) {
+            showToast(data.error, "error");
+        } else {
+            showToast("Switching " + name + " to GHCR image...", "success");
+        }
+    })
+    .catch(function() {
+        showToast("Failed to switch to GHCR", "error");
+    });
+}
+
 function updateToVersion(name) {
     var sel = document.getElementById("version-select");
     if (!sel) return;
@@ -1394,6 +1421,46 @@ function renderAccordionContent(name, data) {
 
     grid.appendChild(actSection);
     contentEl.appendChild(grid);
+
+    // --- GHCR alternative section ---
+    var repo = parseDockerRepo(d.image || "");
+    var ghcrAlt = repo ? ghcrAlternatives[repo] : null;
+    if (ghcrAlt) {
+        var ghcrDiv = document.createElement("div");
+        ghcrDiv.className = "ghcr-callout";
+
+        var iconSpan = document.createElement("span");
+        iconSpan.className = "ghcr-callout-icon";
+        iconSpan.textContent = "\u2139\uFE0F";
+        ghcrDiv.appendChild(iconSpan);
+
+        var bodyDiv = document.createElement("div");
+        bodyDiv.className = "ghcr-callout-body";
+
+        var titleEl = document.createElement("strong");
+        titleEl.textContent = "Available on GHCR";
+        bodyDiv.appendChild(titleEl);
+
+        var descText = document.createElement("span");
+        descText.textContent = ghcrAlt.ghcr_image + ":" + ghcrAlt.tag;
+        if (ghcrAlt.digest_match) {
+            descText.textContent += " (identical build)";
+        } else {
+            descText.textContent += " (different build)";
+        }
+        bodyDiv.appendChild(descText);
+
+        var switchBtn = document.createElement("button");
+        switchBtn.className = "btn btn-info";
+        switchBtn.textContent = "Switch to GHCR";
+        switchBtn.addEventListener("click", function() {
+            switchToGHCR(name, ghcrAlt.ghcr_image + ":" + ghcrAlt.tag);
+        });
+        bodyDiv.appendChild(switchBtn);
+
+        ghcrDiv.appendChild(bodyDiv);
+        contentEl.appendChild(ghcrDiv);
+    }
 }
 
 /* ------------------------------------------------------------
@@ -1986,6 +2053,10 @@ function initSSE() {
         loadDigestBanner();
     });
 
+    es.addEventListener("ghcr_check", function() {
+        loadGHCRAlternatives();
+    });
+
     es.onopen = function () {
         setConnectionStatus(true);
     };
@@ -1993,6 +2064,140 @@ function initSSE() {
     es.onerror = function () {
         setConnectionStatus(false);
     };
+}
+
+/* ------------------------------------------------------------
+   11a. GHCR Alternatives
+   ------------------------------------------------------------ */
+
+function loadGHCRAlternatives() {
+    fetch("/api/ghcr/alternatives")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            ghcrAlternatives = {};
+            if (data && data.length) {
+                for (var i = 0; i < data.length; i++) {
+                    var alt = data[i];
+                    if (alt.available) {
+                        ghcrAlternatives[alt.docker_hub_image] = alt;
+                    }
+                }
+            }
+            applyGHCRBadges();
+        })
+        .catch(function() {});
+}
+
+function applyGHCRBadges() {
+    var rows = document.querySelectorAll("tr.container-row");
+    rows.forEach(function(row) {
+        // Remove existing GHCR badges first (avoid duplicates on refresh).
+        var existing = row.querySelector(".ghcr-badge");
+        if (existing) existing.remove();
+
+        var imageCell = row.querySelector(".cell-image");
+        if (!imageCell) return;
+
+        var title = imageCell.getAttribute("title") || "";
+        // Only for docker.io images (no dots in first segment, or explicit docker.io prefix).
+        // Skip library/* (official images like nginx, redis).
+        var repo = parseDockerRepo(title);
+        if (!repo || !ghcrAlternatives[repo]) return;
+
+        var badge = document.createElement("span");
+        badge.className = "ghcr-badge";
+        badge.textContent = "GHCR";
+        badge.title = "Also available on GitHub Container Registry";
+        imageCell.appendChild(badge);
+    });
+}
+
+function parseDockerRepo(imageRef) {
+    // Strip tag/digest
+    var ref = imageRef.split("@")[0].split(":")[0];
+    // Remove explicit docker.io/ prefix
+    ref = ref.replace(/^docker\.io\//, "");
+    // Skip non-docker.io registries (contain dots in first segment)
+    var firstSegment = ref.split("/")[0];
+    if (firstSegment.indexOf(".") !== -1) return null;
+    // Skip official library images (single segment like "nginx")
+    if (ref.indexOf("/") === -1) return null;
+    // Skip library/ prefix images
+    if (ref.indexOf("library/") === 0) return null;
+    return ref;
+}
+
+function renderGHCRAlternatives() {
+    var container = document.getElementById("ghcr-alternatives-table");
+    if (!container) return;
+
+    fetch("/api/ghcr/alternatives")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data || data.length === 0) {
+                while (container.firstChild) container.removeChild(container.firstChild);
+                var emptyP = document.createElement("p");
+                emptyP.className = "text-muted";
+                emptyP.textContent = "No GHCR alternatives detected yet. Alternatives are checked after each scan.";
+                container.appendChild(emptyP);
+                return;
+            }
+
+            var table = document.createElement("table");
+            table.className = "table-readonly";
+            var thead = document.createElement("thead");
+            var headRow = document.createElement("tr");
+            ["Docker Hub Image", "GHCR Equivalent", "Status"].forEach(function(label) {
+                var th = document.createElement("th");
+                th.textContent = label;
+                headRow.appendChild(th);
+            });
+            thead.appendChild(headRow);
+            table.appendChild(thead);
+
+            var tbody = document.createElement("tbody");
+            data.forEach(function(alt) {
+                var tr = document.createElement("tr");
+
+                var tdHub = document.createElement("td");
+                tdHub.className = "mono";
+                tdHub.textContent = alt.docker_hub_image + ":" + alt.tag;
+                tr.appendChild(tdHub);
+
+                var tdGHCR = document.createElement("td");
+                tdGHCR.className = "mono";
+                tdGHCR.textContent = alt.available ? alt.ghcr_image + ":" + alt.tag : "\u2014";
+                tr.appendChild(tdGHCR);
+
+                var tdStatus = document.createElement("td");
+                var statusBadge = document.createElement("span");
+                if (!alt.available) {
+                    statusBadge.className = "badge badge-muted";
+                    statusBadge.textContent = "Not available";
+                } else if (alt.digest_match) {
+                    statusBadge.className = "badge badge-success";
+                    statusBadge.textContent = "Identical";
+                } else {
+                    statusBadge.className = "badge badge-warning";
+                    statusBadge.textContent = "Different build";
+                }
+                tdStatus.appendChild(statusBadge);
+                tr.appendChild(tdStatus);
+
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+
+            while (container.firstChild) container.removeChild(container.firstChild);
+            container.appendChild(table);
+        })
+        .catch(function() {
+            while (container.firstChild) container.removeChild(container.firstChild);
+            var errP = document.createElement("p");
+            errP.className = "text-muted";
+            errP.textContent = "Failed to load GHCR alternatives.";
+            container.appendChild(errP);
+        });
 }
 
 /* ------------------------------------------------------------
@@ -2183,6 +2388,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 e.stopPropagation();
             }
         });
+
+        // Load GHCR alternatives for dashboard badges.
+        loadGHCRAlternatives();
     }
 
     // Stop/Start/Restart badge click delegation.

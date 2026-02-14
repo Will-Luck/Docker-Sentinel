@@ -2002,6 +2002,140 @@ func (s *Server) apiSaveStackOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// apiGetGHCRAlternatives returns all known GHCR alternatives for dashboard badges.
+func (s *Server) apiGetGHCRAlternatives(w http.ResponseWriter, r *http.Request) {
+	if s.deps.GHCRCache == nil {
+		writeJSON(w, http.StatusOK, []GHCRAlternative{})
+		return
+	}
+
+	alts := s.deps.GHCRCache.All()
+	if alts == nil {
+		alts = []GHCRAlternative{}
+	}
+	writeJSON(w, http.StatusOK, alts)
+}
+
+// apiGetContainerGHCR returns GHCR alternative info for a single container.
+func (s *Server) apiGetContainerGHCR(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.deps.GHCRCache == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+
+	// Find the container to get its image reference.
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var imageRef string
+	for _, c := range containers {
+		if containerName(c) == name {
+			imageRef = c.Image
+			break
+		}
+	}
+	if imageRef == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	repo := registry.RepoPath(imageRef)
+	tag := registry.ExtractTag(imageRef)
+	if tag == "" {
+		tag = "latest"
+	}
+
+	alt, ok := s.deps.GHCRCache.Get(repo, tag)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{"available": false, "checked": false})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, alt)
+}
+
+// apiSwitchToGHCR triggers a container migration from Docker Hub to GHCR.
+func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.isProtectedContainer(r.Context(), name) {
+		writeError(w, http.StatusForbidden, "cannot switch sentinel itself")
+		return
+	}
+
+	if s.deps.GHCRCache == nil {
+		writeError(w, http.StatusNotImplemented, "GHCR detection not available")
+		return
+	}
+
+	// Find container.
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var containerID, imageRef string
+	for _, c := range containers {
+		if containerName(c) == name {
+			containerID = c.ID
+			imageRef = c.Image
+			break
+		}
+	}
+	if containerID == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	repo := registry.RepoPath(imageRef)
+	tag := registry.ExtractTag(imageRef)
+	if tag == "" {
+		tag = "latest"
+	}
+
+	alt, ok := s.deps.GHCRCache.Get(repo, tag)
+	if !ok || !alt.Available {
+		writeError(w, http.StatusBadRequest, "no GHCR alternative available for "+name)
+		return
+	}
+
+	// Build the target GHCR image reference.
+	ghcrImage := alt.GHCRImage + ":" + alt.Tag
+
+	// Trigger migration in background using the existing UpdateContainer lifecycle.
+	go func() {
+		err := s.deps.Updater.UpdateContainer(context.Background(), containerID, name, ghcrImage)
+		if err != nil {
+			s.deps.Log.Error("GHCR switch failed", "name", name, "ghcr_image", ghcrImage, "error", err)
+			return
+		}
+		s.deps.Log.Info("GHCR switch complete", "name", name, "ghcr_image", ghcrImage)
+	}()
+
+	s.logEvent("ghcr_switch", name, "Switching to GHCR: "+ghcrImage)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":     "started",
+		"name":       name,
+		"ghcr_image": ghcrImage,
+		"message":    "migration to GHCR started for " + name,
+	})
+}
+
 // restoreSecrets returns the saved settings if the incoming settings contain any
 // masked values (strings ending in "****"). This prevents overwriting real secrets
 // with their masked representations when the frontend sends back unchanged channels.

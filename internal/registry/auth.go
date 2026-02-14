@@ -65,3 +65,35 @@ func FetchToken(ctx context.Context, repo string, cred *RegistryCredential, host
 
 	return tok.Token, nil
 }
+
+// FetchGHCRToken retrieves an anonymous bearer token from GitHub Container
+// Registry for the given repository (e.g. "go-gitea/gitea"). Public images
+// don't require credentials; the token exchange endpoint grants pull access.
+func FetchGHCRToken(ctx context.Context, repo string) (string, error) {
+	url := "https://ghcr.io/token?service=ghcr.io&scope=repository:" + repo + ":pull"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create GHCR auth request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch GHCR token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GHCR auth endpoint returned %d", resp.StatusCode)
+	}
+
+	var tok TokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+		return "", fmt.Errorf("decode GHCR token response: %w", err)
+	}
+	if tok.Token == "" {
+		return "", fmt.Errorf("empty token in GHCR response")
+	}
+
+	return tok.Token, nil
+}

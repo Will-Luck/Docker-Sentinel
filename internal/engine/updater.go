@@ -79,6 +79,8 @@ type Updater struct {
 	settings      SettingsReader
 	rateTracker   *registry.RateLimitTracker // optional: rate limit awareness
 	rateSaver     func([]byte) error         // optional: persist rate limits after scan
+	ghcrCache     *registry.GHCRCache        // optional: GHCR alternative detection cache
+	ghcrSaver     func([]byte) error         // optional: persist GHCR cache after checks
 	updating      sync.Map                   // map[string]*sync.Mutex — per-container update locks
 }
 
@@ -110,6 +112,16 @@ func (u *Updater) SetRateLimitTracker(t *registry.RateLimitTracker) {
 // SetRateLimitSaver attaches a function to persist rate limits after each scan.
 func (u *Updater) SetRateLimitSaver(fn func([]byte) error) {
 	u.rateSaver = fn
+}
+
+// SetGHCRCache attaches a GHCR alternative detection cache.
+func (u *Updater) SetGHCRCache(c *registry.GHCRCache) {
+	u.ghcrCache = c
+}
+
+// SetGHCRSaver attaches a function to persist the GHCR cache after checks.
+func (u *Updater) SetGHCRSaver(fn func([]byte) error) {
+	u.ghcrSaver = fn
 }
 
 // tryLock attempts to acquire the per-container update lock.
@@ -461,7 +473,93 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 	}
 
+	// Launch background GHCR alternative check for Docker Hub containers.
+	if u.ghcrCache != nil {
+		go u.checkGHCRAlternatives(ctx, containers)
+	}
+
 	return result
+}
+
+// checkGHCRAlternatives probes GHCR for alternatives to Docker Hub images.
+// Runs as a background goroutine after each scan. Skips images that already
+// have a valid (non-expired) cache entry.
+func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []container.Summary) {
+	// Check if GHCR detection is enabled (default: true).
+	if u.settings != nil {
+		val, _ := u.settings.LoadSetting("ghcr_check_enabled")
+		if val == "false" {
+			return
+		}
+	}
+
+	// Gather credentials for Docker Hub and GHCR.
+	var hubCred, ghcrCred *registry.RegistryCredential
+	if cs := u.checker.CredentialStore(); cs != nil {
+		creds, _ := cs.GetRegistryCredentials()
+		hubCred = registry.FindByRegistry(creds, "docker.io")
+		ghcrCred = registry.FindByRegistry(creds, "ghcr.io")
+	}
+
+	checked := 0
+	for _, c := range containers {
+		if ctx.Err() != nil {
+			break
+		}
+
+		host := registry.RegistryHost(c.Image)
+		if host != "docker.io" {
+			continue
+		}
+
+		repo := registry.RepoPath(c.Image)
+		tag := registry.ExtractTag(c.Image)
+		if tag == "" {
+			tag = "latest"
+		}
+
+		// Skip if already cached and not expired.
+		if _, ok := u.ghcrCache.Get(repo, tag); ok {
+			continue
+		}
+
+		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		alt, err := registry.CheckGHCRAlternative(checkCtx, c.Image, hubCred, ghcrCred)
+		cancel()
+
+		if err != nil {
+			u.log.Debug("GHCR check failed", "image", c.Image, "error", err)
+			continue
+		}
+		if alt == nil {
+			continue // skipped (library image or non-docker.io)
+		}
+
+		u.ghcrCache.Set(repo, tag, *alt)
+		checked++
+
+		if alt.Available {
+			match := "different build"
+			if alt.DigestMatch {
+				match = "identical"
+			}
+			u.log.Info("GHCR alternative found", "image", c.Image, "ghcr", alt.GHCRImage, "digest", match)
+		}
+	}
+
+	// Persist cache to DB.
+	if u.ghcrSaver != nil && checked > 0 {
+		if data, err := u.ghcrCache.Export(); err == nil {
+			if err := u.ghcrSaver(data); err != nil {
+				u.log.Warn("failed to persist GHCR cache", "error", err)
+			}
+		}
+	}
+
+	// Emit SSE event so the UI refreshes.
+	if checked > 0 {
+		u.publishEvent(events.EventGHCRCheck, "", fmt.Sprintf("checked %d images", checked))
+	}
 }
 
 // UpdateContainer performs the full update lifecycle for a single container:

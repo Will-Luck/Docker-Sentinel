@@ -25,7 +25,8 @@ var (
 	bucketNotifyPrefs     = []byte("notify_prefs")
 	bucketIgnoredVersions = []byte("ignored_versions")
 	bucketRegistryCreds   = []byte("registry_credentials")
-	bucketRateLimits      = []byte("rate_limits")
+	bucketRateLimits        = []byte("rate_limits")
+	bucketGHCRAlternatives  = []byte("ghcr_alternatives")
 )
 
 // UpdateRecord represents a completed (or failed) container update.
@@ -55,7 +56,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -637,6 +638,30 @@ func (s *Store) LoadRateLimits() ([]byte, error) {
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketRateLimits)
 		v := b.Get([]byte("state"))
+		if v != nil {
+			data = make([]byte, len(v))
+			copy(data, v)
+		}
+		return nil
+	})
+	return data, err
+}
+
+// SaveGHCRCache persists GHCR alternative detection cache.
+func (s *Store) SaveGHCRCache(data []byte) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketGHCRAlternatives)
+		return b.Put([]byte("cache"), data)
+	})
+}
+
+// LoadGHCRCache loads persisted GHCR alternative cache.
+// Returns nil, nil if nothing is stored.
+func (s *Store) LoadGHCRCache() ([]byte, error) {
+	var data []byte
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketGHCRAlternatives)
+		v := b.Get([]byte("cache"))
 		if v != nil {
 			data = make([]byte, len(v))
 			copy(data, v)
