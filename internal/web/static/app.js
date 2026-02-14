@@ -272,6 +272,9 @@ function initSettingsPage() {
 
     // Load GHCR alternatives table on registries tab.
     renderGHCRAlternatives();
+
+    // Load About info.
+    loadAboutInfo();
 }
 
 function onPollIntervalChange(value) {
@@ -3607,4 +3610,140 @@ function updateRateLimitStatus() {
 // Fetch on initial load; live updates arrive via SSE rate_limits event.
 if (document.getElementById("rate-limit-status")) {
     updateRateLimitStatus();
+}
+
+// --- About tab ---
+// All dynamic values are sanitised through escapeHtml() before insertion.
+
+function loadAboutInfo() {
+    var container = document.getElementById("about-content");
+    if (!container) return;
+
+    fetch("/api/about")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var rows = document.createElement("div");
+            rows.className = "settings-rows";
+
+            appendAboutSection(rows, "Instance");
+            appendAboutRow(rows, "Version", data.version || "dev");
+            appendAboutRow(rows, "Go Version", data.go_version || "-");
+            appendAboutRow(rows, "Data Directory", data.data_directory || "-");
+            appendAboutRow(rows, "Uptime", data.uptime || "-");
+            appendAboutRow(rows, "Started", data.started_at ? formatAboutTime(data.started_at) : "-");
+
+            appendAboutSection(rows, "Runtime");
+            appendAboutRow(rows, "Poll Interval", data.poll_interval || "-");
+            appendAboutRow(rows, "Last Scan", data.last_scan ? formatAboutTimeAgo(data.last_scan) : "Never");
+            appendAboutRow(rows, "Containers Monitored", String(data.containers || 0));
+            appendAboutRow(rows, "Updates Applied", String(data.updates_applied || 0));
+            appendAboutRow(rows, "Snapshots Stored", String(data.snapshots || 0));
+
+            appendAboutSection(rows, "Integrations");
+
+            // Notification channels
+            if (data.channels && data.channels.length > 0) {
+                var chWrap = document.createElement("div");
+                chWrap.className = "about-channels";
+                for (var i = 0; i < data.channels.length; i++) {
+                    var badge = document.createElement("span");
+                    badge.className = "about-channel-badge";
+                    badge.textContent = data.channels[i].name;
+                    var typeSpan = document.createElement("span");
+                    typeSpan.className = "about-channel-type";
+                    typeSpan.textContent = data.channels[i].type;
+                    badge.appendChild(typeSpan);
+                    chWrap.appendChild(badge);
+                }
+                appendAboutRowEl(rows, "Notification Channels", chWrap);
+            } else {
+                appendAboutRow(rows, "Notification Channels", "None configured");
+            }
+
+            // Registry auth
+            if (data.registries && data.registries.length > 0) {
+                var regWrap = document.createElement("div");
+                regWrap.className = "about-channels";
+                for (var i = 0; i < data.registries.length; i++) {
+                    var regBadge = document.createElement("span");
+                    regBadge.className = "about-channel-badge";
+                    regBadge.textContent = data.registries[i];
+                    regWrap.appendChild(regBadge);
+                }
+                appendAboutRowEl(rows, "Registry Auth", regWrap);
+            } else {
+                appendAboutRow(rows, "Registry Auth", "None configured");
+            }
+
+            container.textContent = "";
+            container.appendChild(rows);
+        })
+        .catch(function() {
+            container.textContent = "Failed to load info";
+        });
+}
+
+function appendAboutSection(parent, title) {
+    var div = document.createElement("div");
+    div.className = "about-section-title";
+    div.textContent = title;
+    parent.appendChild(div);
+}
+
+function appendAboutRow(parent, label, value) {
+    var row = document.createElement("div");
+    row.className = "setting-row";
+    var info = document.createElement("div");
+    info.className = "setting-info";
+    var lbl = document.createElement("div");
+    lbl.className = "setting-label";
+    lbl.textContent = label;
+    info.appendChild(lbl);
+    row.appendChild(info);
+    var val = document.createElement("div");
+    val.className = "about-value";
+    val.textContent = value;
+    row.appendChild(val);
+    parent.appendChild(row);
+}
+
+function appendAboutRowEl(parent, label, valueEl) {
+    var row = document.createElement("div");
+    row.className = "setting-row";
+    var info = document.createElement("div");
+    info.className = "setting-info";
+    var lbl = document.createElement("div");
+    lbl.className = "setting-label";
+    lbl.textContent = label;
+    info.appendChild(lbl);
+    row.appendChild(info);
+    row.appendChild(valueEl);
+    parent.appendChild(row);
+}
+
+function formatAboutTime(iso) {
+    try {
+        var d = new Date(iso);
+        return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) +
+            " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    } catch(e) {
+        return iso;
+    }
+}
+
+function formatAboutTimeAgo(iso) {
+    try {
+        var d = new Date(iso);
+        var now = new Date();
+        var diff = now - d;
+        var mins = Math.floor(diff / 60000);
+        if (mins < 1) return "Just now";
+        if (mins < 60) return mins + "m ago";
+        var hours = Math.floor(mins / 60);
+        if (hours < 24) return hours + "h " + (mins % 60) + "m ago";
+        var days = Math.floor(hours / 24);
+        return days + "d " + (hours % 24) + "h ago";
+    } catch(e) {
+        return iso;
+    }
 }

@@ -218,6 +218,7 @@ func main() {
 	if cfg.WebEnabled {
 		srv := web.NewServer(web.Dependencies{
 			Store:              &storeAdapter{db},
+			AboutStore:         &aboutStoreAdapter{db},
 			Queue:              &queueAdapter{queue},
 			Docker:             &dockerAdapter{client},
 			Updater:            updater,
@@ -245,6 +246,7 @@ func main() {
 			GHCRCache:           &ghcrCacheAdapter{c: ghcrCache},
 			Digest:              digestSched,
 			Auth:                authSvc,
+			Version:             version,
 			Log:                 log.Logger,
 		})
 
@@ -405,6 +407,12 @@ func (a *storeAdapter) ListHistoryByContainer(name string, limit int) ([]web.Upd
 func (a *storeAdapter) GetMaintenance(name string) (bool, error) {
 	return a.s.GetMaintenance(name)
 }
+
+// aboutStoreAdapter converts store.Store to web.AboutStore.
+type aboutStoreAdapter struct{ s *store.Store }
+
+func (a *aboutStoreAdapter) CountHistory() (int, error)  { return a.s.CountHistory() }
+func (a *aboutStoreAdapter) CountSnapshots() (int, error) { return a.s.CountSnapshots() }
 
 // snapshotAdapter converts store.Store to web.SnapshotStore.
 type snapshotAdapter struct{ s *store.Store }

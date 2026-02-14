@@ -647,6 +647,30 @@ func (s *Store) LoadRateLimits() ([]byte, error) {
 	return data, err
 }
 
+// CountHistory returns the number of entries in the history bucket.
+// Uses bucket stats for O(1) counting.
+func (s *Store) CountHistory() (int, error) {
+	var count int
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketHistory)
+		count = b.Stats().KeyN
+		return nil
+	})
+	return count, err
+}
+
+// CountSnapshots returns the number of entries in the snapshots bucket.
+// Uses bucket stats for O(1) counting.
+func (s *Store) CountSnapshots() (int, error) {
+	var count int
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSnapshots)
+		count = b.Stats().KeyN
+		return nil
+	})
+	return count, err
+}
+
 // SaveGHCRCache persists GHCR alternative detection cache.
 func (s *Store) SaveGHCRCache(data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {

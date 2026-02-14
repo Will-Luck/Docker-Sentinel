@@ -51,7 +51,9 @@ type Dependencies struct {
 	RegistryCredentials RegistryCredentialStore
 	RateTracker         RateLimitProvider
 	GHCRCache           GHCRAlternativeProvider
+	AboutStore         AboutStore
 	Auth               *auth.Service
+	Version            string
 	Log                *slog.Logger
 }
 
@@ -180,6 +182,12 @@ type GHCRAlternative struct {
 	HubDigest      string    `json:"hub_digest,omitempty"`
 	GHCRDigest     string    `json:"ghcr_digest,omitempty"`
 	CheckedAt      time.Time `json:"checked_at"`
+}
+
+// AboutStore provides aggregate counts for the About page.
+type AboutStore interface {
+	CountHistory() (int, error)
+	CountSnapshots() (int, error)
 }
 
 // DigestController controls the digest scheduler.
@@ -331,6 +339,7 @@ type Server struct {
 	mux            *http.ServeMux
 	tmpl           *template.Template
 	server         *http.Server
+	startTime      time.Time          // when the server was created
 	bootstrapToken string             // one-time setup token, cleared after first user creation
 	webauthn       *webauthn.WebAuthn // nil when WebAuthn is not configured
 	tlsCert        string             // path to TLS certificate PEM (empty = plain HTTP)
@@ -356,8 +365,9 @@ func (s *Server) SetWebAuthn(wa *webauthn.WebAuthn) {
 // NewServer creates a Server with all routes registered.
 func NewServer(deps Dependencies) *Server {
 	s := &Server{
-		deps: deps,
-		mux:  http.NewServeMux(),
+		deps:      deps,
+		mux:       http.NewServeMux(),
+		startTime: time.Now(),
 	}
 
 	s.parseTemplates()
@@ -515,6 +525,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
 	s.mux.Handle("GET /api/settings/registries", perm(auth.PermSettingsView, s.apiGetRegistryCredentials))
 	s.mux.Handle("GET /api/ratelimits", perm(auth.PermContainersView, s.apiGetRateLimits))
+	s.mux.Handle("GET /api/about", perm(auth.PermSettingsView, s.apiAbout))
 	s.mux.Handle("GET /api/ghcr/alternatives", perm(auth.PermContainersView, s.apiGetGHCRAlternatives))
 	s.mux.Handle("GET /api/containers/{name}/ghcr", perm(auth.PermContainersView, s.apiGetContainerGHCR))
 
