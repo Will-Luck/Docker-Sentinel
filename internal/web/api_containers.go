@@ -244,7 +244,7 @@ func (s *Server) apiTriggerScan(w http.ResponseWriter, r *http.Request) {
 
 	go s.deps.Scheduler.TriggerScan(context.Background())
 
-	s.logEvent("scan", "", "Manual scan triggered")
+	s.logEvent(r, "scan", "", "Manual scan triggered")
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "Scan started",
 	})

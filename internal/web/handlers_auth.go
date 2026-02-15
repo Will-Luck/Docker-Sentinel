@@ -101,7 +101,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 
 	auth.SetSessionCookie(w, session.Token, session.ExpiresAt, s.deps.Auth.CookieSecure)
 
-	s.logEvent("auth", "", "User "+user.Username+" logged in from "+ip)
+	s.logEvent(r, "auth", "", "User "+user.Username+" logged in from "+ip)
 
 	if isJSON {
 		resp := map[string]any{"redirect": "/"}
@@ -230,7 +230,7 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	auth.SetSessionCookie(w, sessionToken, session.ExpiresAt, s.deps.Auth.CookieSecure)
 
-	s.logEvent("auth", "", "Initial admin user "+username+" created via setup wizard")
+	s.logEvent(r, "auth", "", "Initial admin user "+username+" created via setup wizard")
 
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, map[string]string{"redirect": "/"})
@@ -319,7 +319,7 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logEvent("auth", "", "User "+rc.User.Username+" changed their password")
+	s.logEvent(r, "auth", "", "User "+rc.User.Username+" changed their password")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -427,7 +427,7 @@ func (s *Server) apiCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logEvent("auth", "", "API token "+body.Name+" created by "+rc.User.Username)
+	s.logEvent(r, "auth", "", "API token "+body.Name+" created by "+rc.User.Username)
 
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"id":    tokenID,
@@ -561,7 +561,7 @@ func (s *Server) apiCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	rc := auth.GetRequestContext(r.Context())
 	if rc != nil && rc.User != nil {
-		s.logEvent("auth", "", "User "+body.Username+" created by "+rc.User.Username+" (role: "+body.RoleID+")")
+		s.logEvent(r, "auth", "", "User "+body.Username+" created by "+rc.User.Username+" (role: "+body.RoleID+")")
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]string{"id": userID, "username": body.Username})
@@ -598,7 +598,7 @@ func (s *Server) apiDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logEvent("auth", "", "User "+target.Username+" deleted by "+rc.User.Username)
+	s.logEvent(r, "auth", "", "User "+target.Username+" deleted by "+rc.User.Username)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -628,7 +628,7 @@ func (s *Server) apiAuthSettings(w http.ResponseWriter, r *http.Request) {
 		if !body.AuthEnabled {
 			action = "disabled"
 		}
-		s.logEvent("auth", "", "Authentication "+action+" by "+rc.User.Username)
+		s.logEvent(r, "auth", "", "Authentication "+action+" by "+rc.User.Username)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

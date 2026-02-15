@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
 
@@ -65,14 +67,22 @@ func (s *Server) getContainerLabels(ctx context.Context, name string) map[string
 }
 
 // logEvent appends a log entry if the EventLog dependency is available.
-func (s *Server) logEvent(eventType, container, message string) {
+// It extracts the acting username from the request's auth context (if present).
+func (s *Server) logEvent(r *http.Request, eventType, container, message string) {
 	if s.deps.EventLog == nil {
 		return
+	}
+	var user string
+	if r != nil {
+		if rc := auth.GetRequestContext(r.Context()); rc != nil && rc.User != nil {
+			user = rc.User.Username
+		}
 	}
 	if err := s.deps.EventLog.AppendLog(LogEntry{
 		Type:      eventType,
 		Message:   message,
 		Container: container,
+		User:      user,
 	}); err != nil {
 		s.deps.Log.Warn("failed to persist event log", "type", eventType, "container", container, "error", err)
 	}

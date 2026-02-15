@@ -64,7 +64,7 @@ func (s *Server) apiSetPollInterval(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.logEvent("settings", "", "Poll interval changed to "+d.String())
+	s.logEvent(r, "settings", "", "Poll interval changed to "+d.String())
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":   "ok",
@@ -114,7 +114,7 @@ func (s *Server) apiSetGracePeriod(w http.ResponseWriter, r *http.Request) {
 		s.deps.ConfigWriter.SetGracePeriod(d)
 	}
 
-	s.logEvent("settings", "", "Grace period changed to "+d.String())
+	s.logEvent(r, "settings", "", "Grace period changed to "+d.String())
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message":  "grace period set to " + d.String(),
@@ -152,7 +152,7 @@ func (s *Server) apiSetPause(w http.ResponseWriter, r *http.Request) {
 	if body.Paused {
 		action = "paused"
 	}
-	s.logEvent("settings", "", "Scheduler "+action)
+	s.logEvent(r, "settings", "", "Scheduler "+action)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "scheduler " + action,
@@ -194,7 +194,7 @@ func (s *Server) apiSetLatestAutoUpdate(w http.ResponseWriter, r *http.Request) 
 	if body.Enabled {
 		label = "enabled"
 	}
-	s.logEvent("settings", "", "Auto-update :latest containers "+label)
+	s.logEvent(r, "settings", "", "Auto-update :latest containers "+label)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "latest auto-update " + label,
@@ -224,7 +224,7 @@ func (s *Server) apiSetFilters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logEvent("settings", "", "Scan filters updated")
+	s.logEvent(r, "settings", "", "Scan filters updated")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "filters updated",
@@ -260,7 +260,7 @@ func (s *Server) apiSetImageCleanup(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled {
 		label = "enabled"
 	}
-	s.logEvent("settings", "", "Image cleanup "+label)
+	s.logEvent(r, "settings", "", "Image cleanup "+label)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "image cleanup " + label})
 }
 
@@ -297,7 +297,7 @@ func (s *Server) apiSetSchedule(w http.ResponseWriter, r *http.Request) {
 	if body.Schedule != "" {
 		msg = "Schedule set to " + body.Schedule
 	}
-	s.logEvent("settings", "", msg)
+	s.logEvent(r, "settings", "", msg)
 	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
 }
 
@@ -330,7 +330,7 @@ func (s *Server) apiSetHooksEnabled(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled {
 		label = "enabled"
 	}
-	s.logEvent("settings", "", "Lifecycle hooks "+label)
+	s.logEvent(r, "settings", "", "Lifecycle hooks "+label)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "lifecycle hooks " + label})
 }
 
@@ -363,7 +363,7 @@ func (s *Server) apiSetHooksWriteLabels(w http.ResponseWriter, r *http.Request) 
 	if body.Enabled {
 		label = "enabled"
 	}
-	s.logEvent("settings", "", "Hook label writing "+label)
+	s.logEvent(r, "settings", "", "Hook label writing "+label)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "hook label writing " + label})
 }
 
@@ -396,6 +396,6 @@ func (s *Server) apiSetDependencyAware(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled {
 		label = "enabled"
 	}
-	s.logEvent("settings", "", "Dependency-aware updates "+label)
+	s.logEvent(r, "settings", "", "Dependency-aware updates "+label)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "dependency-aware updates " + label})
 }
