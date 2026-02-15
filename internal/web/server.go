@@ -360,15 +360,15 @@ type ConfigWriter interface {
 
 // Server is the web dashboard HTTP server.
 type Server struct {
-	deps           Dependencies
-	mux            *http.ServeMux
-	tmpl           *template.Template
-	server         *http.Server
+	deps          Dependencies
+	mux           *http.ServeMux
+	tmpl          *template.Template
+	server        *http.Server
 	startTime     time.Time          // when the server was created
 	setupDeadline time.Time          // setup page closes after this; zero = no window
 	webauthn      *webauthn.WebAuthn // nil when WebAuthn is not configured
-	tlsCert        string             // path to TLS certificate PEM (empty = plain HTTP)
-	tlsKey         string             // path to TLS private key PEM
+	tlsCert       string             // path to TLS certificate PEM (empty = plain HTTP)
+	tlsKey        string             // path to TLS private key PEM
 }
 
 // SetSetupDeadline sets the time limit for first-run setup.
