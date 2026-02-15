@@ -12,10 +12,13 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
+	"github.com/Will-Luck/Docker-Sentinel/internal/deps"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/guardian"
+	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -82,6 +85,8 @@ type Updater struct {
 	ghcrCache   *registry.GHCRCache        // optional: GHCR alternative detection cache
 	ghcrSaver   func([]byte) error         // optional: persist GHCR cache after checks
 	updating    sync.Map                   // map[string]*sync.Mutex — per-container update locks
+	hooks       *hooks.Runner              // optional: lifecycle hook runner
+	deps        *deps.Graph                // optional: dependency graph (rebuilt each scan)
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -122,6 +127,11 @@ func (u *Updater) SetGHCRCache(c *registry.GHCRCache) {
 // SetGHCRSaver attaches a function to persist the GHCR cache after checks.
 func (u *Updater) SetGHCRSaver(fn func([]byte) error) {
 	u.ghcrSaver = fn
+}
+
+// SetHookRunner attaches a lifecycle hook runner.
+func (u *Updater) SetHookRunner(r *hooks.Runner) {
+	u.hooks = r
 }
 
 // tryLock attempts to acquire the per-container update lock.
@@ -484,6 +494,11 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}()
 	}
 
+	metrics.ScansTotal.Inc()
+	metrics.ContainersTotal.Set(float64(result.Total))
+	metrics.ContainersMonitored.Set(float64(result.Total - result.Skipped))
+	metrics.PendingUpdates.Set(float64(result.Queued))
+
 	return result
 }
 
@@ -615,6 +630,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	}
 
 	oldImage := inspect.Config.Image
+	oldImageID := inspect.Image // full image ID for cleanup
 	// Determine which image to pull: targetImage (semver bump) or oldImage (mutable tag re-pull).
 	pullImage := oldImage
 	if targetImage != "" {
@@ -633,6 +649,18 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	// 2. Mark maintenance window.
 	if err := u.store.SetMaintenance(name, true); err != nil {
 		u.log.Warn("failed to set maintenance flag", "name", name, "error", err)
+	}
+
+	// 2.5. Run pre-update hooks.
+	if u.hooks != nil && u.cfg.HooksEnabled() {
+		if err := u.hooks.RunPreUpdate(ctx, id, name); err != nil {
+			if errors.Is(err, hooks.ErrSkipUpdate) {
+				u.log.Info("pre-update hook requested skip", "name", name)
+				_ = u.store.SetMaintenance(name, false)
+				return nil
+			}
+			u.log.Warn("pre-update hook failed", "name", name, "error", err)
+		}
 	}
 
 	// 3. Pull the new image.
@@ -705,10 +733,18 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			Error:         fmt.Sprintf("validation failed: %v", err),
 			Timestamp:     u.clock.Now(),
 		})
+		metrics.UpdatesTotal.WithLabelValues("failed").Inc()
 		_ = u.docker.StopContainer(ctx, newID, 10)
 		_ = u.docker.RemoveContainer(ctx, newID)
 		u.doRollback(ctx, name, snapshotData, start)
 		return fmt.Errorf("new container %s failed validation", name)
+	}
+
+	// 6.5. Run post-update hooks.
+	if u.hooks != nil && u.cfg.HooksEnabled() {
+		if err := u.hooks.RunPostUpdate(ctx, newID, name); err != nil {
+			u.log.Warn("post-update hook failed", "name", name, "error", err)
+		}
 	}
 
 	// 7. Remove maintenance label for Guardian compatibility.
@@ -808,6 +844,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.log.Warn("failed to persist update record", "name", name, "error", err)
 	}
 
+	metrics.UpdatesTotal.WithLabelValues("success").Inc()
+	metrics.UpdateDuration.Observe(duration.Seconds())
+
 	u.notifier.Notify(ctx, notify.Event{
 		Type:          notify.EventUpdateSucceeded,
 		ContainerName: name,
@@ -830,6 +869,29 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	// 10. Handle shared network namespaces.
 	u.repairNetworkNamespace(ctx, finaliseNewID, name)
+
+	// 11. Clean up old image if enabled.
+	u.cleanupOldImage(ctx, oldImageID, name)
+
+	// 12. Restart dependents (dependency-aware).
+	if u.deps != nil && u.cfg.DependencyAware() {
+		for _, dep := range u.deps.Dependents(name) {
+			depContainers, err := u.docker.ListContainers(ctx)
+			if err != nil {
+				u.log.Warn("deps: failed to list containers", "error", err)
+				break
+			}
+			for _, dc := range depContainers {
+				if containerName(dc) == dep {
+					u.log.Info("restarting dependent container", "dependent", dep, "provider", name)
+					if err := u.docker.RestartContainer(ctx, dc.ID); err != nil {
+						u.log.Warn("failed to restart dependent", "dependent", dep, "error", err)
+					}
+					break
+				}
+			}
+		}
+	}
 
 	u.log.Info("update complete", "name", name, "duration", duration)
 	u.publishEvent(events.EventContainerUpdate, name, "update succeeded")
@@ -867,6 +929,7 @@ func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []by
 			ContainerName: name,
 			Timestamp:     u.clock.Now(),
 		})
+		metrics.UpdatesTotal.WithLabelValues("rollback").Inc()
 	}
 	if err := u.store.SetMaintenance(name, false); err != nil {
 		u.log.Warn("failed to clear maintenance flag after rollback", "name", name, "error", err)
