@@ -104,14 +104,10 @@ func main() {
 		AuthEnabledEnv: cfg.AuthEnabled,
 	})
 
-	// Generate bootstrap token for first-run setup if needed.
-	var bootstrapToken string
+	// Set up a 5-minute setup window if no admin user exists yet.
+	var setupDeadline time.Time
 	if authSvc.NeedsSetup() {
-		bootstrapToken, err = auth.GenerateBootstrapToken()
-		if err != nil {
-			log.Error("failed to generate bootstrap token", "error", err)
-			os.Exit(1)
-		}
+		setupDeadline = time.Now().Add(5 * time.Minute)
 	}
 
 	// Load persisted runtime settings (override env defaults).
@@ -314,16 +310,16 @@ func main() {
 		if cfg.TLSEnabled() {
 			scheme = "https"
 		}
-		if bootstrapToken != "" {
-			srv.SetBootstrapToken(bootstrapToken)
+		if !setupDeadline.IsZero() {
+			srv.SetSetupDeadline(setupDeadline)
 			fmt.Println("=============================================")
 			fmt.Println("First-run setup required!")
 			fmt.Println("")
-			fmt.Printf("  Open:  %s://<your-host>:%s/setup\n", scheme, cfg.WebPort)
-			fmt.Printf("  Token: %s\n", bootstrapToken)
+			fmt.Printf("  Open %s://<your-host>:%s/setup\n", scheme, cfg.WebPort)
+			fmt.Println("  to create your admin account.")
 			fmt.Println("")
-			fmt.Println("Paste the token into the setup page to create")
-			fmt.Println("your admin account.")
+			fmt.Println("  This page will be available for 5 minutes.")
+			fmt.Println("  Restart the container to get a new window.")
 			fmt.Println("=============================================")
 		}
 

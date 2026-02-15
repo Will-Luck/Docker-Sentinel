@@ -120,8 +120,10 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
+	remaining := time.Until(s.setupDeadline)
 	s.renderTemplate(w, "setup.html", map[string]any{
-		"Token": r.URL.Query().Get("token"),
+		"Expired":          !s.setupWindowOpen(),
+		"RemainingSeconds": int(remaining.Seconds()),
 	})
 }
 
@@ -132,34 +134,26 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify bootstrap token.
-	_ = r.ParseForm()
-	token := r.FormValue("token")
-	if token == "" {
-		// Try JSON body.
-		var body struct {
-			Token    string `json:"token"`
-			Username string `json:"username"`
-			Password string `json:"password"`
-		}
-		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-			if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
-				token = body.Token
-				if r.FormValue("username") == "" {
-					r.Form.Set("username", body.Username)
-					r.Form.Set("password", body.Password)
-				}
-			}
-		}
-	}
-
-	if s.bootstrapToken != "" && token != s.bootstrapToken {
-		writeError(w, http.StatusForbidden, "invalid setup token")
+	if !s.setupWindowOpen() {
+		writeError(w, http.StatusForbidden, "setup window has expired — restart the container to try again")
 		return
 	}
 
-	username := r.FormValue("username")
-	password := r.FormValue("password")
+	var username, password string
+	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			username = body.Username
+			password = body.Password
+		}
+	} else {
+		_ = r.ParseForm()
+		username = r.FormValue("username")
+		password = r.FormValue("password")
+	}
 	if username == "" || password == "" {
 		writeError(w, http.StatusBadRequest, "username and password required")
 		return
@@ -207,8 +201,8 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 	// Mark setup complete.
 	_ = s.deps.Auth.Settings.SaveSetting("auth_setup_complete", "true")
 
-	// Clear bootstrap token.
-	s.bootstrapToken = ""
+	// Close the setup window.
+	s.setupDeadline = time.Time{}
 
 	// Create session for the new admin.
 	sessionToken, err := auth.GenerateSessionToken()

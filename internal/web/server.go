@@ -364,16 +364,26 @@ type Server struct {
 	mux            *http.ServeMux
 	tmpl           *template.Template
 	server         *http.Server
-	startTime      time.Time          // when the server was created
-	bootstrapToken string             // one-time setup token, cleared after first user creation
-	webauthn       *webauthn.WebAuthn // nil when WebAuthn is not configured
+	startTime     time.Time          // when the server was created
+	setupDeadline time.Time          // setup page closes after this; zero = no window
+	webauthn      *webauthn.WebAuthn // nil when WebAuthn is not configured
 	tlsCert        string             // path to TLS certificate PEM (empty = plain HTTP)
 	tlsKey         string             // path to TLS private key PEM
 }
 
-// SetBootstrapToken sets the one-time setup token for first-run security.
-func (s *Server) SetBootstrapToken(token string) {
-	s.bootstrapToken = token
+// SetSetupDeadline sets the time limit for first-run setup.
+// After this deadline, the setup page will reject new account creation
+// until the container is restarted.
+func (s *Server) SetSetupDeadline(d time.Time) {
+	s.setupDeadline = d
+}
+
+// setupWindowOpen returns true if the setup time window is still active.
+func (s *Server) setupWindowOpen() bool {
+	if s.setupDeadline.IsZero() {
+		return false
+	}
+	return time.Now().Before(s.setupDeadline)
 }
 
 // SetTLS configures TLS certificate and key paths for HTTPS serving.

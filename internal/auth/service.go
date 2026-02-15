@@ -142,15 +142,6 @@ func (s *Service) NeedsSetup() bool {
 	return count == 0
 }
 
-// GenerateBootstrapToken creates a one-time setup token.
-func GenerateBootstrapToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
 // GenerateUserID creates a random 16-char hex user ID.
 func GenerateUserID() (string, error) {
 	b := make([]byte, 8)
