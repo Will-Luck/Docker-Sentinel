@@ -9,6 +9,10 @@
 
 A container update orchestrator with a web dashboard, written in Go. Replaces Watchtower with per-container update policies, pre-update snapshots, post-update health validation, automatic rollback, and real-time notifications.
 
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Docker-Sentinel Dashboard" width="900">
+</p>
+
 ## Features
 
 ### Update Engine
@@ -18,6 +22,9 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 - **Version resolution** — resolves actual versions behind mutable tags like `:latest` so you can see what version is really running
 - **Self-update** — Sentinel can check and update its own image (with opt-out via `sentinel.self` label)
 - **[Docker-Guardian](https://github.com/Will-Luck/Docker-Guardian) integration** — maintenance labels prevent restart conflicts during updates
+- **Image cleanup** — automatically removes old images after successful updates (toggle via settings)
+- **Dependency-aware updates** — topological sort ensures dependencies update first; dependents auto-restart on network/volume changes
+- **Cron scheduling** — optional cron expressions (e.g. `0 2 * * *`) alongside poll interval for precise scan timing
 
 ### Registry Intelligence
 - **Digest comparison** for mutable tags (`:latest`) — detects upstream changes without pulling
@@ -37,14 +44,35 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 - **Bulk actions** — select multiple containers to change policies at once
 - **Update queue** — review, approve, reject, or ignore pending updates for manual-policy containers
 - **History & logs** — full update history with timestamps and searchable activity logs
+- **Activity log with user tracking** — every action records which user performed it (when auth is enabled)
 - **About page** — version info, uptime, runtime stats, integration status, and GitHub links
 - **Dashboard footer** — persistent version number and beta notice with link to issue tracker
+
+<details>
+<summary>Screenshots</summary>
+
+| | |
+|---|---|
+| <img src="docs/screenshots/queue.png" alt="Pending Updates" width="400"> | <img src="docs/screenshots/history.png" alt="Update History" width="400"> |
+| <img src="docs/screenshots/logs.png" alt="Activity Log" width="400"> | <img src="docs/screenshots/container-detail.png" alt="Container Detail" width="400"> |
+
+</details>
 
 ### Notifications
 - **7 providers** — Gotify, Slack, Discord, Ntfy, Telegram, Pushover, generic webhooks — each with per-event filtering
 - **Smart deduplication** — never re-notifies for the same update already seen
 - **Per-container modes** — immediate + summary, every scan, summary only, or silent
 - **Daily digest** — consolidated summary of all pending updates at a configurable time
+
+### Lifecycle Hooks
+- **Pre/post-update hooks** — execute custom commands inside containers before or after updates (backups, health checks, cache warming)
+- **Exit code 75 skip** — hooks returning exit 75 abort the update without error (useful for conditional updates)
+- **Hook management UI** — create, edit, test, and delete hooks from the settings page
+- **Label persistence** — optionally write hook config as container labels for portability across recreations
+
+### Observability
+- **Prometheus metrics** — 10 metrics at `/metrics` endpoint (containers total, updates total/duration, scan duration, queue length, image cleanups, registry errors)
+- Enable via `SENTINEL_METRICS=true` or the settings UI
 
 ### Settings & Appearance
 - **Runtime configuration** — adjust poll interval, grace period, default policy, pause scanning, notification behaviour, container filters, and more from the web UI without restart
@@ -53,6 +81,13 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 - **Notification channels** — add/edit/test/delete notification providers with per-event filtering
 - **Registry credentials** — manage authentication for private registries (Docker Hub, GHCR, custom)
 - **Per-container overrides** — set notification mode per container from settings or container detail
+
+<details>
+<summary>Screenshot</summary>
+
+<img src="docs/screenshots/settings-general.png" alt="Settings" width="800">
+
+</details>
 
 ### Authentication & Security
 - **WebAuthn/passkey login** — passwordless authentication via hardware keys, biometrics, or platform authenticators
@@ -63,8 +98,21 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 - **Built-in TLS** — serve HTTPS directly with your own certificates or automatic self-signed
 - **Rate limiting** — login attempt throttling to prevent brute force attacks
 
+<details>
+<summary>Screenshots</summary>
+
+| | |
+|---|---|
+| <img src="docs/screenshots/login.png" alt="Login" width="400"> | <img src="docs/screenshots/settings-auth.png" alt="Auth Settings" width="400"> |
+
+</details>
+
 ### REST API
 All dashboard functionality is exposed as JSON endpoints. See the [full API reference](#rest-api-1) below.
+
+## Documentation
+
+For detailed guides on every feature, see the **[Wiki](https://github.com/Will-Luck/Docker-Sentinel/wiki)**.
 
 ## Quick Start
 
@@ -100,6 +148,11 @@ All configuration is via environment variables. Settings marked with * can also 
 | `SENTINEL_DB_PATH` | `/data/sentinel.db` | BoltDB database path |
 | `SENTINEL_LOG_JSON` | `true` | JSON structured logging |
 | `SENTINEL_DOCKER_SOCK` | `/var/run/docker.sock` | Docker socket path |
+| `SENTINEL_IMAGE_CLEANUP` | `true` | Remove old images after successful updates * |
+| `SENTINEL_CRON` | | Cron expression for scan scheduling (overrides poll interval when set) * |
+| `SENTINEL_METRICS` | `false` | Enable Prometheus metrics at `/metrics` * |
+| `SENTINEL_HOOKS` | `false` | Enable lifecycle hooks * |
+| `SENTINEL_DEPS` | `true` | Enable dependency-aware update ordering * |
 
 ### Web & Authentication
 
@@ -133,6 +186,7 @@ All configuration is via environment variables. Settings marked with * can also 
 | `sentinel.policy` | `auto`, `manual`, `pinned` | `manual` | Update policy |
 | `sentinel.maintenance` | `true` | (absent) | Set during updates, read by Docker-Guardian |
 | `sentinel.self` | `true` | (absent) | Prevents Sentinel from updating itself |
+| `sentinel.depends-on` | comma-separated names | (absent) | Container dependencies for ordered updates |
 
 - **auto** — updates applied automatically when a new image is detected
 - **manual** — updates queued for approval in the dashboard
@@ -249,6 +303,11 @@ Requires Go 1.24+, Docker, and golangci-lint.
 | `POST` | `/api/settings/filters` | Set container name filter patterns |
 | `POST` | `/api/settings/stack-order` | Save custom stack ordering |
 | `POST` | `/api/settings/latest-auto-update` | Toggle auto-update for `:latest` tags |
+| `POST` | `/api/settings/image-cleanup` | Toggle image cleanup * |
+| `POST` | `/api/settings/cron` | Set cron schedule * |
+| `POST` | `/api/settings/hooks` | Toggle hooks * |
+| `POST` | `/api/settings/deps` | Toggle dependency-aware updates * |
+| `POST` | `/api/settings/metrics` | Toggle Prometheus metrics * |
 
 **Notifications**
 
@@ -320,6 +379,23 @@ Requires Go 1.24+, Docker, and golangci-lint.
 |--------|----------|-------------|
 | `POST` | `/api/self-update` | Trigger self-update via ephemeral helper |
 
+**Hooks**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/hooks` | List lifecycle hooks |
+| `POST` | `/api/hooks` | Create a hook |
+| `GET` | `/api/hooks/{id}` | Get hook details |
+| `PUT` | `/api/hooks/{id}` | Update a hook |
+| `DELETE` | `/api/hooks/{id}` | Delete a hook |
+| `POST` | `/api/hooks/{id}/test` | Test hook execution |
+
+**Observability**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/metrics` | Prometheus metrics (requires `SENTINEL_METRICS=true`) |
+
 </details>
 
 <details>
@@ -332,11 +408,14 @@ Docker-Sentinel/
 │   ├── auth/              # Authentication, sessions, passkeys, permissions
 │   ├── clock/             # Time abstraction (testable)
 │   ├── config/            # Environment variable configuration
+│   ├── deps/              # Dependency graph, topological sort
 │   ├── docker/            # Docker API client, labels, snapshots
 │   ├── engine/            # Scheduler, updater, rollback, queue, policy
 │   ├── events/            # Event bus (SSE fan-out)
 │   ├── guardian/          # Docker-Guardian maintenance label integration
+│   ├── hooks/             # Lifecycle hooks (pre/post-update)
 │   ├── logging/           # Structured slog logger
+│   ├── metrics/           # Prometheus metrics exposition
 │   ├── notify/            # Notification providers (7 channels + log)
 │   ├── registry/          # Registry digest checker, semver tag discovery, rate limits
 │   ├── store/             # BoltDB persistence
