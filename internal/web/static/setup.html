@@ -123,7 +123,16 @@
             {{end}}
 
             <form class="setup-form" method="POST" action="/setup">
+                {{if .Token}}
                 <input type="hidden" name="token" value="{{.Token}}">
+                {{else}}
+                <div class="form-group">
+                    <label class="form-label" for="token">Setup Token</label>
+                    <input class="form-input" type="text" id="token" name="token" placeholder="Paste token from container logs" required
+                           style="font-family:'Roboto Mono',monospace; font-size:0.85rem">
+                    <span class="form-hint">Run <code>docker logs &lt;container&gt;</code> to find your setup token</span>
+                </div>
+                {{end}}
                 <div class="form-group">
                     <label class="form-label" for="username">Admin Username</label>
                     <input class="form-input" type="text" id="username" name="username" autocomplete="username" autofocus required>
