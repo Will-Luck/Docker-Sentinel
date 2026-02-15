@@ -216,6 +216,44 @@ function initSettingsPage() {
                 var filters = settings["filters"] || "";
                 filtersArea.value = filters;
             }
+
+            // Image cleanup toggle.
+            var imageCleanupToggle = document.getElementById("image-cleanup-toggle");
+            if (imageCleanupToggle) {
+                var imageCleanup = settings["image_cleanup"] === "true";
+                imageCleanupToggle.checked = imageCleanup;
+                updateToggleText("image-cleanup-text", imageCleanup);
+            }
+
+            // Cron schedule.
+            var cronInput = document.getElementById("cron-schedule");
+            if (cronInput) {
+                cronInput.value = settings["schedule"] || "";
+            }
+
+            // Dependency-aware toggle.
+            var depAwareToggle = document.getElementById("dep-aware-toggle");
+            if (depAwareToggle) {
+                var depAware = settings["dependency_aware"] === "true";
+                depAwareToggle.checked = depAware;
+                updateToggleText("dep-aware-text", depAware);
+            }
+
+            // Hooks enabled toggle.
+            var hooksToggle = document.getElementById("hooks-toggle");
+            if (hooksToggle) {
+                var hooksEnabled = settings["hooks_enabled"] === "true";
+                hooksToggle.checked = hooksEnabled;
+                updateToggleText("hooks-toggle-text", hooksEnabled);
+            }
+
+            // Write hook labels toggle.
+            var hooksLabelsToggle = document.getElementById("hooks-labels-toggle");
+            if (hooksLabelsToggle) {
+                var hooksLabels = settings["hooks_write_labels"] === "true";
+                hooksLabelsToggle.checked = hooksLabels;
+                updateToggleText("hooks-labels-text", hooksLabels);
+            }
         })
         .catch(function() {});
 
@@ -539,6 +577,102 @@ function saveFilters() {
         })
         .catch(function() {
             showToast("Network error — could not save filters", "error");
+        });
+}
+
+function updateToggleText(textId, enabled) {
+    var text = document.getElementById(textId);
+    if (text) {
+        text.textContent = enabled ? "On" : "Off";
+    }
+}
+
+function setImageCleanup(enabled) {
+    updateToggleText("image-cleanup-text", enabled);
+    fetch("/api/settings/image-cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function saveCronSchedule() {
+    var input = document.getElementById("cron-schedule");
+    if (!input) return;
+    fetch("/api/settings/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schedule: input.value })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Schedule updated", "success");
+            } else {
+                showToast(result.data.error || "Failed to update schedule", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not update schedule", "error");
+        });
+}
+
+function setDependencyAware(enabled) {
+    updateToggleText("dep-aware-text", enabled);
+    fetch("/api/settings/dependency-aware", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setHooksEnabled(enabled) {
+    updateToggleText("hooks-toggle-text", enabled);
+    fetch("/api/settings/hooks-enabled", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setHooksWriteLabels(enabled) {
+    updateToggleText("hooks-labels-text", enabled);
+    fetch("/api/settings/hooks-write-labels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
         });
 }
 
