@@ -84,7 +84,7 @@ func (s *Server) apiSaveNotifications(w http.ResponseWriter, r *http.Request) {
 		s.deps.NotifyReconfigurer.Reconfigure(notifiers...)
 	}
 
-	s.logEvent("settings", "", "Notification configuration updated")
+	s.logEvent(r, "settings", "", "Notification configuration updated")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
@@ -222,7 +222,7 @@ func (s *Server) apiSetNotifyPref(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.logEvent("notify_pref", name, "Notification mode set to "+body.Mode)
+	s.logEvent(r, "notify_pref", name, "Notification mode set to "+body.Mode)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "mode": body.Mode})
 }
 
@@ -244,7 +244,7 @@ func (s *Server) apiClearAllNotifyStates(w http.ResponseWriter, r *http.Request)
 			cleared++
 		}
 	}
-	s.logEvent("notify_states_cleared", "", fmt.Sprintf("Cleared %d notification states", cleared))
+	s.logEvent(r, "notify_states_cleared", "", fmt.Sprintf("Cleared %d notification states", cleared))
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "cleared": cleared})
 }
 
@@ -329,7 +329,7 @@ func (s *Server) apiSaveDigestSettings(w http.ResponseWriter, r *http.Request) {
 		s.deps.Digest.SetDigestConfig()
 	}
 
-	s.logEvent("settings", "", "Digest settings updated")
+	s.logEvent(r, "settings", "", "Digest settings updated")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "digest settings saved"})
 }
 
@@ -359,7 +359,7 @@ func (s *Server) apiTriggerDigest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go s.deps.Digest.TriggerDigest(context.Background())
-	s.logEvent("digest", "", "Manual digest triggered")
+	s.logEvent(r, "digest", "", "Manual digest triggered")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "digest triggered"})
 }
 

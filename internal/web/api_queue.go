@@ -57,7 +57,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.logEvent("approve", name, "Update approved and started")
+	s.logEvent(r, "approve", name, "Update approved and started")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "approved",
@@ -95,7 +95,7 @@ func (s *Server) apiIgnoreVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.Queue.Remove(name)
-	s.logEvent("ignore", name, "Ignored version "+ignoredVersion)
+	s.logEvent(r, "ignore", name, "Ignored version "+ignoredVersion)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ignored",
@@ -114,7 +114,7 @@ func (s *Server) apiReject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.Queue.Remove(name)
-	s.logEvent("reject", name, "Update rejected")
+	s.logEvent(r, "reject", name, "Update rejected")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "rejected",

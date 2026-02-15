@@ -196,7 +196,7 @@ func (s *Server) apiPasskeyRegisterFinish(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.logEvent("auth", "", "Passkey \""+name+"\" registered by "+user.Username)
+	s.logEvent(r, "auth", "", "Passkey \""+name+"\" registered by "+user.Username)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "name": name})
 }
@@ -328,7 +328,7 @@ func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 
 	auth.SetSessionCookie(w, session.Token, session.ExpiresAt, s.deps.Auth.CookieSecure)
 
-	s.logEvent("auth", "", "User "+user.Username+" logged in via passkey from "+clientIP(r))
+	s.logEvent(r, "auth", "", "User "+user.Username+" logged in via passkey from "+clientIP(r))
 
 	writeJSON(w, http.StatusOK, map[string]string{"redirect": "/"})
 }
@@ -421,7 +421,7 @@ func (s *Server) apiDeletePasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logEvent("auth", "", "Passkey \""+cred.Name+"\" deleted by "+rc.User.Username)
+	s.logEvent(r, "auth", "", "Passkey \""+cred.Name+"\" deleted by "+rc.User.Username)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

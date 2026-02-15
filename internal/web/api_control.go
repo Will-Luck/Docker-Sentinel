@@ -61,7 +61,7 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	s.logEvent("restart", name, "Container restarted")
+	s.logEvent(r, "restart", name, "Container restarted")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "restarting",
@@ -121,7 +121,7 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	s.logEvent("stop", name, "Container stopped")
+	s.logEvent(r, "stop", name, "Container stopped")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "stopping",
@@ -181,7 +181,7 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	s.logEvent("start", name, "Container started")
+	s.logEvent(r, "start", name, "Container started")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "starting",
@@ -242,7 +242,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.logEvent("update", name, "Manual update triggered")
+	s.logEvent(r, "update", name, "Manual update triggered")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "started",
@@ -275,7 +275,7 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.logEvent("rollback", name, "Rollback triggered")
+	s.logEvent(r, "rollback", name, "Rollback triggered")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "started",
@@ -324,7 +324,7 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logEvent("check", name, "Manual registry check triggered")
+	s.logEvent(r, "check", name, "Manual registry check triggered")
 
 	// Run the check synchronously so the client spinner stays active.
 	updateAvailable, newerVersions, resolvedCurrent, resolvedTarget, checkErr := s.deps.RegistryChecker.CheckForUpdate(r.Context(), imageRef)
@@ -400,7 +400,7 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.logEvent("self_update", "sentinel", "Self-update initiated")
+	s.logEvent(r, "self_update", "sentinel", "Self-update initiated")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "started",

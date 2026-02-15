@@ -112,7 +112,7 @@ func (s *Server) apiSaveRegistryCredentials(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	s.logEvent("settings", "", "Registry credentials updated")
+	s.logEvent(r, "settings", "", "Registry credentials updated")
 
 	// Probe each registry in the background to discover rate limits immediately.
 	if s.deps.RateTracker != nil {
@@ -174,7 +174,7 @@ func (s *Server) apiDeleteRegistryCredential(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	s.logEvent("settings", "", "Registry credential removed")
+	s.logEvent(r, "settings", "", "Registry credential removed")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -409,7 +409,7 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 		s.deps.Log.Info("GHCR switch complete", "name", name, "ghcr_image", ghcrImage)
 	}()
 
-	s.logEvent("ghcr_switch", name, "Switching to GHCR: "+ghcrImage)
+	s.logEvent(r, "ghcr_switch", name, "Switching to GHCR: "+ghcrImage)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":     "started",

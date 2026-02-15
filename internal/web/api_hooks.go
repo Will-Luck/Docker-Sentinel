@@ -73,7 +73,7 @@ func (s *Server) apiSaveHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save hook")
 		return
 	}
-	s.logEvent("hooks", name, fmt.Sprintf("Saved %s hook", body.Phase))
+	s.logEvent(r, "hooks", name, fmt.Sprintf("Saved %s hook", body.Phase))
 	writeJSON(w, http.StatusOK, entry)
 }
 
@@ -94,7 +94,7 @@ func (s *Server) apiDeleteHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete hook")
 		return
 	}
-	s.logEvent("hooks", name, fmt.Sprintf("Deleted %s hook", phase))
+	s.logEvent(r, "hooks", name, fmt.Sprintf("Deleted %s hook", phase))
 	writeJSON(w, http.StatusOK, map[string]string{"message": "hook deleted"})
 }
 

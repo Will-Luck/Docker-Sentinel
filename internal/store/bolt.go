@@ -322,6 +322,7 @@ type LogEntry struct {
 	Type      string    `json:"type"` // policy_set, policy_delete, bulk_policy, update, rollback, approve, reject
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
+	User      string    `json:"user,omitempty"`
 }
 
 // AppendLog writes a log entry to the logs bucket.

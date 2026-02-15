@@ -51,7 +51,7 @@ func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.Log.Info("policy override set", "name", name, "policy", body.Policy)
-	s.logEvent("policy_set", name, "Policy set to "+body.Policy)
+	s.logEvent(r, "policy_set", name, "Policy set to "+body.Policy)
 
 	s.deps.EventBus.Publish(events.SSEEvent{
 		Type:          events.EventPolicyChange,
@@ -91,7 +91,7 @@ func (s *Server) apiDeletePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logEvent("policy_delete", name, "Policy override removed")
+	s.logEvent(r, "policy_delete", name, "Policy override removed")
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
@@ -195,7 +195,7 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 		"blocked", len(blocked), "unchanged", len(unchanged))
 
 	for _, c := range changes {
-		s.logEvent("policy_set", c.Name, "Bulk policy set to "+body.Policy)
+		s.logEvent(r, "policy_set", c.Name, "Bulk policy set to "+body.Policy)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -240,7 +240,7 @@ func (s *Server) apiSetDefaultPolicy(w http.ResponseWriter, r *http.Request) {
 		s.deps.ConfigWriter.SetDefaultPolicy(body.Policy)
 	}
 
-	s.logEvent("settings", "", "Default policy changed to "+body.Policy)
+	s.logEvent(r, "settings", "", "Default policy changed to "+body.Policy)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "default policy set to " + body.Policy,
