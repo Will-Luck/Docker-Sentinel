@@ -107,6 +107,31 @@
             transition: opacity 150ms var(--md-motion-standard);
         }
         .setup-btn:hover { opacity: 0.9; }
+        .setup-timer {
+            text-align: center;
+            font-size: 0.8rem;
+            color: var(--fg-secondary);
+            margin-top: var(--sp-2);
+        }
+        .setup-timer strong {
+            font-family: 'Roboto Mono', monospace;
+            color: var(--fg-primary);
+        }
+        .setup-expired {
+            text-align: center;
+            padding: var(--sp-6) var(--sp-4);
+        }
+        .setup-expired p {
+            color: var(--fg-secondary);
+            margin: var(--sp-3) 0;
+            font-size: 0.9rem;
+        }
+        .setup-expired code {
+            background: var(--bg-input);
+            padding: 2px 6px;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+        }
     </style>
 </head>
 <body>
@@ -116,6 +141,15 @@
                 <img src="/favicon.svg" alt="S" class="nav-logo">
                 <span class="setup-logo-text">Sentinel Setup</span>
             </div>
+
+            {{if .Expired}}
+            <div class="setup-expired">
+                <div class="setup-error">Setup window has expired</div>
+                <p>For security, the setup page is only available for 5 minutes after starting the container.</p>
+                <p>Restart the container to open a new setup window:</p>
+                <p><code>docker restart &lt;container&gt;</code></p>
+            </div>
+            {{else}}
             <p class="setup-subtitle">Create your admin account to get started</p>
 
             {{if .Error}}
@@ -123,16 +157,6 @@
             {{end}}
 
             <form class="setup-form" method="POST" action="/setup">
-                {{if .Token}}
-                <input type="hidden" name="token" value="{{.Token}}">
-                {{else}}
-                <div class="form-group">
-                    <label class="form-label" for="token">Setup Token</label>
-                    <input class="form-input" type="text" id="token" name="token" placeholder="Paste token from container logs" required
-                           style="font-family:'Roboto Mono',monospace; font-size:0.85rem">
-                    <span class="form-hint">Run <code>docker logs &lt;container&gt;</code> to find your setup token</span>
-                </div>
-                {{end}}
                 <div class="form-group">
                     <label class="form-label" for="username">Admin Username</label>
                     <input class="form-input" type="text" id="username" name="username" autocomplete="username" autofocus required>
@@ -148,6 +172,25 @@
                 </div>
                 <button class="setup-btn" type="submit">Create Admin Account</button>
             </form>
+            <div class="setup-timer">
+                Setup window closes in <strong id="countdown"></strong>
+            </div>
+            <script>
+                (function() {
+                    var left = {{.RemainingSeconds}};
+                    var el = document.getElementById('countdown');
+                    function tick() {
+                        if (left <= 0) { location.reload(); return; }
+                        var m = Math.floor(left / 60);
+                        var s = left % 60;
+                        el.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+                        left--;
+                        setTimeout(tick, 1000);
+                    }
+                    tick();
+                })();
+            </script>
+            {{end}}
         </div>
     </div>
 </body>
