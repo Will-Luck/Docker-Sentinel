@@ -698,3 +698,177 @@ func TestUpdateFinaliseInspectFailureRecordsWarning(t *testing.T) {
 		t.Error("inspect should not be classified as destructive")
 	}
 }
+
+// --- Shared network namespace tests ---
+
+func TestRepairNetworkNamespace_ConsumerBrokenSandbox(t *testing.T) {
+	mock := newMockDocker()
+
+	// The updated container is a consumer of "wireguard-pia"'s namespace,
+	// but after finalise it has an empty SandboxKey (broken namespace).
+	mock.inspectResults["new-flare"] = container.InspectResponse{
+		ID:   "new-flare",
+		Name: "/flaresolverr",
+		State: &container.State{
+			Running: true,
+		},
+		Config: &container.Config{
+			Image: "flaresolverr:latest",
+		},
+		HostConfig: &container.HostConfig{
+			NetworkMode: "container:wireguard-pia",
+		},
+		NetworkSettings: &container.NetworkSettings{
+			SandboxKey: "", // broken — empty namespace
+		},
+	}
+
+	// ListContainers returns no other containers (no dependents to check).
+	mock.containers = []container.Summary{}
+
+	u, _ := newTestUpdater(t, mock)
+	u.repairNetworkNamespace(context.Background(), "new-flare", "flaresolverr")
+
+	// Should have restarted the consumer to rejoin the namespace.
+	if len(mock.restartCalls) != 1 {
+		t.Fatalf("restartCalls = %d, want 1", len(mock.restartCalls))
+	}
+	if mock.restartCalls[0] != "new-flare" {
+		t.Errorf("restartCalls[0] = %q, want %q", mock.restartCalls[0], "new-flare")
+	}
+}
+
+func TestRepairNetworkNamespace_ConsumerHealthySandbox(t *testing.T) {
+	mock := newMockDocker()
+
+	// Consumer with a valid SandboxKey — no restart needed.
+	mock.inspectResults["new-flare"] = container.InspectResponse{
+		ID:   "new-flare",
+		Name: "/flaresolverr",
+		Config: &container.Config{
+			Image: "flaresolverr:latest",
+		},
+		HostConfig: &container.HostConfig{
+			NetworkMode: "container:wireguard-pia",
+		},
+		NetworkSettings: &container.NetworkSettings{
+			SandboxKey: "/var/run/docker/netns/abc123",
+		},
+	}
+
+	mock.containers = []container.Summary{}
+
+	u, _ := newTestUpdater(t, mock)
+	u.repairNetworkNamespace(context.Background(), "new-flare", "flaresolverr")
+
+	// Should NOT restart — namespace is healthy.
+	if len(mock.restartCalls) != 0 {
+		t.Errorf("restartCalls = %d, want 0 (sandbox is healthy)", len(mock.restartCalls))
+	}
+}
+
+func TestRepairNetworkNamespace_ProviderRestartsDependents(t *testing.T) {
+	mock := newMockDocker()
+
+	// The updated container is a provider (wireguard-pia) — normal network mode.
+	mock.inspectResults["new-vpn"] = container.InspectResponse{
+		ID:   "new-vpn",
+		Name: "/wireguard-pia",
+		Config: &container.Config{
+			Image: "wireguard-pia:latest",
+		},
+		HostConfig: &container.HostConfig{
+			NetworkMode: "bridge",
+		},
+		NetworkSettings: &container.NetworkSettings{
+			SandboxKey: "/var/run/docker/netns/vpn123",
+		},
+	}
+
+	// Two dependents share this provider's namespace.
+	mock.containers = []container.Summary{
+		{ID: "vpn-id", Names: []string{"/wireguard-pia"}},
+		{ID: "flare-id", Names: []string{"/flaresolverr"}},
+		{ID: "prowlarr-id", Names: []string{"/prowlarr"}},
+		{ID: "unrelated-id", Names: []string{"/nginx"}},
+	}
+
+	mock.inspectResults["flare-id"] = container.InspectResponse{
+		ID:   "flare-id",
+		Name: "/flaresolverr",
+		HostConfig: &container.HostConfig{
+			NetworkMode: "container:wireguard-pia",
+		},
+	}
+	mock.inspectResults["prowlarr-id"] = container.InspectResponse{
+		ID:   "prowlarr-id",
+		Name: "/prowlarr",
+		HostConfig: &container.HostConfig{
+			NetworkMode: "container:wireguard-pia",
+		},
+	}
+	mock.inspectResults["unrelated-id"] = container.InspectResponse{
+		ID:   "unrelated-id",
+		Name: "/nginx",
+		HostConfig: &container.HostConfig{
+			NetworkMode: "bridge",
+		},
+	}
+
+	u, _ := newTestUpdater(t, mock)
+	u.repairNetworkNamespace(context.Background(), "new-vpn", "wireguard-pia")
+
+	// Should restart both dependents but not nginx or self.
+	if len(mock.restartCalls) != 2 {
+		t.Fatalf("restartCalls = %d, want 2", len(mock.restartCalls))
+	}
+
+	restarted := make(map[string]bool)
+	for _, id := range mock.restartCalls {
+		restarted[id] = true
+	}
+	if !restarted["flare-id"] {
+		t.Error("expected flaresolverr to be restarted")
+	}
+	if !restarted["prowlarr-id"] {
+		t.Error("expected prowlarr to be restarted")
+	}
+}
+
+func TestRepairNetworkNamespace_NoDependents(t *testing.T) {
+	mock := newMockDocker()
+
+	// Provider with no dependents — no restarts expected.
+	mock.inspectResults["new-app"] = container.InspectResponse{
+		ID:   "new-app",
+		Name: "/myapp",
+		Config: &container.Config{
+			Image: "myapp:latest",
+		},
+		HostConfig: &container.HostConfig{
+			NetworkMode: "bridge",
+		},
+		NetworkSettings: &container.NetworkSettings{
+			SandboxKey: "/var/run/docker/netns/abc",
+		},
+	}
+
+	mock.containers = []container.Summary{
+		{ID: "app-id", Names: []string{"/myapp"}},
+		{ID: "other-id", Names: []string{"/other"}},
+	}
+	mock.inspectResults["other-id"] = container.InspectResponse{
+		ID:   "other-id",
+		Name: "/other",
+		HostConfig: &container.HostConfig{
+			NetworkMode: "bridge",
+		},
+	}
+
+	u, _ := newTestUpdater(t, mock)
+	u.repairNetworkNamespace(context.Background(), "new-app", "myapp")
+
+	if len(mock.restartCalls) != 0 {
+		t.Errorf("restartCalls = %d, want 0 (no dependents)", len(mock.restartCalls))
+	}
+}

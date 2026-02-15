@@ -17,6 +17,7 @@ type API interface {
 	RemoveContainer(ctx context.Context, id string) error
 	CreateContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig) (string, error)
 	StartContainer(ctx context.Context, id string) error
+	RestartContainer(ctx context.Context, id string) error
 	PullImage(ctx context.Context, refStr string) error
 	ImageDigest(ctx context.Context, imageRef string) (string, error)
 	DistributionDigest(ctx context.Context, imageRef string) (string, error)
