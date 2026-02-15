@@ -22,7 +22,9 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	_ "github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -137,6 +139,26 @@ func main() {
 		cfg.SetLatestAutoUpdate(saved == "true")
 		log.Info("loaded persisted latest auto-update setting", "enabled", saved == "true")
 	}
+	if saved, err := db.LoadSetting("image_cleanup"); err == nil && saved != "" {
+		cfg.SetImageCleanup(saved == "true")
+		log.Info("loaded persisted image cleanup setting", "enabled", saved == "true")
+	}
+	if saved, err := db.LoadSetting("schedule"); err == nil && saved != "" {
+		cfg.SetSchedule(saved)
+		log.Info("loaded persisted schedule", "schedule", saved)
+	}
+	if saved, err := db.LoadSetting("hooks_enabled"); err == nil && saved != "" {
+		cfg.SetHooksEnabled(saved == "true")
+		log.Info("loaded persisted hooks enabled setting", "enabled", saved == "true")
+	}
+	if saved, err := db.LoadSetting("hooks_write_labels"); err == nil && saved != "" {
+		cfg.SetHooksWriteLabels(saved == "true")
+		log.Info("loaded persisted hooks write labels setting", "enabled", saved == "true")
+	}
+	if saved, err := db.LoadSetting("dependency_aware"); err == nil && saved != "" {
+		cfg.SetDependencyAware(saved == "true")
+		log.Info("loaded persisted dependency-aware setting", "enabled", saved == "true")
+	}
 
 	// Build notification chain from persisted channels, with env var fallback.
 	var notifiers []notify.Notifier
@@ -210,6 +232,11 @@ func main() {
 	updater.SetRateLimitSaver(db.SaveRateLimits)
 	updater.SetGHCRCache(ghcrCache)
 	updater.SetGHCRSaver(db.SaveGHCRCache)
+
+	// Create hook runner if hooks are enabled.
+	hookRunner := hooks.NewRunner(client, &hookStoreAdapter{db}, log.Logger)
+	updater.SetHookRunner(hookRunner)
+
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
@@ -244,6 +271,8 @@ func main() {
 			RegistryCredentials: &registryCredentialAdapter{db},
 			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
 			GHCRCache:           &ghcrCacheAdapter{c: ghcrCache},
+			HookStore:           &webHookStoreAdapter{db},
+			MetricsEnabled:      cfg.MetricsEnabled,
 			Digest:              digestSched,
 			Auth:                authSvc,
 			Version:             version,
@@ -911,4 +940,70 @@ func (a *rateLimitAdapter) ProbeAndRecord(ctx context.Context, host string, cred
 		}
 	}
 	return nil
+}
+
+// hookStoreAdapter converts store.Store to hooks.Store interface.
+type hookStoreAdapter struct{ s *store.Store }
+
+func (a *hookStoreAdapter) ListHooks(containerName string) ([]hooks.Hook, error) {
+	entries, err := a.s.ListHooks(containerName)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]hooks.Hook, len(entries))
+	for i, e := range entries {
+		result[i] = hooks.Hook{
+			ContainerName: e.ContainerName,
+			Phase:         e.Phase,
+			Command:       e.Command,
+			Timeout:       e.Timeout,
+		}
+	}
+	return result, nil
+}
+
+func (a *hookStoreAdapter) SaveHook(hook hooks.Hook) error {
+	return a.s.SaveHook(store.HookEntry{
+		ContainerName: hook.ContainerName,
+		Phase:         hook.Phase,
+		Command:       hook.Command,
+		Timeout:       hook.Timeout,
+	})
+}
+
+func (a *hookStoreAdapter) DeleteHook(containerName, phase string) error {
+	return a.s.DeleteHook(containerName, phase)
+}
+
+// webHookStoreAdapter converts store.Store to web.HookStore interface.
+type webHookStoreAdapter struct{ s *store.Store }
+
+func (a *webHookStoreAdapter) ListHooks(containerName string) ([]web.HookEntry, error) {
+	entries, err := a.s.ListHooks(containerName)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.HookEntry, len(entries))
+	for i, e := range entries {
+		result[i] = web.HookEntry{
+			ContainerName: e.ContainerName,
+			Phase:         e.Phase,
+			Command:       e.Command,
+			Timeout:       e.Timeout,
+		}
+	}
+	return result, nil
+}
+
+func (a *webHookStoreAdapter) SaveHook(hook web.HookEntry) error {
+	return a.s.SaveHook(store.HookEntry{
+		ContainerName: hook.ContainerName,
+		Phase:         hook.Phase,
+		Command:       hook.Command,
+		Timeout:       hook.Timeout,
+	})
+}
+
+func (a *webHookStoreAdapter) DeleteHook(containerName, phase string) error {
+	return a.s.DeleteHook(containerName, phase)
 }

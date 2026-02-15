@@ -11,6 +11,9 @@ import (
 	"strings"
 	"time"
 
+	cron "github.com/robfig/cron/v3"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/deps"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -2257,6 +2260,335 @@ func formatUptime(d time.Duration) string {
 		return fmt.Sprintf("%dh %dm", hours, mins)
 	}
 	return fmt.Sprintf("%dm", mins)
+}
+
+// apiSetImageCleanup toggles old image cleanup.
+func (s *Server) apiSetImageCleanup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("image_cleanup", value); err != nil {
+		s.deps.Log.Error("failed to save image_cleanup", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetImageCleanup(body.Enabled)
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent("settings", "", "Image cleanup "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "image cleanup " + label})
+}
+
+// apiSetSchedule sets a cron schedule expression.
+func (s *Server) apiSetSchedule(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Schedule string `json:"schedule"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	// Validate cron expression (empty = disable cron, use poll interval).
+	if body.Schedule != "" {
+		parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		if _, err := parser.Parse(body.Schedule); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid cron expression: "+err.Error())
+			return
+		}
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	if err := s.deps.SettingsStore.SaveSetting("schedule", body.Schedule); err != nil {
+		s.deps.Log.Error("failed to save schedule", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.Scheduler != nil {
+		s.deps.Scheduler.SetSchedule(body.Schedule)
+	}
+	msg := "Schedule cleared (using poll interval)"
+	if body.Schedule != "" {
+		msg = "Schedule set to " + body.Schedule
+	}
+	s.logEvent("settings", "", msg)
+	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
+}
+
+// apiSetHooksEnabled toggles lifecycle hooks.
+func (s *Server) apiSetHooksEnabled(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("hooks_enabled", value); err != nil {
+		s.deps.Log.Error("failed to save hooks_enabled", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetHooksEnabled(body.Enabled)
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent("settings", "", "Lifecycle hooks "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "lifecycle hooks " + label})
+}
+
+// apiSetHooksWriteLabels toggles hook label writing.
+func (s *Server) apiSetHooksWriteLabels(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("hooks_write_labels", value); err != nil {
+		s.deps.Log.Error("failed to save hooks_write_labels", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetHooksWriteLabels(body.Enabled)
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent("settings", "", "Hook label writing "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "hook label writing " + label})
+}
+
+// apiSetDependencyAware toggles dependency-aware updates.
+func (s *Server) apiSetDependencyAware(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("dependency_aware", value); err != nil {
+		s.deps.Log.Error("failed to save dependency_aware", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetDependencyAware(body.Enabled)
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent("settings", "", "Dependency-aware updates "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "dependency-aware updates " + label})
+}
+
+// apiGetHooks returns hooks for a container.
+func (s *Server) apiGetHooks(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("container")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+	if s.deps.HookStore == nil {
+		writeJSON(w, http.StatusOK, []HookEntry{})
+		return
+	}
+	entries, err := s.deps.HookStore.ListHooks(name)
+	if err != nil {
+		s.deps.Log.Error("failed to list hooks", "container", name, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list hooks")
+		return
+	}
+	if entries == nil {
+		entries = []HookEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// apiSaveHook creates or updates a hook for a container.
+func (s *Server) apiSaveHook(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("container")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+	var body struct {
+		Phase   string   `json:"phase"`
+		Command []string `json:"command"`
+		Timeout int      `json:"timeout"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Phase != "pre-update" && body.Phase != "post-update" {
+		writeError(w, http.StatusBadRequest, "phase must be pre-update or post-update")
+		return
+	}
+	if len(body.Command) == 0 {
+		writeError(w, http.StatusBadRequest, "command is required")
+		return
+	}
+	if s.deps.HookStore == nil {
+		writeError(w, http.StatusNotImplemented, "hook store not available")
+		return
+	}
+	if body.Timeout <= 0 {
+		body.Timeout = 30
+	}
+	entry := HookEntry{
+		ContainerName: name,
+		Phase:         body.Phase,
+		Command:       body.Command,
+		Timeout:       body.Timeout,
+	}
+	if err := s.deps.HookStore.SaveHook(entry); err != nil {
+		s.deps.Log.Error("failed to save hook", "container", name, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save hook")
+		return
+	}
+	s.logEvent("hooks", name, fmt.Sprintf("Saved %s hook", body.Phase))
+	writeJSON(w, http.StatusOK, entry)
+}
+
+// apiDeleteHook removes a hook for a container.
+func (s *Server) apiDeleteHook(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("container")
+	phase := r.PathValue("phase")
+	if name == "" || phase == "" {
+		writeError(w, http.StatusBadRequest, "container name and phase required")
+		return
+	}
+	if s.deps.HookStore == nil {
+		writeError(w, http.StatusNotImplemented, "hook store not available")
+		return
+	}
+	if err := s.deps.HookStore.DeleteHook(name, phase); err != nil {
+		s.deps.Log.Error("failed to delete hook", "container", name, "phase", phase, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete hook")
+		return
+	}
+	s.logEvent("hooks", name, fmt.Sprintf("Deleted %s hook", phase))
+	writeJSON(w, http.StatusOK, map[string]string{"message": "hook deleted"})
+}
+
+// apiGetDeps returns the full dependency graph.
+func (s *Server) apiGetDeps(w http.ResponseWriter, r *http.Request) {
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+	infos := make([]deps.ContainerInfo, len(containers))
+	for i, c := range containers {
+		infos[i] = deps.ContainerInfo{
+			Name:   containerName(c),
+			Labels: c.Labels,
+		}
+	}
+	graph := deps.Build(infos)
+	order, sortErr := graph.Sort()
+	cycles := graph.DetectCycles()
+
+	type depInfo struct {
+		Name         string   `json:"name"`
+		Dependencies []string `json:"dependencies"`
+		Dependents   []string `json:"dependents"`
+	}
+	result := make([]depInfo, 0, len(containers))
+	for _, c := range containers {
+		name := containerName(c)
+		result = append(result, depInfo{
+			Name:         name,
+			Dependencies: graph.Dependencies(name),
+			Dependents:   graph.Dependents(name),
+		})
+	}
+	resp := map[string]any{
+		"containers": result,
+		"order":      order,
+		"has_cycles": len(cycles) > 0,
+	}
+	if sortErr != nil {
+		resp["error"] = sortErr.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// apiGetContainerDeps returns dependencies for a single container.
+func (s *Server) apiGetContainerDeps(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("container")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+	infos := make([]deps.ContainerInfo, len(containers))
+	for i, c := range containers {
+		infos[i] = deps.ContainerInfo{
+			Name:   containerName(c),
+			Labels: c.Labels,
+		}
+	}
+	graph := deps.Build(infos)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name":         name,
+		"dependencies": graph.Dependencies(name),
+		"dependents":   graph.Dependents(name),
+	})
 }
 
 // restoreSecrets returns the saved settings if the incoming settings contain any

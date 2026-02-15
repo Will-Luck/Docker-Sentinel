@@ -21,6 +21,8 @@ type API interface {
 	PullImage(ctx context.Context, refStr string) error
 	ImageDigest(ctx context.Context, imageRef string) (string, error)
 	DistributionDigest(ctx context.Context, imageRef string) (string, error)
+	RemoveImage(ctx context.Context, id string) error
+	ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error)
 	Close() error
 }
 

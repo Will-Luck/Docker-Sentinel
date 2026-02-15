@@ -1,7 +1,10 @@
 package docker
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"io"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -106,4 +109,41 @@ func (c *Client) DistributionDigest(ctx context.Context, imageRef string) (strin
 		return "", err
 	}
 	return resp.Descriptor.Digest.String(), nil
+}
+
+// RemoveImage removes an image by ID, pruning untagged children.
+func (c *Client) RemoveImage(ctx context.Context, id string) error {
+	_, err := c.api.ImageRemove(ctx, id, client.ImageRemoveOptions{PruneChildren: true})
+	return err
+}
+
+// ExecContainer runs a command inside a container and returns exit code + output.
+func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error) {
+	execCfg := client.ExecCreateOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+	execResp, err := c.api.ExecCreate(ctx, id, execCfg)
+	if err != nil {
+		return -1, "", fmt.Errorf("exec create: %w", err)
+	}
+
+	attachResp, err := c.api.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return -1, "", fmt.Errorf("exec attach: %w", err)
+	}
+	defer attachResp.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, attachResp.Reader); err != nil {
+		return -1, "", fmt.Errorf("exec read: %w", err)
+	}
+
+	inspectResp, err := c.api.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return -1, buf.String(), fmt.Errorf("exec inspect: %w", err)
+	}
+
+	return inspectResp.ExitCode, buf.String(), nil
 }

@@ -5,6 +5,8 @@ import (
 	"path"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
@@ -56,7 +58,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 	for {
 		select {
-		case <-s.clock.After(s.cfg.PollInterval()):
+		case <-s.nextTick():
 			if s.isPaused() {
 				s.log.Info("scheduler is paused, skipping scheduled scan")
 				continue
@@ -122,6 +124,38 @@ func (s *Scheduler) isPaused() bool {
 		return false
 	}
 	return val == "true"
+}
+
+// nextTick returns a channel that fires at the next scheduled time.
+// If a cron schedule is configured, it computes the next fire time from the expression.
+// Otherwise, it falls back to the poll interval.
+func (s *Scheduler) nextTick() <-chan time.Time {
+	if sched := s.cfg.Schedule(); sched != "" {
+		parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		schedule, err := parser.Parse(sched)
+		if err != nil {
+			s.log.Warn("invalid cron schedule, falling back to poll interval", "schedule", sched, "error", err)
+			return s.clock.After(s.cfg.PollInterval())
+		}
+		next := schedule.Next(time.Now())
+		wait := time.Until(next)
+		if wait < 0 {
+			wait = 0
+		}
+		s.log.Debug("next cron tick", "schedule", sched, "next", next, "wait", wait)
+		return s.clock.After(wait)
+	}
+	return s.clock.After(s.cfg.PollInterval())
+}
+
+// SetSchedule updates the cron schedule at runtime and signals the scheduler to reset.
+func (s *Scheduler) SetSchedule(sched string) {
+	s.cfg.SetSchedule(sched)
+	s.log.Info("schedule updated", "schedule", sched)
+	select {
+	case s.resetCh <- struct{}{}:
+	default:
+	}
 }
 
 // MatchesFilter checks whether a container name matches any of the given glob patterns.

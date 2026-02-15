@@ -43,6 +43,16 @@ type mockDocker struct {
 
 	distDigests map[string]string
 	distErr     map[string]error
+
+	removeImageCalls []string
+	removeImageErr   map[string]error
+
+	execCalls   []string
+	execResults map[string]struct {
+		exitCode int
+		output   string
+	}
+	execErr map[string]error
 }
 
 func newMockDocker() *mockDocker {
@@ -60,6 +70,12 @@ func newMockDocker() *mockDocker {
 		imageDigestErr: make(map[string]error),
 		distDigests:    make(map[string]string),
 		distErr:        make(map[string]error),
+		removeImageErr: make(map[string]error),
+		execResults: make(map[string]struct {
+			exitCode int
+			output   string
+		}),
+		execErr: make(map[string]error),
 	}
 }
 
@@ -153,6 +169,29 @@ func (m *mockDocker) DistributionDigest(_ context.Context, ref string) (string, 
 		return "", err
 	}
 	return m.distDigests[ref], nil
+}
+
+func (m *mockDocker) RemoveImage(_ context.Context, id string) error {
+	m.mu.Lock()
+	m.removeImageCalls = append(m.removeImageCalls, id)
+	m.mu.Unlock()
+	if err, ok := m.removeImageErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) ExecContainer(_ context.Context, id string, cmd []string, _ int) (int, string, error) {
+	m.mu.Lock()
+	m.execCalls = append(m.execCalls, id)
+	m.mu.Unlock()
+	if err, ok := m.execErr[id]; ok {
+		return -1, "", err
+	}
+	if r, ok := m.execResults[id]; ok {
+		return r.exitCode, r.output, nil
+	}
+	return 0, "", nil
 }
 
 func (m *mockDocker) Close() error { return nil }

@@ -14,6 +14,8 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -52,6 +54,8 @@ type Dependencies struct {
 	RateTracker         RateLimitProvider
 	GHCRCache           GHCRAlternativeProvider
 	AboutStore          AboutStore
+	HookStore           HookStore
+	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string
 	Log                 *slog.Logger
@@ -202,6 +206,22 @@ type SchedulerController interface {
 	SetPollInterval(d time.Duration)
 	TriggerScan(ctx context.Context)
 	LastScanTime() time.Time
+	SetSchedule(sched string)
+}
+
+// HookStore reads and writes lifecycle hook configurations.
+type HookStore interface {
+	ListHooks(containerName string) ([]HookEntry, error)
+	SaveHook(hook HookEntry) error
+	DeleteHook(containerName, phase string) error
+}
+
+// HookEntry mirrors hooks.Hook for the web layer.
+type HookEntry struct {
+	ContainerName string   `json:"container_name"`
+	Phase         string   `json:"phase"`
+	Command       []string `json:"command"`
+	Timeout       int      `json:"timeout"`
 }
 
 // SettingsStore reads and writes settings in BoltDB.
@@ -331,6 +351,10 @@ type ConfigWriter interface {
 	SetDefaultPolicy(s string)
 	SetGracePeriod(d time.Duration)
 	SetLatestAutoUpdate(b bool)
+	SetImageCleanup(b bool)
+	SetHooksEnabled(b bool)
+	SetHooksWriteLabels(b bool)
+	SetDependencyAware(b bool)
 }
 
 // Server is the web dashboard HTTP server.
@@ -449,6 +473,11 @@ func (s *Server) registerRoutes() {
 	}
 
 	// --- Public routes (no auth required) ---
+	if s.deps.MetricsEnabled {
+		s.mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+			promhttp.Handler().ServeHTTP(w, r)
+		})
+	}
 	s.mux.HandleFunc("GET /static/style.css", s.serveCSS)
 	s.mux.HandleFunc("GET /static/app.js", s.serveJS)
 	s.mux.HandleFunc("GET /static/auth.js", s.serveAuthJS)
@@ -528,6 +557,9 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/about", perm(auth.PermSettingsView, s.apiAbout))
 	s.mux.Handle("GET /api/ghcr/alternatives", perm(auth.PermContainersView, s.apiGetGHCRAlternatives))
 	s.mux.Handle("GET /api/containers/{name}/ghcr", perm(auth.PermContainersView, s.apiGetContainerGHCR))
+	s.mux.Handle("GET /api/hooks/{container}", perm(auth.PermSettingsView, s.apiGetHooks))
+	s.mux.Handle("GET /api/deps", perm(auth.PermContainersView, s.apiGetDeps))
+	s.mux.Handle("GET /api/deps/{container}", perm(auth.PermContainersView, s.apiGetContainerDeps))
 
 	// Notification prefs & digest (read)
 	s.mux.Handle("GET /api/containers/{name}/notify-pref", perm(auth.PermSettingsView, s.apiGetNotifyPref))
@@ -549,6 +581,13 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/registries/test", perm(auth.PermSettingsModify, s.apiTestRegistryCredential))
 	s.mux.Handle("DELETE /api/settings/registries/{id}", perm(auth.PermSettingsModify, s.apiDeleteRegistryCredential))
 	s.mux.Handle("POST /api/self-update", perm(auth.PermSettingsModify, s.apiSelfUpdate))
+	s.mux.Handle("POST /api/settings/image-cleanup", perm(auth.PermSettingsModify, s.apiSetImageCleanup))
+	s.mux.Handle("POST /api/settings/schedule", perm(auth.PermSettingsModify, s.apiSetSchedule))
+	s.mux.Handle("POST /api/settings/hooks-enabled", perm(auth.PermSettingsModify, s.apiSetHooksEnabled))
+	s.mux.Handle("POST /api/settings/hooks-write-labels", perm(auth.PermSettingsModify, s.apiSetHooksWriteLabels))
+	s.mux.Handle("POST /api/settings/dependency-aware", perm(auth.PermSettingsModify, s.apiSetDependencyAware))
+	s.mux.Handle("POST /api/hooks/{container}", perm(auth.PermSettingsModify, s.apiSaveHook))
+	s.mux.Handle("DELETE /api/hooks/{container}/{phase}", perm(auth.PermSettingsModify, s.apiDeleteHook))
 
 	// Notification prefs & digest (write)
 	s.mux.Handle("POST /api/containers/{name}/notify-pref", perm(auth.PermSettingsModify, s.apiSetNotifyPref))
