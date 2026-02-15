@@ -590,4 +590,3 @@ func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []contai
 		u.publishEvent(events.EventGHCRCheck, "", fmt.Sprintf("checked %d images", checked))
 	}
 }
-
