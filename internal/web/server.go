@@ -237,6 +237,7 @@ type LogEntry struct {
 	Type      string    `json:"type"`
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
+	User      string    `json:"user,omitempty"`
 }
 
 // NotifyPref mirrors store.NotifyPref.
