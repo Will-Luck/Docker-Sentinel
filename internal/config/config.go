@@ -48,6 +48,7 @@ type Config struct {
 	WebAuthnRPID        string // Relying Party ID (e.g. "192.168.1.57")
 	WebAuthnDisplayName string // RP display name shown by authenticators
 	WebAuthnOrigins     string // comma-separated allowed origins
+	MetricsEnabled      bool
 
 	// mu protects the mutable runtime fields below.
 	mu               sync.RWMutex
@@ -55,6 +56,11 @@ type Config struct {
 	gracePeriod      time.Duration // wait after starting new container before health check
 	defaultPolicy    string        // "auto", "manual", or "pinned"
 	latestAutoUpdate bool          // auto-update :latest containers regardless of default policy
+	imageCleanup     bool
+	schedule         string
+	hooksEnabled     bool
+	hooksWriteLabels bool
+	dependencyAware  bool
 }
 
 // NewTestConfig creates a Config with sensible defaults for testing.
@@ -65,6 +71,8 @@ func NewTestConfig() *Config {
 		gracePeriod:      30 * time.Second,
 		defaultPolicy:    "manual",
 		latestAutoUpdate: true,
+		imageCleanup:     true,
+		dependencyAware:  true,
 	}
 }
 
@@ -93,6 +101,12 @@ func Load() *Config {
 		WebAuthnRPID:        envStr("SENTINEL_WEBAUTHN_RPID", ""),
 		WebAuthnDisplayName: envStr("SENTINEL_WEBAUTHN_DISPLAY_NAME", "Docker-Sentinel"),
 		WebAuthnOrigins:     envStr("SENTINEL_WEBAUTHN_ORIGINS", ""),
+		imageCleanup:        envBool("SENTINEL_IMAGE_CLEANUP", true),
+		schedule:            envStr("SENTINEL_SCHEDULE", ""),
+		hooksEnabled:        envBool("SENTINEL_HOOKS", false),
+		hooksWriteLabels:    envBool("SENTINEL_HOOKS_WRITE_LABELS", false),
+		dependencyAware:     envBool("SENTINEL_DEPS", true),
+		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
 	}
 }
 
@@ -136,6 +150,11 @@ func (c *Config) Values() map[string]string {
 	pi := c.pollInterval
 	gp := c.gracePeriod
 	dp := c.defaultPolicy
+	ic := c.imageCleanup
+	sched := c.schedule
+	he := c.hooksEnabled
+	hwl := c.hooksWriteLabels
+	da := c.dependencyAware
 	c.mu.RUnlock()
 
 	return map[string]string{
@@ -157,6 +176,12 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_WEBAUTHN_RPID":         c.WebAuthnRPID,
 		"SENTINEL_WEBAUTHN_DISPLAY_NAME": c.WebAuthnDisplayName,
 		"SENTINEL_WEBAUTHN_ORIGINS":      c.WebAuthnOrigins,
+		"SENTINEL_IMAGE_CLEANUP":         fmt.Sprintf("%t", ic),
+		"SENTINEL_SCHEDULE":              sched,
+		"SENTINEL_HOOKS":                 fmt.Sprintf("%t", he),
+		"SENTINEL_HOOKS_WRITE_LABELS":    fmt.Sprintf("%t", hwl),
+		"SENTINEL_DEPS":                  fmt.Sprintf("%t", da),
+		"SENTINEL_METRICS":               fmt.Sprintf("%t", c.MetricsEnabled),
 	}
 }
 
@@ -257,6 +282,66 @@ func (c *Config) LatestAutoUpdate() bool {
 func (c *Config) SetLatestAutoUpdate(b bool) {
 	c.mu.Lock()
 	c.latestAutoUpdate = b
+	c.mu.Unlock()
+}
+
+func (c *Config) ImageCleanup() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.imageCleanup
+}
+
+func (c *Config) SetImageCleanup(b bool) {
+	c.mu.Lock()
+	c.imageCleanup = b
+	c.mu.Unlock()
+}
+
+func (c *Config) Schedule() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.schedule
+}
+
+func (c *Config) SetSchedule(s string) {
+	c.mu.Lock()
+	c.schedule = s
+	c.mu.Unlock()
+}
+
+func (c *Config) HooksEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.hooksEnabled
+}
+
+func (c *Config) SetHooksEnabled(b bool) {
+	c.mu.Lock()
+	c.hooksEnabled = b
+	c.mu.Unlock()
+}
+
+func (c *Config) HooksWriteLabels() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.hooksWriteLabels
+}
+
+func (c *Config) SetHooksWriteLabels(b bool) {
+	c.mu.Lock()
+	c.hooksWriteLabels = b
+	c.mu.Unlock()
+}
+
+func (c *Config) DependencyAware() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.dependencyAware
+}
+
+func (c *Config) SetDependencyAware(b bool) {
+	c.mu.Lock()
+	c.dependencyAware = b
 	c.mu.Unlock()
 }
 

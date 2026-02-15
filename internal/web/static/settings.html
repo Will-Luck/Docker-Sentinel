@@ -177,6 +177,56 @@
                                 <button class="btn btn-success" onclick="saveFilters()">Save Filters</button>
                             </div>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Image cleanup</div>
+                                <div class="setting-desc">Automatically remove old images after a successful update</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="image-cleanup-toggle" class="channel-toggle" onchange="setImageCleanup(this.checked)">
+                                <span id="image-cleanup-text" class="toggle-switch-text">On</span>
+                            </label>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Cron schedule</div>
+                                <div class="setting-desc">Use a cron expression instead of the poll interval (leave empty to use poll interval)</div>
+                            </div>
+                            <div class="poll-interval-control">
+                                <input type="text" id="cron-schedule" class="setting-select" placeholder="e.g. 0 3 * * *" style="max-width:220px">
+                                <button class="btn btn-success" onclick="saveCronSchedule()">Apply</button>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Dependency-aware updates</div>
+                                <div class="setting-desc">Restart containers that depend on an updated container (via labels or network mode)</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="dep-aware-toggle" class="channel-toggle" onchange="setDependencyAware(this.checked)">
+                                <span id="dep-aware-text" class="toggle-switch-text">On</span>
+                            </label>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Lifecycle hooks</div>
+                                <div class="setting-desc">Run pre-update and post-update commands inside containers during updates</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="hooks-toggle" class="channel-toggle" onchange="setHooksEnabled(this.checked)">
+                                <span id="hooks-toggle-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Write hook labels</div>
+                                <div class="setting-desc">Persist hook configurations as container labels for portability</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="hooks-labels-toggle" class="channel-toggle" onchange="setHooksWriteLabels(this.checked)">
+                                <span id="hooks-labels-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
