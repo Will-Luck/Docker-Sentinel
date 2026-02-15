@@ -32,6 +32,9 @@ type mockDocker struct {
 	startCalls []string
 	startErr   map[string]error
 
+	restartCalls []string
+	restartErr   map[string]error
+
 	pullCalls []string
 	pullErr   map[string]error
 
@@ -51,6 +54,7 @@ func newMockDocker() *mockDocker {
 		createResult:   make(map[string]string),
 		createErr:      make(map[string]error),
 		startErr:       make(map[string]error),
+		restartErr:     make(map[string]error),
 		pullErr:        make(map[string]error),
 		imageDigests:   make(map[string]string),
 		imageDigestErr: make(map[string]error),
@@ -112,6 +116,16 @@ func (m *mockDocker) StartContainer(_ context.Context, id string) error {
 	m.startCalls = append(m.startCalls, id)
 	m.mu.Unlock()
 	if err, ok := m.startErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) RestartContainer(_ context.Context, id string) error {
+	m.mu.Lock()
+	m.restartCalls = append(m.restartCalls, id)
+	m.mu.Unlock()
+	if err, ok := m.restartErr[id]; ok {
 		return err
 	}
 	return nil

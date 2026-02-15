@@ -828,6 +828,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.log.Warn("failed to clean old snapshots", "name", name, "error", err)
 	}
 
+	// 10. Handle shared network namespaces.
+	u.repairNetworkNamespace(ctx, finaliseNewID, name)
+
 	u.log.Info("update complete", "name", name, "duration", duration)
 	u.publishEvent(events.EventContainerUpdate, name, "update succeeded")
 	return nil
@@ -1014,6 +1017,56 @@ func truncateID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// repairNetworkNamespace handles shared-namespace containers after an update.
+// It verifies the updated container's own namespace (if it's a consumer) and
+// restarts any dependents that share this container's namespace (if it's a provider).
+func (u *Updater) repairNetworkNamespace(ctx context.Context, id, name string) {
+	inspect, err := u.docker.InspectContainer(ctx, id)
+	if err != nil {
+		u.log.Warn("namespace check: inspect failed", "name", name, "error", err)
+		return
+	}
+
+	// Case 1: this container uses another's namespace — verify it joined.
+	if inspect.HostConfig != nil && inspect.HostConfig.NetworkMode.IsContainer() {
+		if inspect.NetworkSettings == nil || inspect.NetworkSettings.SandboxKey == "" {
+			u.log.Warn("shared namespace broken, restarting consumer",
+				"name", name, "provider", inspect.HostConfig.NetworkMode.ConnectedContainer())
+			if err := u.docker.RestartContainer(ctx, id); err != nil {
+				u.log.Error("failed to restart namespace consumer", "name", name, "error", err)
+			}
+		}
+	}
+
+	// Case 2: other containers may share this container's namespace — restart them.
+	containers, err := u.docker.ListContainers(ctx)
+	if err != nil {
+		u.log.Warn("namespace check: list failed", "error", err)
+		return
+	}
+
+	for _, c := range containers {
+		cName := containerName(c)
+		if cName == name {
+			continue // skip self
+		}
+		dep, err := u.docker.InspectContainer(ctx, c.ID)
+		if err != nil {
+			continue
+		}
+		if dep.HostConfig == nil || !dep.HostConfig.NetworkMode.IsContainer() {
+			continue
+		}
+		ref := dep.HostConfig.NetworkMode.ConnectedContainer()
+		if ref == name || ref == id {
+			u.log.Info("restarting network dependent", "dependent", cName, "provider", name)
+			if err := u.docker.RestartContainer(ctx, c.ID); err != nil {
+				u.log.Warn("failed to restart dependent", "dependent", cName, "error", err)
+			}
+		}
+	}
 }
 
 // effectiveNotifyMode returns the notification mode for a container,
