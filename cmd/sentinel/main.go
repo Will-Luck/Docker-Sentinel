@@ -317,7 +317,13 @@ func main() {
 		if bootstrapToken != "" {
 			srv.SetBootstrapToken(bootstrapToken)
 			fmt.Println("=============================================")
-			fmt.Printf("Setup URL: %s://localhost:%s/setup?token=%s\n", scheme, cfg.WebPort, bootstrapToken)
+			fmt.Println("First-run setup required!")
+			fmt.Println("")
+			fmt.Printf("  Open:  %s://<your-host>:%s/setup\n", scheme, cfg.WebPort)
+			fmt.Printf("  Token: %s\n", bootstrapToken)
+			fmt.Println("")
+			fmt.Println("Paste the token into the setup page to create")
+			fmt.Println("your admin account.")
 			fmt.Println("=============================================")
 		}
 
