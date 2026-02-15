@@ -42,8 +42,9 @@ func (m *mockDockerForRegistry) RemoveContainer(_ context.Context, _ string) err
 func (m *mockDockerForRegistry) CreateContainer(_ context.Context, _ string, _ *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
 	return "", nil
 }
-func (m *mockDockerForRegistry) StartContainer(_ context.Context, _ string) error { return nil }
-func (m *mockDockerForRegistry) PullImage(_ context.Context, _ string) error      { return nil }
+func (m *mockDockerForRegistry) StartContainer(_ context.Context, _ string) error  { return nil }
+func (m *mockDockerForRegistry) RestartContainer(_ context.Context, _ string) error { return nil }
+func (m *mockDockerForRegistry) PullImage(_ context.Context, _ string) error       { return nil }
 func (m *mockDockerForRegistry) Close() error                                     { return nil }
 
 func (m *mockDockerForRegistry) ImageDigest(_ context.Context, ref string) (string, error) {
