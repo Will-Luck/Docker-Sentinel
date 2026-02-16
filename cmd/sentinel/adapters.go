@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
@@ -671,6 +672,95 @@ func (a *swarmAdapter) ListServices(ctx context.Context) ([]web.ServiceSummary, 
 			Labels:   svc.Spec.Labels,
 			Replicas: replicas,
 		}
+	}
+	return result, nil
+}
+
+func (a *swarmAdapter) ListServiceDetail(ctx context.Context) ([]web.ServiceDetail, error) {
+	services, err := a.client.ListServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build node lookup (one call, not per-task).
+	nodes, nodeErr := a.client.ListNodes(ctx)
+	nodeMap := make(map[string]struct{ Name, Addr string })
+	if nodeErr == nil {
+		for _, n := range nodes {
+			name := n.Description.Hostname
+			addr := n.Status.Addr
+			nodeMap[n.ID] = struct{ Name, Addr string }{name, addr}
+		}
+	}
+
+	result := make([]web.ServiceDetail, 0, len(services))
+	for _, svc := range services {
+		replicas := ""
+		if svc.ServiceStatus != nil {
+			replicas = fmt.Sprintf("%d/%d", svc.ServiceStatus.RunningTasks, svc.ServiceStatus.DesiredTasks)
+		}
+
+		imageRef := svc.Spec.TaskTemplate.ContainerSpec.Image
+		// Strip Swarm digest pinning for display.
+		if i := strings.Index(imageRef, "@sha256:"); i > 0 {
+			imageRef = imageRef[:i]
+		}
+
+		updateStatus := ""
+		if svc.UpdateStatus != nil {
+			updateStatus = string(svc.UpdateStatus.State)
+		}
+
+		summary := web.ServiceSummary{
+			ID:       svc.ID,
+			Name:     svc.Spec.Name,
+			Image:    imageRef,
+			Labels:   svc.Spec.Labels,
+			Replicas: replicas,
+		}
+
+		// Fetch tasks for this service.
+		tasks, taskErr := a.client.ListServiceTasks(ctx, svc.ID)
+		var taskInfos []web.TaskInfo
+		if taskErr == nil {
+			taskInfos = make([]web.TaskInfo, 0, len(tasks))
+			for _, t := range tasks {
+				nodeName := t.NodeID
+				nodeAddr := ""
+				if info, ok := nodeMap[t.NodeID]; ok {
+					nodeName = info.Name
+					nodeAddr = info.Addr
+				}
+				taskImage := t.Spec.ContainerSpec.Image
+				if i := strings.Index(taskImage, "@sha256:"); i > 0 {
+					taskImage = taskImage[:i]
+				}
+				tag := ""
+				if parts := strings.SplitN(taskImage, ":", 2); len(parts) == 2 {
+					tag = parts[1]
+				}
+				errMsg := ""
+				if t.Status.Err != "" {
+					errMsg = t.Status.Err
+				}
+				taskInfos = append(taskInfos, web.TaskInfo{
+					NodeID:   t.NodeID,
+					NodeName: nodeName,
+					NodeAddr: nodeAddr,
+					State:    string(t.Status.State),
+					Image:    taskImage,
+					Tag:      tag,
+					Slot:     t.Slot,
+					Error:    errMsg,
+				})
+			}
+		}
+
+		result = append(result, web.ServiceDetail{
+			ServiceSummary: summary,
+			Tasks:          taskInfos,
+			UpdateStatus:   updateStatus,
+		})
 	}
 	return result, nil
 }

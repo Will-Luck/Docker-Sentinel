@@ -1386,6 +1386,11 @@ function expandAllStacks() {
         var header = groups[i].querySelector(".stack-header");
         if (header) header.setAttribute("aria-expanded", "true");
     }
+    // Also expand Swarm service groups.
+    var svcGroups = document.querySelectorAll(".svc-group");
+    for (var i = 0; i < svcGroups.length; i++) {
+        svcGroups[i].classList.remove("svc-collapsed");
+    }
 }
 
 function collapseAllStacks() {
@@ -1400,6 +1405,66 @@ function collapseAllStacks() {
         var header = groups[i].querySelector(".stack-header");
         if (header) header.setAttribute("aria-expanded", "false");
     }
+    // Also collapse Swarm service groups.
+    var svcGroups = document.querySelectorAll(".svc-group");
+    for (var i = 0; i < svcGroups.length; i++) {
+        svcGroups[i].classList.add("svc-collapsed");
+    }
+}
+
+/* ------------------------------------------------------------
+   7b. Swarm Service Toggle & Actions
+   ------------------------------------------------------------ */
+
+function toggleSvc(headerRow) {
+    var group = headerRow.closest(".svc-group");
+    if (!group) return;
+    group.classList.toggle("svc-collapsed");
+}
+
+function triggerSvcUpdate(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    apiPost(
+        "/api/services/" + encodeURIComponent(name) + "/update",
+        null,
+        "Service update started for " + name,
+        "Failed to trigger service update",
+        btn
+    );
+}
+
+function changeSvcPolicy(name, newPolicy) {
+    // Services use the same policy endpoint as containers.
+    apiPost(
+        "/api/containers/" + encodeURIComponent(name) + "/policy",
+        { policy: newPolicy },
+        "Policy changed to " + newPolicy + " for " + name,
+        "Failed to change policy"
+    );
+}
+
+function refreshServiceRow(name) {
+    fetch("/api/services/" + encodeURIComponent(name) + "/detail")
+        .then(function(r) { return r.json(); })
+        .then(function(svc) {
+            var group = document.querySelector('.svc-group[data-service="' + name + '"]');
+            if (!group) return;
+
+            // Update replicas badge.
+            var badge = group.querySelector(".svc-replicas");
+            if (badge) badge.textContent = svc.Replicas || "";
+
+            // Update version display.
+            var header = group.querySelector(".svc-header");
+            if (header) {
+                if (svc.HasUpdate) {
+                    header.classList.add("has-update");
+                } else {
+                    header.classList.remove("has-update");
+                }
+            }
+        })
+        .catch(function() {});
 }
 
 /* ------------------------------------------------------------
@@ -2189,6 +2254,16 @@ function initSSE() {
             showToast(data.message || "Digest ready", "info");
         } catch (_) {}
         loadDigestBanner();
+    });
+
+    es.addEventListener("service_update", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            queueBatchToast(data.message || ("Service: " + data.container_name), "info");
+            if (data.container_name) {
+                refreshServiceRow(data.container_name);
+            }
+        } catch (_) {}
     });
 
     es.addEventListener("ghcr_check", function() {

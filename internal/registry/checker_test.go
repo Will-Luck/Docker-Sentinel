@@ -66,6 +66,9 @@ func (m *mockDockerForRegistry) RollbackService(_ context.Context, _ string, _ s
 func (m *mockDockerForRegistry) ListServiceTasks(_ context.Context, _ string) ([]swarm.Task, error) {
 	return nil, nil
 }
+func (m *mockDockerForRegistry) ListNodes(_ context.Context) ([]swarm.Node, error) {
+	return nil, nil
+}
 func (m *mockDockerForRegistry) Close() error { return nil }
 
 func (m *mockDockerForRegistry) ImageDigest(_ context.Context, ref string) (string, error) {

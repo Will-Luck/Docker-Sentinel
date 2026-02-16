@@ -124,7 +124,7 @@ func (u *Updater) scanServices(ctx context.Context, mode ScanMode, result *ScanR
 
 		u.log.Info("service update available", "name", name, "image", imageRef,
 			"local_digest", check.LocalDigest, "remote_digest", check.RemoteDigest)
-		u.publishEvent(events.EventContainerUpdate, name, "service update available")
+		u.publishEvent(events.EventServiceUpdate, name, "service update available")
 
 		// Notifications — same dedup logic as containers.
 		shouldNotify := true
@@ -242,7 +242,7 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 		Timestamp:     u.clock.Now(),
 	})
 
-	u.publishEvent(events.EventContainerUpdate, name, "service update started")
+	u.publishEvent(events.EventServiceUpdate, name, "service update started")
 
 	if err := u.docker.UpdateService(ctx, serviceID, svc.Meta.Version, newSpec, ""); err != nil {
 		u.notifier.Notify(ctx, notify.Event{
@@ -283,7 +283,7 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 			NewImage:      targetImage,
 			Timestamp:     u.clock.Now(),
 		})
-		u.publishEvent(events.EventContainerUpdate, name, "service update succeeded")
+		u.publishEvent(events.EventServiceUpdate, name, "service update succeeded")
 
 		// Housekeeping.
 		u.queue.Remove(name)
@@ -298,7 +298,7 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 			NewImage:      targetImage,
 			Timestamp:     u.clock.Now(),
 		})
-		u.publishEvent(events.EventContainerUpdate, name, "service rolled back by Swarm")
+		u.publishEvent(events.EventServiceUpdate, name, "service rolled back by Swarm")
 
 	default: // "failed", "timeout"
 		errMsg := outcome

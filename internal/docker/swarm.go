@@ -52,6 +52,14 @@ func (c *Client) RollbackService(ctx context.Context, id string, version swarm.V
 	return err
 }
 
+func (c *Client) ListNodes(ctx context.Context) ([]swarm.Node, error) {
+	result, err := c.api.NodeList(ctx, client.NodeListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
 func (c *Client) ListServiceTasks(ctx context.Context, serviceID string) ([]swarm.Task, error) {
 	f := client.Filters{}
 	f = f.Add("service", serviceID)
