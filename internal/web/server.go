@@ -280,6 +280,7 @@ type LogEntry struct {
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
 	User      string    `json:"user,omitempty"`
+	Kind      string    `json:"kind,omitempty"` // "service" or "" (default = container)
 }
 
 // NotifyPref mirrors store.NotifyPref.
@@ -510,6 +511,12 @@ func (s *Server) parseTemplates() {
 		"changelogURL": ChangelogURL,
 		"versionURL":   VersionURL,
 		"imageTag":     ImageTag,
+		"serviceOrContainer": func(kind, name string) string {
+			if kind == "service" {
+				return "/service/" + name
+			}
+			return "/container/" + name
+		},
 	}
 
 	s.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(staticFS, "static/*.html"))
@@ -600,6 +607,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/services/{name}/update", perm(auth.PermContainersUpdate, s.apiServiceUpdate))
 	s.mux.Handle("POST /api/services/{name}/rollback", perm(auth.PermContainersRollback, s.apiServiceRollback))
 	s.mux.Handle("POST /api/services/{name}/scale", perm(auth.PermContainersManage, s.apiServiceScale))
+
+	s.mux.Handle("GET /service/{name}", perm(auth.PermContainersView, s.handleServiceDetail))
 
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))

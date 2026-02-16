@@ -548,6 +548,17 @@ table {
     font-size: 0.875rem;
 }
 
+/* Dashboard table — fixed layout prevents column shifts on expand/collapse */
+#container-table {
+    table-layout: fixed;
+}
+
+#container-table td:nth-child(2) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 thead th {
     position: sticky;
     top: 0;
@@ -3413,4 +3424,28 @@ input[type="checkbox"] {
 }
 .footer-beta a:hover {
     color: var(--accent-hover);
+}
+
+
+/* --------------------------------------------------------------------------
+   Service Detail Page
+   -------------------------------------------------------------------------- */
+
+.svc-detail-tasks {
+    margin-bottom: var(--sp-4);
+}
+
+.svc-detail-tasks table {
+    table-layout: auto;
+}
+
+.svc-detail-tasks .svc-task-state {
+    display: inline-flex;
+}
+
+.svc-detail-replicas {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-left: var(--sp-3);
 }

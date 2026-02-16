@@ -113,6 +113,14 @@
             </div>
             <div class="table-wrap">
                 <table id="container-table">
+                    <colgroup>
+                        <col style="width:40px">
+                        <col style="width:25%">
+                        <col>
+                        <col style="width:120px">
+                        <col style="width:100px">
+                        <col style="width:140px">
+                    </colgroup>
                     <thead>
                         <tr>
                             <th class="th-checkbox"><input type="checkbox" id="select-all" title="Select all"><label for="select-all" class="sr-only">Select all containers</label></th>
@@ -185,7 +193,7 @@
                             </td>
                             <td>
                                 <span class="stack-chevron">&#9656;</span>
-                                <span class="svc-name">{{.Name}}</span>
+                                <a href="/service/{{.Name}}" class="svc-name" onclick="event.stopPropagation()">{{.Name}}</a>
                             </td>
                             <td class="cell-image mono" title="{{.Image}}">
                                 {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}

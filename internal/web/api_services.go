@@ -73,11 +73,23 @@ func (s *Server) apiServiceUpdate(w http.ResponseWriter, r *http.Request) {
 		if rc := auth.GetRequestContext(r.Context()); rc != nil && rc.User != nil {
 			user = rc.User.Username
 		}
+		msg := "service update triggered for " + name
+		if targetImage != "" {
+			currentTag := ""
+			if pending, ok := s.deps.Queue.Get(name); ok {
+				currentTag = registry.ExtractTag(pending.CurrentImage)
+			}
+			newTag := registry.ExtractTag(targetImage)
+			if currentTag != "" && newTag != "" {
+				msg = fmt.Sprintf("service %s: %s → %s", name, currentTag, newTag)
+			}
+		}
 		_ = s.deps.EventLog.AppendLog(LogEntry{
 			Type:      "update",
-			Message:   "service update triggered for " + name,
+			Message:   msg,
 			Container: name,
 			User:      user,
+			Kind:      "service",
 		})
 	}
 
@@ -113,6 +125,7 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 			Message:   "service rollback triggered for " + name,
 			Container: name,
 			User:      user,
+			Kind:      "service",
 		})
 	}
 
@@ -309,6 +322,7 @@ func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
 			Message:   fmt.Sprintf("service %s scaled to %d replicas", name, body.Replicas),
 			Container: name,
 			User:      user,
+			Kind:      "service",
 		})
 	}
 
