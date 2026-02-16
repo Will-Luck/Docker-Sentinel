@@ -40,20 +40,21 @@ type pageData struct {
 
 // containerView is a container or Swarm service with computed display fields.
 type containerView struct {
-	ID            string
-	Name          string
-	Image         string
-	Tag           string // Extracted tag from image ref (e.g. "latest", "v2.19.4")
-	NewestVersion string // Newest available version if update pending (semver only)
-	Policy        string
-	State         string
-	Maintenance   bool
-	HasUpdate     bool
-	IsSelf        bool
-	Stack         string // com.docker.compose.project label, or "" for standalone
-	Registry      string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
-	IsService     bool   // true for Swarm services
-	Replicas      string // e.g. "3/3" for services, empty for containers
+	ID              string
+	Name            string
+	Image           string
+	Tag             string // Extracted tag from image ref (e.g. "latest", "v2.19.4")
+	ResolvedVersion string // Actual semver behind non-version tags (e.g. "v2.34.2" for "latest")
+	NewestVersion   string // Newest available version if update pending (semver only)
+	Policy          string
+	State           string
+	Maintenance     bool
+	HasUpdate       bool
+	IsSelf          bool
+	Stack           string // com.docker.compose.project label, or "" for standalone
+	Registry        string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
+	IsService       bool   // true for Swarm services
+	Replicas        string // e.g. "3/3" for services, empty for containers
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -72,6 +73,7 @@ type serviceView struct {
 	Name            string
 	Image           string
 	Tag             string
+	ResolvedVersion string // Actual semver behind non-version tags (e.g. "v2.34.2" for "latest")
 	NewestVersion   string
 	Policy          string
 	HasUpdate       bool
@@ -114,9 +116,18 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 			tag = d.Image
 		}
 	}
-	var newestVersion string
-	if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
-		newestVersion = pending.NewerVersions[0]
+	var newestVersion, resolved string
+	if pending, ok := s.deps.Queue.Get(name); ok {
+		if len(pending.NewerVersions) > 0 {
+			newestVersion = pending.NewerVersions[0]
+		}
+		// For services, image labels aren't in the service spec — use the
+		// digest-resolved version from the registry check instead.
+		if _, isSemver := registry.ParseSemVer(tag); !isSemver {
+			if pending.ResolvedCurrentVersion != "" && pending.ResolvedCurrentVersion != tag {
+				resolved = pending.ResolvedCurrentVersion
+			}
+		}
 	}
 	tasks := make([]taskView, len(d.Tasks))
 	for i, t := range d.Tasks {
@@ -135,6 +146,7 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 		Name:            name,
 		Image:           d.Image,
 		Tag:             tag,
+		ResolvedVersion: resolved,
 		NewestVersion:   newestVersion,
 		Policy:          policy,
 		HasUpdate:       pendingNames[name],
@@ -207,19 +219,30 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			newestVersion = pending.NewerVersions[0]
 		}
 
+		// Resolve the actual version behind non-semver tags like "latest".
+		// Docker merges image labels into container labels at creation time,
+		// so org.opencontainers.image.version is available without extra API calls.
+		var resolved string
+		if _, isSemver := registry.ParseSemVer(tag); !isSemver {
+			if v := c.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
+				resolved = v
+			}
+		}
+
 		views = append(views, containerView{
-			ID:            c.ID,
-			Name:          name,
-			Image:         c.Image,
-			Tag:           tag,
-			NewestVersion: newestVersion,
-			Policy:        policy,
-			State:         c.State,
-			Maintenance:   maintenance,
-			HasUpdate:     pendingNames[name],
-			IsSelf:        c.Labels["sentinel.self"] == "true",
-			Stack:         c.Labels["com.docker.compose.project"],
-			Registry:      registry.RegistryHost(c.Image),
+			ID:              c.ID,
+			Name:            name,
+			Image:           c.Image,
+			Tag:             tag,
+			ResolvedVersion: resolved,
+			NewestVersion:   newestVersion,
+			Policy:          policy,
+			State:           c.State,
+			Maintenance:     maintenance,
+			HasUpdate:       pendingNames[name],
+			IsSelf:          c.Labels["sentinel.self"] == "true",
+			Stack:           c.Labels["com.docker.compose.project"],
+			Registry:        registry.RegistryHost(c.Image),
 		})
 	}
 
@@ -621,16 +644,25 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Resolve the actual version behind non-semver tags like "latest".
+	var detailResolved string
+	if _, isSemver := registry.ParseSemVer(detailTag); !isSemver {
+		if v := found.Labels["org.opencontainers.image.version"]; v != "" && v != detailTag {
+			detailResolved = v
+		}
+	}
+
 	view := containerView{
-		ID:          found.ID,
-		Name:        containerName(*found),
-		Image:       found.Image,
-		Tag:         detailTag,
-		Policy:      detailPolicy,
-		State:       found.State,
-		Maintenance: maintenance,
-		IsSelf:      found.Labels["sentinel.self"] == "true",
-		Registry:    registry.RegistryHost(found.Image),
+		ID:              found.ID,
+		Name:            containerName(*found),
+		Image:           found.Image,
+		Tag:             detailTag,
+		ResolvedVersion: detailResolved,
+		Policy:          detailPolicy,
+		State:           found.State,
+		Maintenance:     maintenance,
+		IsSelf:          found.Labels["sentinel.self"] == "true",
+		Registry:        registry.RegistryHost(found.Image),
 	}
 
 	// Gather history.
