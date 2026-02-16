@@ -32,8 +32,13 @@ func (s *Server) apiServiceUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Explicit version override from form/query.
+	// Explicit version override from form/query — validate format to reject
+	// arbitrary strings (image refs are alphanumeric + . - _ / : @).
 	if v := r.FormValue("version"); v != "" {
+		if len(v) > 256 || !isValidImageRef(v) {
+			writeError(w, http.StatusBadRequest, "invalid version format")
+			return
+		}
 		targetImage = v
 	}
 
@@ -287,7 +292,7 @@ func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.deps.Swarm.ScaleService(r.Context(), name, body.Replicas); err != nil {
 		s.deps.Log.Error("service scale failed", "name", name, "replicas", body.Replicas, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to scale service: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to scale service")
 		return
 	}
 

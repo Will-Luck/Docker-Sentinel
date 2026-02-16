@@ -262,7 +262,7 @@ function initSettingsPage() {
                 updateToggleText("hooks-labels-text", hooksLabels);
             }
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 
     // Tab navigation.
     var tabBtns = document.querySelectorAll(".tab-btn");
@@ -730,7 +730,7 @@ function initPauseBanner() {
                 banner.style.display = "";
             }
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 function resumeScanning() {
@@ -767,7 +767,7 @@ function checkPauseState() {
         .then(function(settings) {
             banner.style.display = settings["paused"] === "true" ? "" : "none";
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 /* ------------------------------------------------------------
@@ -797,7 +797,7 @@ function refreshLastScan() {
                 lastScanTimer = setInterval(renderLastScanTicker, 1000);
             }
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 function renderLastScanTicker() {
@@ -1613,7 +1613,7 @@ function refreshServiceRow(name) {
 
                     if (svc.NewestVersion) {
                         var verHtml = escapeHtml(svc.NewestVersion);
-                        if (svc.VersionURL) {
+                        if (svc.VersionURL && isSafeURL(svc.VersionURL)) {
                             verHtml = '<a href="' + escapeHtml(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHtml(svc.NewestVersion) + '</a>';
                         } else {
                             verHtml = '<span class="version-new">' + verHtml + '</span>';
@@ -1622,7 +1622,7 @@ function refreshServiceRow(name) {
                             ' <span class="version-arrow">&rarr;</span> ' + verHtml;
                     } else {
                         var tagHtml = escapeHtml(svc.Tag) + rvSpan;
-                        if (svc.ChangelogURL) {
+                        if (svc.ChangelogURL && isSafeURL(svc.ChangelogURL)) {
                             imgCell.innerHTML = '<a href="' + escapeHtml(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + '</a>';
                         } else {
                             imgCell.innerHTML = tagHtml;
@@ -1750,7 +1750,7 @@ function refreshServiceRow(name) {
             group.classList.add("row-updated");
             setTimeout(function() { group.classList.remove("row-updated"); }, 300);
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 
@@ -2392,7 +2392,7 @@ function loadGHCRAlternatives() {
             }
             applyGHCRBadges();
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 var registryStyles = {
@@ -3509,6 +3509,13 @@ function escapeHtml(str) {
         .replace(/'/g, "&#039;");
 }
 
+// isSafeURL validates that a URL string starts with http:// or https://.
+// Used as a defence-in-depth check before inserting server-provided URLs
+// into href attributes via innerHTML.
+function isSafeURL(url) {
+    return typeof url === "string" && (url.indexOf("https://") === 0 || url.indexOf("http://") === 0);
+}
+
 
 /* ------------------------------------------------------------
    15. Registry Credentials & Rate Limits
@@ -3898,7 +3905,7 @@ function updateRateLimitStatus() {
             else if (health === "low") el.classList.add("warning");
             else if (health === "exhausted") el.classList.add("error");
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 // Fetch on initial load; live updates arrive via SSE rate_limits event.
@@ -3917,7 +3924,7 @@ function loadFooterVersion() {
         .then(function(data) {
             el.textContent = "Docker-Sentinel " + (data.version || "dev");
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 function loadAboutInfo() {

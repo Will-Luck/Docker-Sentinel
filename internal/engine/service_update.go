@@ -3,9 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"strings"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
@@ -15,15 +14,10 @@ import (
 	"github.com/moby/moby/api/types/swarm"
 )
 
-// scanServices discovers Swarm services and checks for image updates,
+// scanServices checks pre-fetched Swarm services for image updates,
 // routing them through the same policy/queue/notification flow as containers.
-func (u *Updater) scanServices(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int) {
-	services, err := u.docker.ListServices(ctx)
-	if err != nil {
-		u.log.Error("failed to list services", "error", err)
-		result.Errors = append(result.Errors, err)
-		return
-	}
+// The services list is fetched once in Scan() to avoid duplicate API calls.
+func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mode ScanMode, result *ScanResult, filters []string, reserve int) {
 	result.Services = len(services)
 
 	for _, svc := range services {
@@ -294,7 +288,7 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 	case "rollback":
 		// Apply rollback policy setting — change the service's policy to prevent
 		// the next scan from immediately retrying the same broken update.
-		if rp := u.cfg.RollbackPolicy(); rp == "manual" || rp == "pinned" {
+		if rp := u.rollbackPolicy(); rp == "manual" || rp == "pinned" {
 			if err := u.store.SetPolicyOverride(name, rp); err != nil {
 				u.log.Warn("failed to set rollback policy override", "name", name, "policy", rp, "error", err)
 			} else {
@@ -328,21 +322,22 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 	return pollErr
 }
 
-const serviceUpdateTimeout = 10 * time.Minute
+const (
+	serviceUpdateTimeout   = 10 * time.Minute
+	serviceUpdatePollDelay = 5 * time.Second
+)
 
 // pollServiceUpdate polls the service's UpdateStatus until it reaches a
 // terminal state or the timeout expires. Returns the outcome string and
-// any error.
+// any error. Uses u.clock.After for testability with mock clocks.
 func (u *Updater) pollServiceUpdate(ctx context.Context, serviceID, name string) (string, error) {
 	deadline := u.clock.Now().Add(serviceUpdateTimeout)
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return "failed", ctx.Err()
-		case <-ticker.C:
+		case <-u.clock.After(serviceUpdatePollDelay):
 			if u.clock.Now().After(deadline) {
 				return "timeout", fmt.Errorf("service %s update timed out after %s", name, serviceUpdateTimeout)
 			}
