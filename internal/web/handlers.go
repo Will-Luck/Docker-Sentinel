@@ -84,6 +84,8 @@ type serviceView struct {
 	Registry        string
 	UpdateStatus    string
 	Tasks           []taskView
+	ChangelogURL    string `json:"ChangelogURL,omitempty"` // Pre-computed changelog link for JS row updates
+	VersionURL      string `json:"VersionURL,omitempty"`   // Pre-computed version-specific link for JS row updates
 }
 
 // taskView is a single Swarm task (replica) row nested under a service.
@@ -141,6 +143,14 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 			Error:    t.Error,
 		}
 	}
+	// Pre-compute URLs so the JS SSE handler can build proper links
+	// without duplicating the URL logic client-side.
+	changelogLink := ChangelogURL(d.Image)
+	var versionLink string
+	if newestVersion != "" {
+		versionLink = VersionURL(d.Image, newestVersion)
+	}
+
 	sv := serviceView{
 		ID:              d.ID,
 		Name:            name,
@@ -156,6 +166,8 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 		Registry:        registry.RegistryHost(d.Image),
 		UpdateStatus:    d.UpdateStatus,
 		Tasks:           tasks,
+		ChangelogURL:    changelogLink,
+		VersionURL:      versionLink,
 	}
 	// For scaled-to-0 services, load previous replica count so "Scale up"
 	// can restore to the original value instead of defaulting to 1,
