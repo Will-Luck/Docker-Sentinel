@@ -1761,10 +1761,23 @@ function renderAccordionContent(name, data) {
     // --- Versions section ---
     var verSection = document.createElement("div");
     verSection.className = "accordion-section";
-    var verLabel = document.createElement("div");
-    verLabel.className = "accordion-label";
-    verLabel.textContent = "Available Versions";
-    verSection.appendChild(verLabel);
+
+    // Header row: "Available Versions" label + "Full Details" button inline.
+    var verHeader = document.createElement("div");
+    verHeader.className = "accordion-label";
+    verHeader.style.display = "flex";
+    verHeader.style.alignItems = "center";
+    verHeader.style.justifyContent = "space-between";
+    var verLabelSpan = document.createElement("span");
+    verLabelSpan.textContent = "Available Versions";
+    verHeader.appendChild(verLabelSpan);
+    var detailLink = document.createElement("a");
+    detailLink.href = "/container/" + encodeURIComponent(name);
+    detailLink.className = "btn btn-info btn-sm";
+    detailLink.textContent = "Full Details";
+    detailLink.addEventListener("click", function(e) { e.stopPropagation(); });
+    verHeader.appendChild(detailLink);
+    verSection.appendChild(verHeader);
 
     if (versions.length > 0) {
         var verWrap = document.createElement("div");
@@ -1792,25 +1805,17 @@ function renderAccordionContent(name, data) {
 
     grid.appendChild(verSection);
 
-    // --- Actions section ---
-    var actSection = document.createElement("div");
-    actSection.className = "accordion-section accordion-actions";
-
+    // --- Actions section (only if Rollback is available) ---
     if (d.snapshots && d.snapshots.length > 0) {
+        var actSection = document.createElement("div");
+        actSection.className = "accordion-section accordion-actions";
         var rbBtn = document.createElement("button");
         rbBtn.className = "btn btn-error";
         rbBtn.textContent = "Rollback";
         rbBtn.addEventListener("click", function () { triggerRollback(name); });
         actSection.appendChild(rbBtn);
+        grid.appendChild(actSection);
     }
-
-    var detailLink = document.createElement("a");
-    detailLink.href = "/container/" + encodeURIComponent(name);
-    detailLink.className = "btn btn-info";
-    detailLink.textContent = "Full Details";
-    actSection.appendChild(detailLink);
-
-    grid.appendChild(actSection);
     contentEl.appendChild(grid);
 
     // --- GHCR alternative section ---
