@@ -1504,43 +1504,25 @@ function refreshServiceRow(name) {
             if (!group) return;
             var header = group.querySelector(".svc-header");
 
-            // Update replicas badge text and colour.
-            var badge = group.querySelector(".svc-replicas");
-            if (badge) {
-                badge.textContent = svc.Replicas || "";
-                badge.classList.remove("svc-replicas-healthy", "svc-replicas-degraded", "svc-replicas-down");
-                if (svc.DesiredReplicas > 0 && svc.RunningReplicas === svc.DesiredReplicas) {
-                    badge.classList.add("svc-replicas-healthy");
-                } else if (svc.RunningReplicas > 0) {
-                    badge.classList.add("svc-replicas-degraded");
-                } else {
-                    badge.classList.add("svc-replicas-down");
-                }
-            }
-
-            // Update scale badge wrap attributes.
+            // Fully rebuild the scale badge wrap to ensure hover button is always present.
             var wrap = group.querySelector(".status-badge-wrap[data-service]");
             if (wrap) {
-                var hoverBadge = wrap.querySelector(".badge-hover");
-                var spinner = wrap.querySelector(".badge-loading");
-                if (spinner) spinner.remove();
-                if (badge) badge.style.display = "";
-                if (hoverBadge) hoverBadge.style.display = "";
-
+                wrap.style.pointerEvents = ""; // Clear spinner lock from showBadgeSpinner.
+                var prevReplicas = svc.PrevReplicas || parseInt(wrap.getAttribute("data-prev-replicas"), 10) || 1;
                 if (svc.DesiredReplicas > 0) {
+                    var replicaClass = (svc.RunningReplicas === svc.DesiredReplicas) ? "svc-replicas-healthy" :
+                        (svc.RunningReplicas > 0) ? "svc-replicas-degraded" : "svc-replicas-down";
                     wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
-                    if (hoverBadge) {
-                        hoverBadge.textContent = "Scale to 0";
-                        hoverBadge.className = "badge badge-error badge-hover";
-                        hoverBadge.onclick = function(ev) { ev.stopPropagation(); scaleSvc(name, 0, wrap); };
-                    }
+                    wrap.innerHTML = '<span class="badge svc-replicas ' + replicaClass + ' badge-default">' +
+                        escapeHtml(svc.Replicas || '') + '</span>' +
+                        '<span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc(\'' +
+                        escapeHtml(name) + '\', 0, this.closest(\'.status-badge-wrap\'))">Scale to 0</span>';
                 } else {
-                    var prev = parseInt(wrap.getAttribute("data-prev-replicas"), 10) || 1;
-                    if (hoverBadge) {
-                        hoverBadge.textContent = "Scale up";
-                        hoverBadge.className = "badge badge-success badge-hover";
-                        hoverBadge.onclick = function(ev) { ev.stopPropagation(); scaleSvc(name, prev > 0 ? prev : 1, wrap); };
-                    }
+                    wrap.setAttribute("data-prev-replicas", prevReplicas);
+                    wrap.innerHTML = '<span class="badge svc-replicas svc-replicas-down badge-default">' +
+                        escapeHtml(svc.Replicas || '0/0') + '</span>' +
+                        '<span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc(\'' +
+                        escapeHtml(name) + '\', ' + (prevReplicas > 0 ? prevReplicas : 1) + ', this.closest(\'.status-badge-wrap\'))">Scale up</span>';
                 }
             }
 
@@ -1622,7 +1604,7 @@ function refreshServiceRow(name) {
             }
             // Rebuild task rows from fresh data.
             var taskHeader = group.querySelector(".svc-header");
-            if (taskHeader && svc.Tasks) {
+            if (taskHeader && svc.Tasks && svc.Tasks.length > 0) {
                 for (var t = 0; t < svc.Tasks.length; t++) {
                     var task = svc.Tasks[t];
                     var tr = document.createElement("tr");
@@ -1648,6 +1630,12 @@ function refreshServiceRow(name) {
                     // Insert task rows after the header row.
                     taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
                 }
+            } else if (taskHeader && svc.DesiredReplicas === 0) {
+                // Scaled to 0 — show placeholder row.
+                var tr = document.createElement("tr");
+                tr.className = "svc-task-row";
+                tr.innerHTML = '<td></td><td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 \u2014 no active tasks</td><td></td>';
+                taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
             }
 
             group.classList.add("row-updated");
