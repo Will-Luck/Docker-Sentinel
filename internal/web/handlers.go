@@ -66,17 +66,19 @@ type stackGroup struct {
 
 // serviceView is a Swarm service row for the dashboard template.
 type serviceView struct {
-	ID            string
-	Name          string
-	Image         string
-	Tag           string
-	NewestVersion string
-	Policy        string
-	HasUpdate     bool
-	Replicas      string
-	Registry      string
-	UpdateStatus  string
-	Tasks         []taskView
+	ID              string
+	Name            string
+	Image           string
+	Tag             string
+	NewestVersion   string
+	Policy          string
+	HasUpdate       bool
+	Replicas        string
+	DesiredReplicas uint64
+	RunningReplicas uint64
+	Registry        string
+	UpdateStatus    string
+	Tasks           []taskView
 }
 
 // taskView is a single Swarm task (replica) row nested under a service.
@@ -194,17 +196,19 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			svcViews = append(svcViews, serviceView{
-				ID:            d.ID,
-				Name:          name,
-				Image:         d.Image,
-				Tag:           tag,
-				NewestVersion: newestVersion,
-				Policy:        policy,
-				HasUpdate:     pendingNames[name],
-				Replicas:      d.Replicas,
-				Registry:      registry.RegistryHost(d.Image),
-				UpdateStatus:  d.UpdateStatus,
-				Tasks:         tasks,
+				ID:              d.ID,
+				Name:            name,
+				Image:           d.Image,
+				Tag:             tag,
+				NewestVersion:   newestVersion,
+				Policy:          policy,
+				HasUpdate:       pendingNames[name],
+				Replicas:        d.Replicas,
+				DesiredReplicas: d.DesiredReplicas,
+				RunningReplicas: d.RunningReplicas,
+				Registry:        registry.RegistryHost(d.Image),
+				UpdateStatus:    d.UpdateStatus,
+				Tasks:           tasks,
 			})
 		}
 	}

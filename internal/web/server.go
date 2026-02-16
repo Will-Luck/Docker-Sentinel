@@ -218,15 +218,18 @@ type SwarmProvider interface {
 	ListServiceDetail(ctx context.Context) ([]ServiceDetail, error)
 	UpdateService(ctx context.Context, id, name, targetImage string) error
 	RollbackService(ctx context.Context, id, name string) error
+	ScaleService(ctx context.Context, name string, replicas uint64) error
 }
 
 // ServiceSummary is a minimal Swarm service info struct for the web layer.
 type ServiceSummary struct {
-	ID       string
-	Name     string
-	Image    string
-	Labels   map[string]string
-	Replicas string // e.g. "3/3"
+	ID              string
+	Name            string
+	Image           string
+	Labels          map[string]string
+	Replicas        string // e.g. "3/3"
+	DesiredReplicas uint64
+	RunningReplicas uint64
 }
 
 // TaskInfo describes a single Swarm task (one replica on one node).
@@ -596,6 +599,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/services/{name}/detail", perm(auth.PermContainersView, s.apiServiceDetail))
 	s.mux.Handle("POST /api/services/{name}/update", perm(auth.PermContainersUpdate, s.apiServiceUpdate))
 	s.mux.Handle("POST /api/services/{name}/rollback", perm(auth.PermContainersRollback, s.apiServiceRollback))
+	s.mux.Handle("POST /api/services/{name}/scale", perm(auth.PermContainersManage, s.apiServiceScale))
 
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))

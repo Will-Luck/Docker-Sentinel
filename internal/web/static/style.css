@@ -1165,6 +1165,10 @@ td:nth-child(6) {
     font-size: 0.75rem;
 }
 
+.svc-replicas-healthy { background: var(--badge-success-bg); color: var(--badge-success-text); }
+.svc-replicas-degraded { background: var(--badge-warning-bg); color: var(--badge-warning-text); }
+.svc-replicas-down { background: var(--badge-error-bg); color: var(--badge-error-text); }
+
 
 /* --------------------------------------------------------------------------
    11. Accordion — panel, content, grid, sections, version badges

@@ -662,15 +662,20 @@ func (a *swarmAdapter) ListServices(ctx context.Context) ([]web.ServiceSummary, 
 	result := make([]web.ServiceSummary, len(services))
 	for i, svc := range services {
 		replicas := ""
+		var desired, running uint64
 		if svc.ServiceStatus != nil {
-			replicas = fmt.Sprintf("%d/%d", svc.ServiceStatus.RunningTasks, svc.ServiceStatus.DesiredTasks)
+			running = svc.ServiceStatus.RunningTasks
+			desired = svc.ServiceStatus.DesiredTasks
+			replicas = fmt.Sprintf("%d/%d", running, desired)
 		}
 		result[i] = web.ServiceSummary{
-			ID:       svc.ID,
-			Name:     svc.Spec.Name,
-			Image:    svc.Spec.TaskTemplate.ContainerSpec.Image,
-			Labels:   svc.Spec.Labels,
-			Replicas: replicas,
+			ID:              svc.ID,
+			Name:            svc.Spec.Name,
+			Image:           svc.Spec.TaskTemplate.ContainerSpec.Image,
+			Labels:          svc.Spec.Labels,
+			Replicas:        replicas,
+			DesiredReplicas: desired,
+			RunningReplicas: running,
 		}
 	}
 	return result, nil
@@ -696,8 +701,11 @@ func (a *swarmAdapter) ListServiceDetail(ctx context.Context) ([]web.ServiceDeta
 	result := make([]web.ServiceDetail, 0, len(services))
 	for _, svc := range services {
 		replicas := ""
+		var desired, running uint64
 		if svc.ServiceStatus != nil {
-			replicas = fmt.Sprintf("%d/%d", svc.ServiceStatus.RunningTasks, svc.ServiceStatus.DesiredTasks)
+			running = svc.ServiceStatus.RunningTasks
+			desired = svc.ServiceStatus.DesiredTasks
+			replicas = fmt.Sprintf("%d/%d", running, desired)
 		}
 
 		imageRef := svc.Spec.TaskTemplate.ContainerSpec.Image
@@ -712,11 +720,13 @@ func (a *swarmAdapter) ListServiceDetail(ctx context.Context) ([]web.ServiceDeta
 		}
 
 		summary := web.ServiceSummary{
-			ID:       svc.ID,
-			Name:     svc.Spec.Name,
-			Image:    imageRef,
-			Labels:   svc.Spec.Labels,
-			Replicas: replicas,
+			ID:              svc.ID,
+			Name:            svc.Spec.Name,
+			Image:           imageRef,
+			Labels:          svc.Spec.Labels,
+			Replicas:        replicas,
+			DesiredReplicas: desired,
+			RunningReplicas: running,
 		}
 
 		// Fetch tasks for this service.
@@ -792,4 +802,31 @@ func (a *swarmAdapter) RollbackService(ctx context.Context, id, name string) err
 		return fmt.Errorf("inspect service %s: %w", name, err)
 	}
 	return a.client.RollbackService(ctx, id, svc.Meta.Version)
+}
+
+func (a *swarmAdapter) ScaleService(ctx context.Context, name string, replicas uint64) error {
+	services, err := a.client.ListServices(ctx)
+	if err != nil {
+		return fmt.Errorf("list services: %w", err)
+	}
+	var id string
+	for _, svc := range services {
+		if svc.Spec.Name == name {
+			id = svc.ID
+			break
+		}
+	}
+	if id == "" {
+		return fmt.Errorf("service %s not found", name)
+	}
+
+	svc, err := a.client.InspectService(ctx, id)
+	if err != nil {
+		return fmt.Errorf("inspect service %s: %w", name, err)
+	}
+	if svc.Spec.Mode.Replicated == nil {
+		return fmt.Errorf("service %s is not replicated (global mode)", name)
+	}
+	svc.Spec.Mode.Replicated.Replicas = &replicas
+	return a.client.UpdateService(ctx, id, svc.Meta.Version, svc.Spec, "")
 }

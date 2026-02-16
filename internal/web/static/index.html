@@ -179,17 +179,30 @@
 
                     {{range .SwarmServices}}
                     <tbody class="svc-group svc-collapsed" data-service="{{.Name}}">
-                        <tr class="svc-header{{if .HasUpdate}} has-update{{end}}" onclick="toggleSvc(this)">
-                            <td class="td-checkbox"></td>
+                        <tr class="svc-header{{if .HasUpdate}} has-update{{end}}" data-registry="{{.Registry}}" onclick="toggleSvc(this)">
+                            <td class="td-checkbox">
+                                <input type="checkbox" class="row-select" value="{{.Name}}" id="select-svc-{{.Name}}" aria-label="Select {{.Name}}">
+                            </td>
                             <td>
                                 <span class="stack-chevron">&#9656;</span>
                                 <span class="svc-name">{{.Name}}</span>
                             </td>
                             <td class="cell-image mono" title="{{.Image}}">
-                                <span class="version-current">{{.Tag}}</span>
+                                {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}
                                 {{if .NewestVersion}}
+                                    <span class="version-current">{{$tag}}</span>
                                     <span class="version-arrow">&rarr;</span>
-                                    <span class="version-new">{{.NewestVersion}}</span>
+                                    {{with versionURL $img $ver}}
+                                        <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{$ver}}</a>
+                                    {{else}}
+                                        <span class="version-new">{{$ver}}</span>
+                                    {{end}}
+                                {{else}}
+                                    {{with changelogURL $img}}
+                                        <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}</a>
+                                    {{else}}
+                                        {{$tag}}
+                                    {{end}}
                                 {{end}}
                             </td>
                             <td>
@@ -201,14 +214,34 @@
                                     <option value="pinned"{{if eq .Policy "pinned"}} selected{{end}}>pinned</option>
                                 </select>
                             </td>
-                            <td><span class="badge svc-replicas">{{.Replicas}}</span></td>
                             <td>
+                                {{if gt .DesiredReplicas 0}}
+                                <span class="status-badge-wrap" data-service="{{.Name}}" data-action="scale-down" data-prev-replicas="{{.DesiredReplicas}}" onclick="event.stopPropagation()">
+                                    <span class="badge svc-replicas {{if eq .RunningReplicas .DesiredReplicas}}svc-replicas-healthy{{else if gt .RunningReplicas 0}}svc-replicas-degraded{{else}}svc-replicas-down{{end}} badge-default">{{.Replicas}}</span>
+                                    <span class="badge badge-error badge-hover">Scale to 0</span>
+                                </span>
+                                {{else}}
+                                <span class="status-badge-wrap" data-service="{{.Name}}" data-action="scale-up" data-prev-replicas="{{.DesiredReplicas}}" onclick="event.stopPropagation()">
+                                    <span class="badge svc-replicas svc-replicas-down badge-default">{{.Replicas}}</span>
+                                    <span class="badge badge-success badge-hover">Scale up</span>
+                                </span>
+                                {{end}}
+                            </td>
+                            <td>
+                                <div class="btn-group">
                                 {{if and .HasUpdate (ne .Policy "pinned")}}
                                     <button class="btn btn-warning btn-sm"
                                             onclick="event.stopPropagation(); triggerSvcUpdate('{{.Name}}', event)">
                                         Update
                                     </button>
                                 {{end}}
+                                {{if eq .UpdateStatus "completed"}}
+                                    <button class="btn btn-sm"
+                                            onclick="event.stopPropagation(); rollbackSvc('{{.Name}}', event)">
+                                        Rollback
+                                    </button>
+                                {{end}}
+                                </div>
                             </td>
                         </tr>
 
