@@ -229,9 +229,9 @@
                                     <span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc('{{.Name}}', 0, this.closest('.status-badge-wrap'))">Scale to 0</span>
                                 </span>
                                 {{else}}
-                                <span class="status-badge-wrap" data-service="{{.Name}}" data-prev-replicas="{{.DesiredReplicas}}">
+                                <span class="status-badge-wrap" data-service="{{.Name}}" data-prev-replicas="{{if gt .PrevReplicas 0}}{{.PrevReplicas}}{{else}}{{.DesiredReplicas}}{{end}}">
                                     <span class="badge svc-replicas svc-replicas-down badge-default">{{.Replicas}}</span>
-                                    <span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc('{{.Name}}', {{if gt .DesiredReplicas 0}}{{.DesiredReplicas}}{{else}}1{{end}}, this.closest('.status-badge-wrap'))">Scale up</span>
+                                    <span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc('{{.Name}}', {{if gt .PrevReplicas 0}}{{.PrevReplicas}}{{else if gt .DesiredReplicas 0}}{{.DesiredReplicas}}{{else}}1{{end}}, this.closest('.status-badge-wrap'))">Scale up</span>
                                 </span>
                                 {{end}}
                             </td>

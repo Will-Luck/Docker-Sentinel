@@ -1487,8 +1487,13 @@ function scaleSvc(name, replicas, wrap) {
         "Scaled " + name + " to " + replicas + " replicas",
         "Failed to scale " + name
     );
-    // Refresh the row after a short delay to pick up the new replica count.
-    setTimeout(function() { refreshServiceRow(name); }, 2000);
+    // Poll multiple times — Swarm scaling takes 5-15s to converge.
+    var delays = [2000, 5000, 10000, 20000];
+    for (var i = 0; i < delays.length; i++) {
+        (function(d) {
+            setTimeout(function() { refreshServiceRow(name); }, d);
+        })(delays[i]);
+    }
 }
 
 function refreshServiceRow(name) {
@@ -1606,6 +1611,42 @@ function refreshServiceRow(name) {
                         // Button was removed from DOM (e.g. update completed, no longer shown).
                         delete window._svcLoadingBtns[keys[k]];
                     }
+                }
+            }
+
+            // Update expanded task rows.
+            var taskRows = group.querySelectorAll(".svc-task-row");
+            // Remove existing task rows.
+            for (var t = taskRows.length - 1; t >= 0; t--) {
+                taskRows[t].remove();
+            }
+            // Rebuild task rows from fresh data.
+            var taskHeader = group.querySelector(".svc-header");
+            if (taskHeader && svc.Tasks) {
+                for (var t = 0; t < svc.Tasks.length; t++) {
+                    var task = svc.Tasks[t];
+                    var tr = document.createElement("tr");
+                    tr.className = "svc-task-row";
+                    var stateBadge;
+                    if (task.State === "running") {
+                        stateBadge = '<span class="badge badge-success">running</span>';
+                    } else if (task.State === "preparing") {
+                        stateBadge = '<span class="badge badge-info">preparing</span>';
+                    } else {
+                        stateBadge = '<span class="badge badge-error" title="' + escapeHtml(task.Error || '') + '">' + escapeHtml(task.State) + '</span>';
+                    }
+                    var nodeDisplay = escapeHtml(task.NodeName);
+                    if (task.NodeAddr) {
+                        nodeDisplay += ' <span class="svc-node-addr">(' + escapeHtml(task.NodeAddr) + ')</span>';
+                    }
+                    tr.innerHTML = '<td></td>' +
+                        '<td class="svc-node">' + nodeDisplay + '</td>' +
+                        '<td class="mono">' + escapeHtml(task.Tag || '') + '</td>' +
+                        '<td></td>' +
+                        '<td>' + stateBadge + '</td>' +
+                        '<td></td>';
+                    // Insert task rows after the header row.
+                    taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
                 }
             }
 
