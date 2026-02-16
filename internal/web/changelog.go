@@ -13,11 +13,13 @@ func ChangelogURL(imageRef string) string {
 	parts := strings.Split(ref, "/")
 
 	switch {
-	// ghcr.io/owner/repo
+	// ghcr.io/owner/repo — link to the GitHub Packages page, not the repo's
+	// releases page, because the GitHub repo name often doesn't match the
+	// GHCR image name (e.g. ghcr.io/valkey-io/valkey → valkey-container repo).
 	case len(parts) >= 3 && parts[0] == "ghcr.io":
 		owner := parts[1]
-		repo := strings.Join(parts[2:], "/")
-		return "https://github.com/" + owner + "/" + repo + "/releases"
+		repo := parts[len(parts)-1] // last segment is the package name
+		return "https://github.com/orgs/" + owner + "/packages/container/package/" + repo
 
 	// lscr.io/linuxserver/name
 	case len(parts) >= 3 && parts[0] == "lscr.io" && parts[1] == "linuxserver":
@@ -51,8 +53,8 @@ func VersionURL(imageRef, version string) string {
 	switch {
 	case len(parts) >= 3 && parts[0] == "ghcr.io":
 		owner := parts[1]
-		repo := strings.Join(parts[2:], "/")
-		return "https://github.com/" + owner + "/" + repo + "/releases/tag/" + version
+		repo := parts[len(parts)-1]
+		return "https://github.com/orgs/" + owner + "/packages/container/package/" + repo
 
 	case len(parts) >= 3 && parts[0] == "lscr.io" && parts[1] == "linuxserver":
 		name := parts[2]
