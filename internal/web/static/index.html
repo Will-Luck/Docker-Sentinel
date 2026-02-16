@@ -215,7 +215,7 @@
                         {{range .Tasks}}
                         <tr class="svc-task-row">
                             <td></td>
-                            <td class="svc-node" title="{{.NodeAddr}}">{{.NodeName}}</td>
+                            <td class="svc-node">{{.NodeName}}{{if .NodeAddr}} <span class="svc-node-addr">({{.NodeAddr}})</span>{{end}}</td>
                             <td class="mono">{{.Tag}}</td>
                             <td></td>
                             <td>

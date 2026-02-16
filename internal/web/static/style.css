@@ -1154,6 +1154,11 @@ td:nth-child(6) {
     padding-left: var(--sp-6) !important;
 }
 
+.svc-node-addr {
+    color: var(--fg-tertiary);
+    font-size: 0.75rem;
+}
+
 .svc-replicas {
     font-family: var(--font-mono);
     font-weight: 600;
