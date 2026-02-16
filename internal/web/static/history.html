@@ -82,7 +82,7 @@
                             {{range $i, $r := .History}}
                             <tr class="container-row" onclick="onRowClick(event, 'history-{{$i}}')">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
-                                <td><a href="/container/{{$r.ContainerName}}" class="container-link">{{$r.ContainerName}}</a></td>
+                                <td><a href="{{serviceOrContainer $r.Type $r.ContainerName}}" class="container-link">{{$r.ContainerName}}</a></td>
                                 <td>
                                     {{if eq $r.Outcome "success"}}
                                         <span class="badge badge-success">Success</span>

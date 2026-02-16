@@ -323,6 +323,7 @@ type LogEntry struct {
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
 	User      string    `json:"user,omitempty"`
+	Kind      string    `json:"kind,omitempty"` // "service" or "" (default = container)
 }
 
 // AppendLog writes a log entry to the logs bucket.

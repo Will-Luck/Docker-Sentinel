@@ -225,6 +225,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, sv := range svcViews {
+		if sv.RunningReplicas > 0 {
+			running++
+		}
 		if sv.HasUpdate {
 			pending++
 		}
@@ -651,6 +654,148 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	s.withAuthDetail(r, &data)
 
 	s.renderTemplate(w, "container.html", data)
+}
+
+// serviceDetailData holds all data for the per-service detail page.
+type serviceDetailData struct {
+	Service      serviceView
+	History      []UpdateRecord
+	Versions     []string
+	ChangelogURL string
+
+	// Auth context.
+	CurrentUser *auth.User
+	AuthEnabled bool
+	CSRFToken   string
+}
+
+// withAuthServiceDetail populates auth context on serviceDetailData.
+func (s *Server) withAuthServiceDetail(r *http.Request, data *serviceDetailData) {
+	rc := auth.GetRequestContext(r.Context())
+	if rc != nil {
+		data.CurrentUser = rc.User
+		data.AuthEnabled = rc.AuthEnabled
+	}
+	if cookie, err := r.Cookie(auth.CSRFCookieName); err == nil {
+		data.CSRFToken = cookie.Value
+	}
+}
+
+// handleServiceDetail renders the per-service detail page.
+func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		s.renderError(w, http.StatusBadRequest, "Bad Request", "Service name is required.")
+		return
+	}
+
+	if s.deps.Swarm == nil || !s.deps.Swarm.IsSwarmMode() {
+		s.renderError(w, http.StatusBadRequest, "Not Available", "Swarm mode is not active.")
+		return
+	}
+
+	details, err := s.deps.Swarm.ListServiceDetail(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list service details", "error", err)
+		s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load services.")
+		return
+	}
+
+	var found *ServiceDetail
+	for i := range details {
+		if details[i].Name == name {
+			found = &details[i]
+			break
+		}
+	}
+	if found == nil {
+		s.renderError(w, http.StatusNotFound, "Service Not Found", "The service \""+name+"\" was not found.")
+		return
+	}
+
+	policy := containerPolicy(found.Labels)
+	if s.deps.Policy != nil {
+		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+			policy = p
+		}
+	}
+
+	tag := registry.ExtractTag(found.Image)
+	if tag == "" {
+		if idx := strings.LastIndex(found.Image, "/"); idx >= 0 {
+			tag = found.Image[idx+1:]
+		} else {
+			tag = found.Image
+		}
+	}
+
+	var newestVersion string
+	if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
+		newestVersion = pending.NewerVersions[0]
+	}
+
+	pendingNames := make(map[string]bool)
+	for _, p := range s.deps.Queue.List() {
+		pendingNames[p.ContainerName] = true
+	}
+
+	tasks := make([]taskView, len(found.Tasks))
+	for i, t := range found.Tasks {
+		tasks[i] = taskView{
+			NodeName: t.NodeName,
+			NodeAddr: t.NodeAddr,
+			State:    t.State,
+			Image:    t.Image,
+			Tag:      t.Tag,
+			Slot:     t.Slot,
+			Error:    t.Error,
+		}
+	}
+
+	view := serviceView{
+		ID:              found.ID,
+		Name:            name,
+		Image:           found.Image,
+		Tag:             tag,
+		NewestVersion:   newestVersion,
+		Policy:          policy,
+		HasUpdate:       pendingNames[name],
+		Replicas:        found.Replicas,
+		DesiredReplicas: found.DesiredReplicas,
+		RunningReplicas: found.RunningReplicas,
+		Registry:        registry.RegistryHost(found.Image),
+		UpdateStatus:    found.UpdateStatus,
+		Tasks:           tasks,
+	}
+
+	// Gather history.
+	history, err := s.deps.Store.ListHistoryByContainer(name, 50)
+	if err != nil {
+		s.deps.Log.Warn("failed to list history for service", "name", name, "error", err)
+	}
+	if history == nil {
+		history = []UpdateRecord{}
+	}
+
+	// Gather versions.
+	var versions []string
+	if s.deps.Registry != nil {
+		versions, err = s.deps.Registry.ListVersions(r.Context(), found.Image)
+		if err != nil {
+			s.deps.Log.Warn("failed to list versions", "name", name, "error", err)
+			versions = nil
+		}
+	}
+
+	data := serviceDetailData{
+		Service:      view,
+		History:      history,
+		Versions:     versions,
+		ChangelogURL: ChangelogURL(found.Image),
+	}
+	s.withAuthServiceDetail(r, &data)
+
+	s.renderTemplate(w, "service.html", data)
 }
 
 // errorPageData holds data for the error.html template.

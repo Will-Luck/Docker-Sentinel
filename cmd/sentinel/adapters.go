@@ -320,6 +320,7 @@ func (a *eventLogAdapter) AppendLog(entry web.LogEntry) error {
 		Message:   entry.Message,
 		Container: entry.Container,
 		User:      entry.User,
+		Kind:      entry.Kind,
 	})
 }
 
@@ -336,6 +337,7 @@ func (a *eventLogAdapter) ListLogs(limit int) ([]web.LogEntry, error) {
 			Message:   e.Message,
 			Container: e.Container,
 			User:      e.User,
+			Kind:      e.Kind,
 		}
 	}
 	return result, nil

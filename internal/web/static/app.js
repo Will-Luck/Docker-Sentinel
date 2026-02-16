@@ -1424,12 +1424,25 @@ function toggleSvc(headerRow) {
 
 function triggerSvcUpdate(name, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
+    if (btn) {
+        btn.classList.add("loading");
+        btn.disabled = true;
+        window._svcLoadingBtns = window._svcLoadingBtns || {};
+        window._svcLoadingBtns[name] = btn;
+        // Safety timeout — clear after 60s even if SSE never fires.
+        setTimeout(function() {
+            if (window._svcLoadingBtns && window._svcLoadingBtns[name]) {
+                window._svcLoadingBtns[name].classList.remove("loading");
+                window._svcLoadingBtns[name].disabled = false;
+                delete window._svcLoadingBtns[name];
+            }
+        }, 60000);
+    }
     apiPost(
         "/api/services/" + encodeURIComponent(name) + "/update",
         null,
         "Service update started for " + name,
-        "Failed to trigger service update",
-        btn
+        "Failed to trigger service update"
     );
 }
 
@@ -1445,12 +1458,24 @@ function changeSvcPolicy(name, newPolicy) {
 
 function rollbackSvc(name, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
+    if (btn) {
+        btn.classList.add("loading");
+        btn.disabled = true;
+        window._svcLoadingBtns = window._svcLoadingBtns || {};
+        window._svcLoadingBtns["rb:" + name] = btn;
+        setTimeout(function() {
+            if (window._svcLoadingBtns && window._svcLoadingBtns["rb:" + name]) {
+                window._svcLoadingBtns["rb:" + name].classList.remove("loading");
+                window._svcLoadingBtns["rb:" + name].disabled = false;
+                delete window._svcLoadingBtns["rb:" + name];
+            }
+        }, 60000);
+    }
     apiPost(
         "/api/services/" + encodeURIComponent(name) + "/rollback",
         null,
         "Rollback started for " + name,
-        "Failed to rollback " + name,
-        btn
+        "Failed to rollback " + name
     );
 }
 
@@ -1472,6 +1497,7 @@ function refreshServiceRow(name) {
         .then(function(svc) {
             var group = document.querySelector('.svc-group[data-service="' + name + '"]');
             if (!group) return;
+            var header = group.querySelector(".svc-header");
 
             // Update replicas badge text and colour.
             var badge = group.querySelector(".svc-replicas");
@@ -1491,14 +1517,12 @@ function refreshServiceRow(name) {
             var wrap = group.querySelector(".status-badge-wrap[data-service]");
             if (wrap) {
                 var hoverBadge = wrap.querySelector(".badge-hover");
-                // Remove any spinner left over from scaling.
                 var spinner = wrap.querySelector(".badge-loading");
                 if (spinner) spinner.remove();
                 if (badge) badge.style.display = "";
                 if (hoverBadge) hoverBadge.style.display = "";
 
                 if (svc.DesiredReplicas > 0) {
-                    // Only update prev-replicas when running — preserves "before scale-to-0" count.
                     wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
                     if (hoverBadge) {
                         hoverBadge.textContent = "Scale to 0";
@@ -1515,15 +1539,56 @@ function refreshServiceRow(name) {
                 }
             }
 
-            // Update version display.
-            var header = group.querySelector(".svc-header");
+            // Update image/version display in header.
+            // Note: escapeHtml sanitises all dynamic values before DOM insertion.
             if (header) {
+                var imgCell = header.querySelector(".cell-image");
+                if (imgCell && svc.Tag) {
+                    if (svc.NewestVersion) {
+                        imgCell.innerHTML = '<span class="version-current">' + escapeHtml(svc.Tag) + '</span>' +
+                            ' <span class="version-arrow">&rarr;</span> ' +
+                            '<span class="version-new">' + escapeHtml(svc.NewestVersion) + '</span>';
+                    } else {
+                        imgCell.textContent = svc.Tag;
+                    }
+                }
+
+                // Update has-update class.
                 if (svc.HasUpdate) {
                     header.classList.add("has-update");
                 } else {
                     header.classList.remove("has-update");
                 }
+
+                // Update action buttons (all dynamic values passed through escapeHtml).
+                var actionCell = header.querySelector("td:last-child .btn-group");
+                if (actionCell) {
+                    var btns = "";
+                    if (svc.HasUpdate && svc.Policy !== "pinned") {
+                        btns += '<button class="btn btn-warning btn-sm" onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHtml(name) + '\', event)">Update</button>';
+                    }
+                    if (svc.UpdateStatus === "completed") {
+                        btns += '<button class="btn btn-sm" onclick="event.stopPropagation(); rollbackSvc(\'' + escapeHtml(name) + '\', event)">Rollback</button>';
+                    }
+                    actionCell.innerHTML = btns;
+                }
             }
+
+            // Clear loading buttons if present.
+            if (window._svcLoadingBtns) {
+                var keys = [name, "rb:" + name];
+                for (var k = 0; k < keys.length; k++) {
+                    var b = window._svcLoadingBtns[keys[k]];
+                    if (b) {
+                        b.classList.remove("loading");
+                        b.disabled = false;
+                        delete window._svcLoadingBtns[keys[k]];
+                    }
+                }
+            }
+
+            group.classList.add("row-updated");
+            setTimeout(function() { group.classList.remove("row-updated"); }, 300);
         })
         .catch(function() {});
 }
@@ -1903,6 +1968,26 @@ function applyFiltersAndSort() {
             if (show) visibleCount++;
         }
         stack.style.display = visibleCount === 0 ? "none" : "";
+    }
+
+    // Filter Swarm service groups too.
+    var svcGroups = table.querySelectorAll("tbody.svc-group");
+    for (var g = 0; g < svcGroups.length; g++) {
+        var svcGroup = svcGroups[g];
+        var svcHeader = svcGroup.querySelector(".svc-header");
+        if (!svcHeader) continue;
+        var showSvc = true;
+        if (filterState.status === "running") {
+            var rb = svcHeader.querySelector(".svc-replicas");
+            showSvc = rb && !rb.classList.contains("svc-replicas-down");
+        } else if (filterState.status === "stopped") {
+            var rb2 = svcHeader.querySelector(".svc-replicas");
+            showSvc = rb2 && rb2.classList.contains("svc-replicas-down");
+        }
+        if (showSvc && filterState.updates === "pending") {
+            showSvc = svcHeader.classList.contains("has-update");
+        }
+        svcGroup.style.display = showSvc ? "" : "none";
     }
 
     if (filterState.sort !== "default") {
@@ -2323,6 +2408,8 @@ function initSSE() {
             queueBatchToast(data.message || ("Service: " + data.container_name), "info");
             if (data.container_name) {
                 refreshServiceRow(data.container_name);
+                // Swarm updates converge over 10-30s; do a second refresh.
+                setTimeout(function() { refreshServiceRow(data.container_name); }, 10000);
             }
         } catch (_) {}
     });
