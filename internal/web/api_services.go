@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
@@ -109,17 +110,36 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user := ""
+	if rc := auth.GetRequestContext(r.Context()); rc != nil && rc.User != nil {
+		user = rc.User.Username
+	}
+
 	go func() {
-		if err := s.deps.Swarm.RollbackService(context.Background(), "", name); err != nil {
+		start := time.Now()
+		err := s.deps.Swarm.RollbackService(context.Background(), "", name)
+		duration := time.Since(start)
+
+		outcome := "success"
+		errMsg := ""
+		if err != nil {
+			outcome = "failed"
+			errMsg = err.Error()
 			s.deps.Log.Error("service rollback failed", "name", name, "error", err)
 		}
+
+		// Record in update history so rollbacks appear on the history page.
+		_ = s.deps.Store.RecordUpdate(UpdateRecord{
+			Timestamp:     time.Now(),
+			ContainerName: name,
+			Outcome:       "rollback_" + outcome,
+			Duration:      duration,
+			Error:         errMsg,
+			Type:          "service",
+		})
 	}()
 
 	if s.deps.EventLog != nil {
-		user := ""
-		if rc := auth.GetRequestContext(r.Context()); rc != nil && rc.User != nil {
-			user = rc.User.Username
-		}
 		_ = s.deps.EventLog.AppendLog(LogEntry{
 			Type:      "rollback",
 			Message:   "service rollback triggered for " + name,

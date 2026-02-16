@@ -44,9 +44,12 @@ func (c *Client) UpdateService(ctx context.Context, id string, version swarm.Ver
 }
 
 // RollbackService triggers Swarm's native rollback to the previous spec.
-func (c *Client) RollbackService(ctx context.Context, id string, version swarm.Version) error {
+// The current spec must be passed — the Docker API validates it even though
+// "Rollback: previous" means the spec is ignored for the actual rollout.
+func (c *Client) RollbackService(ctx context.Context, id string, version swarm.Version, spec swarm.ServiceSpec) error {
 	_, err := c.api.ServiceUpdate(ctx, id, client.ServiceUpdateOptions{
 		Version:  version,
+		Spec:     spec,
 		Rollback: "previous",
 	})
 	return err

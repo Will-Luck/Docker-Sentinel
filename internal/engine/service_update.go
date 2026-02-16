@@ -268,6 +268,7 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 		NewImage:      targetImage,
 		Outcome:       outcome,
 		Duration:      duration,
+		Type:          "service",
 	}
 	if pollErr != nil {
 		record.Error = pollErr.Error()

@@ -62,11 +62,12 @@ type Dependencies struct {
 	Log                 *slog.Logger
 }
 
-// HistoryStore reads update history and maintenance state.
+// HistoryStore reads/writes update history and maintenance state.
 type HistoryStore interface {
 	ListHistory(limit int) ([]UpdateRecord, error)
 	ListHistoryByContainer(name string, limit int) ([]UpdateRecord, error)
 	GetMaintenance(name string) (bool, error)
+	RecordUpdate(rec UpdateRecord) error
 }
 
 // SnapshotStore reads container snapshots.

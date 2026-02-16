@@ -1137,7 +1137,13 @@ td:nth-child(6) {
 .svc-name {
     font-weight: 600;
     font-size: 0.85rem;
-    color: var(--fg-primary);
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.svc-name:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
 }
 
 /* Chevron rotation for svc-group (reuses stack-chevron class) */
