@@ -304,17 +304,17 @@
         );
     }
 
+    // Version is passed as a query parameter (not JSON body) because the Go
+    // handler uses r.FormValue() which reads both form bodies and query params.
     function updateSvcToVersion(name) {
         var sel = document.getElementById("version-select");
         if (!sel) return;
         var version = sel.value;
         apiPost(
-            "/api/services/" + encodeURIComponent(name) + "/update",
+            "/api/services/" + encodeURIComponent(name) + "/update?version=" + encodeURIComponent(version),
             null,
             "Updating " + name + " to " + version,
-            "Failed to update " + name,
-            null,
-            "?version=" + encodeURIComponent(version)
+            "Failed to update " + name
         );
     }
 
