@@ -292,6 +292,15 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 		_ = u.store.ClearIgnoredVersions(name)
 
 	case "rollback":
+		// Apply rollback policy setting — change the service's policy to prevent
+		// the next scan from immediately retrying the same broken update.
+		if rp := u.cfg.RollbackPolicy(); rp == "manual" || rp == "pinned" {
+			if err := u.store.SetPolicyOverride(name, rp); err != nil {
+				u.log.Warn("failed to set rollback policy override", "name", name, "policy", rp, "error", err)
+			} else {
+				u.log.Info("policy changed after rollback", "name", name, "policy", rp)
+			}
+		}
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventRollbackOK,
 			ContainerName: name,

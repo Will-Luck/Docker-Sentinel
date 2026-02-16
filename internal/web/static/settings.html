@@ -123,6 +123,17 @@
                         </div>
                         <div class="setting-row">
                             <div class="setting-info">
+                                <div class="setting-label">On Rollback</div>
+                                <div class="setting-desc">Automatically change update policy when a service or container rolls back, preventing the same broken update from being retried</div>
+                            </div>
+                            <select id="rollback-policy" class="setting-select" onchange="setRollbackPolicy(this.value)">
+                                <option value="">No change</option>
+                                <option value="manual">Set to Manual</option>
+                                <option value="pinned">Set to Pinned</option>
+                            </select>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
                                 <div class="setting-label">Auto-update :latest containers</div>
                                 <div class="setting-desc">Containers using the :latest tag are set to auto-update, regardless of the default policy above</div>
                             </div>

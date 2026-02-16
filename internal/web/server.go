@@ -402,6 +402,7 @@ type ConfigWriter interface {
 	SetHooksEnabled(b bool)
 	SetHooksWriteLabels(b bool)
 	SetDependencyAware(b bool)
+	SetRollbackPolicy(s string)
 }
 
 // Server is the web dashboard HTTP server.
@@ -658,6 +659,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/hooks-enabled", perm(auth.PermSettingsModify, s.apiSetHooksEnabled))
 	s.mux.Handle("POST /api/settings/hooks-write-labels", perm(auth.PermSettingsModify, s.apiSetHooksWriteLabels))
 	s.mux.Handle("POST /api/settings/dependency-aware", perm(auth.PermSettingsModify, s.apiSetDependencyAware))
+	s.mux.Handle("POST /api/settings/rollback-policy", perm(auth.PermSettingsModify, s.apiSetRollbackPolicy))
 	s.mux.Handle("POST /api/hooks/{container}", perm(auth.PermSettingsModify, s.apiSaveHook))
 	s.mux.Handle("DELETE /api/hooks/{container}/{phase}", perm(auth.PermSettingsModify, s.apiDeleteHook))
 

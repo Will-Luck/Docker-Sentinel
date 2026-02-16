@@ -61,6 +61,7 @@ type Config struct {
 	hooksEnabled     bool
 	hooksWriteLabels bool
 	dependencyAware  bool
+	rollbackPolicy   string // "", "manual", or "pinned"
 }
 
 // NewTestConfig creates a Config with sensible defaults for testing.
@@ -106,6 +107,7 @@ func Load() *Config {
 		hooksEnabled:        envBool("SENTINEL_HOOKS", false),
 		hooksWriteLabels:    envBool("SENTINEL_HOOKS_WRITE_LABELS", false),
 		dependencyAware:     envBool("SENTINEL_DEPS", true),
+		rollbackPolicy:      envStr("SENTINEL_ROLLBACK_POLICY", ""),
 		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
 	}
 }
@@ -155,6 +157,7 @@ func (c *Config) Values() map[string]string {
 	he := c.hooksEnabled
 	hwl := c.hooksWriteLabels
 	da := c.dependencyAware
+	rp := c.rollbackPolicy
 	c.mu.RUnlock()
 
 	return map[string]string{
@@ -181,6 +184,7 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_HOOKS":                 fmt.Sprintf("%t", he),
 		"SENTINEL_HOOKS_WRITE_LABELS":    fmt.Sprintf("%t", hwl),
 		"SENTINEL_DEPS":                  fmt.Sprintf("%t", da),
+		"SENTINEL_ROLLBACK_POLICY":       rp,
 		"SENTINEL_METRICS":               fmt.Sprintf("%t", c.MetricsEnabled),
 	}
 }
@@ -342,6 +346,18 @@ func (c *Config) DependencyAware() bool {
 func (c *Config) SetDependencyAware(b bool) {
 	c.mu.Lock()
 	c.dependencyAware = b
+	c.mu.Unlock()
+}
+
+func (c *Config) RollbackPolicy() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.rollbackPolicy
+}
+
+func (c *Config) SetRollbackPolicy(s string) {
+	c.mu.Lock()
+	c.rollbackPolicy = s
 	c.mu.Unlock()
 }
 

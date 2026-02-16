@@ -116,6 +116,17 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 		user = rc.User.Username
 	}
 
+	// Capture current image before rollback so history records have context.
+	currentImage := ""
+	if details, err := s.deps.Swarm.ListServiceDetail(r.Context()); err == nil {
+		for _, d := range details {
+			if d.Name == name {
+				currentImage = d.Image
+				break
+			}
+		}
+	}
+
 	go func() {
 		start := time.Now()
 		err := s.deps.Swarm.RollbackService(context.Background(), "", name)
@@ -133,11 +144,22 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 		_ = s.deps.Store.RecordUpdate(UpdateRecord{
 			Timestamp:     time.Now(),
 			ContainerName: name,
+			OldImage:      currentImage,
+			NewImage:      "(previous version)",
 			Outcome:       "rollback_" + outcome,
 			Duration:      duration,
 			Error:         errMsg,
 			Type:          "service",
 		})
+
+		// Apply rollback policy setting — change the service's policy to prevent
+		// the next scan from immediately retrying the same broken update.
+		if outcome == "success" && s.deps.SettingsStore != nil && s.deps.Policy != nil {
+			if rp, _ := s.deps.SettingsStore.LoadSetting("rollback_policy"); rp == "manual" || rp == "pinned" {
+				_ = s.deps.Policy.SetPolicyOverride(name, rp)
+				s.deps.Log.Info("policy changed after manual rollback", "name", name, "policy", rp)
+			}
+		}
 	}()
 
 	if s.deps.EventLog != nil {
