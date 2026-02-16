@@ -33,7 +33,7 @@ type pageData struct {
 	CSRFToken   string
 }
 
-// containerView is a container with computed display fields.
+// containerView is a container or Swarm service with computed display fields.
 type containerView struct {
 	ID            string
 	Name          string
@@ -47,6 +47,8 @@ type containerView struct {
 	IsSelf        bool
 	Stack         string // com.docker.compose.project label, or "" for standalone
 	Registry      string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
+	IsService     bool   // true for Swarm services
+	Replicas      string // e.g. "3/3" for services, empty for containers
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -116,6 +118,50 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			Stack:         c.Labels["com.docker.compose.project"],
 			Registry:      registry.RegistryHost(c.Image),
 		})
+	}
+
+	// Append Swarm services if available.
+	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
+		services, svcErr := s.deps.Swarm.ListServices(r.Context())
+		if svcErr != nil {
+			s.deps.Log.Warn("failed to list services", "error", svcErr)
+		}
+		for _, svc := range services {
+			name := svc.Name
+			policy := containerPolicy(svc.Labels)
+			if s.deps.Policy != nil {
+				if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+					policy = p
+				}
+			}
+			tag := registry.ExtractTag(svc.Image)
+			if tag == "" {
+				if idx := strings.LastIndex(svc.Image, "/"); idx >= 0 {
+					tag = svc.Image[idx+1:]
+				} else {
+					tag = svc.Image
+				}
+			}
+			var newestVersion string
+			if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
+				newestVersion = pending.NewerVersions[0]
+			}
+			views = append(views, containerView{
+				ID:            svc.ID,
+				Name:          name,
+				Image:         svc.Image,
+				Tag:           tag,
+				NewestVersion: newestVersion,
+				Policy:        policy,
+				State:         "running",
+				HasUpdate:     pendingNames[name],
+				IsSelf:        svc.Labels["sentinel.self"] == "true",
+				Stack:         "Swarm Services",
+				Registry:      registry.RegistryHost(svc.Image),
+				IsService:     true,
+				Replicas:      svc.Replicas,
+			})
+		}
 	}
 
 	// Compute stats for the dashboard header.

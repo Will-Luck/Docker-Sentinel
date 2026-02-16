@@ -2,11 +2,13 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/swarm"
 )
 
 // mockDocker implements docker.API for engine tests.
@@ -53,6 +55,19 @@ type mockDocker struct {
 		output   string
 	}
 	execErr map[string]error
+
+	// Swarm mock fields
+	swarmManager     bool
+	services         []swarm.Service
+	servicesErr      error
+	inspectService   map[string]swarm.Service
+	inspectSvcErr    map[string]error
+	updateSvcCalls   []string
+	updateSvcErr     map[string]error
+	rollbackSvcCalls []string
+	rollbackSvcErr   map[string]error
+	serviceTasks     map[string][]swarm.Task
+	serviceTasksErr  map[string]error
 }
 
 func newMockDocker() *mockDocker {
@@ -75,7 +90,13 @@ func newMockDocker() *mockDocker {
 			exitCode int
 			output   string
 		}),
-		execErr: make(map[string]error),
+		execErr:         make(map[string]error),
+		inspectService:  make(map[string]swarm.Service),
+		inspectSvcErr:   make(map[string]error),
+		updateSvcErr:    make(map[string]error),
+		rollbackSvcErr:  make(map[string]error),
+		serviceTasks:    make(map[string][]swarm.Task),
+		serviceTasksErr: make(map[string]error),
 	}
 }
 
@@ -192,6 +213,51 @@ func (m *mockDocker) ExecContainer(_ context.Context, id string, cmd []string, _
 		return r.exitCode, r.output, nil
 	}
 	return 0, "", nil
+}
+
+func (m *mockDocker) IsSwarmManager(_ context.Context) bool {
+	return m.swarmManager
+}
+
+func (m *mockDocker) ListServices(_ context.Context) ([]swarm.Service, error) {
+	return m.services, m.servicesErr
+}
+
+func (m *mockDocker) InspectService(_ context.Context, id string) (swarm.Service, error) {
+	if err, ok := m.inspectSvcErr[id]; ok && err != nil {
+		return swarm.Service{}, err
+	}
+	if svc, ok := m.inspectService[id]; ok {
+		return svc, nil
+	}
+	return swarm.Service{}, fmt.Errorf("service %s not found", id)
+}
+
+func (m *mockDocker) UpdateService(_ context.Context, id string, _ swarm.Version, _ swarm.ServiceSpec, _ string) error {
+	m.mu.Lock()
+	m.updateSvcCalls = append(m.updateSvcCalls, id)
+	m.mu.Unlock()
+	if err, ok := m.updateSvcErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) RollbackService(_ context.Context, id string, _ swarm.Version) error {
+	m.mu.Lock()
+	m.rollbackSvcCalls = append(m.rollbackSvcCalls, id)
+	m.mu.Unlock()
+	if err, ok := m.rollbackSvcErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) ListServiceTasks(_ context.Context, serviceID string) ([]swarm.Task, error) {
+	if err, ok := m.serviceTasksErr[serviceID]; ok && err != nil {
+		return nil, err
+	}
+	return m.serviceTasks[serviceID], nil
 }
 
 func (m *mockDocker) Close() error { return nil }

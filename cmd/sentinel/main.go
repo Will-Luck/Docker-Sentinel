@@ -233,13 +233,19 @@ func main() {
 	hookRunner := hooks.NewRunner(client, &hookStoreAdapter{db}, log.Logger)
 	updater.SetHookRunner(hookRunner)
 
+	// Detect Swarm mode.
+	isSwarm := client.IsSwarmManager(ctx)
+	if isSwarm {
+		log.Info("swarm mode detected — service monitoring enabled")
+	}
+
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
-		srv := web.NewServer(web.Dependencies{
+		webDeps := web.Dependencies{
 			Store:               &storeAdapter{db},
 			AboutStore:          &aboutStoreAdapter{db},
 			Queue:               &queueAdapter{queue},
@@ -273,7 +279,11 @@ func main() {
 			Auth:                authSvc,
 			Version:             version,
 			Log:                 log.Logger,
-		})
+		}
+		if isSwarm {
+			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
+		}
+		srv := web.NewServer(webDeps)
 
 		// Configure WebAuthn passkeys if RPID is set.
 		if cfg.WebAuthnEnabled() {

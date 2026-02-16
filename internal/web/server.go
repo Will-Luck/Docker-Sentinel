@@ -55,6 +55,7 @@ type Dependencies struct {
 	GHCRCache           GHCRAlternativeProvider
 	AboutStore          AboutStore
 	HookStore           HookStore
+	Swarm               SwarmProvider // nil when not in Swarm mode
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string
@@ -209,6 +210,24 @@ type SchedulerController interface {
 	SetSchedule(sched string)
 }
 
+// SwarmProvider provides Swarm service operations for the dashboard.
+// Nil when the daemon is not a Swarm manager.
+type SwarmProvider interface {
+	IsSwarmMode() bool
+	ListServices(ctx context.Context) ([]ServiceSummary, error)
+	UpdateService(ctx context.Context, id, name, targetImage string) error
+	RollbackService(ctx context.Context, id, name string) error
+}
+
+// ServiceSummary is a minimal Swarm service info struct for the web layer.
+type ServiceSummary struct {
+	ID       string
+	Name     string
+	Image    string
+	Labels   map[string]string
+	Replicas string // e.g. "3/3"
+}
+
 // HookStore reads and writes lifecycle hook configurations.
 type HookStore interface {
 	ListHooks(containerName string) ([]HookEntry, error)
@@ -263,6 +282,7 @@ type UpdateRecord struct {
 	Outcome       string        `json:"outcome"`
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
+	Type          string        `json:"type,omitempty"` // "container" (default) or "service"
 }
 
 // SnapshotEntry represents a snapshot with a parsed image reference for display.
@@ -291,6 +311,7 @@ type PendingUpdate struct {
 	NewerVersions          []string  `json:"newer_versions,omitempty"`
 	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
 	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
+	Type                   string    `json:"type,omitempty"` // "container" (default) or "service"
 }
 
 // ContainerLister lists containers.
@@ -549,6 +570,10 @@ func (s *Server) registerRoutes() {
 
 	// containers.rollback
 	s.mux.Handle("POST /api/containers/{name}/rollback", perm(auth.PermContainersRollback, s.apiRollback))
+
+	// Swarm service operations (reuse container permissions).
+	s.mux.Handle("POST /api/services/{name}/update", perm(auth.PermContainersUpdate, s.apiServiceUpdate))
+	s.mux.Handle("POST /api/services/{name}/rollback", perm(auth.PermContainersRollback, s.apiServiceRollback))
 
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))
