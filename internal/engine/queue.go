@@ -11,7 +11,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
-// PendingUpdate represents a container with an available update awaiting approval.
+// PendingUpdate represents a container or service with an available update awaiting approval.
 type PendingUpdate struct {
 	ContainerID            string    `json:"container_id"`
 	ContainerName          string    `json:"container_name"`
@@ -22,6 +22,7 @@ type PendingUpdate struct {
 	NewerVersions          []string  `json:"newer_versions,omitempty"`
 	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
 	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
+	Type                   string    `json:"type,omitempty"` // "container" (default) or "service"
 }
 
 // Queue manages pending updates with BoltDB persistence.

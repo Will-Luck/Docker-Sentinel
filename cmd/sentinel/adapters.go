@@ -133,6 +133,7 @@ func (a *queueAdapter) Add(update web.PendingUpdate) {
 		NewerVersions:          update.NewerVersions,
 		ResolvedCurrentVersion: update.ResolvedCurrentVersion,
 		ResolvedTargetVersion:  update.ResolvedTargetVersion,
+		Type:                   update.Type,
 	})
 }
 
@@ -165,6 +166,7 @@ func convertPendingUpdate(item engine.PendingUpdate) web.PendingUpdate {
 		NewerVersions:          item.NewerVersions,
 		ResolvedCurrentVersion: item.ResolvedCurrentVersion,
 		ResolvedTargetVersion:  item.ResolvedTargetVersion,
+		Type:                   item.Type,
 	}
 }
 
@@ -639,4 +641,65 @@ func (a *webHookStoreAdapter) SaveHook(hook web.HookEntry) error {
 
 func (a *webHookStoreAdapter) DeleteHook(containerName, phase string) error {
 	return a.s.DeleteHook(containerName, phase)
+}
+
+// swarmAdapter bridges docker.Client + engine.Updater to web.SwarmProvider.
+type swarmAdapter struct {
+	client  *docker.Client
+	updater *engine.Updater
+}
+
+func (a *swarmAdapter) IsSwarmMode() bool {
+	return a.client.IsSwarmManager(context.Background())
+}
+
+func (a *swarmAdapter) ListServices(ctx context.Context) ([]web.ServiceSummary, error) {
+	services, err := a.client.ListServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.ServiceSummary, len(services))
+	for i, svc := range services {
+		replicas := ""
+		if svc.ServiceStatus != nil {
+			replicas = fmt.Sprintf("%d/%d", svc.ServiceStatus.RunningTasks, svc.ServiceStatus.DesiredTasks)
+		}
+		result[i] = web.ServiceSummary{
+			ID:       svc.ID,
+			Name:     svc.Spec.Name,
+			Image:    svc.Spec.TaskTemplate.ContainerSpec.Image,
+			Labels:   svc.Spec.Labels,
+			Replicas: replicas,
+		}
+	}
+	return result, nil
+}
+
+func (a *swarmAdapter) UpdateService(ctx context.Context, id, name, targetImage string) error {
+	return a.updater.UpdateService(ctx, id, name, targetImage)
+}
+
+func (a *swarmAdapter) RollbackService(ctx context.Context, id, name string) error {
+	// Look up service by name if id is empty (rollback from UI).
+	if id == "" {
+		services, err := a.client.ListServices(ctx)
+		if err != nil {
+			return fmt.Errorf("list services: %w", err)
+		}
+		for _, svc := range services {
+			if svc.Spec.Name == name {
+				id = svc.ID
+				break
+			}
+		}
+		if id == "" {
+			return fmt.Errorf("service %s not found", name)
+		}
+	}
+
+	svc, err := a.client.InspectService(ctx, id)
+	if err != nil {
+		return fmt.Errorf("inspect service %s: %w", name, err)
+	}
+	return a.client.RollbackService(ctx, id, svc.Meta.Version)
 }

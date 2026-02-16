@@ -61,6 +61,10 @@ type ScanResult struct {
 	Failed      int
 	RateLimited int // containers skipped due to rate limits
 	Errors      []error
+
+	// Swarm service stats (only populated when Swarm mode is active).
+	Services       int
+	ServiceUpdates int
 }
 
 // Updater performs container scanning and update operations.
@@ -464,7 +468,12 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 	}
 
-	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf("total=%d updated=%d", result.Total, result.Updated))
+	// Scan Swarm services if we're on a manager node.
+	if u.docker.IsSwarmManager(ctx) {
+		u.scanServices(ctx, mode, &result, filters, reserve)
+	}
+
+	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf("total=%d updated=%d services=%d", result.Total, result.Updated, result.ServiceUpdates))
 
 	if u.rateTracker != nil {
 		u.publishEvent(events.EventRateLimits, "", u.rateTracker.OverallHealth())

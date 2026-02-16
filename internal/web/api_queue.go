@@ -44,10 +44,15 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Trigger the update in background — don't block the HTTP response.
 	// Use a detached context because r.Context() is cancelled when the handler returns.
+	// Route to service updater or container updater based on type.
 	go func() {
-		err := s.deps.Updater.UpdateContainer(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
+		var err error
+		if update.Type == "service" && s.deps.Swarm != nil {
+			err = s.deps.Swarm.UpdateService(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
+		} else {
+			err = s.deps.Updater.UpdateContainer(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
+		}
 		if errors.Is(err, engine.ErrUpdateInProgress) {
-			// Re-enqueue the approved update so it's not lost.
 			s.deps.Queue.Add(update)
 			s.deps.Log.Warn("update busy, re-enqueued", "name", name)
 			return
