@@ -326,6 +326,26 @@ func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Before scaling, look up current desired replicas so we can remember
+	// the previous count (used by "Scale up" to restore to original value).
+	var prevReplicas uint64
+	details, _ := s.deps.Swarm.ListServiceDetail(r.Context())
+	for _, d := range details {
+		if d.Name == name {
+			prevReplicas = d.DesiredReplicas
+			break
+		}
+	}
+
+	// Scaling to 0: save previous replica count so "Scale up" can restore it.
+	if body.Replicas == 0 && prevReplicas > 0 && s.deps.SettingsStore != nil {
+		_ = s.deps.SettingsStore.SaveSetting("svc_prev_replicas::"+name, fmt.Sprintf("%d", prevReplicas))
+	}
+	// Scaling back up: clear the saved count.
+	if body.Replicas > 0 && s.deps.SettingsStore != nil {
+		_ = s.deps.SettingsStore.SaveSetting("svc_prev_replicas::"+name, "")
+	}
+
 	if err := s.deps.Swarm.ScaleService(r.Context(), name, body.Replicas); err != nil {
 		s.deps.Log.Error("service scale failed", "name", name, "replicas", body.Replicas, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to scale service: "+err.Error())
@@ -346,5 +366,8 @@ func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "scaled"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":            "scaled",
+		"previous_replicas": prevReplicas,
+	})
 }

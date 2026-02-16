@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
@@ -76,6 +77,7 @@ type serviceView struct {
 	Replicas        string
 	DesiredReplicas uint64
 	RunningReplicas uint64
+	PrevReplicas    uint64 // Previous desired replicas (for "Scale up" after scale-to-0)
 	Registry        string
 	UpdateStatus    string
 	Tasks           []taskView
@@ -195,7 +197,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					Error:    t.Error,
 				}
 			}
-			svcViews = append(svcViews, serviceView{
+			sv := serviceView{
 				ID:              d.ID,
 				Name:            name,
 				Image:           d.Image,
@@ -209,7 +211,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				Registry:        registry.RegistryHost(d.Image),
 				UpdateStatus:    d.UpdateStatus,
 				Tasks:           tasks,
-			})
+			}
+			// For scaled-to-0 services, load previous replica count so "Scale up"
+			// can restore to the original value instead of defaulting to 1.
+			if sv.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
+				if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
+					if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
+						sv.PrevReplicas = n
+					}
+				}
+			}
+			svcViews = append(svcViews, sv)
 		}
 	}
 
