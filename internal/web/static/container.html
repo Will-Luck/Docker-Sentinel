@@ -61,7 +61,7 @@
         <div class="card detail-overview">
             <div class="detail-overview-top">
                 <div class="detail-overview-info">
-                    <span class="detail-overview-image mono">{{.Container.Image}}</span>
+                    <span class="detail-overview-image mono">{{.Container.Image}}{{if .Container.ResolvedVersion}} <span class="resolved-ver">({{.Container.ResolvedVersion}})</span>{{end}}</span>
                     <span class="badge {{if eq .Container.State "running"}}badge-success{{else}}badge-error{{end}}">{{.Container.State}}</span>
                     {{if .ChangelogURL}}
                     <a href="{{.ChangelogURL}}" target="_blank" rel="noopener" class="changelog-link">Changelog</a>

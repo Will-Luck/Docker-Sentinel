@@ -61,7 +61,7 @@
         <div class="card detail-overview">
             <div class="detail-overview-top">
                 <div class="detail-overview-info">
-                    <span class="detail-overview-image mono">{{.Service.Image}}</span>
+                    <span class="detail-overview-image mono">{{.Service.Image}}{{if .Service.ResolvedVersion}} <span class="resolved-ver">({{.Service.ResolvedVersion}})</span>{{end}}</span>
                     <span class="badge {{if and (gt .Service.DesiredReplicas 0) (eq .Service.RunningReplicas .Service.DesiredReplicas)}}badge-success{{else if gt .Service.RunningReplicas 0}}badge-warning{{else}}badge-error{{end}}">{{.Service.Replicas}} replicas</span>
                     {{if .Service.UpdateStatus}}
                     <span class="badge badge-info">{{.Service.UpdateStatus}}</span>

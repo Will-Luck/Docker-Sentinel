@@ -196,9 +196,9 @@
                                 <a href="/service/{{.Name}}" class="svc-name" onclick="event.stopPropagation()">{{.Name}}</a>
                             </td>
                             <td class="cell-image mono" title="{{.Image}}">
-                                {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}
+                                {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}{{$rv := .ResolvedVersion}}
                                 {{if .NewestVersion}}
-                                    <span class="version-current">{{$tag}}</span>
+                                    <span class="version-current">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</span>
                                     <span class="version-arrow">&rarr;</span>
                                     {{with versionURL $img $ver}}
                                         <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{$ver}}</a>
@@ -207,9 +207,9 @@
                                     {{end}}
                                 {{else}}
                                     {{with changelogURL $img}}
-                                        <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}</a>
+                                        <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</a>
                                     {{else}}
-                                        {{$tag}}
+                                        {{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}
                                     {{end}}
                                 {{end}}
                             </td>
@@ -328,9 +328,9 @@
                                     {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
                                 </td>
                                 <td class="cell-image mono" title="{{.Image}}">
-                                    {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}
+                                    {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}{{$rv := .ResolvedVersion}}
                                     {{if .NewestVersion}}
-                                        <span class="version-current">{{$tag}}</span>
+                                        <span class="version-current">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</span>
                                         <span class="version-arrow">&rarr;</span>
                                         {{with versionURL $img $ver}}
                                             <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{$ver}}</a>
@@ -339,9 +339,9 @@
                                         {{end}}
                                     {{else}}
                                         {{with changelogURL $img}}
-                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}</a>
+                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</a>
                                         {{else}}
-                                            {{$tag}}
+                                            {{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}
                                         {{end}}
                                     {{end}}
                                 </td>

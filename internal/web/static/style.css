@@ -614,6 +614,7 @@ tbody td {
 .version-current { color: var(--fg-secondary); }
 .version-arrow { color: var(--warning); margin: 0 4px; }
 .version-new { color: var(--warning); font-weight: 600; }
+.resolved-ver { color: var(--fg-muted); font-size: 0.85em; }
 a.version-link { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
 a.version-link:hover { border-bottom-style: solid; }
 
