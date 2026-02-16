@@ -13,6 +13,37 @@ A container update orchestrator with a web dashboard, written in Go. Supports st
   <img src="docs/screenshots/dashboard.png" alt="Docker-Sentinel Dashboard" width="900">
 </p>
 
+## Quick Start
+
+```bash
+docker run -d \
+  --name docker-sentinel \
+  --restart unless-stopped \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v sentinel-data:/data \
+  -p 8080:8080 \
+  willluck/docker-sentinel:latest
+```
+
+Open `http://localhost:8080` and create your admin account. That's it — Sentinel will scan your containers immediately.
+
+Also available from GHCR: `ghcr.io/will-luck/docker-sentinel:latest`
+
+## Why Sentinel?
+
+| | Sentinel | Watchtower | Diun |
+|---|---|---|---|
+| Per-container policies | auto / manual / pinned | all-or-nothing | N/A (notify only) |
+| Web dashboard | full UI with real-time updates | none | none |
+| Pre-update snapshots | full `docker inspect` saved | none | N/A |
+| Automatic rollback | rolls back on health check failure | none | N/A |
+| Update approval queue | review and approve/reject | none | N/A |
+| Docker Swarm support | services, scaling, rollback | limited | notify only |
+| Newer version discovery | finds newer semver tags | digest only | digest + tag |
+| Notifications | 7 providers + digest | Slack, email, Gotify | many providers |
+| Auth / multi-user | passwords, passkeys, RBAC | none | none |
+| Lifecycle hooks | pre/post-update commands | none | N/A |
+
 ## Features
 
 ### Update Engine
@@ -124,29 +155,6 @@ All dashboard functionality is exposed as JSON endpoints. See the [full API refe
 ## Documentation
 
 For detailed guides on every feature, see the **[Wiki](https://github.com/Will-Luck/Docker-Sentinel/wiki)**.
-
-## Quick Start
-
-```bash
-# From Docker Hub
-docker run -d \
-  --name docker-sentinel \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v sentinel-data:/data \
-  -p 8080:8080 \
-  -e SENTINEL_POLL_INTERVAL=6h \
-  willluck/docker-sentinel:latest
-
-# Or from GitHub Container Registry
-# ghcr.io/will-luck/docker-sentinel:latest
-```
-
-Then open `http://localhost:8080` in your browser. On first visit you'll be prompted to create an admin account.
-
-<p align="center">
-  <img src="docs/screenshots/setup.png" alt="First-run setup wizard" width="500">
-</p>
 
 ## Configuration
 
