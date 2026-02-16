@@ -576,6 +576,10 @@ tbody tr:hover {
 tbody tr:last-child {
     border-bottom: none;
 }
+/* Svc-header always keeps its divider, even when it's :last-child (collapsed). */
+.svc-header {
+    border-bottom: 1px solid var(--border) !important;
+}
 
 tbody td {
     padding: 10px var(--sp-4);

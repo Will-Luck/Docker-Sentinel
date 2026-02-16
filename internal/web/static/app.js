@@ -1498,17 +1498,19 @@ function refreshServiceRow(name) {
                 if (hoverBadge) hoverBadge.style.display = "";
 
                 if (svc.DesiredReplicas > 0) {
-                    wrap.setAttribute("data-action", "scale-down");
+                    // Only update prev-replicas when running — preserves "before scale-to-0" count.
                     wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
                     if (hoverBadge) {
                         hoverBadge.textContent = "Scale to 0";
                         hoverBadge.className = "badge badge-error badge-hover";
+                        hoverBadge.onclick = function(ev) { ev.stopPropagation(); scaleSvc(name, 0, wrap); };
                     }
                 } else {
-                    wrap.setAttribute("data-action", "scale-up");
+                    var prev = parseInt(wrap.getAttribute("data-prev-replicas"), 10) || 1;
                     if (hoverBadge) {
                         hoverBadge.textContent = "Scale up";
                         hoverBadge.className = "badge badge-success badge-hover";
+                        hoverBadge.onclick = function(ev) { ev.stopPropagation(); scaleSvc(name, prev > 0 ? prev : 1, wrap); };
                     }
                 }
             }
@@ -2693,26 +2695,13 @@ document.addEventListener("DOMContentLoaded", function () {
         loadGHCRAlternatives();
     }
 
-    // Stop/Start/Restart/Scale badge click delegation.
+    // Stop/Start/Restart badge click delegation (containers only — service scale uses inline onclick).
     document.addEventListener("click", function(e) {
         var badge = e.target.closest(".status-badge-wrap .badge-hover");
         if (!badge) return;
         e.stopPropagation();
         var wrap = badge.closest(".status-badge-wrap");
         if (!wrap) return;
-
-        // Service scale actions.
-        var svcName = wrap.getAttribute("data-service");
-        if (svcName) {
-            var action = wrap.getAttribute("data-action");
-            var prev = parseInt(wrap.getAttribute("data-prev-replicas"), 10) || 1;
-            if (action === "scale-down") {
-                scaleSvc(svcName, 0, wrap);
-            } else if (action === "scale-up") {
-                scaleSvc(svcName, prev > 0 ? prev : 1, wrap);
-            }
-            return;
-        }
 
         // Container stop/start/restart actions.
         var name = wrap.getAttribute("data-name");
