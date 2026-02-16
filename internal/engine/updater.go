@@ -249,10 +249,30 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 	}
 
-	// Prune queue entries for containers that no longer exist.
+	// Filter out Swarm task containers — their updates are handled by scanServices
+	// at the service level. Without this filter, task containers get queued under
+	// names like "nginx.2.abc123" instead of the service name "nginx".
+	filtered := containers[:0]
+	for _, c := range containers {
+		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	containers = filtered
+
+	// Prune queue entries for containers/services that no longer exist.
 	liveNames := make(map[string]bool, len(containers))
 	for _, c := range containers {
 		liveNames[containerName(c)] = true
+	}
+	// Include Swarm service names so service queue entries aren't pruned.
+	if u.docker.IsSwarmManager(ctx) {
+		if services, err := u.docker.ListServices(ctx); err == nil {
+			for _, svc := range services {
+				liveNames[svc.Spec.Name] = true
+			}
+		}
 	}
 	if pruned := u.queue.Prune(liveNames); pruned > 0 {
 		u.log.Info("pruned stale queue entries", "count", pruned)
