@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -203,7 +204,7 @@ func (s *Server) apiServicesList(w http.ResponseWriter, r *http.Request) {
 				Error:    t.Error,
 			}
 		}
-		views = append(views, serviceView{
+		sv := serviceView{
 			ID:              d.ID,
 			Name:            name,
 			Image:           d.Image,
@@ -217,7 +218,19 @@ func (s *Server) apiServicesList(w http.ResponseWriter, r *http.Request) {
 			Registry:        registry.RegistryHost(d.Image),
 			UpdateStatus:    d.UpdateStatus,
 			Tasks:           tasks,
-		})
+		}
+
+		// For scaled-to-0 services, load previous replica count for display and "Scale up".
+		if d.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
+			if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
+				if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
+					sv.PrevReplicas = n
+					sv.Replicas = fmt.Sprintf("0/%d", n)
+				}
+			}
+		}
+
+		views = append(views, sv)
 	}
 	writeJSON(w, http.StatusOK, views)
 }
@@ -298,6 +311,17 @@ func (s *Server) apiServiceDetail(w http.ResponseWriter, r *http.Request) {
 			UpdateStatus:    d.UpdateStatus,
 			Tasks:           tasks,
 		}
+
+		// For scaled-to-0 services, load previous replica count for display and "Scale up".
+		if d.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
+			if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
+				if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
+					view.PrevReplicas = n
+					view.Replicas = fmt.Sprintf("0/%d", n)
+				}
+			}
+		}
+
 		writeJSON(w, http.StatusOK, view)
 		return
 	}

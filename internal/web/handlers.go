@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -213,11 +214,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				Tasks:           tasks,
 			}
 			// For scaled-to-0 services, load previous replica count so "Scale up"
-			// can restore to the original value instead of defaulting to 1.
+			// can restore to the original value instead of defaulting to 1,
+			// and show "0/3" instead of "0/0" in the badge.
 			if sv.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
 				if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
 					if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
 						sv.PrevReplicas = n
+						sv.Replicas = fmt.Sprintf("0/%d", n)
 					}
 				}
 			}
@@ -778,6 +781,16 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 		Registry:        registry.RegistryHost(found.Image),
 		UpdateStatus:    found.UpdateStatus,
 		Tasks:           tasks,
+	}
+
+	// For scaled-to-0 services, load previous replica count for display and "Scale up".
+	if view.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
+		if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
+			if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
+				view.PrevReplicas = n
+				view.Replicas = fmt.Sprintf("0/%d", n)
+			}
+		}
 	}
 
 	// Gather history.

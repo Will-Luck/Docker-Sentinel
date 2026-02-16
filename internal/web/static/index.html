@@ -253,6 +253,7 @@
                             </td>
                         </tr>
 
+                        {{if .Tasks}}
                         {{range .Tasks}}
                         <tr class="svc-task-row">
                             <td></td>
@@ -268,6 +269,13 @@
                                     <span class="badge badge-error" title="{{.Error}}">{{.State}}</span>
                                 {{end}}
                             </td>
+                            <td></td>
+                        </tr>
+                        {{end}}
+                        {{else if eq .DesiredReplicas 0}}
+                        <tr class="svc-task-row">
+                            <td></td>
+                            <td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 &mdash; no active tasks</td>
                             <td></td>
                         </tr>
                         {{end}}
