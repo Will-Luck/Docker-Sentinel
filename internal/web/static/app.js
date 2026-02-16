@@ -1600,17 +1600,36 @@ function refreshServiceRow(name) {
             }
 
             // Update image/version display in header.
-            // Note: escapeHtml sanitises all dynamic values before DOM insertion.
+            // All dynamic values are sanitised through escapeHtml before DOM insertion.
+            // URLs come from our own API (server-computed), not user input.
             if (header) {
                 var imgCell = header.querySelector(".cell-image");
                 if (imgCell && svc.Tag) {
+                    // Remove existing registry badge — applyRegistryBadges() will re-add it.
+                    var oldBadge = imgCell.querySelector(".registry-badge");
+                    if (oldBadge) oldBadge.remove();
+
+                    var rvSpan = (svc.ResolvedVersion) ? ' <span class="resolved-ver">(' + escapeHtml(svc.ResolvedVersion) + ')</span>' : '';
+
                     if (svc.NewestVersion) {
-                        imgCell.innerHTML = '<span class="version-current">' + escapeHtml(svc.Tag) + '</span>' +
-                            ' <span class="version-arrow">&rarr;</span> ' +
-                            '<span class="version-new">' + escapeHtml(svc.NewestVersion) + '</span>';
+                        var verHtml = escapeHtml(svc.NewestVersion);
+                        if (svc.VersionURL) {
+                            verHtml = '<a href="' + escapeHtml(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHtml(svc.NewestVersion) + '</a>';
+                        } else {
+                            verHtml = '<span class="version-new">' + verHtml + '</span>';
+                        }
+                        imgCell.innerHTML = '<span class="version-current">' + escapeHtml(svc.Tag) + rvSpan + '</span>' +
+                            ' <span class="version-arrow">&rarr;</span> ' + verHtml;
                     } else {
-                        imgCell.textContent = svc.Tag;
+                        var tagHtml = escapeHtml(svc.Tag) + rvSpan;
+                        if (svc.ChangelogURL) {
+                            imgCell.innerHTML = '<a href="' + escapeHtml(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + '</a>';
+                        } else {
+                            imgCell.innerHTML = tagHtml;
+                        }
                     }
+                    imgCell.setAttribute("title", svc.Image || "");
+                    applyRegistryBadges();
                 }
 
                 // Update has-update class.
@@ -1638,6 +1657,7 @@ function refreshServiceRow(name) {
                             (isRolling ? ' disabled' : '') +
                             ' onclick="event.stopPropagation(); rollbackSvc(\'' + escapeHtml(name) + '\', event)">Rollback</button>';
                     }
+                    btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
                     actionCell.innerHTML = btns;
 
                     // Update the tracked button references to the new DOM elements.
