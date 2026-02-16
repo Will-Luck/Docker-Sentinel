@@ -1394,7 +1394,7 @@ function onRowClick(e, name) {
     if (e.target.closest(".status-badge-wrap")) {
         return;
     }
-    toggleAccordion(name);
+    window.location.href = "/container/" + encodeURIComponent(name);
 }
 
 /* ------------------------------------------------------------
@@ -1424,11 +1424,6 @@ function expandAllStacks() {
 }
 
 function collapseAllStacks() {
-    var panels = document.querySelectorAll(".accordion-panel");
-    for (var i = 0; i < panels.length; i++) {
-        panels[i].style.display = "none";
-        panels[i].classList.remove("accordion-open", "accordion-closing");
-    }
     var groups = document.querySelectorAll(".stack-group");
     for (var i = 0; i < groups.length; i++) {
         groups[i].classList.add("stack-collapsed");
@@ -1738,208 +1733,6 @@ function refreshServiceRow(name) {
         .catch(function() {});
 }
 
-/* ------------------------------------------------------------
-   8. Accordion (lazy-load from API)
-   ------------------------------------------------------------ */
-
-var accordionCache = {};
-
-function toggleAccordion(name) {
-    var panel = document.getElementById("accordion-" + name);
-    if (!panel) return;
-
-    var isOpen = panel.style.display !== "none" && !panel.classList.contains("accordion-closing");
-    if (isOpen) {
-        panel.classList.remove("accordion-open");
-        panel.classList.add("accordion-closing");
-        setTimeout(function() {
-            panel.style.display = "none";
-            panel.classList.remove("accordion-closing");
-        }, 200);
-        return;
-    }
-
-    panel.style.display = "";
-    panel.classList.remove("accordion-closing");
-    panel.classList.add("accordion-open");
-
-    // If the panel already has server-rendered content, skip fetching.
-    var contentEl = panel.querySelector(".accordion-content");
-    if (contentEl && contentEl.querySelector(".accordion-grid")) return;
-
-    // Use cache if available.
-    if (accordionCache[name]) {
-        renderAccordionContent(name, accordionCache[name]);
-        return;
-    }
-
-    // Show loading state.
-    if (contentEl) contentEl.textContent = "Loading\u2026";
-
-    // Lazy-load from API (parallel requests).
-    var enc = encodeURIComponent(name);
-    Promise.all([
-        fetch("/api/containers/" + enc).then(function (r) { return r.json(); }),
-        fetch("/api/containers/" + enc + "/versions").then(function (r) { return r.json(); })
-    ]).then(function (results) {
-        var data = { detail: results[0], versions: results[1] };
-        accordionCache[name] = data;
-        renderAccordionContent(name, data);
-    }).catch(function () {
-        if (contentEl) contentEl.textContent = "Failed to load data";
-    });
-}
-
-function renderAccordionContent(name, data) {
-    var panel = document.getElementById("accordion-" + name);
-    if (!panel) return;
-    var contentEl = panel.querySelector(".accordion-content");
-    if (!contentEl) return;
-
-    var d = data.detail;
-    var versions = data.versions || [];
-
-    // Clear existing content safely.
-    while (contentEl.firstChild) contentEl.removeChild(contentEl.firstChild);
-
-    var grid = document.createElement("div");
-    grid.className = "accordion-grid";
-
-    // --- Info section ---
-    var infoSection = document.createElement("div");
-    infoSection.className = "accordion-section";
-
-    function addField(parent, labelText, valueText, extraClass) {
-        var lbl = document.createElement("div");
-        lbl.className = "accordion-label";
-        lbl.textContent = labelText;
-        parent.appendChild(lbl);
-        var val = document.createElement("div");
-        val.className = "accordion-value" + (extraClass ? " " + extraClass : "");
-        val.textContent = valueText;
-        parent.appendChild(val);
-    }
-
-    addField(infoSection, "Image", d.image || "", "mono");
-    addField(infoSection, "State", d.state || "");
-    addField(infoSection, "Policy", d.policy || "");
-
-    if (d.maintenance) {
-        var mLabel = document.createElement("div");
-        mLabel.className = "accordion-label";
-        mLabel.textContent = "Maintenance";
-        infoSection.appendChild(mLabel);
-        var mVal = document.createElement("div");
-        mVal.className = "accordion-value";
-        var mBadge = document.createElement("span");
-        mBadge.className = "badge badge-warning";
-        mBadge.textContent = "In progress";
-        mVal.appendChild(mBadge);
-        infoSection.appendChild(mVal);
-    }
-
-    grid.appendChild(infoSection);
-
-    // --- Versions section ---
-    var verSection = document.createElement("div");
-    verSection.className = "accordion-section";
-
-    // Header row: "Available Versions" label + "Full Details" button inline.
-    var verHeader = document.createElement("div");
-    verHeader.className = "accordion-label";
-    verHeader.style.display = "flex";
-    verHeader.style.alignItems = "center";
-    verHeader.style.justifyContent = "space-between";
-    var verLabelSpan = document.createElement("span");
-    verLabelSpan.textContent = "Available Versions";
-    verHeader.appendChild(verLabelSpan);
-    var detailLink = document.createElement("a");
-    detailLink.href = "/container/" + encodeURIComponent(name);
-    detailLink.className = "btn btn-info btn-sm";
-    detailLink.textContent = "Full Details";
-    detailLink.addEventListener("click", function(e) { e.stopPropagation(); });
-    verHeader.appendChild(detailLink);
-    verSection.appendChild(verHeader);
-
-    if (versions.length > 0) {
-        var verWrap = document.createElement("div");
-        verWrap.className = "accordion-versions";
-        var limit = Math.min(versions.length, 8);
-        for (var i = 0; i < limit; i++) {
-            var badge = document.createElement("span");
-            badge.className = "version-badge";
-            badge.textContent = versions[i];
-            verWrap.appendChild(badge);
-        }
-        if (versions.length > 8) {
-            var more = document.createElement("span");
-            more.className = "text-muted";
-            more.textContent = "+" + (versions.length - 8) + " more";
-            verWrap.appendChild(more);
-        }
-        verSection.appendChild(verWrap);
-    } else {
-        var noVer = document.createElement("div");
-        noVer.className = "text-muted";
-        noVer.textContent = "No newer versions found";
-        verSection.appendChild(noVer);
-    }
-
-    grid.appendChild(verSection);
-
-    // --- Actions section (only if Rollback is available) ---
-    if (d.snapshots && d.snapshots.length > 0) {
-        var actSection = document.createElement("div");
-        actSection.className = "accordion-section accordion-actions";
-        var rbBtn = document.createElement("button");
-        rbBtn.className = "btn btn-error";
-        rbBtn.textContent = "Rollback";
-        rbBtn.addEventListener("click", function () { triggerRollback(name); });
-        actSection.appendChild(rbBtn);
-        grid.appendChild(actSection);
-    }
-    contentEl.appendChild(grid);
-
-    // --- GHCR alternative section ---
-    var repo = parseDockerRepo(d.image || "");
-    var ghcrAlt = repo ? ghcrAlternatives[repo] : null;
-    if (ghcrAlt) {
-        var ghcrDiv = document.createElement("div");
-        ghcrDiv.className = "ghcr-callout";
-
-        var iconSpan = document.createElement("span");
-        iconSpan.className = "ghcr-callout-icon";
-        iconSpan.textContent = "\u2139\uFE0F";
-        ghcrDiv.appendChild(iconSpan);
-
-        var bodyDiv = document.createElement("div");
-        bodyDiv.className = "ghcr-callout-body";
-
-        var titleEl = document.createElement("strong");
-        titleEl.textContent = "Available on GHCR";
-        bodyDiv.appendChild(titleEl);
-
-        var descText = document.createElement("span");
-        descText.textContent = ghcrAlt.ghcr_image + ":" + ghcrAlt.tag;
-        if (ghcrAlt.digest_match) {
-            descText.textContent += " (identical build)";
-        } else {
-            descText.textContent += " (different build)";
-        }
-        bodyDiv.appendChild(descText);
-
-        var switchBtn = document.createElement("button");
-        switchBtn.className = "btn btn-info";
-        switchBtn.textContent = "Switch to GHCR";
-        switchBtn.addEventListener("click", function() {
-            switchToGHCR(name, ghcrAlt.ghcr_image + ":" + ghcrAlt.tag);
-        });
-        bodyDiv.appendChild(switchBtn);
-
-        ghcrDiv.appendChild(bodyDiv);
-        contentEl.appendChild(ghcrDiv);
-    }
-}
 
 /* ------------------------------------------------------------
    9. Multi-select
@@ -2111,10 +1904,6 @@ function applyFiltersAndSort() {
             else if (filterState.status === "stopped") show = !row.classList.contains("state-running");
             if (show && filterState.updates === "pending") show = row.classList.contains("has-update");
             row.style.display = show ? "" : "none";
-            var next = row.nextElementSibling;
-            if (next && next.classList.contains("accordion-panel")) {
-                if (!show) next.style.display = "none";
-            }
             if (show) visibleCount++;
         }
         stack.style.display = visibleCount === 0 ? "none" : "";
@@ -2167,10 +1956,7 @@ function sortRows(stacks) {
         }
 
         for (var i = 0; i < rows.length; i++) {
-            var row = rows[i];
-            var acc = document.getElementById("accordion-" + row.getAttribute("data-name"));
-            tbody.appendChild(row);
-            if (acc) tbody.appendChild(acc);
+            tbody.appendChild(rows[i]);
         }
     }
 }
@@ -2332,10 +2118,8 @@ var sseReloadTimer = null;
 
 function scheduleReload() {
     // Only full-reload on pages that render the container table (dashboard).
-    // Other pages (settings, history, queue, etc.) don't need reloading
-    // and it destroys user state like open accordion sections.
+    // Other pages (settings, history, queue, etc.) don't need reloading.
     if (!document.getElementById("container-table")) return;
-    accordionCache = {};
     if (sseReloadTimer) clearTimeout(sseReloadTimer);
     sseReloadTimer = setTimeout(function () {
         window.location.reload();
@@ -2362,18 +2146,13 @@ function updateContainerRow(name) {
             temp.innerHTML = data.html; // Safe: server-rendered Go template HTML, no user content
 
             var oldRow = document.querySelector('tr.container-row[data-name="' + name + '"]');
-            var oldAccordion = document.getElementById("accordion-" + name);
 
             if (oldRow) {
                 var newRow = temp.querySelector(".container-row");
-                var newAccordion = temp.querySelector(".accordion-panel");
 
                 if (newRow) {
                     oldRow.replaceWith(newRow);
                     newRow.classList.add("row-updated");
-                }
-                if (newAccordion && oldAccordion) {
-                    oldAccordion.replaceWith(newAccordion);
                 }
 
                 // Reapply checkbox state from selectedContainers after DOM patch.
@@ -2383,9 +2162,6 @@ function updateContainerRow(name) {
                 }
                 recomputeSelectionState();
             }
-
-            // Clear accordion cache for this container.
-            delete accordionCache[name];
 
             // Reapply badges and filters after DOM patch.
             applyRegistryBadges();
@@ -2859,18 +2635,6 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    // Click-to-copy for digest and mono values in accordion detail views.
-    document.addEventListener("click", function(e) {
-        var target = e.target.closest(".accordion-content .mono, .accordion-content .cell-digest");
-        if (!target) return;
-        var text = target.textContent.trim();
-        if (!text || text === "\u2014") return;
-        if (navigator.clipboard) {
-            navigator.clipboard.writeText(text).then(function() {
-                showToast("Copied to clipboard", "info");
-            });
-        }
-    });
 
     // Escape key closes open tooltips.
     document.addEventListener("keydown", function(e) {

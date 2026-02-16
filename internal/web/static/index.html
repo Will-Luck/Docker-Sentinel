@@ -390,7 +390,7 @@
                                                 Update Sentinel
                                             </button>
                                             {{else}}
-                                            <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">View</a>
+                                            <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Full Details</a>
                                             {{end}}
                                         {{else if and .HasUpdate (ne .Policy "pinned")}}
                                         <button class="btn btn-warning"
@@ -398,15 +398,8 @@
                                             Update
                                         </button>
                                         {{else}}
-                                        <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">View</a>
+                                        <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Full Details</a>
                                         {{end}}
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr class="accordion-panel" id="accordion-{{.Name}}" style="display:none">
-                                <td colspan="6">
-                                    <div class="accordion-content">
-                                        <div class="accordion-loading">Loading...</div>
                                     </div>
                                 </td>
                             </tr>
