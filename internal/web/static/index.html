@@ -249,7 +249,7 @@
                                         Rollback
                                     </button>
                                 {{end}}
-                                    <a href="/service/{{.Name}}" class="btn btn-sm" onclick="event.stopPropagation()">Full Details</a>
+                                    <a href="/service/{{.Name}}" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>
                                 </div>
                             </td>
                         </tr>
@@ -391,7 +391,7 @@
                                                 Update Sentinel
                                             </button>
                                             {{else}}
-                                            <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Full Details</a>
+                                            <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Details</a>
                                             {{end}}
                                         {{else if and .HasUpdate (ne .Policy "pinned")}}
                                         <button class="btn btn-warning"
@@ -399,7 +399,7 @@
                                             Update
                                         </button>
                                         {{else}}
-                                        <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Full Details</a>
+                                        <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Details</a>
                                         {{end}}
                                     </div>
                                 </td>
