@@ -173,6 +173,12 @@ func NewerVersions(current string, tags []string) []SemVer {
 		if !ok {
 			continue
 		}
+		// Skip candidates from a different versioning scheme. Calendar
+		// versioning tags like "2021.12.14" parse as semver with major >= 1900,
+		// which would falsely compare as "newer" than real semver like "3.21".
+		if versionSchemeMismatch(cur, sv) {
+			continue
+		}
 		if cur.LessThan(sv) {
 			newer = append(newer, sv)
 		}
@@ -184,6 +190,15 @@ func NewerVersions(current string, tags []string) []SemVer {
 	})
 
 	return newer
+}
+
+// versionSchemeMismatch returns true when two versions appear to use different
+// versioning schemes (e.g. semver "3.21" vs calver "2021.12.14"). Comparing
+// across schemes produces nonsensical results.
+func versionSchemeMismatch(a, b SemVer) bool {
+	aCalver := a.Major >= 1900
+	bCalver := b.Major >= 1900
+	return aCalver != bCalver
 }
 
 // NormaliseRepo converts an image reference to a Docker Hub repository path.

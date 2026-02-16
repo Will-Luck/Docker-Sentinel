@@ -141,6 +141,31 @@ func TestNewerVersionsNoNewer(t *testing.T) {
 	}
 }
 
+func TestNewerVersionsCalverMismatch(t *testing.T) {
+	// linuxserver images have both semver (3.21) and calver (2021.12.14) tags.
+	// Calver tags should NOT appear as "newer" than semver tags.
+	tags := []string{"3.20", "3.22", "2021.12.14", "2021.11.27", "2022.01.05"}
+	newer := NewerVersions("3.21", tags)
+	if len(newer) != 1 {
+		t.Fatalf("expected 1 newer version, got %d: %v", len(newer), newer)
+	}
+	if newer[0].Raw != "3.22" {
+		t.Errorf("expected 3.22, got %s", newer[0].Raw)
+	}
+}
+
+func TestNewerVersionsCalverToCalver(t *testing.T) {
+	// When both current and candidates are calver, comparison should work.
+	tags := []string{"2021.11.27", "2022.01.05", "2020.06.01"}
+	newer := NewerVersions("2021.12.14", tags)
+	if len(newer) != 1 {
+		t.Fatalf("expected 1 newer version, got %d: %v", len(newer), newer)
+	}
+	if newer[0].Raw != "2022.01.05" {
+		t.Errorf("expected 2022.01.05, got %s", newer[0].Raw)
+	}
+}
+
 func TestNormaliseRepo(t *testing.T) {
 	tests := []struct {
 		input string
