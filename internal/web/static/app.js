@@ -1479,8 +1479,42 @@ function rollbackSvc(name, event) {
     );
 }
 
+// Cache of task data for scaled-to-0 services. Preserved across refreshes
+// so task rows persistently show as "shutdown" instead of disappearing.
+var _svcTaskCache = {};
+
 function scaleSvc(name, replicas, wrap) {
     if (wrap) showBadgeSpinner(wrap);
+
+    // Scaling to 0: cache current tasks, then mark rows as "shutdown".
+    if (replicas === 0) {
+        var group = document.querySelector('.svc-group[data-service="' + name + '"]');
+        if (group) {
+            // Capture task data from DOM before Swarm removes them.
+            var taskRows = group.querySelectorAll(".svc-task-row");
+            var cached = [];
+            for (var t = 0; t < taskRows.length; t++) {
+                var nodeCell = taskRows[t].querySelector(".svc-node");
+                var tagCell = taskRows[t].querySelector(".mono");
+                cached.push({
+                    NodeHtml: nodeCell ? nodeCell.innerHTML : "",
+                    Tag: tagCell ? tagCell.textContent : ""
+                });
+                // Immediately mark as shutdown.
+                var stateCell = taskRows[t].querySelector(".badge");
+                if (stateCell) {
+                    stateCell.textContent = "shutdown";
+                    stateCell.className = "badge badge-error";
+                    stateCell.title = "";
+                }
+            }
+            if (cached.length > 0) _svcTaskCache[name] = cached;
+        }
+    } else {
+        // Scaling up: clear cache so refreshServiceRow uses live data.
+        delete _svcTaskCache[name];
+    }
+
     apiPost(
         "/api/services/" + encodeURIComponent(name) + "/scale",
         { replicas: replicas },
@@ -1631,11 +1665,27 @@ function refreshServiceRow(name) {
                     taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
                 }
             } else if (taskHeader && svc.DesiredReplicas === 0) {
-                // Scaled to 0 — show placeholder row.
-                var tr = document.createElement("tr");
-                tr.className = "svc-task-row";
-                tr.innerHTML = '<td></td><td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 \u2014 no active tasks</td><td></td>';
-                taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
+                // Scaled to 0: show cached tasks as "shutdown" if available,
+                // otherwise fall back to a placeholder.
+                var cached = _svcTaskCache[name];
+                if (cached && cached.length > 0) {
+                    for (var t = cached.length - 1; t >= 0; t--) {
+                        var tr = document.createElement("tr");
+                        tr.className = "svc-task-row";
+                        tr.innerHTML = '<td></td>' +
+                            '<td class="svc-node">' + cached[t].NodeHtml + '</td>' +
+                            '<td class="mono">' + escapeHtml(cached[t].Tag || '') + '</td>' +
+                            '<td></td>' +
+                            '<td><span class="badge badge-error">shutdown</span></td>' +
+                            '<td></td>';
+                        taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
+                    }
+                } else {
+                    var tr = document.createElement("tr");
+                    tr.className = "svc-task-row";
+                    tr.innerHTML = '<td></td><td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 \u2014 no active tasks</td><td></td>';
+                    taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
+                }
             }
 
             group.classList.add("row-updated");
