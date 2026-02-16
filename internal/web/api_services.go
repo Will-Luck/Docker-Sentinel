@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
@@ -116,20 +114,28 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 		user = rc.User.Username
 	}
 
-	// Capture current image before rollback so history records have context.
-	currentImage := ""
+	// Resolve service ID and current image before firing the rollback goroutine.
+	var serviceID, currentImage string
 	if details, err := s.deps.Swarm.ListServiceDetail(r.Context()); err == nil {
 		for _, d := range details {
 			if d.Name == name {
+				serviceID = d.ID
 				currentImage = d.Image
 				break
 			}
 		}
 	}
+	if serviceID == "" {
+		writeError(w, http.StatusNotFound, "service not found")
+		return
+	}
 
+	// Manual rollbacks via the web UI record history here in the goroutine.
+	// Engine-initiated rollbacks (Swarm auto-rollback during UpdateService)
+	// record history inside the engine's pollServiceUpdate flow instead.
 	go func() {
 		start := time.Now()
-		err := s.deps.Swarm.RollbackService(context.Background(), "", name)
+		err := s.deps.Swarm.RollbackService(context.Background(), serviceID, name)
 		duration := time.Since(start)
 
 		outcome := "success"
@@ -195,64 +201,7 @@ func (s *Server) apiServicesList(w http.ResponseWriter, r *http.Request) {
 
 	views := make([]serviceView, 0, len(details))
 	for _, d := range details {
-		name := d.Name
-		policy := containerPolicy(d.Labels)
-		if s.deps.Policy != nil {
-			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-				policy = p
-			}
-		}
-		tag := registry.ExtractTag(d.Image)
-		if tag == "" {
-			if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
-				tag = d.Image[idx+1:]
-			} else {
-				tag = d.Image
-			}
-		}
-		var newestVersion string
-		if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
-			newestVersion = pending.NewerVersions[0]
-		}
-		tasks := make([]taskView, len(d.Tasks))
-		for i, t := range d.Tasks {
-			tasks[i] = taskView{
-				NodeName: t.NodeName,
-				NodeAddr: t.NodeAddr,
-				State:    t.State,
-				Image:    t.Image,
-				Tag:      t.Tag,
-				Slot:     t.Slot,
-				Error:    t.Error,
-			}
-		}
-		sv := serviceView{
-			ID:              d.ID,
-			Name:            name,
-			Image:           d.Image,
-			Tag:             tag,
-			NewestVersion:   newestVersion,
-			Policy:          policy,
-			HasUpdate:       pendingNames[name],
-			Replicas:        d.Replicas,
-			DesiredReplicas: d.DesiredReplicas,
-			RunningReplicas: d.RunningReplicas,
-			Registry:        registry.RegistryHost(d.Image),
-			UpdateStatus:    d.UpdateStatus,
-			Tasks:           tasks,
-		}
-
-		// For scaled-to-0 services, load previous replica count for display and "Scale up".
-		if d.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
-			if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
-				if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
-					sv.PrevReplicas = n
-					sv.Replicas = fmt.Sprintf("0/%d", n)
-				}
-			}
-		}
-
-		views = append(views, sv)
+		views = append(views, s.buildServiceView(d, pendingNames))
 	}
 	writeJSON(w, http.StatusOK, views)
 }
@@ -276,75 +225,15 @@ func (s *Server) apiServiceDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pendingNames := make(map[string]bool)
+	for _, p := range s.deps.Queue.List() {
+		pendingNames[p.ContainerName] = true
+	}
 	for _, d := range details {
 		if d.Name != name {
 			continue
 		}
-
-		policy := containerPolicy(d.Labels)
-		if s.deps.Policy != nil {
-			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-				policy = p
-			}
-		}
-		tag := registry.ExtractTag(d.Image)
-		if tag == "" {
-			if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
-				tag = d.Image[idx+1:]
-			} else {
-				tag = d.Image
-			}
-		}
-		var newestVersion string
-		if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
-			newestVersion = pending.NewerVersions[0]
-		}
-		tasks := make([]taskView, len(d.Tasks))
-		for i, t := range d.Tasks {
-			tasks[i] = taskView{
-				NodeName: t.NodeName,
-				NodeAddr: t.NodeAddr,
-				State:    t.State,
-				Image:    t.Image,
-				Tag:      t.Tag,
-				Slot:     t.Slot,
-				Error:    t.Error,
-			}
-		}
-		hasUpdate := false
-		for _, p := range s.deps.Queue.List() {
-			if p.ContainerName == name {
-				hasUpdate = true
-				break
-			}
-		}
-		view := serviceView{
-			ID:              d.ID,
-			Name:            name,
-			Image:           d.Image,
-			Tag:             tag,
-			NewestVersion:   newestVersion,
-			Policy:          policy,
-			HasUpdate:       hasUpdate,
-			Replicas:        d.Replicas,
-			DesiredReplicas: d.DesiredReplicas,
-			RunningReplicas: d.RunningReplicas,
-			Registry:        registry.RegistryHost(d.Image),
-			UpdateStatus:    d.UpdateStatus,
-			Tasks:           tasks,
-		}
-
-		// For scaled-to-0 services, load previous replica count for display and "Scale up".
-		if d.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
-			if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
-				if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
-					view.PrevReplicas = n
-					view.Replicas = fmt.Sprintf("0/%d", n)
-				}
-			}
-		}
-
-		writeJSON(w, http.StatusOK, view)
+		writeJSON(w, http.StatusOK, s.buildServiceView(d, pendingNames))
 		return
 	}
 
@@ -369,6 +258,10 @@ func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Replicas > 100 {
+		writeError(w, http.StatusBadRequest, "replica count must be 100 or fewer")
 		return
 	}
 

@@ -95,6 +95,70 @@ type taskView struct {
 	Error    string
 }
 
+// buildServiceView constructs a serviceView from a ServiceDetail, resolving
+// policy overrides, tag extraction, queue state, and prev-replicas. Used by
+// the dashboard, API list, API detail, and service detail page handlers.
+func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool) serviceView {
+	name := d.Name
+	policy := containerPolicy(d.Labels)
+	if s.deps.Policy != nil {
+		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+			policy = p
+		}
+	}
+	tag := registry.ExtractTag(d.Image)
+	if tag == "" {
+		if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
+			tag = d.Image[idx+1:]
+		} else {
+			tag = d.Image
+		}
+	}
+	var newestVersion string
+	if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
+		newestVersion = pending.NewerVersions[0]
+	}
+	tasks := make([]taskView, len(d.Tasks))
+	for i, t := range d.Tasks {
+		tasks[i] = taskView{
+			NodeName: t.NodeName,
+			NodeAddr: t.NodeAddr,
+			State:    t.State,
+			Image:    t.Image,
+			Tag:      t.Tag,
+			Slot:     t.Slot,
+			Error:    t.Error,
+		}
+	}
+	sv := serviceView{
+		ID:              d.ID,
+		Name:            name,
+		Image:           d.Image,
+		Tag:             tag,
+		NewestVersion:   newestVersion,
+		Policy:          policy,
+		HasUpdate:       pendingNames[name],
+		Replicas:        d.Replicas,
+		DesiredReplicas: d.DesiredReplicas,
+		RunningReplicas: d.RunningReplicas,
+		Registry:        registry.RegistryHost(d.Image),
+		UpdateStatus:    d.UpdateStatus,
+		Tasks:           tasks,
+	}
+	// For scaled-to-0 services, load previous replica count so "Scale up"
+	// can restore to the original value instead of defaulting to 1,
+	// and show "0/3" instead of "0/0" in the badge.
+	if sv.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
+		if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
+			if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
+				sv.PrevReplicas = n
+				sv.Replicas = fmt.Sprintf("0/%d", n)
+			}
+		}
+	}
+	return sv
+}
+
 // handleDashboard renders the main container dashboard.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
@@ -167,64 +231,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Warn("failed to list service details", "error", svcErr)
 		}
 		for _, d := range details {
-			name := d.Name
-			policy := containerPolicy(d.Labels)
-			if s.deps.Policy != nil {
-				if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-					policy = p
-				}
-			}
-			tag := registry.ExtractTag(d.Image)
-			if tag == "" {
-				if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
-					tag = d.Image[idx+1:]
-				} else {
-					tag = d.Image
-				}
-			}
-			var newestVersion string
-			if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
-				newestVersion = pending.NewerVersions[0]
-			}
-			tasks := make([]taskView, len(d.Tasks))
-			for i, t := range d.Tasks {
-				tasks[i] = taskView{
-					NodeName: t.NodeName,
-					NodeAddr: t.NodeAddr,
-					State:    t.State,
-					Image:    t.Image,
-					Tag:      t.Tag,
-					Slot:     t.Slot,
-					Error:    t.Error,
-				}
-			}
-			sv := serviceView{
-				ID:              d.ID,
-				Name:            name,
-				Image:           d.Image,
-				Tag:             tag,
-				NewestVersion:   newestVersion,
-				Policy:          policy,
-				HasUpdate:       pendingNames[name],
-				Replicas:        d.Replicas,
-				DesiredReplicas: d.DesiredReplicas,
-				RunningReplicas: d.RunningReplicas,
-				Registry:        registry.RegistryHost(d.Image),
-				UpdateStatus:    d.UpdateStatus,
-				Tasks:           tasks,
-			}
-			// For scaled-to-0 services, load previous replica count so "Scale up"
-			// can restore to the original value instead of defaulting to 1,
-			// and show "0/3" instead of "0/0" in the badge.
-			if sv.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
-				if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
-					if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
-						sv.PrevReplicas = n
-						sv.Replicas = fmt.Sprintf("0/%d", n)
-					}
-				}
-			}
-			svcViews = append(svcViews, sv)
+			svcViews = append(svcViews, s.buildServiceView(d, pendingNames))
 		}
 	}
 
@@ -728,70 +735,11 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policy := containerPolicy(found.Labels)
-	if s.deps.Policy != nil {
-		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-			policy = p
-		}
-	}
-
-	tag := registry.ExtractTag(found.Image)
-	if tag == "" {
-		if idx := strings.LastIndex(found.Image, "/"); idx >= 0 {
-			tag = found.Image[idx+1:]
-		} else {
-			tag = found.Image
-		}
-	}
-
-	var newestVersion string
-	if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
-		newestVersion = pending.NewerVersions[0]
-	}
-
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
 		pendingNames[p.ContainerName] = true
 	}
-
-	tasks := make([]taskView, len(found.Tasks))
-	for i, t := range found.Tasks {
-		tasks[i] = taskView{
-			NodeName: t.NodeName,
-			NodeAddr: t.NodeAddr,
-			State:    t.State,
-			Image:    t.Image,
-			Tag:      t.Tag,
-			Slot:     t.Slot,
-			Error:    t.Error,
-		}
-	}
-
-	view := serviceView{
-		ID:              found.ID,
-		Name:            name,
-		Image:           found.Image,
-		Tag:             tag,
-		NewestVersion:   newestVersion,
-		Policy:          policy,
-		HasUpdate:       pendingNames[name],
-		Replicas:        found.Replicas,
-		DesiredReplicas: found.DesiredReplicas,
-		RunningReplicas: found.RunningReplicas,
-		Registry:        registry.RegistryHost(found.Image),
-		UpdateStatus:    found.UpdateStatus,
-		Tasks:           tasks,
-	}
-
-	// For scaled-to-0 services, load previous replica count for display and "Scale up".
-	if view.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
-		if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
-			if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
-				view.PrevReplicas = n
-				view.Replicas = fmt.Sprintf("0/%d", n)
-			}
-		}
-	}
+	view := s.buildServiceView(*found, pendingNames)
 
 	// Gather history.
 	history, err := s.deps.Store.ListHistoryByContainer(name, 50)

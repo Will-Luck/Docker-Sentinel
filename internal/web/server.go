@@ -603,7 +603,8 @@ func (s *Server) registerRoutes() {
 	// containers.rollback
 	s.mux.Handle("POST /api/containers/{name}/rollback", perm(auth.PermContainersRollback, s.apiRollback))
 
-	// Swarm service operations (reuse container permissions).
+	// Swarm service operations share container permission scopes by design —
+	// services are treated as a container-equivalent resource.
 	s.mux.Handle("GET /api/services", perm(auth.PermContainersView, s.apiServicesList))
 	s.mux.Handle("GET /api/services/{name}/detail", perm(auth.PermContainersView, s.apiServiceDetail))
 	s.mux.Handle("POST /api/services/{name}/update", perm(auth.PermContainersUpdate, s.apiServiceUpdate))

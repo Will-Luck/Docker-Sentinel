@@ -56,7 +56,8 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Append Swarm service names so notification prefs can list them.
+	// Append Swarm services to the container list so notification preferences
+	// can reference them. Uses State="service" to distinguish from real containers.
 	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
 		services, _ := s.deps.Swarm.ListServices(r.Context())
 		for _, svc := range services {

@@ -1536,7 +1536,7 @@ function scaleSvc(name, replicas, wrap) {
                 var nodeCell = taskRows[t].querySelector(".svc-node");
                 var tagCell = taskRows[t].querySelector(".mono");
                 cached.push({
-                    NodeHtml: nodeCell ? nodeCell.innerHTML : "",
+                    NodeText: nodeCell ? nodeCell.textContent : "",
                     Tag: tagCell ? tagCell.textContent : ""
                 });
                 // Immediately mark as shutdown.
@@ -1712,7 +1712,7 @@ function refreshServiceRow(name) {
                         var tr = document.createElement("tr");
                         tr.className = "svc-task-row";
                         tr.innerHTML = '<td></td>' +
-                            '<td class="svc-node">' + cached[t].NodeHtml + '</td>' +
+                            '<td class="svc-node">' + escapeHtml(cached[t].NodeText || '') + '</td>' +
                             '<td class="mono">' + escapeHtml(cached[t].Tag || '') + '</td>' +
                             '<td></td>' +
                             '<td><span class="badge badge-error">shutdown</span></td>' +
