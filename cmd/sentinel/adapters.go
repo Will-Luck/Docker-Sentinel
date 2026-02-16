@@ -274,12 +274,14 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	if tag == "" {
 		return nil, nil
 	}
-	repo := registry.NormaliseRepo(imageRef)
-	token, err := registry.FetchAnonymousToken(ctx, repo)
+	repo := registry.RepoPath(imageRef)
+	host := registry.RegistryHost(imageRef)
+
+	token, err := registry.FetchToken(ctx, repo, nil, host)
 	if err != nil {
 		return nil, fmt.Errorf("fetch token: %w", err)
 	}
-	tagsResult, err := registry.ListTags(ctx, imageRef, token, "docker.io", nil)
+	tagsResult, err := registry.ListTags(ctx, imageRef, token, host, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
 	}

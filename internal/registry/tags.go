@@ -39,7 +39,9 @@ func ListTags(ctx context.Context, imageRef string, token string, host string, c
 	repo := RepoPath(imageRef)
 	var url string
 	if host != "" && host != "docker.io" {
-		url = "https://" + host + "/v2/" + repo + "/tags/list"
+		// Request up to 10000 tags per page — GHCR defaults to 100 which
+		// misses newer tags on images with many variants (e.g. nginx has 300+).
+		url = "https://" + host + "/v2/" + repo + "/tags/list?n=10000"
 	} else {
 		url = "https://registry-1.docker.io/v2/" + repo + "/tags/list"
 	}
