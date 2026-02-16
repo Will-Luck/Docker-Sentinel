@@ -68,6 +68,8 @@ type mockDocker struct {
 	rollbackSvcErr   map[string]error
 	serviceTasks     map[string][]swarm.Task
 	serviceTasksErr  map[string]error
+	nodes            []swarm.Node
+	nodesErr         error
 }
 
 func newMockDocker() *mockDocker {
@@ -258,6 +260,10 @@ func (m *mockDocker) ListServiceTasks(_ context.Context, serviceID string) ([]sw
 		return nil, err
 	}
 	return m.serviceTasks[serviceID], nil
+}
+
+func (m *mockDocker) ListNodes(_ context.Context) ([]swarm.Node, error) {
+	return m.nodes, m.nodesErr
 }
 
 func (m *mockDocker) Close() error { return nil }

@@ -32,6 +32,7 @@ type API interface {
 	UpdateService(ctx context.Context, id string, version swarm.Version, spec swarm.ServiceSpec, registryAuth string) error
 	RollbackService(ctx context.Context, id string, version swarm.Version) error
 	ListServiceTasks(ctx context.Context, serviceID string) ([]swarm.Task, error)
+	ListNodes(ctx context.Context) ([]swarm.Node, error)
 
 	Close() error
 }

@@ -21,6 +21,9 @@ type pageData struct {
 	Settings   map[string]string
 	Logs       []LogEntry
 
+	// Swarm services — separate section below standalone containers.
+	SwarmServices []serviceView
+
 	// Dashboard stats (computed by the handler).
 	TotalContainers   int
 	RunningContainers int
@@ -61,6 +64,32 @@ type stackGroup struct {
 	PendingCount int
 }
 
+// serviceView is a Swarm service row for the dashboard template.
+type serviceView struct {
+	ID            string
+	Name          string
+	Image         string
+	Tag           string
+	NewestVersion string
+	Policy        string
+	HasUpdate     bool
+	Replicas      string
+	Registry      string
+	UpdateStatus  string
+	Tasks         []taskView
+}
+
+// taskView is a single Swarm task (replica) row nested under a service.
+type taskView struct {
+	NodeName string
+	NodeAddr string
+	State    string
+	Image    string
+	Tag      string
+	Slot     int
+	Error    string
+}
+
 // handleDashboard renders the main container dashboard.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
@@ -78,6 +107,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	views := make([]containerView, 0, len(containers))
 	for _, c := range containers {
+		// Filter out Swarm task containers — they'll appear in the Swarm Services section.
+		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+
 		name := containerName(c)
 		maintenance, _ := s.deps.Store.GetMaintenance(name)
 
@@ -120,46 +154,57 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Append Swarm services if available.
+	// Build Swarm Services section if available.
+	var svcViews []serviceView
 	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
-		services, svcErr := s.deps.Swarm.ListServices(r.Context())
+		details, svcErr := s.deps.Swarm.ListServiceDetail(r.Context())
 		if svcErr != nil {
-			s.deps.Log.Warn("failed to list services", "error", svcErr)
+			s.deps.Log.Warn("failed to list service details", "error", svcErr)
 		}
-		for _, svc := range services {
-			name := svc.Name
-			policy := containerPolicy(svc.Labels)
+		for _, d := range details {
+			name := d.Name
+			policy := containerPolicy(d.Labels)
 			if s.deps.Policy != nil {
 				if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
 					policy = p
 				}
 			}
-			tag := registry.ExtractTag(svc.Image)
+			tag := registry.ExtractTag(d.Image)
 			if tag == "" {
-				if idx := strings.LastIndex(svc.Image, "/"); idx >= 0 {
-					tag = svc.Image[idx+1:]
+				if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
+					tag = d.Image[idx+1:]
 				} else {
-					tag = svc.Image
+					tag = d.Image
 				}
 			}
 			var newestVersion string
 			if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
 				newestVersion = pending.NewerVersions[0]
 			}
-			views = append(views, containerView{
-				ID:            svc.ID,
+			tasks := make([]taskView, len(d.Tasks))
+			for i, t := range d.Tasks {
+				tasks[i] = taskView{
+					NodeName: t.NodeName,
+					NodeAddr: t.NodeAddr,
+					State:    t.State,
+					Image:    t.Image,
+					Tag:      t.Tag,
+					Slot:     t.Slot,
+					Error:    t.Error,
+				}
+			}
+			svcViews = append(svcViews, serviceView{
+				ID:            d.ID,
 				Name:          name,
-				Image:         svc.Image,
+				Image:         d.Image,
 				Tag:           tag,
 				NewestVersion: newestVersion,
 				Policy:        policy,
-				State:         "running",
 				HasUpdate:     pendingNames[name],
-				IsSelf:        svc.Labels["sentinel.self"] == "true",
-				Stack:         "Swarm Services",
-				Registry:      registry.RegistryHost(svc.Image),
-				IsService:     true,
-				Replicas:      svc.Replicas,
+				Replicas:      d.Replicas,
+				Registry:      registry.RegistryHost(d.Image),
+				UpdateStatus:  d.UpdateStatus,
+				Tasks:         tasks,
 			})
 		}
 	}
@@ -172,6 +217,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			running++
 		}
 		if v.HasUpdate {
+			pending++
+		}
+	}
+	for _, sv := range svcViews {
+		if sv.HasUpdate {
 			pending++
 		}
 	}
@@ -265,7 +315,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Page:              "dashboard",
 		Containers:        views,
 		Stacks:            stacks,
-		TotalContainers:   len(views),
+		SwarmServices:     svcViews,
+		TotalContainers:   len(views) + len(svcViews),
 		RunningContainers: running,
 		PendingUpdates:    pending,
 		QueueCount:        len(s.deps.Queue.List()),

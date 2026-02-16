@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
 // apiServiceUpdate triggers an update for a Swarm service.
@@ -113,4 +115,153 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rolling back"})
+}
+
+// apiServicesList returns all Swarm services as JSON for the dashboard.
+func (s *Server) apiServicesList(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Swarm == nil || !s.deps.Swarm.IsSwarmMode() {
+		writeJSON(w, http.StatusOK, []serviceView{})
+		return
+	}
+
+	details, err := s.deps.Swarm.ListServiceDetail(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list services")
+		return
+	}
+
+	pendingNames := make(map[string]bool)
+	for _, p := range s.deps.Queue.List() {
+		pendingNames[p.ContainerName] = true
+	}
+
+	views := make([]serviceView, 0, len(details))
+	for _, d := range details {
+		name := d.Name
+		policy := containerPolicy(d.Labels)
+		if s.deps.Policy != nil {
+			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+				policy = p
+			}
+		}
+		tag := registry.ExtractTag(d.Image)
+		if tag == "" {
+			if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
+				tag = d.Image[idx+1:]
+			} else {
+				tag = d.Image
+			}
+		}
+		var newestVersion string
+		if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
+			newestVersion = pending.NewerVersions[0]
+		}
+		tasks := make([]taskView, len(d.Tasks))
+		for i, t := range d.Tasks {
+			tasks[i] = taskView{
+				NodeName: t.NodeName,
+				NodeAddr: t.NodeAddr,
+				State:    t.State,
+				Image:    t.Image,
+				Tag:      t.Tag,
+				Slot:     t.Slot,
+				Error:    t.Error,
+			}
+		}
+		views = append(views, serviceView{
+			ID:            d.ID,
+			Name:          name,
+			Image:         d.Image,
+			Tag:           tag,
+			NewestVersion: newestVersion,
+			Policy:        policy,
+			HasUpdate:     pendingNames[name],
+			Replicas:      d.Replicas,
+			Registry:      registry.RegistryHost(d.Image),
+			UpdateStatus:  d.UpdateStatus,
+			Tasks:         tasks,
+		})
+	}
+	writeJSON(w, http.StatusOK, views)
+}
+
+// apiServiceDetail returns a single Swarm service with tasks as JSON.
+func (s *Server) apiServiceDetail(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+
+	if s.deps.Swarm == nil || !s.deps.Swarm.IsSwarmMode() {
+		writeError(w, http.StatusBadRequest, "swarm mode not active")
+		return
+	}
+
+	details, err := s.deps.Swarm.ListServiceDetail(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list services")
+		return
+	}
+
+	for _, d := range details {
+		if d.Name != name {
+			continue
+		}
+
+		policy := containerPolicy(d.Labels)
+		if s.deps.Policy != nil {
+			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+				policy = p
+			}
+		}
+		tag := registry.ExtractTag(d.Image)
+		if tag == "" {
+			if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
+				tag = d.Image[idx+1:]
+			} else {
+				tag = d.Image
+			}
+		}
+		var newestVersion string
+		if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
+			newestVersion = pending.NewerVersions[0]
+		}
+		tasks := make([]taskView, len(d.Tasks))
+		for i, t := range d.Tasks {
+			tasks[i] = taskView{
+				NodeName: t.NodeName,
+				NodeAddr: t.NodeAddr,
+				State:    t.State,
+				Image:    t.Image,
+				Tag:      t.Tag,
+				Slot:     t.Slot,
+				Error:    t.Error,
+			}
+		}
+		hasUpdate := false
+		for _, p := range s.deps.Queue.List() {
+			if p.ContainerName == name {
+				hasUpdate = true
+				break
+			}
+		}
+		view := serviceView{
+			ID:            d.ID,
+			Name:          name,
+			Image:         d.Image,
+			Tag:           tag,
+			NewestVersion: newestVersion,
+			Policy:        policy,
+			HasUpdate:     hasUpdate,
+			Replicas:      d.Replicas,
+			Registry:      registry.RegistryHost(d.Image),
+			UpdateStatus:  d.UpdateStatus,
+			Tasks:         tasks,
+		}
+		writeJSON(w, http.StatusOK, view)
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "service not found")
 }

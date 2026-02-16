@@ -215,6 +215,7 @@ type SchedulerController interface {
 type SwarmProvider interface {
 	IsSwarmMode() bool
 	ListServices(ctx context.Context) ([]ServiceSummary, error)
+	ListServiceDetail(ctx context.Context) ([]ServiceDetail, error)
 	UpdateService(ctx context.Context, id, name, targetImage string) error
 	RollbackService(ctx context.Context, id, name string) error
 }
@@ -226,6 +227,25 @@ type ServiceSummary struct {
 	Image    string
 	Labels   map[string]string
 	Replicas string // e.g. "3/3"
+}
+
+// TaskInfo describes a single Swarm task (one replica on one node).
+type TaskInfo struct {
+	NodeID   string
+	NodeName string
+	NodeAddr string
+	State    string
+	Image    string
+	Tag      string
+	Slot     int
+	Error    string
+}
+
+// ServiceDetail is a ServiceSummary enriched with per-node task info.
+type ServiceDetail struct {
+	ServiceSummary
+	Tasks        []TaskInfo
+	UpdateStatus string
 }
 
 // HookStore reads and writes lifecycle hook configurations.
@@ -572,6 +592,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/containers/{name}/rollback", perm(auth.PermContainersRollback, s.apiRollback))
 
 	// Swarm service operations (reuse container permissions).
+	s.mux.Handle("GET /api/services", perm(auth.PermContainersView, s.apiServicesList))
+	s.mux.Handle("GET /api/services/{name}/detail", perm(auth.PermContainersView, s.apiServiceDetail))
 	s.mux.Handle("POST /api/services/{name}/update", perm(auth.PermContainersUpdate, s.apiServiceUpdate))
 	s.mux.Handle("POST /api/services/{name}/rollback", perm(auth.PermContainersRollback, s.apiServiceRollback))
 

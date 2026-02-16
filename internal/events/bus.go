@@ -19,6 +19,7 @@ const (
 	EventSettingsChange  EventType = "settings_change"
 	EventRateLimits      EventType = "rate_limits"
 	EventGHCRCheck       EventType = "ghcr_check"
+	EventServiceUpdate   EventType = "service_update"
 )
 
 // SSEEvent is a single event published through the bus and streamed to SSE clients.
