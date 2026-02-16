@@ -1443,6 +1443,29 @@ function changeSvcPolicy(name, newPolicy) {
     );
 }
 
+function rollbackSvc(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    apiPost(
+        "/api/services/" + encodeURIComponent(name) + "/rollback",
+        null,
+        "Rollback started for " + name,
+        "Failed to rollback " + name,
+        btn
+    );
+}
+
+function scaleSvc(name, replicas, wrap) {
+    if (wrap) showBadgeSpinner(wrap);
+    apiPost(
+        "/api/services/" + encodeURIComponent(name) + "/scale",
+        { replicas: replicas },
+        "Scaled " + name + " to " + replicas + " replicas",
+        "Failed to scale " + name
+    );
+    // Refresh the row after a short delay to pick up the new replica count.
+    setTimeout(function() { refreshServiceRow(name); }, 2000);
+}
+
 function refreshServiceRow(name) {
     fetch("/api/services/" + encodeURIComponent(name) + "/detail")
         .then(function(r) { return r.json(); })
@@ -1450,9 +1473,45 @@ function refreshServiceRow(name) {
             var group = document.querySelector('.svc-group[data-service="' + name + '"]');
             if (!group) return;
 
-            // Update replicas badge.
+            // Update replicas badge text and colour.
             var badge = group.querySelector(".svc-replicas");
-            if (badge) badge.textContent = svc.Replicas || "";
+            if (badge) {
+                badge.textContent = svc.Replicas || "";
+                badge.classList.remove("svc-replicas-healthy", "svc-replicas-degraded", "svc-replicas-down");
+                if (svc.DesiredReplicas > 0 && svc.RunningReplicas === svc.DesiredReplicas) {
+                    badge.classList.add("svc-replicas-healthy");
+                } else if (svc.RunningReplicas > 0) {
+                    badge.classList.add("svc-replicas-degraded");
+                } else {
+                    badge.classList.add("svc-replicas-down");
+                }
+            }
+
+            // Update scale badge wrap attributes.
+            var wrap = group.querySelector(".status-badge-wrap[data-service]");
+            if (wrap) {
+                var hoverBadge = wrap.querySelector(".badge-hover");
+                // Remove any spinner left over from scaling.
+                var spinner = wrap.querySelector(".badge-loading");
+                if (spinner) spinner.remove();
+                if (badge) badge.style.display = "";
+                if (hoverBadge) hoverBadge.style.display = "";
+
+                if (svc.DesiredReplicas > 0) {
+                    wrap.setAttribute("data-action", "scale-down");
+                    wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
+                    if (hoverBadge) {
+                        hoverBadge.textContent = "Scale to 0";
+                        hoverBadge.className = "badge badge-error badge-hover";
+                    }
+                } else {
+                    wrap.setAttribute("data-action", "scale-up");
+                    if (hoverBadge) {
+                        hoverBadge.textContent = "Scale up";
+                        hoverBadge.className = "badge badge-success badge-hover";
+                    }
+                }
+            }
 
             // Update version display.
             var header = group.querySelector(".svc-header");
@@ -2309,7 +2368,7 @@ var registryStyles = {
 };
 
 function applyRegistryBadges() {
-    var rows = document.querySelectorAll("tr.container-row");
+    var rows = document.querySelectorAll("tr.container-row, tr.svc-header");
     rows.forEach(function(row) {
         var imageCell = row.querySelector(".cell-image");
         if (!imageCell) return;
@@ -2634,13 +2693,28 @@ document.addEventListener("DOMContentLoaded", function () {
         loadGHCRAlternatives();
     }
 
-    // Stop/Start/Restart badge click delegation.
+    // Stop/Start/Restart/Scale badge click delegation.
     document.addEventListener("click", function(e) {
         var badge = e.target.closest(".status-badge-wrap .badge-hover");
         if (!badge) return;
         e.stopPropagation();
         var wrap = badge.closest(".status-badge-wrap");
         if (!wrap) return;
+
+        // Service scale actions.
+        var svcName = wrap.getAttribute("data-service");
+        if (svcName) {
+            var action = wrap.getAttribute("data-action");
+            var prev = parseInt(wrap.getAttribute("data-prev-replicas"), 10) || 1;
+            if (action === "scale-down") {
+                scaleSvc(svcName, 0, wrap);
+            } else if (action === "scale-up") {
+                scaleSvc(svcName, prev > 0 ? prev : 1, wrap);
+            }
+            return;
+        }
+
+        // Container stop/start/restart actions.
         var name = wrap.getAttribute("data-name");
         if (!name) return;
         var action = wrap.getAttribute("data-action") || "restart";
@@ -3265,7 +3339,7 @@ function renderContainerNotifyPrefs(el, containers, prefs) {
 
         var heading = document.createElement("div");
         heading.className = "notify-prefs-group-heading";
-        heading.textContent = stackName || "Standalone";
+        heading.textContent = stackName === "swarm" ? "Swarm Services" : (stackName || "Standalone");
         groupCard.appendChild(heading);
 
         // Grid for this stack

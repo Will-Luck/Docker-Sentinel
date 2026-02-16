@@ -27,6 +27,11 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]containerInfo, 0, len(containers))
 	for _, c := range containers {
+		// Filter out Swarm task containers — they appear under Swarm Services.
+		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+
 		name := containerName(c)
 		policy := containerPolicy(c.Labels)
 		if s.deps.Policy != nil {
@@ -49,6 +54,20 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 			Maintenance: maintenance,
 			Stack:       c.Labels["com.docker.compose.project"],
 		})
+	}
+
+	// Append Swarm service names so notification prefs can list them.
+	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
+		services, _ := s.deps.Swarm.ListServices(r.Context())
+		for _, svc := range services {
+			result = append(result, containerInfo{
+				ID:    svc.ID,
+				Name:  svc.Name,
+				Image: svc.Image,
+				State: "service",
+				Stack: "swarm",
+			})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, result)

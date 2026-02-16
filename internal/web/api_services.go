@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -169,17 +171,19 @@ func (s *Server) apiServicesList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		views = append(views, serviceView{
-			ID:            d.ID,
-			Name:          name,
-			Image:         d.Image,
-			Tag:           tag,
-			NewestVersion: newestVersion,
-			Policy:        policy,
-			HasUpdate:     pendingNames[name],
-			Replicas:      d.Replicas,
-			Registry:      registry.RegistryHost(d.Image),
-			UpdateStatus:  d.UpdateStatus,
-			Tasks:         tasks,
+			ID:              d.ID,
+			Name:            name,
+			Image:           d.Image,
+			Tag:             tag,
+			NewestVersion:   newestVersion,
+			Policy:          policy,
+			HasUpdate:       pendingNames[name],
+			Replicas:        d.Replicas,
+			DesiredReplicas: d.DesiredReplicas,
+			RunningReplicas: d.RunningReplicas,
+			Registry:        registry.RegistryHost(d.Image),
+			UpdateStatus:    d.UpdateStatus,
+			Tasks:           tasks,
 		})
 	}
 	writeJSON(w, http.StatusOK, views)
@@ -247,21 +251,66 @@ func (s *Server) apiServiceDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		view := serviceView{
-			ID:            d.ID,
-			Name:          name,
-			Image:         d.Image,
-			Tag:           tag,
-			NewestVersion: newestVersion,
-			Policy:        policy,
-			HasUpdate:     hasUpdate,
-			Replicas:      d.Replicas,
-			Registry:      registry.RegistryHost(d.Image),
-			UpdateStatus:  d.UpdateStatus,
-			Tasks:         tasks,
+			ID:              d.ID,
+			Name:            name,
+			Image:           d.Image,
+			Tag:             tag,
+			NewestVersion:   newestVersion,
+			Policy:          policy,
+			HasUpdate:       hasUpdate,
+			Replicas:        d.Replicas,
+			DesiredReplicas: d.DesiredReplicas,
+			RunningReplicas: d.RunningReplicas,
+			Registry:        registry.RegistryHost(d.Image),
+			UpdateStatus:    d.UpdateStatus,
+			Tasks:           tasks,
 		}
 		writeJSON(w, http.StatusOK, view)
 		return
 	}
 
 	writeError(w, http.StatusNotFound, "service not found")
+}
+
+// apiServiceScale scales a Swarm service to the requested replica count.
+func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+
+	if s.deps.Swarm == nil || !s.deps.Swarm.IsSwarmMode() {
+		writeError(w, http.StatusBadRequest, "swarm mode not active")
+		return
+	}
+
+	var body struct {
+		Replicas uint64 `json:"replicas"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if err := s.deps.Swarm.ScaleService(r.Context(), name, body.Replicas); err != nil {
+		s.deps.Log.Error("service scale failed", "name", name, "replicas", body.Replicas, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to scale service: "+err.Error())
+		return
+	}
+
+	if s.deps.EventLog != nil {
+		user := ""
+		if rc := auth.GetRequestContext(r.Context()); rc != nil && rc.User != nil {
+			user = rc.User.Username
+		}
+		_ = s.deps.EventLog.AppendLog(LogEntry{
+			Type:      "scale",
+			Message:   fmt.Sprintf("service %s scaled to %d replicas", name, body.Replicas),
+			Container: name,
+			User:      user,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "scaled"})
 }
