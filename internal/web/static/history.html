@@ -88,6 +88,14 @@
                                         <span class="badge badge-success">Success</span>
                                     {{else if eq $r.Outcome "rollback"}}
                                         <span class="badge badge-error">Rollback</span>
+                                    {{else if eq $r.Outcome "rollback_success"}}
+                                        <span class="badge badge-warning">Rollback OK</span>
+                                    {{else if eq $r.Outcome "rollback_failed"}}
+                                        <span class="badge badge-error">Rollback Failed</span>
+                                    {{else if eq $r.Outcome "failed"}}
+                                        <span class="badge badge-error">Failed</span>
+                                    {{else if eq $r.Outcome "finalise_warning"}}
+                                        <span class="badge badge-warning">Warning</span>
                                     {{else}}
                                         <span class="badge badge-muted">{{$r.Outcome}}</span>
                                     {{end}}

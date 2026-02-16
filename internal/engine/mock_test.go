@@ -245,7 +245,7 @@ func (m *mockDocker) UpdateService(_ context.Context, id string, _ swarm.Version
 	return nil
 }
 
-func (m *mockDocker) RollbackService(_ context.Context, id string, _ swarm.Version) error {
+func (m *mockDocker) RollbackService(_ context.Context, id string, _ swarm.Version, _ swarm.ServiceSpec) error {
 	m.mu.Lock()
 	m.rollbackSvcCalls = append(m.rollbackSvcCalls, id)
 	m.mu.Unlock()

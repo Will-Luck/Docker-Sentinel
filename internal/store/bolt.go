@@ -38,6 +38,7 @@ type UpdateRecord struct {
 	Outcome       string        `json:"outcome"` // "success", "rollback", "failed", or "finalise_warning"
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
+	Type          string        `json:"type,omitempty"` // "container" (default) or "service"
 }
 
 // Store wraps a BoltDB database for Sentinel persistence.

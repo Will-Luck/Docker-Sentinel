@@ -38,6 +38,7 @@ func (a *storeAdapter) ListHistory(limit int) ([]web.UpdateRecord, error) {
 			Outcome:       r.Outcome,
 			Duration:      r.Duration,
 			Error:         r.Error,
+			Type:          r.Type,
 		}
 	}
 	return result, nil
@@ -60,6 +61,7 @@ func (a *storeAdapter) ListHistoryByContainer(name string, limit int) ([]web.Upd
 			Outcome:       r.Outcome,
 			Duration:      r.Duration,
 			Error:         r.Error,
+			Type:          r.Type,
 		}
 	}
 	return result, nil
@@ -67,6 +69,21 @@ func (a *storeAdapter) ListHistoryByContainer(name string, limit int) ([]web.Upd
 
 func (a *storeAdapter) GetMaintenance(name string) (bool, error) {
 	return a.s.GetMaintenance(name)
+}
+
+func (a *storeAdapter) RecordUpdate(rec web.UpdateRecord) error {
+	return a.s.RecordUpdate(store.UpdateRecord{
+		Timestamp:     rec.Timestamp,
+		ContainerName: rec.ContainerName,
+		OldImage:      rec.OldImage,
+		OldDigest:     rec.OldDigest,
+		NewImage:      rec.NewImage,
+		NewDigest:     rec.NewDigest,
+		Outcome:       rec.Outcome,
+		Duration:      rec.Duration,
+		Error:         rec.Error,
+		Type:          rec.Type,
+	})
 }
 
 // aboutStoreAdapter converts store.Store to web.AboutStore.
@@ -803,7 +820,7 @@ func (a *swarmAdapter) RollbackService(ctx context.Context, id, name string) err
 	if err != nil {
 		return fmt.Errorf("inspect service %s: %w", name, err)
 	}
-	return a.client.RollbackService(ctx, id, svc.Meta.Version)
+	return a.client.RollbackService(ctx, id, svc.Meta.Version, svc.Spec)
 }
 
 func (a *swarmAdapter) ScaleService(ctx context.Context, name string, replicas uint64) error {

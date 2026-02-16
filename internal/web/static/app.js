@@ -1561,27 +1561,49 @@ function refreshServiceRow(name) {
                 }
 
                 // Update action buttons (all dynamic values passed through escapeHtml).
+                // But if the update is still in progress (loading btn tracked), keep the
+                // spinner alive on the newly rendered button.
                 var actionCell = header.querySelector("td:last-child .btn-group");
                 if (actionCell) {
+                    var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
+                    var isRolling  = window._svcLoadingBtns && window._svcLoadingBtns["rb:" + name];
                     var btns = "";
                     if (svc.HasUpdate && svc.Policy !== "pinned") {
-                        btns += '<button class="btn btn-warning btn-sm" onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHtml(name) + '\', event)">Update</button>';
+                        btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? ' loading' : '') + '"' +
+                            (isUpdating ? ' disabled' : '') +
+                            ' onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHtml(name) + '\', event)">Update</button>';
                     }
                     if (svc.UpdateStatus === "completed") {
-                        btns += '<button class="btn btn-sm" onclick="event.stopPropagation(); rollbackSvc(\'' + escapeHtml(name) + '\', event)">Rollback</button>';
+                        btns += '<button class="btn btn-sm' + (isRolling ? ' loading' : '') + '"' +
+                            (isRolling ? ' disabled' : '') +
+                            ' onclick="event.stopPropagation(); rollbackSvc(\'' + escapeHtml(name) + '\', event)">Rollback</button>';
                     }
                     actionCell.innerHTML = btns;
+
+                    // Update the tracked button references to the new DOM elements.
+                    if (isUpdating) {
+                        var newBtn = actionCell.querySelector(".btn-warning");
+                        if (newBtn) window._svcLoadingBtns[name] = newBtn;
+                    }
+                    if (isRolling) {
+                        var newRbBtn = actionCell.querySelector(".btn:not(.btn-warning)");
+                        if (newRbBtn) window._svcLoadingBtns["rb:" + name] = newRbBtn;
+                    }
                 }
             }
 
-            // Clear loading buttons if present.
+            // Clear loading buttons only when update is truly done (no HasUpdate means
+            // it succeeded, or UpdateStatus changed from what triggered the action).
+            // The SSE "service update succeeded" event will fire refreshServiceRow again,
+            // and at that point HasUpdate will be false — so the Update button won't be
+            // rendered at all, naturally clearing the spinner.
+            // We only force-clear here if the button is gone from the DOM entirely.
             if (window._svcLoadingBtns) {
                 var keys = [name, "rb:" + name];
                 for (var k = 0; k < keys.length; k++) {
                     var b = window._svcLoadingBtns[keys[k]];
-                    if (b) {
-                        b.classList.remove("loading");
-                        b.disabled = false;
+                    if (b && !b.isConnected) {
+                        // Button was removed from DOM (e.g. update completed, no longer shown).
                         delete window._svcLoadingBtns[keys[k]];
                     }
                 }
