@@ -100,6 +100,22 @@ func webReplaceTag(imageRef, newTag string) string {
 	return imageRef + ":" + newTag
 }
 
+// isValidImageRef checks that s looks like a Docker image reference:
+// alphanumerics, dots, dashes, underscores, slashes, colons, and @.
+// Rejects empty strings, whitespace, and control characters.
+func isValidImageRef(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '.' || c == '-' || c == '_' || c == '/' || c == ':' || c == '@') {
+			return false
+		}
+	}
+	return true
+}
+
 // restoreSecrets returns the saved settings if the incoming settings contain any
 // masked values (strings ending in "****"). This prevents overwriting real secrets
 // with their masked representations when the frontend sends back unchanged channels.

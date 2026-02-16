@@ -19,6 +19,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/swarm"
 )
 
 // ErrUpdateInProgress is returned when an update is attempted on a container
@@ -201,6 +202,22 @@ func (u *Updater) publishEvent(evtType events.EventType, name, message string) {
 	})
 }
 
+// rollbackPolicy returns the configured rollback policy, checking both the
+// in-memory Config and the persisted SettingsStore. This ensures the engine
+// respects UI-configured values even after restart (Config is hydrated from
+// env vars only; SettingsStore has the user's persisted preference).
+func (u *Updater) rollbackPolicy() string {
+	if rp := u.cfg.RollbackPolicy(); rp != "" {
+		return rp
+	}
+	if u.settings != nil {
+		if val, err := u.settings.LoadSetting("rollback_policy"); err == nil && val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
 // Scan lists running containers, checks for updates, and processes them
 // according to each container's policy. The mode controls rate limit headroom.
 func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
@@ -261,18 +278,26 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 	containers = filtered
 
+	// Check Swarm mode and cache the services list once per scan,
+	// avoiding duplicate IsSwarmManager + ListServices API calls.
+	isSwarm := u.docker.IsSwarmManager(ctx)
+	var swarmServices []swarm.Service
+	if isSwarm {
+		var svcErr error
+		swarmServices, svcErr = u.docker.ListServices(ctx)
+		if svcErr != nil {
+			u.log.Error("failed to list services", "error", svcErr)
+			result.Errors = append(result.Errors, svcErr)
+		}
+	}
+
 	// Prune queue entries for containers/services that no longer exist.
 	liveNames := make(map[string]bool, len(containers))
 	for _, c := range containers {
 		liveNames[containerName(c)] = true
 	}
-	// Include Swarm service names so service queue entries aren't pruned.
-	if u.docker.IsSwarmManager(ctx) {
-		if services, err := u.docker.ListServices(ctx); err == nil {
-			for _, svc := range services {
-				liveNames[svc.Spec.Name] = true
-			}
-		}
+	for _, svc := range swarmServices {
+		liveNames[svc.Spec.Name] = true
 	}
 	if pruned := u.queue.Prune(liveNames); pruned > 0 {
 		u.log.Info("pruned stale queue entries", "count", pruned)
@@ -488,9 +513,9 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 	}
 
-	// Scan Swarm services if we're on a manager node.
-	if u.docker.IsSwarmManager(ctx) {
-		u.scanServices(ctx, mode, &result, filters, reserve)
+	// Scan Swarm services using the pre-fetched list.
+	if isSwarm && len(swarmServices) > 0 {
+		u.scanServices(ctx, swarmServices, mode, &result, filters, reserve)
 	}
 
 	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf("total=%d updated=%d services=%d", result.Total, result.Updated, result.ServiceUpdates))
