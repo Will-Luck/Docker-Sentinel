@@ -55,17 +55,19 @@ type Dependencies struct {
 	GHCRCache           GHCRAlternativeProvider
 	AboutStore          AboutStore
 	HookStore           HookStore
+	Swarm               SwarmProvider // nil when not in Swarm mode
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string
 	Log                 *slog.Logger
 }
 
-// HistoryStore reads update history and maintenance state.
+// HistoryStore reads/writes update history and maintenance state.
 type HistoryStore interface {
 	ListHistory(limit int) ([]UpdateRecord, error)
 	ListHistoryByContainer(name string, limit int) ([]UpdateRecord, error)
 	GetMaintenance(name string) (bool, error)
+	RecordUpdate(rec UpdateRecord) error
 }
 
 // SnapshotStore reads container snapshots.
@@ -209,6 +211,47 @@ type SchedulerController interface {
 	SetSchedule(sched string)
 }
 
+// SwarmProvider provides Swarm service operations for the dashboard.
+// Nil when the daemon is not a Swarm manager.
+type SwarmProvider interface {
+	IsSwarmMode() bool
+	ListServices(ctx context.Context) ([]ServiceSummary, error)
+	ListServiceDetail(ctx context.Context) ([]ServiceDetail, error)
+	UpdateService(ctx context.Context, id, name, targetImage string) error
+	RollbackService(ctx context.Context, id, name string) error
+	ScaleService(ctx context.Context, name string, replicas uint64) error
+}
+
+// ServiceSummary is a minimal Swarm service info struct for the web layer.
+type ServiceSummary struct {
+	ID              string
+	Name            string
+	Image           string
+	Labels          map[string]string
+	Replicas        string // e.g. "3/3"
+	DesiredReplicas uint64
+	RunningReplicas uint64
+}
+
+// TaskInfo describes a single Swarm task (one replica on one node).
+type TaskInfo struct {
+	NodeID   string
+	NodeName string
+	NodeAddr string
+	State    string
+	Image    string
+	Tag      string
+	Slot     int
+	Error    string
+}
+
+// ServiceDetail is a ServiceSummary enriched with per-node task info.
+type ServiceDetail struct {
+	ServiceSummary
+	Tasks        []TaskInfo
+	UpdateStatus string
+}
+
 // HookStore reads and writes lifecycle hook configurations.
 type HookStore interface {
 	ListHooks(containerName string) ([]HookEntry, error)
@@ -238,6 +281,7 @@ type LogEntry struct {
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
 	User      string    `json:"user,omitempty"`
+	Kind      string    `json:"kind,omitempty"` // "service" or "" (default = container)
 }
 
 // NotifyPref mirrors store.NotifyPref.
@@ -263,6 +307,7 @@ type UpdateRecord struct {
 	Outcome       string        `json:"outcome"`
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
+	Type          string        `json:"type,omitempty"` // "container" (default) or "service"
 }
 
 // SnapshotEntry represents a snapshot with a parsed image reference for display.
@@ -291,6 +336,7 @@ type PendingUpdate struct {
 	NewerVersions          []string  `json:"newer_versions,omitempty"`
 	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
 	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
+	Type                   string    `json:"type,omitempty"` // "container" (default) or "service"
 }
 
 // ContainerLister lists containers.
@@ -356,6 +402,7 @@ type ConfigWriter interface {
 	SetHooksEnabled(b bool)
 	SetHooksWriteLabels(b bool)
 	SetDependencyAware(b bool)
+	SetRollbackPolicy(s string)
 }
 
 // Server is the web dashboard HTTP server.
@@ -466,6 +513,12 @@ func (s *Server) parseTemplates() {
 		"changelogURL": ChangelogURL,
 		"versionURL":   VersionURL,
 		"imageTag":     ImageTag,
+		"serviceOrContainer": func(kind, name string) string {
+			if kind == "service" {
+				return "/service/" + name
+			}
+			return "/container/" + name
+		},
 	}
 
 	s.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(staticFS, "static/*.html"))
@@ -550,6 +603,16 @@ func (s *Server) registerRoutes() {
 	// containers.rollback
 	s.mux.Handle("POST /api/containers/{name}/rollback", perm(auth.PermContainersRollback, s.apiRollback))
 
+	// Swarm service operations share container permission scopes by design —
+	// services are treated as a container-equivalent resource.
+	s.mux.Handle("GET /api/services", perm(auth.PermContainersView, s.apiServicesList))
+	s.mux.Handle("GET /api/services/{name}/detail", perm(auth.PermContainersView, s.apiServiceDetail))
+	s.mux.Handle("POST /api/services/{name}/update", perm(auth.PermContainersUpdate, s.apiServiceUpdate))
+	s.mux.Handle("POST /api/services/{name}/rollback", perm(auth.PermContainersRollback, s.apiServiceRollback))
+	s.mux.Handle("POST /api/services/{name}/scale", perm(auth.PermContainersManage, s.apiServiceScale))
+
+	s.mux.Handle("GET /service/{name}", perm(auth.PermContainersView, s.handleServiceDetail))
+
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))
 	s.mux.Handle("POST /api/containers/{name}/stop", perm(auth.PermContainersManage, s.apiStop))
@@ -597,6 +660,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/hooks-enabled", perm(auth.PermSettingsModify, s.apiSetHooksEnabled))
 	s.mux.Handle("POST /api/settings/hooks-write-labels", perm(auth.PermSettingsModify, s.apiSetHooksWriteLabels))
 	s.mux.Handle("POST /api/settings/dependency-aware", perm(auth.PermSettingsModify, s.apiSetDependencyAware))
+	s.mux.Handle("POST /api/settings/rollback-policy", perm(auth.PermSettingsModify, s.apiSetRollbackPolicy))
 	s.mux.Handle("POST /api/hooks/{container}", perm(auth.PermSettingsModify, s.apiSaveHook))
 	s.mux.Handle("DELETE /api/hooks/{container}/{phase}", perm(auth.PermSettingsModify, s.apiDeleteHook))
 

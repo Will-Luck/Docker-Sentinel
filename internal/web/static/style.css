@@ -548,6 +548,17 @@ table {
     font-size: 0.875rem;
 }
 
+/* Dashboard table — fixed layout prevents column shifts on expand/collapse */
+#container-table {
+    table-layout: fixed;
+}
+
+#container-table td:nth-child(2) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 thead th {
     position: sticky;
     top: 0;
@@ -576,6 +587,10 @@ tbody tr:hover {
 tbody tr:last-child {
     border-bottom: none;
 }
+/* Svc-header always keeps its divider, even when it's :last-child (collapsed). */
+.svc-header {
+    border-bottom: 1px solid var(--border) !important;
+}
 
 tbody td {
     padding: 10px var(--sp-4);
@@ -599,6 +614,7 @@ tbody td {
 .version-current { color: var(--fg-secondary); }
 .version-arrow { color: var(--warning); margin: 0 4px; }
 .version-new { color: var(--warning); font-weight: 600; }
+.resolved-ver { color: var(--fg-muted); font-size: 0.85em; }
 a.version-link { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
 a.version-link:hover { border-bottom-style: solid; }
 
@@ -1063,6 +1079,117 @@ td:nth-child(6) {
 .stack-collapsed .accordion-panel {
     display: none !important;
 }
+
+
+/* --------------------------------------------------------------------------
+   10b. Swarm Services — separate section with collapsible per-node tasks
+   -------------------------------------------------------------------------- */
+
+.section-separator {
+    border: none;
+}
+
+.section-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-top: 2px solid var(--border);
+    margin-top: var(--sp-2);
+}
+
+.section-title {
+    font-weight: 700;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-secondary);
+}
+
+.section-summary {
+    font-size: 0.75rem;
+    color: var(--fg-tertiary);
+}
+
+.svc-group {
+    border-left: 3px solid var(--accent);
+}
+
+.svc-header {
+    cursor: pointer;
+    background: var(--bg-raised);
+    user-select: none;
+    transition: background 150ms;
+
+    &:hover {
+        background: var(--bg-hover);
+    }
+
+    & td {
+        padding: var(--sp-2) var(--sp-4);
+    }
+}
+
+.svc-header.has-update {
+    border-left: 3px solid var(--warning);
+    background: var(--warning-bg);
+}
+
+.svc-name {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.svc-name:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
+/* Chevron rotation for svc-group (reuses stack-chevron class) */
+.svc-collapsed .stack-chevron {
+    transform: rotate(0deg);
+}
+
+.svc-group:not(.svc-collapsed) .stack-chevron {
+    transform: rotate(90deg);
+}
+
+/* Collapsed: hide task rows */
+.svc-collapsed .svc-task-row {
+    display: none !important;
+}
+
+.svc-task-row {
+    background: var(--bg-body);
+
+    & td {
+        padding: var(--sp-1) var(--sp-4);
+        font-size: 0.8rem;
+    }
+}
+
+.svc-node {
+    font-family: var(--font-mono);
+    color: var(--fg-secondary);
+    padding-left: var(--sp-6) !important;
+}
+
+.svc-node-addr {
+    color: var(--fg-tertiary);
+    font-size: 0.75rem;
+}
+
+.svc-replicas {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.svc-replicas-healthy { background: var(--badge-success-bg); color: var(--badge-success-text); }
+.svc-replicas-degraded { background: var(--badge-warning-bg); color: var(--badge-warning-text); }
+.svc-replicas-down { background: var(--badge-error-bg); color: var(--badge-error-text); }
 
 
 /* --------------------------------------------------------------------------
@@ -3304,4 +3431,28 @@ input[type="checkbox"] {
 }
 .footer-beta a:hover {
     color: var(--accent-hover);
+}
+
+
+/* --------------------------------------------------------------------------
+   Service Detail Page
+   -------------------------------------------------------------------------- */
+
+.svc-detail-tasks {
+    margin-bottom: var(--sp-4);
+}
+
+.svc-detail-tasks table {
+    table-layout: auto;
+}
+
+.svc-detail-tasks .svc-task-state {
+    display: inline-flex;
+}
+
+.svc-detail-replicas {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-left: var(--sp-3);
 }

@@ -7,7 +7,7 @@
 [![Last Commit](https://img.shields.io/github/last-commit/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/commits)
 [![GHCR](https://img.shields.io/badge/ghcr.io-docker--sentinel-blue?logo=github)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
 
-A container update orchestrator with a web dashboard, written in Go. Replaces Watchtower with per-container update policies, pre-update snapshots, post-update health validation, automatic rollback, and real-time notifications.
+A container update orchestrator with a web dashboard, written in Go. Supports standalone Docker and Docker Swarm. Replaces Watchtower with per-container and per-service update policies, pre-update snapshots, post-update health validation, automatic rollback, and real-time notifications.
 
 <p align="center">
   <img src="docs/screenshots/dashboard.png" alt="Docker-Sentinel Dashboard" width="900">
@@ -25,6 +25,15 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 - **Image cleanup** — automatically removes old images after successful updates (toggle via settings)
 - **Dependency-aware updates** — topological sort ensures dependencies update first; dependents auto-restart on network/volume changes
 - **Cron scheduling** — optional cron expressions (e.g. `0 2 * * *`) alongside poll interval for precise scan timing
+
+### Docker Swarm
+- **Automatic detection** — runs in Swarm mode when deployed on a manager node
+- **Per-service update policies** — auto, manual, or pinned per service
+- **Service detail page** — task status across nodes, replica counts, image versions
+- **Scale up/down** — adjust replica count directly from the dashboard
+- **Native rollback** — uses Docker's built-in service rollback API
+- **Rollback policy** — automatically change policy on rollback to prevent retry loops
+- **Swarm task filtering** — task containers excluded from standalone scan
 
 ### Registry Intelligence
 - **Digest comparison** for mutable tags (`:latest`) — detects upstream changes without pulling
@@ -53,8 +62,10 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 
 | | |
 |---|---|
+| <img src="docs/screenshots/setup.png" alt="First-run setup wizard" width="400"> | <img src="docs/screenshots/service-detail.png" alt="Service detail — tasks across Swarm nodes" width="400"> |
 | <img src="docs/screenshots/queue.png" alt="Pending Updates" width="400"> | <img src="docs/screenshots/history.png" alt="Update History" width="400"> |
 | <img src="docs/screenshots/logs.png" alt="Activity Log" width="400"> | <img src="docs/screenshots/container-detail.png" alt="Container Detail" width="400"> |
+| <img src="docs/screenshots/settings-registries.png" alt="Registry rate limits and credentials" width="400"> | |
 
 </details>
 
@@ -132,6 +143,10 @@ docker run -d \
 ```
 
 Then open `http://localhost:8080` in your browser. On first visit you'll be prompted to create an admin account.
+
+<p align="center">
+  <img src="docs/screenshots/setup.png" alt="First-run setup wizard" width="500">
+</p>
 
 ## Configuration
 

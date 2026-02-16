@@ -3,8 +3,10 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
@@ -21,6 +23,9 @@ type pageData struct {
 	Settings   map[string]string
 	Logs       []LogEntry
 
+	// Swarm services — separate section below standalone containers.
+	SwarmServices []serviceView
+
 	// Dashboard stats (computed by the handler).
 	TotalContainers   int
 	RunningContainers int
@@ -33,20 +38,23 @@ type pageData struct {
 	CSRFToken   string
 }
 
-// containerView is a container with computed display fields.
+// containerView is a container or Swarm service with computed display fields.
 type containerView struct {
-	ID            string
-	Name          string
-	Image         string
-	Tag           string // Extracted tag from image ref (e.g. "latest", "v2.19.4")
-	NewestVersion string // Newest available version if update pending (semver only)
-	Policy        string
-	State         string
-	Maintenance   bool
-	HasUpdate     bool
-	IsSelf        bool
-	Stack         string // com.docker.compose.project label, or "" for standalone
-	Registry      string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
+	ID              string
+	Name            string
+	Image           string
+	Tag             string // Extracted tag from image ref (e.g. "latest", "v2.19.4")
+	ResolvedVersion string // Actual semver behind non-version tags (e.g. "v2.34.2" for "latest")
+	NewestVersion   string // Newest available version if update pending (semver only)
+	Policy          string
+	State           string
+	Maintenance     bool
+	HasUpdate       bool
+	IsSelf          bool
+	Stack           string // com.docker.compose.project label, or "" for standalone
+	Registry        string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
+	IsService       bool   // true for Swarm services
+	Replicas        string // e.g. "3/3" for services, empty for containers
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -57,6 +65,122 @@ type stackGroup struct {
 	RunningCount int
 	StoppedCount int
 	PendingCount int
+}
+
+// serviceView is a Swarm service row for the dashboard template.
+type serviceView struct {
+	ID              string
+	Name            string
+	Image           string
+	Tag             string
+	ResolvedVersion string // Actual semver behind non-version tags (e.g. "v2.34.2" for "latest")
+	NewestVersion   string
+	Policy          string
+	HasUpdate       bool
+	Replicas        string
+	DesiredReplicas uint64
+	RunningReplicas uint64
+	PrevReplicas    uint64 // Previous desired replicas (for "Scale up" after scale-to-0)
+	Registry        string
+	UpdateStatus    string
+	Tasks           []taskView
+	ChangelogURL    string `json:"ChangelogURL,omitempty"` // Pre-computed changelog link for JS row updates
+	VersionURL      string `json:"VersionURL,omitempty"`   // Pre-computed version-specific link for JS row updates
+}
+
+// taskView is a single Swarm task (replica) row nested under a service.
+type taskView struct {
+	NodeName string
+	NodeAddr string
+	State    string
+	Image    string
+	Tag      string
+	Slot     int
+	Error    string
+}
+
+// buildServiceView constructs a serviceView from a ServiceDetail, resolving
+// policy overrides, tag extraction, queue state, and prev-replicas. Used by
+// the dashboard, API list, API detail, and service detail page handlers.
+func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool) serviceView {
+	name := d.Name
+	policy := containerPolicy(d.Labels)
+	if s.deps.Policy != nil {
+		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+			policy = p
+		}
+	}
+	tag := registry.ExtractTag(d.Image)
+	if tag == "" {
+		if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
+			tag = d.Image[idx+1:]
+		} else {
+			tag = d.Image
+		}
+	}
+	var newestVersion, resolved string
+	if pending, ok := s.deps.Queue.Get(name); ok {
+		if len(pending.NewerVersions) > 0 {
+			newestVersion = pending.NewerVersions[0]
+		}
+		// For services, image labels aren't in the service spec — use the
+		// digest-resolved version from the registry check instead.
+		if _, isSemver := registry.ParseSemVer(tag); !isSemver {
+			if pending.ResolvedCurrentVersion != "" && pending.ResolvedCurrentVersion != tag {
+				resolved = pending.ResolvedCurrentVersion
+			}
+		}
+	}
+	tasks := make([]taskView, len(d.Tasks))
+	for i, t := range d.Tasks {
+		tasks[i] = taskView{
+			NodeName: t.NodeName,
+			NodeAddr: t.NodeAddr,
+			State:    t.State,
+			Image:    t.Image,
+			Tag:      t.Tag,
+			Slot:     t.Slot,
+			Error:    t.Error,
+		}
+	}
+	// Pre-compute URLs so the JS SSE handler can build proper links
+	// without duplicating the URL logic client-side.
+	changelogLink := ChangelogURL(d.Image)
+	var versionLink string
+	if newestVersion != "" {
+		versionLink = VersionURL(d.Image, newestVersion)
+	}
+
+	sv := serviceView{
+		ID:              d.ID,
+		Name:            name,
+		Image:           d.Image,
+		Tag:             tag,
+		ResolvedVersion: resolved,
+		NewestVersion:   newestVersion,
+		Policy:          policy,
+		HasUpdate:       pendingNames[name],
+		Replicas:        d.Replicas,
+		DesiredReplicas: d.DesiredReplicas,
+		RunningReplicas: d.RunningReplicas,
+		Registry:        registry.RegistryHost(d.Image),
+		UpdateStatus:    d.UpdateStatus,
+		Tasks:           tasks,
+		ChangelogURL:    changelogLink,
+		VersionURL:      versionLink,
+	}
+	// For scaled-to-0 services, load previous replica count so "Scale up"
+	// can restore to the original value instead of defaulting to 1,
+	// and show "0/3" instead of "0/0" in the badge.
+	if sv.DesiredReplicas == 0 && s.deps.SettingsStore != nil {
+		if saved, _ := s.deps.SettingsStore.LoadSetting("svc_prev_replicas::" + name); saved != "" {
+			if n, err := strconv.ParseUint(saved, 10, 64); err == nil {
+				sv.PrevReplicas = n
+				sv.Replicas = fmt.Sprintf("0/%d", n)
+			}
+		}
+	}
+	return sv
 }
 
 // handleDashboard renders the main container dashboard.
@@ -76,6 +200,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	views := make([]containerView, 0, len(containers))
 	for _, c := range containers {
+		// Filter out Swarm task containers — they'll appear in the Swarm Services section.
+		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+
 		name := containerName(c)
 		maintenance, _ := s.deps.Store.GetMaintenance(name)
 
@@ -102,20 +231,43 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			newestVersion = pending.NewerVersions[0]
 		}
 
+		// Resolve the actual version behind non-semver tags like "latest".
+		// Docker merges image labels into container labels at creation time,
+		// so org.opencontainers.image.version is available without extra API calls.
+		var resolved string
+		if _, isSemver := registry.ParseSemVer(tag); !isSemver {
+			if v := c.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
+				resolved = v
+			}
+		}
+
 		views = append(views, containerView{
-			ID:            c.ID,
-			Name:          name,
-			Image:         c.Image,
-			Tag:           tag,
-			NewestVersion: newestVersion,
-			Policy:        policy,
-			State:         c.State,
-			Maintenance:   maintenance,
-			HasUpdate:     pendingNames[name],
-			IsSelf:        c.Labels["sentinel.self"] == "true",
-			Stack:         c.Labels["com.docker.compose.project"],
-			Registry:      registry.RegistryHost(c.Image),
+			ID:              c.ID,
+			Name:            name,
+			Image:           c.Image,
+			Tag:             tag,
+			ResolvedVersion: resolved,
+			NewestVersion:   newestVersion,
+			Policy:          policy,
+			State:           c.State,
+			Maintenance:     maintenance,
+			HasUpdate:       pendingNames[name],
+			IsSelf:          c.Labels["sentinel.self"] == "true",
+			Stack:           c.Labels["com.docker.compose.project"],
+			Registry:        registry.RegistryHost(c.Image),
 		})
+	}
+
+	// Build Swarm Services section if available.
+	var svcViews []serviceView
+	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
+		details, svcErr := s.deps.Swarm.ListServiceDetail(r.Context())
+		if svcErr != nil {
+			s.deps.Log.Warn("failed to list service details", "error", svcErr)
+		}
+		for _, d := range details {
+			svcViews = append(svcViews, s.buildServiceView(d, pendingNames))
+		}
 	}
 
 	// Compute stats for the dashboard header.
@@ -126,6 +278,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			running++
 		}
 		if v.HasUpdate {
+			pending++
+		}
+	}
+	for _, sv := range svcViews {
+		if sv.RunningReplicas > 0 {
+			running++
+		}
+		if sv.HasUpdate {
 			pending++
 		}
 	}
@@ -219,7 +379,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Page:              "dashboard",
 		Containers:        views,
 		Stacks:            stacks,
-		TotalContainers:   len(views),
+		SwarmServices:     svcViews,
+		TotalContainers:   len(views) + len(svcViews),
 		RunningContainers: running,
 		PendingUpdates:    pending,
 		QueueCount:        len(s.deps.Queue.List()),
@@ -495,16 +656,25 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Resolve the actual version behind non-semver tags like "latest".
+	var detailResolved string
+	if _, isSemver := registry.ParseSemVer(detailTag); !isSemver {
+		if v := found.Labels["org.opencontainers.image.version"]; v != "" && v != detailTag {
+			detailResolved = v
+		}
+	}
+
 	view := containerView{
-		ID:          found.ID,
-		Name:        containerName(*found),
-		Image:       found.Image,
-		Tag:         detailTag,
-		Policy:      detailPolicy,
-		State:       found.State,
-		Maintenance: maintenance,
-		IsSelf:      found.Labels["sentinel.self"] == "true",
-		Registry:    registry.RegistryHost(found.Image),
+		ID:              found.ID,
+		Name:            containerName(*found),
+		Image:           found.Image,
+		Tag:             detailTag,
+		ResolvedVersion: detailResolved,
+		Policy:          detailPolicy,
+		State:           found.State,
+		Maintenance:     maintenance,
+		IsSelf:          found.Labels["sentinel.self"] == "true",
+		Registry:        registry.RegistryHost(found.Image),
 	}
 
 	// Gather history.
@@ -550,6 +720,99 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	s.withAuthDetail(r, &data)
 
 	s.renderTemplate(w, "container.html", data)
+}
+
+// serviceDetailData holds all data for the per-service detail page.
+type serviceDetailData struct {
+	Service      serviceView
+	History      []UpdateRecord
+	Versions     []string
+	ChangelogURL string
+
+	// Auth context.
+	CurrentUser *auth.User
+	AuthEnabled bool
+	CSRFToken   string
+}
+
+// withAuthServiceDetail populates auth context on serviceDetailData.
+func (s *Server) withAuthServiceDetail(r *http.Request, data *serviceDetailData) {
+	rc := auth.GetRequestContext(r.Context())
+	if rc != nil {
+		data.CurrentUser = rc.User
+		data.AuthEnabled = rc.AuthEnabled
+	}
+	if cookie, err := r.Cookie(auth.CSRFCookieName); err == nil {
+		data.CSRFToken = cookie.Value
+	}
+}
+
+// handleServiceDetail renders the per-service detail page.
+func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		s.renderError(w, http.StatusBadRequest, "Bad Request", "Service name is required.")
+		return
+	}
+
+	if s.deps.Swarm == nil || !s.deps.Swarm.IsSwarmMode() {
+		s.renderError(w, http.StatusBadRequest, "Not Available", "Swarm mode is not active.")
+		return
+	}
+
+	details, err := s.deps.Swarm.ListServiceDetail(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list service details", "error", err)
+		s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load services.")
+		return
+	}
+
+	var found *ServiceDetail
+	for i := range details {
+		if details[i].Name == name {
+			found = &details[i]
+			break
+		}
+	}
+	if found == nil {
+		s.renderError(w, http.StatusNotFound, "Service Not Found", "The service \""+name+"\" was not found.")
+		return
+	}
+
+	pendingNames := make(map[string]bool)
+	for _, p := range s.deps.Queue.List() {
+		pendingNames[p.ContainerName] = true
+	}
+	view := s.buildServiceView(*found, pendingNames)
+
+	// Gather history.
+	history, err := s.deps.Store.ListHistoryByContainer(name, 50)
+	if err != nil {
+		s.deps.Log.Warn("failed to list history for service", "name", name, "error", err)
+	}
+	if history == nil {
+		history = []UpdateRecord{}
+	}
+
+	// Gather versions.
+	var versions []string
+	if s.deps.Registry != nil {
+		versions, err = s.deps.Registry.ListVersions(r.Context(), found.Image)
+		if err != nil {
+			s.deps.Log.Warn("failed to list versions", "name", name, "error", err)
+			versions = nil
+		}
+	}
+
+	data := serviceDetailData{
+		Service:      view,
+		History:      history,
+		Versions:     versions,
+		ChangelogURL: ChangelogURL(found.Image),
+	}
+	s.withAuthServiceDetail(r, &data)
+
+	s.renderTemplate(w, "service.html", data)
 }
 
 // errorPageData holds data for the error.html template.

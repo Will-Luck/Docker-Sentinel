@@ -25,13 +25,15 @@ func FetchAnonymousToken(ctx context.Context, repo string) (string, error) {
 
 // FetchToken retrieves a bearer token for the given registry.
 // For Docker Hub (host "docker.io" or ""), it uses auth.docker.io.
-// For other registries, credentials are used directly as Basic auth
-// by the caller — this function only handles Docker Hub token exchange.
+// For GHCR, it uses ghcr.io/token.
+// For other registries, returns empty — callers use Basic auth directly.
 func FetchToken(ctx context.Context, repo string, cred *RegistryCredential, host string) (string, error) {
-	// Only Docker Hub uses the token exchange flow.
-	// Other registries use Basic auth directly on v2 API calls.
+	if host == "ghcr.io" {
+		return FetchGHCRToken(ctx, repo, cred)
+	}
+	// Non-Hub, non-GHCR registries use Basic auth directly on v2 API calls.
 	if host != "" && host != "docker.io" {
-		return "", nil // no token needed; caller uses Basic auth directly
+		return "", nil
 	}
 
 	url := "https://auth.docker.io/token?service=registry.docker.io&scope=repository:" + repo + ":pull"

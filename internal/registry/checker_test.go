@@ -9,6 +9,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/swarm"
 )
 
 // mockDockerForRegistry implements docker.API for registry checker tests.
@@ -48,6 +49,25 @@ func (m *mockDockerForRegistry) PullImage(_ context.Context, _ string) error    
 func (m *mockDockerForRegistry) RemoveImage(_ context.Context, _ string) error      { return nil }
 func (m *mockDockerForRegistry) ExecContainer(_ context.Context, _ string, _ []string, _ int) (int, string, error) {
 	return 0, "", nil
+}
+func (m *mockDockerForRegistry) IsSwarmManager(_ context.Context) bool { return false }
+func (m *mockDockerForRegistry) ListServices(_ context.Context) ([]swarm.Service, error) {
+	return nil, nil
+}
+func (m *mockDockerForRegistry) InspectService(_ context.Context, _ string) (swarm.Service, error) {
+	return swarm.Service{}, nil
+}
+func (m *mockDockerForRegistry) UpdateService(_ context.Context, _ string, _ swarm.Version, _ swarm.ServiceSpec, _ string) error {
+	return nil
+}
+func (m *mockDockerForRegistry) RollbackService(_ context.Context, _ string, _ swarm.Version, _ swarm.ServiceSpec) error {
+	return nil
+}
+func (m *mockDockerForRegistry) ListServiceTasks(_ context.Context, _ string) ([]swarm.Task, error) {
+	return nil, nil
+}
+func (m *mockDockerForRegistry) ListNodes(_ context.Context) ([]swarm.Node, error) {
+	return nil, nil
 }
 func (m *mockDockerForRegistry) Close() error { return nil }
 

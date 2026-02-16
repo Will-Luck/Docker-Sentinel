@@ -399,3 +399,45 @@ func (s *Server) apiSetDependencyAware(w http.ResponseWriter, r *http.Request) {
 	s.logEvent(r, "settings", "", "Dependency-aware updates "+label)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "dependency-aware updates " + label})
 }
+
+// apiSetRollbackPolicy sets the automatic policy change on rollback.
+func (s *Server) apiSetRollbackPolicy(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Policy string `json:"policy"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	switch body.Policy {
+	case "", "manual", "pinned":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "rollback policy must be empty, manual, or pinned")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("rollback_policy", body.Policy); err != nil {
+		s.deps.Log.Error("failed to save rollback policy", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save rollback policy")
+		return
+	}
+
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetRollbackPolicy(body.Policy)
+	}
+
+	msg := "Rollback policy: no change"
+	if body.Policy != "" {
+		msg = "Rollback policy: set to " + body.Policy
+	}
+	s.logEvent(r, "settings", "", msg)
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
+}

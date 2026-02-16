@@ -82,12 +82,20 @@
                             {{range $i, $r := .History}}
                             <tr class="container-row" onclick="onRowClick(event, 'history-{{$i}}')">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
-                                <td><a href="/container/{{$r.ContainerName}}" class="container-link">{{$r.ContainerName}}</a></td>
+                                <td><a href="{{serviceOrContainer $r.Type $r.ContainerName}}" class="container-link">{{$r.ContainerName}}</a></td>
                                 <td>
                                     {{if eq $r.Outcome "success"}}
                                         <span class="badge badge-success">Success</span>
                                     {{else if eq $r.Outcome "rollback"}}
                                         <span class="badge badge-error">Rollback</span>
+                                    {{else if eq $r.Outcome "rollback_success"}}
+                                        <span class="badge badge-warning">Rollback OK</span>
+                                    {{else if eq $r.Outcome "rollback_failed"}}
+                                        <span class="badge badge-error">Rollback Failed</span>
+                                    {{else if eq $r.Outcome "failed"}}
+                                        <span class="badge badge-error">Failed</span>
+                                    {{else if eq $r.Outcome "finalise_warning"}}
+                                        <span class="badge badge-warning">Warning</span>
                                     {{else}}
                                         <span class="badge badge-muted">{{$r.Outcome}}</span>
                                     {{end}}

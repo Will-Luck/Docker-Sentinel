@@ -103,6 +103,82 @@ func extractHash(digest string) string {
 	return digest
 }
 
+// CheckVersionedWithDigest is like CheckVersioned but skips the local ImageDigest
+// lookup, using knownDigest instead. Used for Swarm services where the digest is
+// embedded in the service spec but the tag-only ref may not exist in the local
+// image store.
+func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownDigest string) CheckResult {
+	result := CheckResult{ImageRef: imageRef}
+
+	if docker.IsLocalImage(imageRef) {
+		result.IsLocal = true
+		return result
+	}
+
+	result.LocalDigest = knownDigest
+
+	remoteDigest, err := c.docker.DistributionDigest(ctx, imageRef)
+	if err != nil {
+		c.log.Debug("failed to get remote digest, treating as local", "image", imageRef, "error", err)
+		result.IsLocal = true
+		return result
+	}
+	result.RemoteDigest = remoteDigest
+	result.UpdateAvailable = !digestsMatch(knownDigest, remoteDigest)
+
+	// Version lookup — same as CheckVersioned.
+	tag := ExtractTag(imageRef)
+	if tag == "" || result.IsLocal {
+		return result
+	}
+
+	_, ok := ParseSemVer(tag)
+	if !ok {
+		if result.UpdateAvailable && (tag == "latest" || tag == "") {
+			c.resolveLatestVersions(ctx, imageRef, &result)
+		}
+		return result
+	}
+
+	repo := RepoPath(imageRef)
+	host := RegistryHost(imageRef)
+
+	var cred *RegistryCredential
+	if c.creds != nil {
+		creds, err := c.creds.GetRegistryCredentials()
+		if err == nil {
+			cred = FindByRegistry(creds, host)
+		}
+	}
+
+	token, err := FetchToken(ctx, repo, cred, host)
+	if err != nil {
+		c.log.Debug("failed to fetch token for version check", "repo", repo, "error", err)
+		return result
+	}
+
+	tagsResult, err := ListTags(ctx, imageRef, token, host, cred)
+	if err != nil {
+		c.log.Debug("failed to list tags for version check", "repo", repo, "error", err)
+		return result
+	}
+
+	if c.tracker != nil {
+		c.tracker.Record(host, tagsResult.Headers)
+		c.tracker.SetAuth(host, cred != nil)
+	}
+
+	newer := NewerVersions(tag, tagsResult.Tags)
+	for _, sv := range newer {
+		result.NewerVersions = append(result.NewerVersions, sv.Raw)
+	}
+	if len(newer) > 0 {
+		result.UpdateAvailable = true
+	}
+
+	return result
+}
+
 // CheckVersioned performs a digest check and, for versioned tags, also looks
 // for newer semver releases by listing remote tags.
 //

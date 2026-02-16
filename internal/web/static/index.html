@@ -113,6 +113,14 @@
             </div>
             <div class="table-wrap">
                 <table id="container-table">
+                    <colgroup>
+                        <col style="width:40px">
+                        <col style="width:22%">
+                        <col>
+                        <col style="width:120px">
+                        <col style="width:100px">
+                        <col style="width:220px">
+                    </colgroup>
                     <thead>
                         <tr>
                             <th class="th-checkbox"><input type="checkbox" id="select-all" title="Select all"><label for="select-all" class="sr-only">Select all containers</label></th>
@@ -168,6 +176,114 @@
                             </tr>
                         </tbody>
                     {{end}}
+
+                    {{if .SwarmServices}}
+                    <tbody class="section-separator">
+                        <tr><td colspan="6"><div class="section-divider">
+                            <span class="section-title">Swarm Services</span>
+                            <span class="section-summary">{{len .SwarmServices}} services</span>
+                        </div></td></tr>
+                    </tbody>
+
+                    {{range .SwarmServices}}
+                    <tbody class="svc-group svc-collapsed" data-service="{{.Name}}">
+                        <tr class="svc-header{{if .HasUpdate}} has-update{{end}}" data-registry="{{.Registry}}" onclick="toggleSvc(this)">
+                            <td class="td-checkbox">
+                                <input type="checkbox" class="row-select" value="{{.Name}}" id="select-svc-{{.Name}}" aria-label="Select {{.Name}}">
+                            </td>
+                            <td>
+                                <span class="stack-chevron">&#9656;</span>
+                                <a href="/service/{{.Name}}" class="svc-name" onclick="event.stopPropagation()">{{.Name}}</a>
+                            </td>
+                            <td class="cell-image mono" title="{{.Image}}">
+                                {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}{{$rv := .ResolvedVersion}}
+                                {{if .NewestVersion}}
+                                    <span class="version-current">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</span>
+                                    <span class="version-arrow">&rarr;</span>
+                                    {{with versionURL $img $ver}}
+                                        <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{$ver}}</a>
+                                    {{else}}
+                                        <span class="version-new">{{$ver}}</span>
+                                    {{end}}
+                                {{else}}
+                                    {{with changelogURL $img}}
+                                        <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</a>
+                                    {{else}}
+                                        {{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}
+                                    {{end}}
+                                {{end}}
+                            </td>
+                            <td>
+                                <select class="policy-select policy-{{.Policy}}"
+                                        onchange="this.className='policy-select policy-'+this.value; changeSvcPolicy('{{.Name}}', this.value)"
+                                        data-current="{{.Policy}}">
+                                    <option value="auto"{{if eq .Policy "auto"}} selected{{end}}>auto</option>
+                                    <option value="manual"{{if eq .Policy "manual"}} selected{{end}}>manual</option>
+                                    <option value="pinned"{{if eq .Policy "pinned"}} selected{{end}}>pinned</option>
+                                </select>
+                            </td>
+                            <td>
+                                {{if gt .DesiredReplicas 0}}
+                                <span class="status-badge-wrap" data-service="{{.Name}}" data-prev-replicas="{{.DesiredReplicas}}">
+                                    <span class="badge svc-replicas {{if eq .RunningReplicas .DesiredReplicas}}svc-replicas-healthy{{else if gt .RunningReplicas 0}}svc-replicas-degraded{{else}}svc-replicas-down{{end}} badge-default">{{.Replicas}}</span>
+                                    <span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc('{{.Name}}', 0, this.closest('.status-badge-wrap'))">Scale to 0</span>
+                                </span>
+                                {{else}}
+                                <span class="status-badge-wrap" data-service="{{.Name}}" data-prev-replicas="{{if gt .PrevReplicas 0}}{{.PrevReplicas}}{{else}}{{.DesiredReplicas}}{{end}}">
+                                    <span class="badge svc-replicas svc-replicas-down badge-default">{{.Replicas}}</span>
+                                    <span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc('{{.Name}}', {{if gt .PrevReplicas 0}}{{.PrevReplicas}}{{else if gt .DesiredReplicas 0}}{{.DesiredReplicas}}{{else}}1{{end}}, this.closest('.status-badge-wrap'))">Scale up</span>
+                                </span>
+                                {{end}}
+                            </td>
+                            <td>
+                                <div class="btn-group">
+                                {{if and .HasUpdate (ne .Policy "pinned")}}
+                                    <button class="btn btn-warning btn-sm"
+                                            onclick="event.stopPropagation(); triggerSvcUpdate('{{.Name}}', event)">
+                                        Update
+                                    </button>
+                                {{end}}
+                                {{if eq .UpdateStatus "completed"}}
+                                    <button class="btn btn-sm"
+                                            onclick="event.stopPropagation(); rollbackSvc('{{.Name}}', event)">
+                                        Rollback
+                                    </button>
+                                {{end}}
+                                    <a href="/service/{{.Name}}" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>
+                                </div>
+                            </td>
+                        </tr>
+
+                        {{if .Tasks}}
+                        {{range .Tasks}}
+                        <tr class="svc-task-row">
+                            <td></td>
+                            <td class="svc-node">{{.NodeName}}{{if .NodeAddr}} <span class="svc-node-addr">({{.NodeAddr}})</span>{{end}}</td>
+                            <td class="mono">{{.Tag}}</td>
+                            <td></td>
+                            <td>
+                                {{if eq .State "running"}}
+                                    <span class="badge badge-success">running</span>
+                                {{else if eq .State "preparing"}}
+                                    <span class="badge badge-info">preparing</span>
+                                {{else}}
+                                    <span class="badge badge-error" title="{{.Error}}">{{.State}}</span>
+                                {{end}}
+                            </td>
+                            <td></td>
+                        </tr>
+                        {{end}}
+                        {{else if eq .DesiredReplicas 0}}
+                        <tr class="svc-task-row">
+                            <td></td>
+                            <td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 &mdash; no active tasks</td>
+                            <td></td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                    {{end}}
+                    {{end}}
+
                 </table>
             </div>
         </div>
@@ -212,9 +328,9 @@
                                     {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
                                 </td>
                                 <td class="cell-image mono" title="{{.Image}}">
-                                    {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}
+                                    {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}{{$rv := .ResolvedVersion}}
                                     {{if .NewestVersion}}
-                                        <span class="version-current">{{$tag}}</span>
+                                        <span class="version-current">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</span>
                                         <span class="version-arrow">&rarr;</span>
                                         {{with versionURL $img $ver}}
                                             <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{$ver}}</a>
@@ -223,9 +339,9 @@
                                         {{end}}
                                     {{else}}
                                         {{with changelogURL $img}}
-                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}</a>
+                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</a>
                                         {{else}}
-                                            {{$tag}}
+                                            {{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}
                                         {{end}}
                                     {{end}}
                                 </td>
@@ -275,7 +391,7 @@
                                                 Update Sentinel
                                             </button>
                                             {{else}}
-                                            <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">View</a>
+                                            <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Details</a>
                                             {{end}}
                                         {{else if and .HasUpdate (ne .Policy "pinned")}}
                                         <button class="btn btn-warning"
@@ -283,15 +399,8 @@
                                             Update
                                         </button>
                                         {{else}}
-                                        <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">View</a>
+                                        <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Details</a>
                                         {{end}}
-                                    </div>
-                                </td>
-                            </tr>
-                            <tr class="accordion-panel" id="accordion-{{.Name}}" style="display:none">
-                                <td colspan="6">
-                                    <div class="accordion-content">
-                                        <div class="accordion-loading">Loading...</div>
                                     </div>
                                 </td>
                             </tr>

@@ -182,6 +182,13 @@ function initSettingsPage() {
                 selectOptionByValue(policySelect, policy);
             }
 
+            // Rollback policy.
+            var rbSelect = document.getElementById("rollback-policy");
+            if (rbSelect) {
+                var rbPolicy = settings["rollback_policy"] || settings["SENTINEL_ROLLBACK_POLICY"] || "";
+                selectOptionByValue(rbSelect, rbPolicy);
+            }
+
             // Grace period.
             var graceSelect = document.getElementById("grace-period");
             if (graceSelect) {
@@ -255,7 +262,7 @@ function initSettingsPage() {
                 updateToggleText("hooks-labels-text", hooksLabels);
             }
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 
     // Tab navigation.
     var tabBtns = document.querySelectorAll(".tab-btn");
@@ -455,6 +462,29 @@ function setDefaultPolicy(value) {
         })
         .catch(function() {
             showToast("Network error — could not update default policy", "error");
+        });
+}
+
+function setRollbackPolicy(value) {
+    fetch("/api/settings/rollback-policy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ policy: value })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Rollback policy updated", "success");
+            } else {
+                showToast(result.data.error || "Failed to update rollback policy", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not update rollback policy", "error");
         });
 }
 
@@ -700,7 +730,7 @@ function initPauseBanner() {
                 banner.style.display = "";
             }
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 function resumeScanning() {
@@ -737,7 +767,7 @@ function checkPauseState() {
         .then(function(settings) {
             banner.style.display = settings["paused"] === "true" ? "" : "none";
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 /* ------------------------------------------------------------
@@ -767,7 +797,7 @@ function refreshLastScan() {
                 lastScanTimer = setInterval(renderLastScanTicker, 1000);
             }
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 function renderLastScanTicker() {
@@ -1364,7 +1394,7 @@ function onRowClick(e, name) {
     if (e.target.closest(".status-badge-wrap")) {
         return;
     }
-    toggleAccordion(name);
+    window.location.href = "/container/" + encodeURIComponent(name);
 }
 
 /* ------------------------------------------------------------
@@ -1386,219 +1416,343 @@ function expandAllStacks() {
         var header = groups[i].querySelector(".stack-header");
         if (header) header.setAttribute("aria-expanded", "true");
     }
+    // Also expand Swarm service groups.
+    var svcGroups = document.querySelectorAll(".svc-group");
+    for (var i = 0; i < svcGroups.length; i++) {
+        svcGroups[i].classList.remove("svc-collapsed");
+    }
 }
 
 function collapseAllStacks() {
-    var panels = document.querySelectorAll(".accordion-panel");
-    for (var i = 0; i < panels.length; i++) {
-        panels[i].style.display = "none";
-        panels[i].classList.remove("accordion-open", "accordion-closing");
-    }
     var groups = document.querySelectorAll(".stack-group");
     for (var i = 0; i < groups.length; i++) {
         groups[i].classList.add("stack-collapsed");
         var header = groups[i].querySelector(".stack-header");
         if (header) header.setAttribute("aria-expanded", "false");
     }
+    // Also collapse Swarm service groups.
+    var svcGroups = document.querySelectorAll(".svc-group");
+    for (var i = 0; i < svcGroups.length; i++) {
+        svcGroups[i].classList.add("svc-collapsed");
+    }
 }
 
 /* ------------------------------------------------------------
-   8. Accordion (lazy-load from API)
+   7b. Swarm Service Toggle & Actions
    ------------------------------------------------------------ */
 
-var accordionCache = {};
+function toggleSvc(headerRow) {
+    var group = headerRow.closest(".svc-group");
+    if (!group) return;
+    group.classList.toggle("svc-collapsed");
+}
 
-function toggleAccordion(name) {
-    var panel = document.getElementById("accordion-" + name);
-    if (!panel) return;
-
-    var isOpen = panel.style.display !== "none" && !panel.classList.contains("accordion-closing");
-    if (isOpen) {
-        panel.classList.remove("accordion-open");
-        panel.classList.add("accordion-closing");
+function triggerSvcUpdate(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    if (btn) {
+        btn.classList.add("loading");
+        btn.disabled = true;
+        window._svcLoadingBtns = window._svcLoadingBtns || {};
+        window._svcLoadingBtns[name] = btn;
+        // Safety timeout — clear after 60s even if SSE never fires.
         setTimeout(function() {
-            panel.style.display = "none";
-            panel.classList.remove("accordion-closing");
-        }, 200);
-        return;
+            if (window._svcLoadingBtns && window._svcLoadingBtns[name]) {
+                window._svcLoadingBtns[name].classList.remove("loading");
+                window._svcLoadingBtns[name].disabled = false;
+                delete window._svcLoadingBtns[name];
+            }
+        }, 60000);
     }
-
-    panel.style.display = "";
-    panel.classList.remove("accordion-closing");
-    panel.classList.add("accordion-open");
-
-    // If the panel already has server-rendered content, skip fetching.
-    var contentEl = panel.querySelector(".accordion-content");
-    if (contentEl && contentEl.querySelector(".accordion-grid")) return;
-
-    // Use cache if available.
-    if (accordionCache[name]) {
-        renderAccordionContent(name, accordionCache[name]);
-        return;
+    apiPost(
+        "/api/services/" + encodeURIComponent(name) + "/update",
+        null,
+        "Service update started for " + name,
+        "Failed to trigger service update"
+    );
+    // Poll multiple times — Swarm updates take 10-30s to converge.
+    var delays = [2000, 5000, 10000, 20000];
+    for (var i = 0; i < delays.length; i++) {
+        (function(d) {
+            setTimeout(function() { refreshServiceRow(name); }, d);
+        })(delays[i]);
     }
-
-    // Show loading state.
-    if (contentEl) contentEl.textContent = "Loading\u2026";
-
-    // Lazy-load from API (parallel requests).
-    var enc = encodeURIComponent(name);
-    Promise.all([
-        fetch("/api/containers/" + enc).then(function (r) { return r.json(); }),
-        fetch("/api/containers/" + enc + "/versions").then(function (r) { return r.json(); })
-    ]).then(function (results) {
-        var data = { detail: results[0], versions: results[1] };
-        accordionCache[name] = data;
-        renderAccordionContent(name, data);
-    }).catch(function () {
-        if (contentEl) contentEl.textContent = "Failed to load data";
-    });
 }
 
-function renderAccordionContent(name, data) {
-    var panel = document.getElementById("accordion-" + name);
-    if (!panel) return;
-    var contentEl = panel.querySelector(".accordion-content");
-    if (!contentEl) return;
+function changeSvcPolicy(name, newPolicy) {
+    // Services use the same policy endpoint as containers.
+    apiPost(
+        "/api/containers/" + encodeURIComponent(name) + "/policy",
+        { policy: newPolicy },
+        "Policy changed to " + newPolicy + " for " + name,
+        "Failed to change policy"
+    );
+}
 
-    var d = data.detail;
-    var versions = data.versions || [];
-
-    // Clear existing content safely.
-    while (contentEl.firstChild) contentEl.removeChild(contentEl.firstChild);
-
-    var grid = document.createElement("div");
-    grid.className = "accordion-grid";
-
-    // --- Info section ---
-    var infoSection = document.createElement("div");
-    infoSection.className = "accordion-section";
-
-    function addField(parent, labelText, valueText, extraClass) {
-        var lbl = document.createElement("div");
-        lbl.className = "accordion-label";
-        lbl.textContent = labelText;
-        parent.appendChild(lbl);
-        var val = document.createElement("div");
-        val.className = "accordion-value" + (extraClass ? " " + extraClass : "");
-        val.textContent = valueText;
-        parent.appendChild(val);
+function rollbackSvc(name, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    if (btn) {
+        btn.classList.add("loading");
+        btn.disabled = true;
+        window._svcLoadingBtns = window._svcLoadingBtns || {};
+        window._svcLoadingBtns["rb:" + name] = btn;
+        setTimeout(function() {
+            if (window._svcLoadingBtns && window._svcLoadingBtns["rb:" + name]) {
+                window._svcLoadingBtns["rb:" + name].classList.remove("loading");
+                window._svcLoadingBtns["rb:" + name].disabled = false;
+                delete window._svcLoadingBtns["rb:" + name];
+            }
+        }, 60000);
     }
-
-    addField(infoSection, "Image", d.image || "", "mono");
-    addField(infoSection, "State", d.state || "");
-    addField(infoSection, "Policy", d.policy || "");
-
-    if (d.maintenance) {
-        var mLabel = document.createElement("div");
-        mLabel.className = "accordion-label";
-        mLabel.textContent = "Maintenance";
-        infoSection.appendChild(mLabel);
-        var mVal = document.createElement("div");
-        mVal.className = "accordion-value";
-        var mBadge = document.createElement("span");
-        mBadge.className = "badge badge-warning";
-        mBadge.textContent = "In progress";
-        mVal.appendChild(mBadge);
-        infoSection.appendChild(mVal);
+    apiPost(
+        "/api/services/" + encodeURIComponent(name) + "/rollback",
+        null,
+        "Rollback started for " + name,
+        "Failed to rollback " + name
+    );
+    // Poll multiple times — Swarm rollback takes 10-30s to converge.
+    var delays = [2000, 5000, 10000, 20000];
+    for (var i = 0; i < delays.length; i++) {
+        (function(d) {
+            setTimeout(function() { refreshServiceRow(name); }, d);
+        })(delays[i]);
     }
+}
 
-    grid.appendChild(infoSection);
+// Cache of task data for scaled-to-0 services. Preserved across refreshes
+// so task rows persistently show as "shutdown" instead of disappearing.
+var _svcTaskCache = {};
 
-    // --- Versions section ---
-    var verSection = document.createElement("div");
-    verSection.className = "accordion-section";
-    var verLabel = document.createElement("div");
-    verLabel.className = "accordion-label";
-    verLabel.textContent = "Available Versions";
-    verSection.appendChild(verLabel);
+function scaleSvc(name, replicas, wrap) {
+    if (wrap) showBadgeSpinner(wrap);
 
-    if (versions.length > 0) {
-        var verWrap = document.createElement("div");
-        verWrap.className = "accordion-versions";
-        var limit = Math.min(versions.length, 8);
-        for (var i = 0; i < limit; i++) {
-            var badge = document.createElement("span");
-            badge.className = "version-badge";
-            badge.textContent = versions[i];
-            verWrap.appendChild(badge);
+    // Scaling to 0: cache current tasks, then mark rows as "shutdown".
+    if (replicas === 0) {
+        var group = document.querySelector('.svc-group[data-service="' + name + '"]');
+        if (group) {
+            // Capture task data from DOM before Swarm removes them.
+            var taskRows = group.querySelectorAll(".svc-task-row");
+            var cached = [];
+            for (var t = 0; t < taskRows.length; t++) {
+                var nodeCell = taskRows[t].querySelector(".svc-node");
+                var tagCell = taskRows[t].querySelector(".mono");
+                cached.push({
+                    NodeText: nodeCell ? nodeCell.textContent : "",
+                    Tag: tagCell ? tagCell.textContent : ""
+                });
+                // Immediately mark as shutdown.
+                var stateCell = taskRows[t].querySelector(".badge");
+                if (stateCell) {
+                    stateCell.textContent = "shutdown";
+                    stateCell.className = "badge badge-error";
+                    stateCell.title = "";
+                }
+            }
+            if (cached.length > 0) _svcTaskCache[name] = cached;
         }
-        if (versions.length > 8) {
-            var more = document.createElement("span");
-            more.className = "text-muted";
-            more.textContent = "+" + (versions.length - 8) + " more";
-            verWrap.appendChild(more);
-        }
-        verSection.appendChild(verWrap);
     } else {
-        var noVer = document.createElement("div");
-        noVer.className = "text-muted";
-        noVer.textContent = "No newer versions found";
-        verSection.appendChild(noVer);
+        // Scaling up: clear cache so refreshServiceRow uses live data.
+        delete _svcTaskCache[name];
     }
 
-    grid.appendChild(verSection);
-
-    // --- Actions section ---
-    var actSection = document.createElement("div");
-    actSection.className = "accordion-section accordion-actions";
-
-    if (d.snapshots && d.snapshots.length > 0) {
-        var rbBtn = document.createElement("button");
-        rbBtn.className = "btn btn-error";
-        rbBtn.textContent = "Rollback";
-        rbBtn.addEventListener("click", function () { triggerRollback(name); });
-        actSection.appendChild(rbBtn);
-    }
-
-    var detailLink = document.createElement("a");
-    detailLink.href = "/container/" + encodeURIComponent(name);
-    detailLink.className = "btn btn-info";
-    detailLink.textContent = "Full Details";
-    actSection.appendChild(detailLink);
-
-    grid.appendChild(actSection);
-    contentEl.appendChild(grid);
-
-    // --- GHCR alternative section ---
-    var repo = parseDockerRepo(d.image || "");
-    var ghcrAlt = repo ? ghcrAlternatives[repo] : null;
-    if (ghcrAlt) {
-        var ghcrDiv = document.createElement("div");
-        ghcrDiv.className = "ghcr-callout";
-
-        var iconSpan = document.createElement("span");
-        iconSpan.className = "ghcr-callout-icon";
-        iconSpan.textContent = "\u2139\uFE0F";
-        ghcrDiv.appendChild(iconSpan);
-
-        var bodyDiv = document.createElement("div");
-        bodyDiv.className = "ghcr-callout-body";
-
-        var titleEl = document.createElement("strong");
-        titleEl.textContent = "Available on GHCR";
-        bodyDiv.appendChild(titleEl);
-
-        var descText = document.createElement("span");
-        descText.textContent = ghcrAlt.ghcr_image + ":" + ghcrAlt.tag;
-        if (ghcrAlt.digest_match) {
-            descText.textContent += " (identical build)";
-        } else {
-            descText.textContent += " (different build)";
-        }
-        bodyDiv.appendChild(descText);
-
-        var switchBtn = document.createElement("button");
-        switchBtn.className = "btn btn-info";
-        switchBtn.textContent = "Switch to GHCR";
-        switchBtn.addEventListener("click", function() {
-            switchToGHCR(name, ghcrAlt.ghcr_image + ":" + ghcrAlt.tag);
-        });
-        bodyDiv.appendChild(switchBtn);
-
-        ghcrDiv.appendChild(bodyDiv);
-        contentEl.appendChild(ghcrDiv);
+    apiPost(
+        "/api/services/" + encodeURIComponent(name) + "/scale",
+        { replicas: replicas },
+        "Scaled " + name + " to " + replicas + " replicas",
+        "Failed to scale " + name
+    );
+    // Poll multiple times — Swarm scaling takes 5-15s to converge.
+    var delays = [2000, 5000, 10000, 20000];
+    for (var i = 0; i < delays.length; i++) {
+        (function(d) {
+            setTimeout(function() { refreshServiceRow(name); }, d);
+        })(delays[i]);
     }
 }
+
+function refreshServiceRow(name) {
+    fetch("/api/services/" + encodeURIComponent(name) + "/detail")
+        .then(function(r) { return r.json(); })
+        .then(function(svc) {
+            var group = document.querySelector('.svc-group[data-service="' + name + '"]');
+            if (!group) return;
+            var header = group.querySelector(".svc-header");
+
+            // Fully rebuild the scale badge wrap to ensure hover button is always present.
+            var wrap = group.querySelector(".status-badge-wrap[data-service]");
+            if (wrap) {
+                wrap.style.pointerEvents = ""; // Clear spinner lock from showBadgeSpinner.
+                var prevReplicas = svc.PrevReplicas || parseInt(wrap.getAttribute("data-prev-replicas"), 10) || 1;
+                if (svc.DesiredReplicas > 0) {
+                    var replicaClass = (svc.RunningReplicas === svc.DesiredReplicas) ? "svc-replicas-healthy" :
+                        (svc.RunningReplicas > 0) ? "svc-replicas-degraded" : "svc-replicas-down";
+                    wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
+                    wrap.innerHTML = '<span class="badge svc-replicas ' + replicaClass + ' badge-default">' +
+                        escapeHtml(svc.Replicas || '') + '</span>' +
+                        '<span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc(\'' +
+                        escapeHtml(name) + '\', 0, this.closest(\'.status-badge-wrap\'))">Scale to 0</span>';
+                } else {
+                    wrap.setAttribute("data-prev-replicas", prevReplicas);
+                    wrap.innerHTML = '<span class="badge svc-replicas svc-replicas-down badge-default">' +
+                        escapeHtml(svc.Replicas || '0/0') + '</span>' +
+                        '<span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc(\'' +
+                        escapeHtml(name) + '\', ' + (prevReplicas > 0 ? prevReplicas : 1) + ', this.closest(\'.status-badge-wrap\'))">Scale up</span>';
+                }
+            }
+
+            // Update image/version display in header.
+            // All dynamic values are sanitised through escapeHtml before DOM insertion.
+            // URLs come from our own API (server-computed), not user input.
+            if (header) {
+                var imgCell = header.querySelector(".cell-image");
+                if (imgCell && svc.Tag) {
+                    // Remove existing registry badge — applyRegistryBadges() will re-add it.
+                    var oldBadge = imgCell.querySelector(".registry-badge");
+                    if (oldBadge) oldBadge.remove();
+
+                    var rvSpan = (svc.ResolvedVersion) ? ' <span class="resolved-ver">(' + escapeHtml(svc.ResolvedVersion) + ')</span>' : '';
+
+                    if (svc.NewestVersion) {
+                        var verHtml = escapeHtml(svc.NewestVersion);
+                        if (svc.VersionURL && isSafeURL(svc.VersionURL)) {
+                            verHtml = '<a href="' + escapeHtml(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHtml(svc.NewestVersion) + '</a>';
+                        } else {
+                            verHtml = '<span class="version-new">' + verHtml + '</span>';
+                        }
+                        imgCell.innerHTML = '<span class="version-current">' + escapeHtml(svc.Tag) + rvSpan + '</span>' +
+                            ' <span class="version-arrow">&rarr;</span> ' + verHtml;
+                    } else {
+                        var tagHtml = escapeHtml(svc.Tag) + rvSpan;
+                        if (svc.ChangelogURL && isSafeURL(svc.ChangelogURL)) {
+                            imgCell.innerHTML = '<a href="' + escapeHtml(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + '</a>';
+                        } else {
+                            imgCell.innerHTML = tagHtml;
+                        }
+                    }
+                    imgCell.setAttribute("title", svc.Image || "");
+                    applyRegistryBadges();
+                }
+
+                // Update has-update class.
+                if (svc.HasUpdate) {
+                    header.classList.add("has-update");
+                } else {
+                    header.classList.remove("has-update");
+                }
+
+                // Update action buttons (all dynamic values passed through escapeHtml).
+                // But if the update is still in progress (loading btn tracked), keep the
+                // spinner alive on the newly rendered button.
+                var actionCell = header.querySelector("td:last-child .btn-group");
+                if (actionCell) {
+                    var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
+                    var isRolling  = window._svcLoadingBtns && window._svcLoadingBtns["rb:" + name];
+                    var btns = "";
+                    if (svc.HasUpdate && svc.Policy !== "pinned") {
+                        btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? ' loading' : '') + '"' +
+                            (isUpdating ? ' disabled' : '') +
+                            ' onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHtml(name) + '\', event)">Update</button>';
+                    }
+                    if (svc.UpdateStatus === "completed") {
+                        btns += '<button class="btn btn-sm' + (isRolling ? ' loading' : '') + '"' +
+                            (isRolling ? ' disabled' : '') +
+                            ' onclick="event.stopPropagation(); rollbackSvc(\'' + escapeHtml(name) + '\', event)">Rollback</button>';
+                    }
+                    btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
+                    actionCell.innerHTML = btns;
+
+                    // Update the tracked button references to the new DOM elements.
+                    if (isUpdating) {
+                        var newBtn = actionCell.querySelector(".btn-warning");
+                        if (newBtn) window._svcLoadingBtns[name] = newBtn;
+                    }
+                    if (isRolling) {
+                        var newRbBtn = actionCell.querySelector(".btn:not(.btn-warning)");
+                        if (newRbBtn) window._svcLoadingBtns["rb:" + name] = newRbBtn;
+                    }
+                }
+            }
+
+            // Clear loading buttons only when update is truly done (no HasUpdate means
+            // it succeeded, or UpdateStatus changed from what triggered the action).
+            // The SSE "service update succeeded" event will fire refreshServiceRow again,
+            // and at that point HasUpdate will be false — so the Update button won't be
+            // rendered at all, naturally clearing the spinner.
+            // We only force-clear here if the button is gone from the DOM entirely.
+            if (window._svcLoadingBtns) {
+                var keys = [name, "rb:" + name];
+                for (var k = 0; k < keys.length; k++) {
+                    var b = window._svcLoadingBtns[keys[k]];
+                    if (b && !b.isConnected) {
+                        // Button was removed from DOM (e.g. update completed, no longer shown).
+                        delete window._svcLoadingBtns[keys[k]];
+                    }
+                }
+            }
+
+            // Update expanded task rows.
+            var taskRows = group.querySelectorAll(".svc-task-row");
+            // Remove existing task rows.
+            for (var t = taskRows.length - 1; t >= 0; t--) {
+                taskRows[t].remove();
+            }
+            // Rebuild task rows from fresh data.
+            var taskHeader = group.querySelector(".svc-header");
+            if (taskHeader && svc.Tasks && svc.Tasks.length > 0) {
+                for (var t = 0; t < svc.Tasks.length; t++) {
+                    var task = svc.Tasks[t];
+                    var tr = document.createElement("tr");
+                    tr.className = "svc-task-row";
+                    var stateBadge;
+                    if (task.State === "running") {
+                        stateBadge = '<span class="badge badge-success">running</span>';
+                    } else if (task.State === "preparing") {
+                        stateBadge = '<span class="badge badge-info">preparing</span>';
+                    } else {
+                        stateBadge = '<span class="badge badge-error" title="' + escapeHtml(task.Error || '') + '">' + escapeHtml(task.State) + '</span>';
+                    }
+                    var nodeDisplay = escapeHtml(task.NodeName);
+                    if (task.NodeAddr) {
+                        nodeDisplay += ' <span class="svc-node-addr">(' + escapeHtml(task.NodeAddr) + ')</span>';
+                    }
+                    tr.innerHTML = '<td></td>' +
+                        '<td class="svc-node">' + nodeDisplay + '</td>' +
+                        '<td class="mono">' + escapeHtml(task.Tag || '') + '</td>' +
+                        '<td></td>' +
+                        '<td>' + stateBadge + '</td>' +
+                        '<td></td>';
+                    // Insert task rows after the header row.
+                    taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
+                }
+            } else if (taskHeader && svc.DesiredReplicas === 0) {
+                // Scaled to 0: show cached tasks as "shutdown" if available,
+                // otherwise fall back to a placeholder.
+                var cached = _svcTaskCache[name];
+                if (cached && cached.length > 0) {
+                    for (var t = cached.length - 1; t >= 0; t--) {
+                        var tr = document.createElement("tr");
+                        tr.className = "svc-task-row";
+                        tr.innerHTML = '<td></td>' +
+                            '<td class="svc-node">' + escapeHtml(cached[t].NodeText || '') + '</td>' +
+                            '<td class="mono">' + escapeHtml(cached[t].Tag || '') + '</td>' +
+                            '<td></td>' +
+                            '<td><span class="badge badge-error">shutdown</span></td>' +
+                            '<td></td>';
+                        taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
+                    }
+                } else {
+                    var tr = document.createElement("tr");
+                    tr.className = "svc-task-row";
+                    tr.innerHTML = '<td></td><td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 \u2014 no active tasks</td><td></td>';
+                    taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
+                }
+            }
+
+            group.classList.add("row-updated");
+            setTimeout(function() { group.classList.remove("row-updated"); }, 300);
+        })
+        .catch(function() { /* ignore — falls back to defaults */ });
+}
+
 
 /* ------------------------------------------------------------
    9. Multi-select
@@ -1770,13 +1924,29 @@ function applyFiltersAndSort() {
             else if (filterState.status === "stopped") show = !row.classList.contains("state-running");
             if (show && filterState.updates === "pending") show = row.classList.contains("has-update");
             row.style.display = show ? "" : "none";
-            var next = row.nextElementSibling;
-            if (next && next.classList.contains("accordion-panel")) {
-                if (!show) next.style.display = "none";
-            }
             if (show) visibleCount++;
         }
         stack.style.display = visibleCount === 0 ? "none" : "";
+    }
+
+    // Filter Swarm service groups too.
+    var svcGroups = table.querySelectorAll("tbody.svc-group");
+    for (var g = 0; g < svcGroups.length; g++) {
+        var svcGroup = svcGroups[g];
+        var svcHeader = svcGroup.querySelector(".svc-header");
+        if (!svcHeader) continue;
+        var showSvc = true;
+        if (filterState.status === "running") {
+            var rb = svcHeader.querySelector(".svc-replicas");
+            showSvc = rb && !rb.classList.contains("svc-replicas-down");
+        } else if (filterState.status === "stopped") {
+            var rb2 = svcHeader.querySelector(".svc-replicas");
+            showSvc = rb2 && rb2.classList.contains("svc-replicas-down");
+        }
+        if (showSvc && filterState.updates === "pending") {
+            showSvc = svcHeader.classList.contains("has-update");
+        }
+        svcGroup.style.display = showSvc ? "" : "none";
     }
 
     if (filterState.sort !== "default") {
@@ -1806,10 +1976,7 @@ function sortRows(stacks) {
         }
 
         for (var i = 0; i < rows.length; i++) {
-            var row = rows[i];
-            var acc = document.getElementById("accordion-" + row.getAttribute("data-name"));
-            tbody.appendChild(row);
-            if (acc) tbody.appendChild(acc);
+            tbody.appendChild(rows[i]);
         }
     }
 }
@@ -1971,10 +2138,8 @@ var sseReloadTimer = null;
 
 function scheduleReload() {
     // Only full-reload on pages that render the container table (dashboard).
-    // Other pages (settings, history, queue, etc.) don't need reloading
-    // and it destroys user state like open accordion sections.
+    // Other pages (settings, history, queue, etc.) don't need reloading.
     if (!document.getElementById("container-table")) return;
-    accordionCache = {};
     if (sseReloadTimer) clearTimeout(sseReloadTimer);
     sseReloadTimer = setTimeout(function () {
         window.location.reload();
@@ -2001,18 +2166,13 @@ function updateContainerRow(name) {
             temp.innerHTML = data.html; // Safe: server-rendered Go template HTML, no user content
 
             var oldRow = document.querySelector('tr.container-row[data-name="' + name + '"]');
-            var oldAccordion = document.getElementById("accordion-" + name);
 
             if (oldRow) {
                 var newRow = temp.querySelector(".container-row");
-                var newAccordion = temp.querySelector(".accordion-panel");
 
                 if (newRow) {
                     oldRow.replaceWith(newRow);
                     newRow.classList.add("row-updated");
-                }
-                if (newAccordion && oldAccordion) {
-                    oldAccordion.replaceWith(newAccordion);
                 }
 
                 // Reapply checkbox state from selectedContainers after DOM patch.
@@ -2022,9 +2182,6 @@ function updateContainerRow(name) {
                 }
                 recomputeSelectionState();
             }
-
-            // Clear accordion cache for this container.
-            delete accordionCache[name];
 
             // Reapply badges and filters after DOM patch.
             applyRegistryBadges();
@@ -2191,6 +2348,18 @@ function initSSE() {
         loadDigestBanner();
     });
 
+    es.addEventListener("service_update", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            queueBatchToast(data.message || ("Service: " + data.container_name), "info");
+            if (data.container_name) {
+                refreshServiceRow(data.container_name);
+                // Swarm updates converge over 10-30s; do a second refresh.
+                setTimeout(function() { refreshServiceRow(data.container_name); }, 10000);
+            }
+        } catch (_) {}
+    });
+
     es.addEventListener("ghcr_check", function() {
         loadGHCRAlternatives();
     });
@@ -2223,7 +2392,7 @@ function loadGHCRAlternatives() {
             }
             applyGHCRBadges();
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 var registryStyles = {
@@ -2234,7 +2403,7 @@ var registryStyles = {
 };
 
 function applyRegistryBadges() {
-    var rows = document.querySelectorAll("tr.container-row");
+    var rows = document.querySelectorAll("tr.container-row, tr.svc-header");
     rows.forEach(function(row) {
         var imageCell = row.querySelector(".cell-image");
         if (!imageCell) return;
@@ -2486,18 +2655,6 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    // Click-to-copy for digest and mono values in accordion detail views.
-    document.addEventListener("click", function(e) {
-        var target = e.target.closest(".accordion-content .mono, .accordion-content .cell-digest");
-        if (!target) return;
-        var text = target.textContent.trim();
-        if (!text || text === "\u2014") return;
-        if (navigator.clipboard) {
-            navigator.clipboard.writeText(text).then(function() {
-                showToast("Copied to clipboard", "info");
-            });
-        }
-    });
 
     // Escape key closes open tooltips.
     document.addEventListener("keydown", function(e) {
@@ -2559,13 +2716,15 @@ document.addEventListener("DOMContentLoaded", function () {
         loadGHCRAlternatives();
     }
 
-    // Stop/Start/Restart badge click delegation.
+    // Stop/Start/Restart badge click delegation (containers only — service scale uses inline onclick).
     document.addEventListener("click", function(e) {
         var badge = e.target.closest(".status-badge-wrap .badge-hover");
         if (!badge) return;
         e.stopPropagation();
         var wrap = badge.closest(".status-badge-wrap");
         if (!wrap) return;
+
+        // Container stop/start/restart actions.
         var name = wrap.getAttribute("data-name");
         if (!name) return;
         var action = wrap.getAttribute("data-action") || "restart";
@@ -3190,7 +3349,7 @@ function renderContainerNotifyPrefs(el, containers, prefs) {
 
         var heading = document.createElement("div");
         heading.className = "notify-prefs-group-heading";
-        heading.textContent = stackName || "Standalone";
+        heading.textContent = stackName === "swarm" ? "Swarm Services" : (stackName || "Standalone");
         groupCard.appendChild(heading);
 
         // Grid for this stack
@@ -3348,6 +3507,13 @@ function escapeHtml(str) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+// isSafeURL validates that a URL string starts with http:// or https://.
+// Used as a defence-in-depth check before inserting server-provided URLs
+// into href attributes via innerHTML.
+function isSafeURL(url) {
+    return typeof url === "string" && (url.indexOf("https://") === 0 || url.indexOf("http://") === 0);
 }
 
 
@@ -3739,7 +3905,7 @@ function updateRateLimitStatus() {
             else if (health === "low") el.classList.add("warning");
             else if (health === "exhausted") el.classList.add("error");
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 // Fetch on initial load; live updates arrive via SSE rate_limits event.
@@ -3758,7 +3924,7 @@ function loadFooterVersion() {
         .then(function(data) {
             el.textContent = "Docker-Sentinel " + (data.version || "dev");
         })
-        .catch(function() {});
+        .catch(function() { /* ignore — falls back to defaults */ });
 }
 
 function loadAboutInfo() {

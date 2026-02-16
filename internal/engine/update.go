@@ -346,6 +346,15 @@ func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []by
 			Timestamp:     u.clock.Now(),
 		})
 	} else {
+		// Apply rollback policy setting — change the container's policy to prevent
+		// the next scan from immediately retrying the same broken update.
+		if rp := u.rollbackPolicy(); rp == "manual" || rp == "pinned" {
+			if err := u.store.SetPolicyOverride(name, rp); err != nil {
+				u.log.Warn("failed to set rollback policy override", "name", name, "policy", rp, "error", err)
+			} else {
+				u.log.Info("policy changed after rollback", "name", name, "policy", rp)
+			}
+		}
 		u.publishEvent(events.EventContainerUpdate, name, "rollback succeeded")
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventRollbackOK,

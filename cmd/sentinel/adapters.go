@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
@@ -37,6 +38,7 @@ func (a *storeAdapter) ListHistory(limit int) ([]web.UpdateRecord, error) {
 			Outcome:       r.Outcome,
 			Duration:      r.Duration,
 			Error:         r.Error,
+			Type:          r.Type,
 		}
 	}
 	return result, nil
@@ -59,6 +61,7 @@ func (a *storeAdapter) ListHistoryByContainer(name string, limit int) ([]web.Upd
 			Outcome:       r.Outcome,
 			Duration:      r.Duration,
 			Error:         r.Error,
+			Type:          r.Type,
 		}
 	}
 	return result, nil
@@ -66,6 +69,21 @@ func (a *storeAdapter) ListHistoryByContainer(name string, limit int) ([]web.Upd
 
 func (a *storeAdapter) GetMaintenance(name string) (bool, error) {
 	return a.s.GetMaintenance(name)
+}
+
+func (a *storeAdapter) RecordUpdate(rec web.UpdateRecord) error {
+	return a.s.RecordUpdate(store.UpdateRecord{
+		Timestamp:     rec.Timestamp,
+		ContainerName: rec.ContainerName,
+		OldImage:      rec.OldImage,
+		OldDigest:     rec.OldDigest,
+		NewImage:      rec.NewImage,
+		NewDigest:     rec.NewDigest,
+		Outcome:       rec.Outcome,
+		Duration:      rec.Duration,
+		Error:         rec.Error,
+		Type:          rec.Type,
+	})
 }
 
 // aboutStoreAdapter converts store.Store to web.AboutStore.
@@ -133,6 +151,7 @@ func (a *queueAdapter) Add(update web.PendingUpdate) {
 		NewerVersions:          update.NewerVersions,
 		ResolvedCurrentVersion: update.ResolvedCurrentVersion,
 		ResolvedTargetVersion:  update.ResolvedTargetVersion,
+		Type:                   update.Type,
 	})
 }
 
@@ -165,6 +184,7 @@ func convertPendingUpdate(item engine.PendingUpdate) web.PendingUpdate {
 		NewerVersions:          item.NewerVersions,
 		ResolvedCurrentVersion: item.ResolvedCurrentVersion,
 		ResolvedTargetVersion:  item.ResolvedTargetVersion,
+		Type:                   item.Type,
 	}
 }
 
@@ -254,12 +274,14 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	if tag == "" {
 		return nil, nil
 	}
-	repo := registry.NormaliseRepo(imageRef)
-	token, err := registry.FetchAnonymousToken(ctx, repo)
+	repo := registry.RepoPath(imageRef)
+	host := registry.RegistryHost(imageRef)
+
+	token, err := registry.FetchToken(ctx, repo, nil, host)
 	if err != nil {
 		return nil, fmt.Errorf("fetch token: %w", err)
 	}
-	tagsResult, err := registry.ListTags(ctx, imageRef, token, "docker.io", nil)
+	tagsResult, err := registry.ListTags(ctx, imageRef, token, host, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
 	}
@@ -317,6 +339,7 @@ func (a *eventLogAdapter) AppendLog(entry web.LogEntry) error {
 		Message:   entry.Message,
 		Container: entry.Container,
 		User:      entry.User,
+		Kind:      entry.Kind,
 	})
 }
 
@@ -333,6 +356,7 @@ func (a *eventLogAdapter) ListLogs(limit int) ([]web.LogEntry, error) {
 			Message:   e.Message,
 			Container: e.Container,
 			User:      e.User,
+			Kind:      e.Kind,
 		}
 	}
 	return result, nil
@@ -639,4 +663,191 @@ func (a *webHookStoreAdapter) SaveHook(hook web.HookEntry) error {
 
 func (a *webHookStoreAdapter) DeleteHook(containerName, phase string) error {
 	return a.s.DeleteHook(containerName, phase)
+}
+
+// swarmAdapter bridges docker.Client + engine.Updater to web.SwarmProvider.
+type swarmAdapter struct {
+	client  *docker.Client
+	updater *engine.Updater
+}
+
+func (a *swarmAdapter) IsSwarmMode() bool {
+	return a.client.IsSwarmManager(context.Background())
+}
+
+func (a *swarmAdapter) ListServices(ctx context.Context) ([]web.ServiceSummary, error) {
+	services, err := a.client.ListServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.ServiceSummary, len(services))
+	for i, svc := range services {
+		replicas := ""
+		var desired, running uint64
+		if svc.ServiceStatus != nil {
+			running = svc.ServiceStatus.RunningTasks
+			desired = svc.ServiceStatus.DesiredTasks
+			replicas = fmt.Sprintf("%d/%d", running, desired)
+		}
+		result[i] = web.ServiceSummary{
+			ID:              svc.ID,
+			Name:            svc.Spec.Name,
+			Image:           svc.Spec.TaskTemplate.ContainerSpec.Image,
+			Labels:          svc.Spec.Labels,
+			Replicas:        replicas,
+			DesiredReplicas: desired,
+			RunningReplicas: running,
+		}
+	}
+	return result, nil
+}
+
+func (a *swarmAdapter) ListServiceDetail(ctx context.Context) ([]web.ServiceDetail, error) {
+	services, err := a.client.ListServices(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build node lookup (one call, not per-task).
+	nodes, nodeErr := a.client.ListNodes(ctx)
+	nodeMap := make(map[string]struct{ Name, Addr string })
+	if nodeErr == nil {
+		for _, n := range nodes {
+			name := n.Description.Hostname
+			addr := n.Status.Addr
+			nodeMap[n.ID] = struct{ Name, Addr string }{name, addr}
+		}
+	}
+
+	result := make([]web.ServiceDetail, 0, len(services))
+	for _, svc := range services {
+		replicas := ""
+		var desired, running uint64
+		if svc.ServiceStatus != nil {
+			running = svc.ServiceStatus.RunningTasks
+			desired = svc.ServiceStatus.DesiredTasks
+			replicas = fmt.Sprintf("%d/%d", running, desired)
+		}
+
+		imageRef := svc.Spec.TaskTemplate.ContainerSpec.Image
+		// Strip Swarm digest pinning for display.
+		if i := strings.Index(imageRef, "@sha256:"); i > 0 {
+			imageRef = imageRef[:i]
+		}
+
+		updateStatus := ""
+		if svc.UpdateStatus != nil {
+			updateStatus = string(svc.UpdateStatus.State)
+		}
+
+		summary := web.ServiceSummary{
+			ID:              svc.ID,
+			Name:            svc.Spec.Name,
+			Image:           imageRef,
+			Labels:          svc.Spec.Labels,
+			Replicas:        replicas,
+			DesiredReplicas: desired,
+			RunningReplicas: running,
+		}
+
+		// Fetch tasks for this service.
+		tasks, taskErr := a.client.ListServiceTasks(ctx, svc.ID)
+		var taskInfos []web.TaskInfo
+		if taskErr == nil {
+			taskInfos = make([]web.TaskInfo, 0, len(tasks))
+			for _, t := range tasks {
+				nodeName := t.NodeID
+				nodeAddr := ""
+				if info, ok := nodeMap[t.NodeID]; ok {
+					nodeName = info.Name
+					nodeAddr = info.Addr
+				}
+				taskImage := t.Spec.ContainerSpec.Image
+				if i := strings.Index(taskImage, "@sha256:"); i > 0 {
+					taskImage = taskImage[:i]
+				}
+				tag := ""
+				if parts := strings.SplitN(taskImage, ":", 2); len(parts) == 2 {
+					tag = parts[1]
+				}
+				errMsg := ""
+				if t.Status.Err != "" {
+					errMsg = t.Status.Err
+				}
+				taskInfos = append(taskInfos, web.TaskInfo{
+					NodeID:   t.NodeID,
+					NodeName: nodeName,
+					NodeAddr: nodeAddr,
+					State:    string(t.Status.State),
+					Image:    taskImage,
+					Tag:      tag,
+					Slot:     t.Slot,
+					Error:    errMsg,
+				})
+			}
+		}
+
+		result = append(result, web.ServiceDetail{
+			ServiceSummary: summary,
+			Tasks:          taskInfos,
+			UpdateStatus:   updateStatus,
+		})
+	}
+	return result, nil
+}
+
+func (a *swarmAdapter) UpdateService(ctx context.Context, id, name, targetImage string) error {
+	return a.updater.UpdateService(ctx, id, name, targetImage)
+}
+
+func (a *swarmAdapter) RollbackService(ctx context.Context, id, name string) error {
+	// Look up service by name if id is empty (rollback from UI).
+	if id == "" {
+		services, err := a.client.ListServices(ctx)
+		if err != nil {
+			return fmt.Errorf("list services: %w", err)
+		}
+		for _, svc := range services {
+			if svc.Spec.Name == name {
+				id = svc.ID
+				break
+			}
+		}
+		if id == "" {
+			return fmt.Errorf("service %s not found", name)
+		}
+	}
+
+	svc, err := a.client.InspectService(ctx, id)
+	if err != nil {
+		return fmt.Errorf("inspect service %s: %w", name, err)
+	}
+	return a.client.RollbackService(ctx, id, svc.Meta.Version, svc.Spec)
+}
+
+func (a *swarmAdapter) ScaleService(ctx context.Context, name string, replicas uint64) error {
+	services, err := a.client.ListServices(ctx)
+	if err != nil {
+		return fmt.Errorf("list services: %w", err)
+	}
+	var id string
+	for _, svc := range services {
+		if svc.Spec.Name == name {
+			id = svc.ID
+			break
+		}
+	}
+	if id == "" {
+		return fmt.Errorf("service %s not found", name)
+	}
+
+	svc, err := a.client.InspectService(ctx, id)
+	if err != nil {
+		return fmt.Errorf("inspect service %s: %w", name, err)
+	}
+	if svc.Spec.Mode.Replicated == nil {
+		return fmt.Errorf("service %s is not replicated (global mode)", name)
+	}
+	svc.Spec.Mode.Replicated.Replicas = &replicas
+	return a.client.UpdateService(ctx, id, svc.Meta.Version, svc.Spec, "")
 }

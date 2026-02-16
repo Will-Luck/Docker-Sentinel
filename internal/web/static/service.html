@@ -1,0 +1,345 @@
+{{define "service.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Service.Name}} — Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <img src="/favicon.svg" alt="S" class="nav-logo">
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">Pending Updates</a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/logs" class="nav-link">Logs</a>
+            <a href="/settings" class="nav-link">Settings</a>
+        </div>
+        <div class="nav-status" aria-live="polite">
+            <span id="sse-indicator" class="status-dot disconnected"></span>
+            <span id="sse-label" class="nav-status-text">Disconnected</span>
+        </div>
+        {{if .AuthEnabled}}{{if .CurrentUser}}
+        <div class="nav-user">
+            <button class="nav-user-btn" onclick="toggleUserDropdown(event)" aria-haspopup="true" aria-expanded="false">
+                <span>{{.CurrentUser.Username}}</span>
+                <span class="nav-user-role">{{.CurrentUser.RoleID}}</span>
+                <span class="nav-user-chevron">&#9662;</span>
+            </button>
+            <div class="nav-user-dropdown" id="user-dropdown">
+                <a href="/account">My Account</a>
+                <div class="dropdown-divider"></div>
+                <form method="POST" action="/logout" style="margin:0">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <button type="submit">Logout</button>
+                </form>
+            </div>
+        </div>
+        {{end}}{{else}}
+        <div class="nav-auth-off">Auth: Off</div>
+        {{end}}
+    </nav>
+
+    <main class="main-content" id="main-content">
+        <div class="breadcrumb">
+            <a href="/">Dashboard</a> / <span class="breadcrumb-current">{{.Service.Name}}</span>
+        </div>
+
+        <!-- Overview -->
+        <div class="card detail-overview">
+            <div class="detail-overview-top">
+                <div class="detail-overview-info">
+                    <span class="detail-overview-image mono">{{.Service.Image}}{{if .Service.ResolvedVersion}} <span class="resolved-ver">({{.Service.ResolvedVersion}})</span>{{end}}</span>
+                    <span class="badge {{if and (gt .Service.DesiredReplicas 0) (eq .Service.RunningReplicas .Service.DesiredReplicas)}}badge-success{{else if gt .Service.RunningReplicas 0}}badge-warning{{else}}badge-error{{end}}">{{.Service.Replicas}} replicas</span>
+                    {{if .Service.UpdateStatus}}
+                    <span class="badge badge-info">{{.Service.UpdateStatus}}</span>
+                    {{end}}
+                    {{if .ChangelogURL}}
+                    <a href="{{.ChangelogURL}}" target="_blank" rel="noopener" class="changelog-link">Changelog</a>
+                    {{end}}
+                </div>
+                <div class="detail-overview-actions">
+                    {{if ne .Service.Policy "pinned"}}
+                    <button class="btn" onclick="triggerSvcCheck('{{.Service.Name}}', event)">Check for Updates</button>
+                    <button class="btn btn-warning" onclick="triggerSvcUpdate('{{.Service.Name}}', event)">Update Now</button>
+                    {{end}}
+                    {{if eq .Service.UpdateStatus "completed"}}
+                    <button class="btn btn-warning" onclick="rollbackSvc('{{.Service.Name}}', event)">Rollback</button>
+                    {{end}}
+                </div>
+            </div>
+            <div class="detail-meta">
+                <span class="detail-meta-label">Service ID</span>
+                <code class="detail-meta-value" id="container-id" title="{{.Service.ID}}">{{truncDigest .Service.ID}}</code>
+                <button class="detail-meta-copy" onclick="copyContainerID()" title="Copy full Service ID" aria-label="Copy service ID">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                <span class="detail-meta-label" style="margin-left:var(--sp-6)">Desired</span>
+                <code class="detail-meta-value">{{.Service.DesiredReplicas}}</code>
+                <span class="detail-meta-label" style="margin-left:var(--sp-4)">Running</span>
+                <code class="detail-meta-value">{{.Service.RunningReplicas}}</code>
+            </div>
+        </div>
+
+        <!-- Tasks table — always visible -->
+        {{if .Service.Tasks}}
+        <div class="card svc-detail-tasks">
+            <div class="card-header"><h2>Tasks</h2></div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Slot</th>
+                            <th>Node</th>
+                            <th>Image</th>
+                            <th>State</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Service.Tasks}}
+                        <tr>
+                            <td>{{.Slot}}</td>
+                            <td>{{.NodeName}}{{if .NodeAddr}} <span class="text-muted">({{.NodeAddr}})</span>{{end}}</td>
+                            <td class="mono">{{.Tag}}</td>
+                            <td>
+                                {{if eq .State "running"}}
+                                    <span class="badge badge-success">running</span>
+                                {{else if eq .State "preparing"}}
+                                    <span class="badge badge-info">preparing</span>
+                                {{else}}
+                                    <span class="badge badge-error" title="{{.Error}}">{{.State}}</span>
+                                {{end}}
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {{end}}
+
+        <!-- Accordion sections -->
+        <div class="accordion-stack">
+
+            <!-- Update Policy -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Update Policy</h2>
+                    <span class="accordion-preview badge {{if eq .Service.Policy "auto"}}badge-success{{else if eq .Service.Policy "manual"}}badge-muted{{else}}badge-error{{end}}" data-policy-preview>{{.Service.Policy}}</span>
+                </summary>
+                <div class="accordion-body">
+                    <p class="accordion-intro">Controls how Sentinel handles updates for this service.</p>
+                    <div class="policy-cards" id="policy-cards">
+                        <label class="policy-card{{if eq .Service.Policy "auto"}} selected{{end}}">
+                            <input type="radio" name="policy" value="auto"{{if eq .Service.Policy "auto"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value); updatePolicyCards()">
+                            <div class="policy-card-inner">
+                                <span class="policy-card-title">Auto</span>
+                                <span class="policy-card-desc">Updates applied automatically when detected</span>
+                            </div>
+                        </label>
+                        <label class="policy-card{{if eq .Service.Policy "manual"}} selected{{end}}">
+                            <input type="radio" name="policy" value="manual"{{if eq .Service.Policy "manual"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value); updatePolicyCards()">
+                            <div class="policy-card-inner">
+                                <span class="policy-card-title">Manual</span>
+                                <span class="policy-card-desc">Queued for your approval before applying</span>
+                            </div>
+                        </label>
+                        <label class="policy-card{{if eq .Service.Policy "pinned"}} selected{{end}}">
+                            <input type="radio" name="policy" value="pinned"{{if eq .Service.Policy "pinned"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value); updatePolicyCards()">
+                            <div class="policy-card-inner">
+                                <span class="policy-card-title">Pinned</span>
+                                <span class="policy-card-desc">Never updated — stays on current version</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Notification Preferences -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Notification Preferences</h2>
+                </summary>
+                <div class="accordion-body">
+                    <p class="accordion-intro">Override notification behaviour for this service.</p>
+                    <div class="notify-pref-cards" id="notify-pref-cards">
+                        <label class="policy-card selected">
+                            <input type="radio" name="notify-pref" value="default" checked onchange="saveNotifyPref('{{.Service.Name}}', this.value)">
+                            <div class="policy-card-inner">
+                                <span class="policy-card-title">Default</span>
+                                <span class="policy-card-desc">Uses global notification settings</span>
+                            </div>
+                        </label>
+                        <label class="policy-card">
+                            <input type="radio" name="notify-pref" value="every_scan" onchange="saveNotifyPref('{{.Service.Name}}', this.value)">
+                            <div class="policy-card-inner">
+                                <span class="policy-card-title">Every Scan</span>
+                                <span class="policy-card-desc">Notify on every scan that finds updates</span>
+                            </div>
+                        </label>
+                        <label class="policy-card">
+                            <input type="radio" name="notify-pref" value="digest_only" onchange="saveNotifyPref('{{.Service.Name}}', this.value)">
+                            <div class="policy-card-inner">
+                                <span class="policy-card-title">Digest Only</span>
+                                <span class="policy-card-desc">Include in digest emails only</span>
+                            </div>
+                        </label>
+                        <label class="policy-card">
+                            <input type="radio" name="notify-pref" value="muted" onchange="saveNotifyPref('{{.Service.Name}}', this.value)">
+                            <div class="policy-card-inner">
+                                <span class="policy-card-title">Muted</span>
+                                <span class="policy-card-desc">No notifications for this service</span>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Available Versions -->
+            {{if .Versions}}
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Available Versions</h2>
+                    <span class="accordion-preview badge badge-muted">{{len .Versions}}</span>
+                </summary>
+                <div class="accordion-body">
+                    <div class="version-picker">
+                        <select id="version-select" class="policy-select" style="min-width:200px;text-align:left;text-align-last:left">
+                            {{range .Versions}}
+                            <option value="{{.}}">{{.}}</option>
+                            {{end}}
+                        </select>
+                        <button class="btn btn-warning" onclick="updateSvcToVersion('{{.Service.Name}}')">Update to Version</button>
+                    </div>
+                </div>
+            </details>
+            {{end}}
+
+            <!-- Update History -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Update History</h2>
+                    <span class="accordion-preview badge badge-muted">{{len .History}}</span>
+                </summary>
+                <div class="accordion-body">
+                    {{if .History}}
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Old Image</th>
+                                    <th>New Image</th>
+                                    <th>Outcome</th>
+                                    <th>Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .History}}
+                                <tr>
+                                    <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
+                                    <td class="mono cell-image">{{imageTag .OldImage}}</td>
+                                    <td class="mono cell-image">{{imageTag .NewImage}}</td>
+                                    <td>
+                                        {{if eq .Outcome "success"}}
+                                            <span class="badge badge-success">Success</span>
+                                        {{else if eq .Outcome "rollback"}}
+                                            <span class="badge badge-error">Rollback</span>
+                                        {{else}}
+                                            <span class="badge badge-muted">{{.Outcome}}</span>
+                                        {{end}}
+                                    </td>
+                                    <td class="mono">{{fmtDuration .Duration}}</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                    {{else}}
+                    <div class="empty-state"><p>No update history for this service yet.</p></div>
+                    {{end}}
+                </div>
+            </details>
+
+        </div>
+    </main>
+
+    <footer class="app-footer" id="app-footer">
+        <span class="footer-version" id="footer-version"></span>
+        <span class="footer-beta">
+            This is BETA software.
+            <a href="https://github.com/Will-Luck/Docker-Sentinel/issues" target="_blank" rel="noopener">Report issues on GitHub</a>
+        </span>
+    </footer>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+    <script src="/static/auth.js"></script>
+    <script>
+    // Service-specific JS helpers
+    function triggerSvcCheck(name, event) {
+        var btn = event && event.target ? event.target.closest(".btn") : null;
+        apiPost(
+            "/api/check/" + encodeURIComponent(name),
+            null,
+            "Check started for " + name,
+            "Failed to check " + name,
+            btn
+        );
+    }
+
+    // Version is passed as a query parameter (not JSON body) because the Go
+    // handler uses r.FormValue() which reads both form bodies and query params.
+    function updateSvcToVersion(name) {
+        var sel = document.getElementById("version-select");
+        if (!sel) return;
+        var version = sel.value;
+        apiPost(
+            "/api/services/" + encodeURIComponent(name) + "/update?version=" + encodeURIComponent(version),
+            null,
+            "Updating " + name + " to " + version,
+            "Failed to update " + name
+        );
+    }
+
+    // Load notification preferences for this service
+    (function() {
+        fetch("/api/containers/" + encodeURIComponent("{{.Service.Name}}") + "/notify-pref")
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data && data.mode) {
+                    var radios = document.querySelectorAll('input[name="notify-pref"]');
+                    for (var i = 0; i < radios.length; i++) {
+                        var card = radios[i].closest(".policy-card");
+                        if (radios[i].value === data.mode) {
+                            radios[i].checked = true;
+                            if (card) card.classList.add("selected");
+                        } else {
+                            radios[i].checked = false;
+                            if (card) card.classList.remove("selected");
+                        }
+                    }
+                }
+            })
+            .catch(function() {});
+    })();
+    </script>
+</body>
+</html>
+{{end}}

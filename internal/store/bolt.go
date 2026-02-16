@@ -38,6 +38,7 @@ type UpdateRecord struct {
 	Outcome       string        `json:"outcome"` // "success", "rollback", "failed", or "finalise_warning"
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
+	Type          string        `json:"type,omitempty"` // "container" (default) or "service"
 }
 
 // Store wraps a BoltDB database for Sentinel persistence.
@@ -323,6 +324,7 @@ type LogEntry struct {
 	Message   string    `json:"message"`
 	Container string    `json:"container,omitempty"`
 	User      string    `json:"user,omitempty"`
+	Kind      string    `json:"kind,omitempty"` // "service" or "" (default = container)
 }
 
 // AppendLog writes a log entry to the logs bucket.

@@ -30,47 +30,76 @@ type TagsResult struct {
 	Headers http.Header // response headers for rate limit extraction
 }
 
+// maxTagPages is the maximum number of pagination requests when fetching tags.
+// GHCR caps responses at 1000 tags per page regardless of the n= parameter,
+// and some images (e.g. linuxserver/*) have 5000+ tags with arch-specific and
+// build-variant suffixes. 10 pages × 1000 = 10000 tags max.
+const maxTagPages = 10
+
 // ListTags fetches all tags for the given image reference from a container registry.
 // For Docker Hub, it uses registry-1.docker.io. For other registries, it uses
 // the registry host extracted from the image reference.
-// The token is a bearer token for Docker Hub; for other registries, pass empty
-// token and provide credentials via the cred parameter for Basic auth.
+// Automatically paginates using the ?last= parameter when the registry returns
+// a full page (GHCR caps at 1000 per page).
 func ListTags(ctx context.Context, imageRef string, token string, host string, cred *RegistryCredential) (TagsResult, error) {
 	repo := RepoPath(imageRef)
-	var url string
+	var baseURL string
 	if host != "" && host != "docker.io" {
-		url = "https://" + host + "/v2/" + repo + "/tags/list"
+		baseURL = "https://" + host + "/v2/" + repo + "/tags/list?n=10000"
 	} else {
-		url = "https://registry-1.docker.io/v2/" + repo + "/tags/list"
+		baseURL = "https://registry-1.docker.io/v2/" + repo + "/tags/list"
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return TagsResult{}, fmt.Errorf("create tags request: %w", err)
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	} else if cred != nil {
-		// Non-Hub registries: use Basic auth directly
-		req.SetBasicAuth(cred.Username, cred.Secret)
+	var allTags []string
+	var lastHeaders http.Header
+	pageURL := baseURL
+
+	for page := 0; page < maxTagPages; page++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+		if err != nil {
+			return TagsResult{}, fmt.Errorf("create tags request: %w", err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		} else if cred != nil {
+			req.SetBasicAuth(cred.Username, cred.Secret)
+		}
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return TagsResult{}, fmt.Errorf("fetch tags: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return TagsResult{}, fmt.Errorf("tags endpoint returned %d", resp.StatusCode)
+		}
+
+		var tagList TagList
+		if err := json.NewDecoder(resp.Body).Decode(&tagList); err != nil {
+			resp.Body.Close()
+			return TagsResult{}, fmt.Errorf("decode tags response: %w", err)
+		}
+		lastHeaders = resp.Header
+		resp.Body.Close()
+
+		allTags = append(allTags, tagList.Tags...)
+
+		// If we got fewer than 1000 tags, there are no more pages.
+		if len(tagList.Tags) < 1000 {
+			break
+		}
+
+		// Build next page URL using last= parameter.
+		last := tagList.Tags[len(tagList.Tags)-1]
+		if strings.Contains(baseURL, "?") {
+			pageURL = baseURL + "&last=" + last
+		} else {
+			pageURL = baseURL + "?last=" + last
+		}
 	}
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return TagsResult{}, fmt.Errorf("fetch tags: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return TagsResult{}, fmt.Errorf("tags endpoint returned %d", resp.StatusCode)
-	}
-
-	var tagList TagList
-	if err := json.NewDecoder(resp.Body).Decode(&tagList); err != nil {
-		return TagsResult{}, fmt.Errorf("decode tags response: %w", err)
-	}
-
-	return TagsResult{Tags: tagList.Tags, Headers: resp.Header}, nil
+	return TagsResult{Tags: allTags, Headers: lastHeaders}, nil
 }
 
 // ParseSemVer attempts to parse a tag string as a semantic version.
@@ -171,6 +200,12 @@ func NewerVersions(current string, tags []string) []SemVer {
 		if !ok {
 			continue
 		}
+		// Skip candidates from a different versioning scheme. Calendar
+		// versioning tags like "2021.12.14" parse as semver with major >= 1900,
+		// which would falsely compare as "newer" than real semver like "3.21".
+		if versionSchemeMismatch(cur, sv) {
+			continue
+		}
 		if cur.LessThan(sv) {
 			newer = append(newer, sv)
 		}
@@ -182,6 +217,15 @@ func NewerVersions(current string, tags []string) []SemVer {
 	})
 
 	return newer
+}
+
+// versionSchemeMismatch returns true when two versions appear to use different
+// versioning schemes (e.g. semver "3.21" vs calver "2021.12.14"). Comparing
+// across schemes produces nonsensical results.
+func versionSchemeMismatch(a, b SemVer) bool {
+	aCalver := a.Major >= 1900
+	bCalver := b.Major >= 1900
+	return aCalver != bCalver
 }
 
 // NormaliseRepo converts an image reference to a Docker Hub repository path.

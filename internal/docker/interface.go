@@ -5,6 +5,7 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/swarm"
 )
 
 // API defines the subset of Docker operations used by Sentinel.
@@ -23,6 +24,16 @@ type API interface {
 	DistributionDigest(ctx context.Context, imageRef string) (string, error)
 	RemoveImage(ctx context.Context, id string) error
 	ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error)
+
+	// Swarm operations — only functional when the daemon is a Swarm manager.
+	IsSwarmManager(ctx context.Context) bool
+	ListServices(ctx context.Context) ([]swarm.Service, error)
+	InspectService(ctx context.Context, id string) (swarm.Service, error)
+	UpdateService(ctx context.Context, id string, version swarm.Version, spec swarm.ServiceSpec, registryAuth string) error
+	RollbackService(ctx context.Context, id string, version swarm.Version, spec swarm.ServiceSpec) error
+	ListServiceTasks(ctx context.Context, serviceID string) ([]swarm.Task, error)
+	ListNodes(ctx context.Context) ([]swarm.Node, error)
+
 	Close() error
 }
 
