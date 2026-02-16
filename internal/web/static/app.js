@@ -182,6 +182,13 @@ function initSettingsPage() {
                 selectOptionByValue(policySelect, policy);
             }
 
+            // Rollback policy.
+            var rbSelect = document.getElementById("rollback-policy");
+            if (rbSelect) {
+                var rbPolicy = settings["rollback_policy"] || settings["SENTINEL_ROLLBACK_POLICY"] || "";
+                selectOptionByValue(rbSelect, rbPolicy);
+            }
+
             // Grace period.
             var graceSelect = document.getElementById("grace-period");
             if (graceSelect) {
@@ -455,6 +462,29 @@ function setDefaultPolicy(value) {
         })
         .catch(function() {
             showToast("Network error — could not update default policy", "error");
+        });
+}
+
+function setRollbackPolicy(value) {
+    fetch("/api/settings/rollback-policy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ policy: value })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Rollback policy updated", "success");
+            } else {
+                showToast(result.data.error || "Failed to update rollback policy", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not update rollback policy", "error");
         });
 }
 
@@ -1444,6 +1474,13 @@ function triggerSvcUpdate(name, event) {
         "Service update started for " + name,
         "Failed to trigger service update"
     );
+    // Poll multiple times — Swarm updates take 10-30s to converge.
+    var delays = [2000, 5000, 10000, 20000];
+    for (var i = 0; i < delays.length; i++) {
+        (function(d) {
+            setTimeout(function() { refreshServiceRow(name); }, d);
+        })(delays[i]);
+    }
 }
 
 function changeSvcPolicy(name, newPolicy) {
@@ -1477,6 +1514,13 @@ function rollbackSvc(name, event) {
         "Rollback started for " + name,
         "Failed to rollback " + name
     );
+    // Poll multiple times — Swarm rollback takes 10-30s to converge.
+    var delays = [2000, 5000, 10000, 20000];
+    for (var i = 0; i < delays.length; i++) {
+        (function(d) {
+            setTimeout(function() { refreshServiceRow(name); }, d);
+        })(delays[i]);
+    }
 }
 
 // Cache of task data for scaled-to-0 services. Preserved across refreshes

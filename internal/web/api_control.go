@@ -272,6 +272,15 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.deps.Rollback.RollbackContainer(context.Background(), name); err != nil {
 			s.deps.Log.Error("rollback failed", "name", name, "error", err)
+			return
+		}
+		// Apply rollback policy setting — change the container's policy to prevent
+		// the next scan from immediately retrying the same broken update.
+		if s.deps.SettingsStore != nil && s.deps.Policy != nil {
+			if rp, _ := s.deps.SettingsStore.LoadSetting("rollback_policy"); rp == "manual" || rp == "pinned" {
+				_ = s.deps.Policy.SetPolicyOverride(name, rp)
+				s.deps.Log.Info("policy changed after manual rollback", "name", name, "policy", rp)
+			}
 		}
 	}()
 
