@@ -22,7 +22,9 @@ type PendingUpdate struct {
 	NewerVersions          []string  `json:"newer_versions,omitempty"`
 	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
 	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
-	Type                   string    `json:"type,omitempty"` // "container" (default) or "service"
+	Type                   string    `json:"type,omitempty"`    // "container" (default) or "service"
+	HostID                 string    `json:"host_id,omitempty"` // cluster host ID (empty = local)
+	HostName               string    `json:"host_name,omitempty"`
 }
 
 // Queue manages pending updates with BoltDB persistence.

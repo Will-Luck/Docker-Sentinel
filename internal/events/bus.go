@@ -20,6 +20,7 @@ const (
 	EventRateLimits      EventType = "rate_limits"
 	EventGHCRCheck       EventType = "ghcr_check"
 	EventServiceUpdate   EventType = "service_update"
+	EventClusterHost     EventType = "cluster_host" // host connected/disconnected/enrolled
 )
 
 // SSEEvent is a single event published through the bus and streamed to SSE clients.
@@ -27,6 +28,7 @@ type SSEEvent struct {
 	Type          EventType `json:"type"`
 	ContainerName string    `json:"container_name,omitempty"`
 	Message       string    `json:"message,omitempty"`
+	HostName      string    `json:"host_name,omitempty"` // source host (empty = local)
 	Timestamp     time.Time `json:"timestamp"`
 }
 

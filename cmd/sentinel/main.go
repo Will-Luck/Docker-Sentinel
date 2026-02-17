@@ -18,6 +18,9 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/agent"
+	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
@@ -34,7 +37,27 @@ import (
 var version = "dev"
 
 func main() {
+	// Subcommand dispatch: "sentinel server" or "sentinel agent".
+	// Bare "sentinel" defaults to server mode for backwards compatibility.
+	mode := ""
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "server":
+			mode = "server"
+			os.Args = append(os.Args[:1], os.Args[2:]...) // strip subcommand
+		case "agent":
+			mode = "agent"
+			os.Args = append(os.Args[:1], os.Args[2:]...) // strip subcommand
+		}
+	}
+
 	cfg := config.Load()
+
+	// Subcommand takes precedence over SENTINEL_MODE env var.
+	if mode != "" {
+		cfg.Mode = mode
+	}
+
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
 		os.Exit(1)
@@ -46,8 +69,21 @@ func main() {
 	}
 	log := logging.New(cfg.LogJSON)
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer cancel()
+
 	fmt.Println("Docker-Sentinel " + version)
+	if cfg.Mode != "" {
+		fmt.Printf("Mode: %s\n", cfg.Mode)
+	}
 	fmt.Println("=============================================")
+
+	// Agent mode runs a completely different code path.
+	if cfg.IsAgent() {
+		runAgent(ctx, cfg, log)
+		return
+	}
+
 	fmt.Printf("SENTINEL_POLL_INTERVAL=%s\n", cfg.PollInterval())
 	fmt.Printf("SENTINEL_GRACE_PERIOD=%s\n", cfg.GracePeriod())
 	fmt.Printf("SENTINEL_DEFAULT_POLICY=%s\n", cfg.DefaultPolicy())
@@ -58,9 +94,6 @@ func main() {
 	fmt.Printf("SENTINEL_TLS_KEY=%s\n", cfg.TLSKey)
 	fmt.Printf("SENTINEL_TLS_AUTO=%t\n", cfg.TLSAuto)
 	fmt.Printf("SENTINEL_WEBAUTHN_RPID=%s\n", cfg.WebAuthnRPID)
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
 
 	client, err := docker.NewClient(cfg.DockerSock)
 	if err != nil {
@@ -243,6 +276,33 @@ func main() {
 	scheduler.SetSettingsReader(db)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
+
+	// Start cluster gRPC server if enabled (before web so the adapter is available).
+	var clusterSrv *clusterserver.Server
+	if cfg.ClusterEnabled {
+		dataDir := cfg.ClusterDataDir
+		ca, caErr := cluster.EnsureCA(dataDir)
+		if caErr != nil {
+			log.Error("failed to initialise cluster CA", "error", caErr)
+			os.Exit(1)
+		}
+
+		clusterSrv = clusterserver.New(ca, db, bus, log.Logger)
+
+		clusterAddr := net.JoinHostPort("", cfg.ClusterPort)
+		if startErr := clusterSrv.Start(clusterAddr); startErr != nil {
+			log.Error("failed to start cluster gRPC server", "error", startErr)
+			os.Exit(1)
+		}
+		log.Info("cluster gRPC server started", "addr", clusterAddr)
+
+		// Ensure graceful shutdown.
+		go func() {
+			<-ctx.Done()
+			clusterSrv.Stop()
+		}()
+	}
+
 	// Start web dashboard if enabled.
 	if cfg.WebEnabled {
 		webDeps := web.Dependencies{
@@ -282,6 +342,9 @@ func main() {
 		}
 		if isSwarm {
 			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
+		}
+		if clusterSrv != nil {
+			webDeps.Cluster = &clusterAdapter{srv: clusterSrv}
 		}
 		srv := web.NewServer(webDeps)
 
@@ -379,6 +442,43 @@ func main() {
 	}
 
 	log.Info("sentinel shutdown complete")
+}
+
+// runAgent starts Sentinel in agent mode. This is a completely separate
+// code path from the server — it connects to a remote Sentinel server
+// over gRPC and executes update commands on the local Docker host.
+func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
+	fmt.Println("Docker-Sentinel Agent " + version)
+	fmt.Println("=============================================")
+	fmt.Printf("SENTINEL_SERVER_ADDR=%s\n", cfg.ServerAddr)
+	fmt.Printf("SENTINEL_HOST_NAME=%s\n", cfg.HostName)
+	fmt.Printf("SENTINEL_CLUSTER_DIR=%s\n", cfg.ClusterDataDir)
+
+	client, err := docker.NewClient(cfg.DockerSock)
+	if err != nil {
+		log.Error("failed to create Docker client", "error", err)
+		os.Exit(1)
+	}
+	defer client.Close()
+
+	agentCfg := agent.Config{
+		ServerAddr:         cfg.ServerAddr,
+		EnrollToken:        cfg.EnrollToken,
+		HostName:           cfg.HostName,
+		DataDir:            cfg.ClusterDataDir,
+		GracePeriodOffline: cfg.GracePeriodOffline,
+		DockerSock:         cfg.DockerSock,
+		Version:            version,
+	}
+
+	a := agent.New(agentCfg, client, log.Logger)
+
+	log.Info("starting agent mode", "server", cfg.ServerAddr, "host", cfg.HostName)
+	if err := a.Run(ctx); err != nil {
+		log.Error("agent exited with error", "error", err)
+		os.Exit(1)
+	}
+	log.Info("agent shutdown complete")
 }
 
 // parseHeaders parses comma-separated "Key:Value" pairs into a map.

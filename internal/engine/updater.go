@@ -68,6 +68,49 @@ type ScanResult struct {
 	ServiceUpdates int
 }
 
+// ClusterScanner provides access to remote host containers for multi-host scanning.
+// Nil when clustering is disabled — single-host mode has zero overhead.
+type ClusterScanner interface {
+	// ConnectedHosts returns the IDs of all currently connected agent hosts.
+	ConnectedHosts() []string
+	// HostInfo returns info about a specific host.
+	HostInfo(hostID string) (HostContext, bool)
+	// ListContainers requests a container list from a remote agent.
+	// Blocks until the agent responds or context is cancelled.
+	ListContainers(ctx context.Context, hostID string) ([]RemoteContainer, error)
+	// UpdateContainer requests an update on a remote agent.
+	// Blocks until the agent responds with the result.
+	UpdateContainer(ctx context.Context, hostID string, containerName, targetImage, targetDigest string) (RemoteUpdateResult, error)
+}
+
+// HostContext identifies a remote host for scoped operations.
+type HostContext struct {
+	HostID   string
+	HostName string
+}
+
+// RemoteContainer is a simplified container representation from a remote agent.
+type RemoteContainer struct {
+	ID          string
+	Name        string
+	Image       string
+	ImageDigest string
+	State       string
+	Labels      map[string]string
+}
+
+// RemoteUpdateResult from a remote agent.
+type RemoteUpdateResult struct {
+	ContainerName string
+	OldImage      string
+	OldDigest     string
+	NewImage      string
+	NewDigest     string
+	Outcome       string
+	Error         string
+	Duration      time.Duration
+}
+
 // Updater performs container scanning and update operations.
 type Updater struct {
 	docker      docker.API
@@ -87,6 +130,7 @@ type Updater struct {
 	updating    sync.Map                   // map[string]*sync.Mutex — per-container update locks
 	hooks       *hooks.Runner              // optional: lifecycle hook runner
 	deps        *deps.Graph                // optional: dependency graph (rebuilt each scan)
+	cluster     ClusterScanner             // optional: nil = single-host mode
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -132,6 +176,12 @@ func (u *Updater) SetGHCRSaver(fn func([]byte) error) {
 // SetHookRunner attaches a lifecycle hook runner.
 func (u *Updater) SetHookRunner(r *hooks.Runner) {
 	u.hooks = r
+}
+
+// SetClusterScanner attaches a cluster scanner for multi-host scanning.
+// When nil (the default), remote host scanning is skipped entirely.
+func (u *Updater) SetClusterScanner(cs ClusterScanner) {
+	u.cluster = cs
 }
 
 // tryLock attempts to acquire the per-container update lock.
@@ -518,6 +568,11 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.scanServices(ctx, swarmServices, mode, &result, filters, reserve)
 	}
 
+	// Scan remote hosts if cluster mode is active.
+	if u.cluster != nil {
+		u.scanRemoteHosts(ctx, mode, &result, filters, reserve)
+	}
+
 	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf("total=%d updated=%d services=%d", result.Total, result.Updated, result.ServiceUpdates))
 
 	if u.rateTracker != nil {
@@ -549,6 +604,186 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	metrics.PendingUpdates.Set(float64(result.Queued))
 
 	return result
+}
+
+// ---------------------------------------------------------------------------
+// Multi-host (cluster) scanning
+// ---------------------------------------------------------------------------
+
+// scanRemoteHosts iterates connected agents and scans their containers for
+// updates. Registry checks run server-side (shared rate limit pool); the
+// actual pull/restart is dispatched to the remote agent via ClusterScanner.
+func (u *Updater) scanRemoteHosts(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int) {
+	hosts := u.cluster.ConnectedHosts()
+	if len(hosts) == 0 {
+		return
+	}
+
+	u.log.Info("scanning remote hosts", "count", len(hosts))
+
+	for _, hostID := range hosts {
+		if ctx.Err() != nil {
+			return
+		}
+
+		hostCtx, ok := u.cluster.HostInfo(hostID)
+		if !ok {
+			continue
+		}
+
+		u.scanRemoteHost(ctx, hostID, hostCtx, mode, result, filters, reserve)
+	}
+}
+
+// scanRemoteHost scans a single remote host's containers for updates.
+// Policy resolution, filtering, and registry checks all happen server-side.
+// Only the container update itself is dispatched to the remote agent.
+func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostContext, mode ScanMode, result *ScanResult, filters []string, reserve int) {
+	containers, err := u.cluster.ListContainers(ctx, hostID)
+	if err != nil {
+		u.log.Error("failed to list remote containers", "host", host.HostName, "error", err)
+		return
+	}
+
+	u.log.Info("scanning remote host", "host", host.HostName, "containers", len(containers))
+
+	for _, c := range containers {
+		if ctx.Err() != nil {
+			return
+		}
+
+		result.Total++
+
+		// Skip based on policy (same resolution as local containers).
+		tag := registry.ExtractTag(c.Image)
+		resolved := ResolvePolicy(u.store, c.Labels, c.Name, tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())
+		policy := docker.Policy(resolved.Policy)
+
+		if policy == docker.PolicyPinned {
+			u.log.Debug("skipping pinned remote container", "host", host.HostName, "name", c.Name)
+			result.Skipped++
+			continue
+		}
+
+		// Skip sentinel self-update on remote hosts too.
+		if isSentinel(c.Labels) {
+			u.log.Debug("skipping sentinel on remote host", "host", host.HostName, "name", c.Name)
+			result.Skipped++
+			continue
+		}
+
+		// Skip containers matching filter patterns.
+		if MatchesFilter(c.Name, filters) {
+			u.log.Debug("skipping filtered remote container", "host", host.HostName, "name", c.Name)
+			result.Skipped++
+			continue
+		}
+
+		// Rate limit check (shared server-side pool).
+		if u.rateTracker != nil {
+			regHost := registry.RegistryHost(c.Image)
+			canProceed, wait := u.rateTracker.CanProceed(regHost, reserve)
+			if !canProceed {
+				if mode == ScanManual {
+					u.log.Warn("rate limit exhausted during remote scan, stopping",
+						"registry", regHost, "resets_in", wait)
+					result.RateLimited++
+					return
+				}
+				u.log.Debug("rate limit low, skipping remote container",
+					"host", host.HostName, "name", c.Name, "registry", regHost)
+				result.RateLimited++
+				continue
+			}
+		}
+
+		// Registry check (server-side).
+		check := u.checker.CheckVersioned(ctx, c.Image)
+		if check.Error != nil {
+			u.log.Warn("registry check failed for remote container",
+				"host", host.HostName, "name", c.Name, "error", check.Error)
+			continue
+		}
+
+		if check.IsLocal || !check.UpdateAvailable {
+			continue
+		}
+
+		u.log.Info("remote update available",
+			"host", host.HostName, "name", c.Name, "image", c.Image,
+			"remote_digest", check.RemoteDigest)
+
+		// Build target image for semver version bumps.
+		scanTarget := ""
+		if len(check.NewerVersions) > 0 {
+			scanTarget = replaceTag(c.Image, check.NewerVersions[0])
+		}
+
+		scopedName := store.ScopedKey(hostID, c.Name)
+
+		switch policy {
+		case docker.PolicyAuto:
+			result.AutoCount++
+
+			// Dispatch update to the remote agent.
+			ur, updateErr := u.cluster.UpdateContainer(ctx, hostID, c.Name, scanTarget, check.RemoteDigest)
+			if updateErr != nil {
+				u.log.Error("remote update failed",
+					"host", host.HostName, "name", c.Name, "error", updateErr)
+				result.Errors = append(result.Errors, fmt.Errorf("%s/%s: %w", host.HostName, c.Name, updateErr))
+				result.Failed++
+				continue
+			}
+
+			// Record update in host-scoped history.
+			_ = u.store.RecordUpdate(store.UpdateRecord{
+				Timestamp:     u.clock.Now(),
+				ContainerName: scopedName,
+				OldImage:      ur.OldImage,
+				OldDigest:     ur.OldDigest,
+				NewImage:      ur.NewImage,
+				NewDigest:     ur.NewDigest,
+				Outcome:       ur.Outcome,
+				Duration:      ur.Duration,
+			})
+
+			// SSE event with host context.
+			if u.events != nil {
+				u.events.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: c.Name,
+					HostName:      host.HostName,
+					Message:       fmt.Sprintf("updated %s on %s: %s", c.Name, host.HostName, ur.Outcome),
+					Timestamp:     u.clock.Now(),
+				})
+			}
+
+			if ur.Outcome == "success" {
+				result.Updated++
+			} else {
+				result.Failed++
+			}
+
+		case docker.PolicyManual:
+			// Queue for manual approval with host context.
+			u.queue.Add(PendingUpdate{
+				ContainerName:          c.Name,
+				CurrentImage:           c.Image,
+				CurrentDigest:          c.ImageDigest,
+				RemoteDigest:           check.RemoteDigest,
+				DetectedAt:             u.clock.Now(),
+				NewerVersions:          check.NewerVersions,
+				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+				ResolvedTargetVersion:  check.ResolvedTargetVersion,
+				HostID:                 hostID,
+				HostName:               host.HostName,
+			})
+			u.log.Info("remote update queued for approval",
+				"host", host.HostName, "name", c.Name)
+			u.publishEvent(events.EventQueueChange, scopedName, "queued for approval")
+			result.Queued++
+		}
+	}
 }
 
 // checkGHCRAlternatives probes GHCR for alternatives to Docker Hub images.

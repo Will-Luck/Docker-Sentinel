@@ -25,6 +25,13 @@ var (
 	bucketRateLimits       = []byte("rate_limits")
 	bucketGHCRAlternatives = []byte("ghcr_alternatives")
 	bucketHooks            = []byte("hooks")
+
+	// Cluster / multi-host
+	bucketClusterHosts       = []byte("cluster_hosts")
+	bucketClusterTokens      = []byte("cluster_tokens")
+	bucketClusterJournal     = []byte("cluster_journal")
+	bucketClusterConfigCache = []byte("cluster_config_cache")
+	bucketClusterRevoked     = []byte("cluster_revoked")
 )
 
 // UpdateRecord represents a completed (or failed) container update.
@@ -55,7 +62,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -457,4 +464,186 @@ func (s *Store) CountSnapshots() (int, error) {
 		return nil
 	})
 	return count, err
+}
+
+// ScopedKey returns a host-scoped key for multi-host store operations.
+// If hostID is empty (local containers), returns the bare name unchanged
+// for backwards compatibility. Remote containers use "hostID::name".
+func ScopedKey(hostID, name string) string {
+	if hostID == "" {
+		return name
+	}
+	return hostID + "::" + name
+}
+
+// ---------------------------------------------------------------------------
+// Cluster host registration
+// ---------------------------------------------------------------------------
+
+// SaveClusterHost persists a host registration to the cluster_hosts bucket.
+func (s *Store) SaveClusterHost(id string, data []byte) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterHosts).Put([]byte(id), data)
+	})
+}
+
+// GetClusterHost retrieves a host registration by ID.
+func (s *Store) GetClusterHost(id string) ([]byte, error) {
+	var data []byte
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketClusterHosts).Get([]byte(id))
+		if v != nil {
+			data = make([]byte, len(v))
+			copy(data, v)
+		}
+		return nil
+	})
+	return data, err
+}
+
+// ListClusterHosts returns all registered hosts.
+func (s *Store) ListClusterHosts() (map[string][]byte, error) {
+	result := make(map[string][]byte)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterHosts).ForEach(func(k, v []byte) error {
+			data := make([]byte, len(v))
+			copy(data, v)
+			result[string(k)] = data
+			return nil
+		})
+	})
+	return result, err
+}
+
+// DeleteClusterHost removes a host registration.
+func (s *Store) DeleteClusterHost(id string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterHosts).Delete([]byte(id))
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Enrollment tokens
+// ---------------------------------------------------------------------------
+
+// SaveEnrollToken stores an enrollment token (hashed).
+func (s *Store) SaveEnrollToken(id string, data []byte) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterTokens).Put([]byte(id), data)
+	})
+}
+
+// GetEnrollToken retrieves an enrollment token by ID.
+func (s *Store) GetEnrollToken(id string) ([]byte, error) {
+	var data []byte
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketClusterTokens).Get([]byte(id))
+		if v != nil {
+			data = make([]byte, len(v))
+			copy(data, v)
+		}
+		return nil
+	})
+	return data, err
+}
+
+// DeleteEnrollToken removes a used or expired token.
+func (s *Store) DeleteEnrollToken(id string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterTokens).Delete([]byte(id))
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Certificate revocation
+// ---------------------------------------------------------------------------
+
+// AddRevokedCert adds a certificate serial to the revocation list.
+func (s *Store) AddRevokedCert(serial string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterRevoked).Put([]byte(serial), []byte(time.Now().UTC().Format(time.RFC3339)))
+	})
+}
+
+// IsRevokedCert checks if a certificate serial is revoked.
+func (s *Store) IsRevokedCert(serial string) (bool, error) {
+	var revoked bool
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketClusterRevoked).Get([]byte(serial))
+		revoked = v != nil
+		return nil
+	})
+	return revoked, err
+}
+
+// ListRevokedCerts returns all revoked certificate serials with their revocation timestamps.
+func (s *Store) ListRevokedCerts() (map[string]string, error) {
+	result := make(map[string]string)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterRevoked).ForEach(func(k, v []byte) error {
+			result[string(k)] = string(v)
+			return nil
+		})
+	})
+	return result, err
+}
+
+// ---------------------------------------------------------------------------
+// Offline action journal (agent-side)
+// ---------------------------------------------------------------------------
+
+// SaveClusterJournal stores an offline action journal entry.
+func (s *Store) SaveClusterJournal(id string, data []byte) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterJournal).Put([]byte(id), data)
+	})
+}
+
+// ListClusterJournal returns all journal entries.
+func (s *Store) ListClusterJournal() (map[string][]byte, error) {
+	result := make(map[string][]byte)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterJournal).ForEach(func(k, v []byte) error {
+			data := make([]byte, len(v))
+			copy(data, v)
+			result[string(k)] = data
+			return nil
+		})
+	})
+	return result, err
+}
+
+// ClearClusterJournal removes all journal entries (after successful sync).
+func (s *Store) ClearClusterJournal() error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketClusterJournal)
+		return b.ForEach(func(k, _ []byte) error {
+			return b.Delete(k)
+		})
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Cluster config cache (autonomous mode fallback)
+// ---------------------------------------------------------------------------
+
+// SaveClusterConfigCache stores cached settings/policies for autonomous mode.
+func (s *Store) SaveClusterConfigCache(key string, data []byte) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketClusterConfigCache).Put([]byte(key), data)
+	})
+}
+
+// GetClusterConfigCache retrieves a cached config value.
+func (s *Store) GetClusterConfigCache(key string) ([]byte, error) {
+	var data []byte
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketClusterConfigCache).Get([]byte(key))
+		if v != nil {
+			data = make([]byte, len(v))
+			copy(data, v)
+		}
+		return nil
+	})
+	return data, err
 }
