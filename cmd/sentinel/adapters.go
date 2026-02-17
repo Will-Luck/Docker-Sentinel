@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -41,6 +46,8 @@ func (a *storeAdapter) ListHistory(limit int) ([]web.UpdateRecord, error) {
 			Duration:      r.Duration,
 			Error:         r.Error,
 			Type:          r.Type,
+			HostID:        r.HostID,
+			HostName:      r.HostName,
 		}
 	}
 	return result, nil
@@ -64,6 +71,8 @@ func (a *storeAdapter) ListHistoryByContainer(name string, limit int) ([]web.Upd
 			Duration:      r.Duration,
 			Error:         r.Error,
 			Type:          r.Type,
+			HostID:        r.HostID,
+			HostName:      r.HostName,
 		}
 	}
 	return result, nil
@@ -85,6 +94,8 @@ func (a *storeAdapter) RecordUpdate(rec web.UpdateRecord) error {
 		Duration:      rec.Duration,
 		Error:         rec.Error,
 		Type:          rec.Type,
+		HostID:        rec.HostID,
+		HostName:      rec.HostName,
 	})
 }
 
@@ -966,6 +977,26 @@ func (a *clusterAdapter) GetHost(id string) (web.ClusterHost, bool) {
 	}, true
 }
 
+func (a *clusterAdapter) AllHostContainers() []web.RemoteContainer {
+	var result []web.RemoteContainer
+	for _, info := range a.srv.AllHosts() {
+		hs, ok := a.srv.GetHost(info.ID)
+		if !ok {
+			continue
+		}
+		for _, c := range hs.Containers {
+			result = append(result, web.RemoteContainer{
+				Name:     c.Name,
+				Image:    c.Image,
+				State:    c.State,
+				HostID:   info.ID,
+				HostName: info.Name,
+			})
+		}
+	}
+	return result
+}
+
 func (a *clusterAdapter) ConnectedHosts() []string {
 	return a.srv.ConnectedHosts()
 }
@@ -989,4 +1020,73 @@ func (a *clusterAdapter) DrainHost(id string) error {
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
 	_, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
 	return err
+}
+
+// clusterManager implements web.ClusterLifecycle for dynamic cluster
+// start/stop from the settings API. Uses ClusterController.SetProvider()
+// to swap the active provider atomically — no value-copy issues.
+type clusterManager struct {
+	mu      sync.Mutex
+	srv     *clusterserver.Server
+	db      *store.Store
+	bus     *events.Bus
+	log     *slog.Logger
+	updater *engine.Updater
+	ctrl    *web.ClusterController // stable pointer in Dependencies
+	dataDir string                 // CA/cert storage directory
+}
+
+func (m *clusterManager) Start() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.srv != nil {
+		return nil // already running
+	}
+
+	// Read port from DB, fall back to default.
+	port, _ := m.db.LoadSetting(store.SettingClusterPort)
+	if port == "" {
+		port = "9443"
+	}
+
+	ca, err := cluster.EnsureCA(m.dataDir)
+	if err != nil {
+		return fmt.Errorf("initialise CA: %w", err)
+	}
+
+	m.srv = clusterserver.New(ca, m.db, m.bus, m.log)
+
+	addr := net.JoinHostPort("", port)
+	if err := m.srv.Start(addr); err != nil {
+		m.srv = nil
+		return fmt.Errorf("start gRPC: %w", err)
+	}
+
+	// Wire cluster scanner into the engine for multi-host scanning.
+	m.updater.SetClusterScanner(&clusterScannerAdapter{srv: m.srv})
+
+	// Swap provider in controller — handlers see it immediately.
+	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv})
+
+	m.log.Info("cluster gRPC server started", "addr", addr)
+	return nil
+}
+
+func (m *clusterManager) Stop() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.srv == nil {
+		return
+	}
+
+	// Clear provider first so handlers stop dispatching.
+	m.ctrl.SetProvider(nil)
+	m.updater.SetClusterScanner(nil)
+
+	m.srv.Stop()
+	m.srv = nil
+
+	m.log.Info("cluster gRPC server stopped")
 }

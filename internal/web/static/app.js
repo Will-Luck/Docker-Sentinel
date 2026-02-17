@@ -320,6 +320,9 @@ function initSettingsPage() {
 
     // Load About info.
     loadAboutInfo();
+
+    // Load cluster settings.
+    loadClusterSettings();
 }
 
 function onPollIntervalChange(value) {
@@ -607,6 +610,81 @@ function saveFilters() {
         })
         .catch(function() {
             showToast("Network error — could not save filters", "error");
+        });
+}
+
+/* ------------------------------------------------------------
+   2b. Cluster Settings Tab
+   ------------------------------------------------------------ */
+
+function loadClusterSettings() {
+    // Only run on the settings page (cluster-enabled element exists).
+    if (!document.getElementById("cluster-enabled")) return;
+
+    fetch("/api/settings/cluster")
+        .then(function(r) { return r.json(); })
+        .then(function(s) {
+            var enabled = s.enabled === "true";
+            document.getElementById("cluster-enabled").checked = enabled;
+            updateToggleText("cluster-enabled-text", enabled);
+            document.getElementById("cluster-port").value = s.port || "9443";
+            document.getElementById("cluster-grace").value = s.grace_period || "30m";
+            document.getElementById("cluster-policy").value = s.remote_policy || "manual";
+            toggleClusterFields(enabled);
+        })
+        .catch(function(err) {
+            console.error("Failed to load cluster settings:", err);
+        });
+}
+
+function onClusterToggle(enabled) {
+    if (!enabled) {
+        if (!confirm("Disabling cluster mode will disconnect all agents. Continue?")) {
+            document.getElementById("cluster-enabled").checked = true;
+            return;
+        }
+    }
+    updateToggleText("cluster-enabled-text", enabled);
+    toggleClusterFields(enabled);
+    saveClusterSettings();
+}
+
+function toggleClusterFields(enabled) {
+    var fields = document.getElementById("cluster-fields");
+    if (!fields) return;
+    if (enabled) {
+        fields.classList.remove("disabled");
+    } else {
+        fields.classList.add("disabled");
+    }
+}
+
+function saveClusterSettings() {
+    var enabled = document.getElementById("cluster-enabled").checked;
+    fetch("/api/settings/cluster", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            enabled: enabled,
+            port: document.getElementById("cluster-port").value,
+            grace_period: document.getElementById("cluster-grace").value,
+            remote_policy: document.getElementById("cluster-policy").value
+        })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast("Cluster settings saved", "success");
+            } else {
+                showToast(result.data.error || "Failed to save cluster settings", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not save cluster settings", "error");
         });
 }
 
@@ -1082,36 +1160,36 @@ function removeQueueRow(btn) {
     }, 180);
 }
 
-function approveUpdate(name, event) {
+function approveUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
-        "/api/approve/" + encodeURIComponent(name),
+        "/api/approve/" + encodeURIComponent(key),
         null,
-        "Approved update for " + name,
+        "Approved update for " + key,
         "Failed to approve",
         btn,
         function () { removeQueueRow(btn); }
     );
 }
 
-function ignoreUpdate(name, event) {
+function ignoreUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
-        "/api/ignore/" + encodeURIComponent(name),
+        "/api/ignore/" + encodeURIComponent(key),
         null,
-        "Version ignored for " + name,
+        "Version ignored for " + key,
         "Failed to ignore version",
         btn,
         function () { removeQueueRow(btn); }
     );
 }
 
-function rejectUpdate(name, event) {
+function rejectUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
-        "/api/reject/" + encodeURIComponent(name),
+        "/api/reject/" + encodeURIComponent(key),
         null,
-        "Rejected update for " + name,
+        "Rejected update for " + key,
         "Failed to reject",
         btn,
         function () { removeQueueRow(btn); }
@@ -1120,7 +1198,7 @@ function rejectUpdate(name, event) {
 
 // Bulk queue actions — fire each row's action with a staggered delay.
 function bulkQueueAction(actionFn, triggerBtn) {
-    var rows = document.querySelectorAll(".table-wrap tbody tr.container-row");
+    var rows = document.querySelectorAll(".table-wrap tbody tr.container-row[data-queue-key]");
     if (!rows.length) return;
     if (triggerBtn) {
         triggerBtn.classList.add("loading");
@@ -1130,12 +1208,11 @@ function bulkQueueAction(actionFn, triggerBtn) {
     var total = rows.length;
     var processed = 0;
     rows.forEach(function (row) {
-        var link = row.querySelector(".container-link");
-        var name = link ? link.textContent.trim() : null;
-        if (!name) { total--; return; }
+        var key = row.getAttribute("data-queue-key");
+        if (!key) { total--; return; }
         var btn = row.querySelector(".btn");
         setTimeout(function () {
-            actionFn(name, { target: btn });
+            actionFn(key, { target: btn });
             processed++;
             if (processed >= total && triggerBtn) {
                 triggerBtn.classList.remove("loading");
@@ -1402,11 +1479,38 @@ function onRowClick(e, name) {
    ------------------------------------------------------------ */
 
 function toggleStack(headerRow) {
+    // Non-cluster path: stack is a <tbody class="stack-group">.
     var group = headerRow.closest(".stack-group");
-    if (!group) return;
-    group.classList.toggle("stack-collapsed");
-    var expanded = !group.classList.contains("stack-collapsed");
-    headerRow.setAttribute("aria-expanded", expanded ? "true" : "false");
+    if (group) {
+        group.classList.toggle("stack-collapsed");
+        var expanded = !group.classList.contains("stack-collapsed");
+        headerRow.setAttribute("aria-expanded", expanded ? "true" : "false");
+        return;
+    }
+
+    // Cluster path: stack header is a <tr> inside a host-group <tbody>.
+    // Toggle visibility of following sibling rows until the next stack-header
+    // or host-header.
+    var collapsed = headerRow.classList.toggle("stack-section-collapsed");
+    var chevron = headerRow.querySelector(".stack-chevron");
+    if (chevron) {
+        chevron.style.transform = collapsed ? "rotate(0deg)" : "rotate(90deg)";
+    }
+    var sibling = headerRow.nextElementSibling;
+    while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
+        sibling.style.display = collapsed ? "none" : "";
+        sibling = sibling.nextElementSibling;
+    }
+}
+
+function toggleHostGroup(header) {
+    var hostGroup = header.closest(".host-group");
+    if (!hostGroup) return;
+    var isCollapsed = hostGroup.classList.toggle("host-collapsed");
+    var icon = header.querySelector(".expand-icon");
+    if (icon) {
+        icon.textContent = isCollapsed ? "\u25B8" : "\u25BE"; // right-pointing or down-pointing triangle
+    }
 }
 
 function expandAllStacks() {
@@ -1415,6 +1519,25 @@ function expandAllStacks() {
         groups[i].classList.remove("stack-collapsed");
         var header = groups[i].querySelector(".stack-header");
         if (header) header.setAttribute("aria-expanded", "true");
+    }
+    // Expand stacks inside host groups (cluster path).
+    var hostStackHeaders = document.querySelectorAll(".host-group .stack-header");
+    for (var i = 0; i < hostStackHeaders.length; i++) {
+        hostStackHeaders[i].classList.remove("stack-section-collapsed");
+        var chevron = hostStackHeaders[i].querySelector(".stack-chevron");
+        if (chevron) chevron.style.transform = "rotate(90deg)";
+        var sibling = hostStackHeaders[i].nextElementSibling;
+        while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
+            sibling.style.display = "";
+            sibling = sibling.nextElementSibling;
+        }
+    }
+    // Expand host groups themselves.
+    var hostGroups = document.querySelectorAll(".host-group");
+    for (var i = 0; i < hostGroups.length; i++) {
+        hostGroups[i].classList.remove("host-collapsed");
+        var icon = hostGroups[i].querySelector(".expand-icon");
+        if (icon) icon.textContent = "\u25BE";
     }
     // Also expand Swarm service groups.
     var svcGroups = document.querySelectorAll(".svc-group");
@@ -1429,6 +1552,25 @@ function collapseAllStacks() {
         groups[i].classList.add("stack-collapsed");
         var header = groups[i].querySelector(".stack-header");
         if (header) header.setAttribute("aria-expanded", "false");
+    }
+    // Collapse stacks inside host groups (cluster path).
+    var hostStackHeaders = document.querySelectorAll(".host-group .stack-header");
+    for (var i = 0; i < hostStackHeaders.length; i++) {
+        hostStackHeaders[i].classList.add("stack-section-collapsed");
+        var chevron = hostStackHeaders[i].querySelector(".stack-chevron");
+        if (chevron) chevron.style.transform = "rotate(0deg)";
+        var sibling = hostStackHeaders[i].nextElementSibling;
+        while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
+            sibling.style.display = "none";
+            sibling = sibling.nextElementSibling;
+        }
+    }
+    // Collapse host groups themselves.
+    var hostGroups = document.querySelectorAll(".host-group");
+    for (var i = 0; i < hostGroups.length; i++) {
+        hostGroups[i].classList.add("host-collapsed");
+        var icon = hostGroups[i].querySelector(".expand-icon");
+        if (icon) icon.textContent = "\u25B8";
     }
     // Also collapse Swarm service groups.
     var svcGroups = document.querySelectorAll(".svc-group");

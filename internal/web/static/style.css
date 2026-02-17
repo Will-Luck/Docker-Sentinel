@@ -2694,6 +2694,16 @@ table.managing .stack-drag-handle:active {
     align-items: flex-end;
 }
 
+/* Cluster settings — disabled state when toggle is off */
+.cluster-fields.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.cluster-fields {
+    transition: opacity 150ms var(--md-motion-standard);
+}
+
 
 /* --------------------------------------------------------------------------
    21. Utility Helpers
@@ -3431,6 +3441,196 @@ input[type="checkbox"] {
 }
 .footer-beta a:hover {
     color: var(--accent-hover);
+}
+
+
+/* --------------------------------------------------------------------------
+   Cluster Page — Host Cards & Enrollment
+   -------------------------------------------------------------------------- */
+
+.host-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: var(--sp-4);
+    margin-bottom: var(--sp-6);
+}
+
+.host-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: var(--sp-5);
+    transition: box-shadow 150ms var(--md-motion-standard);
+}
+
+.host-card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.host-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--sp-3);
+}
+
+.host-card-name {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+
+.host-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: var(--radius-full);
+    display: inline-block;
+    flex-shrink: 0;
+}
+.host-status-dot.connected { background: var(--success); }
+.host-status-dot.disconnected { background: var(--error); }
+.host-status-dot.draining { background: var(--warning); }
+
+.host-state-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--bg-raised);
+    color: var(--fg-secondary);
+}
+.host-state-badge.badge-active {
+    background: var(--success-bg);
+    color: var(--success-fg);
+}
+.host-state-badge.badge-draining {
+    background: var(--warning-bg);
+    color: var(--warning-fg);
+}
+
+.host-badge {
+    display: inline-block;
+    background: var(--md-primary-container);
+    color: var(--md-on-primary-container);
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    margin-left: var(--sp-1);
+    vertical-align: middle;
+    font-weight: 500;
+}
+
+.host-card-meta {
+    display: flex;
+    gap: var(--sp-3);
+    color: var(--fg-secondary);
+    font-size: 0.85rem;
+    margin-bottom: var(--sp-3);
+    font-family: var(--font-mono);
+}
+
+.host-card-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-4);
+    margin: var(--sp-3) 0;
+    color: var(--fg-secondary);
+    font-size: 0.85rem;
+}
+
+.host-card-stats .text-muted {
+    color: var(--fg-muted);
+}
+
+.host-card-actions {
+    display: flex;
+    gap: var(--sp-2);
+    margin-top: var(--sp-4);
+    border-top: 1px solid var(--border);
+    padding-top: var(--sp-3);
+}
+
+/* Enrollment section */
+
+.enroll-section {
+    margin-top: var(--sp-6);
+}
+
+.token-display {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--sp-3);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    word-break: break-all;
+    margin-top: var(--sp-3);
+}
+
+.token-display code {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: break-word;
+}
+
+.agent-command {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--sp-3);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    margin-top: var(--sp-3);
+    color: var(--fg-secondary);
+    line-height: 1.6;
+}
+
+/* --------------------------------------------------------------------------
+   Dashboard Host Groups (cluster mode)
+   -------------------------------------------------------------------------- */
+
+.host-header {
+    cursor: pointer;
+    background: var(--bg-surface);
+}
+
+.host-header td {
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: 2px solid var(--border);
+}
+
+.host-header-inner {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.host-header-inner .expand-icon {
+    font-size: 0.85rem;
+    width: 1em;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.host-group.host-collapsed tr:not(.host-header) {
+    display: none;
+}
+
+.host-name {
+    flex: 1;
+}
+
+.host-count {
+    margin-left: auto;
 }
 
 

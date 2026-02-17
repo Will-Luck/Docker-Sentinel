@@ -55,8 +55,8 @@ type Dependencies struct {
 	GHCRCache           GHCRAlternativeProvider
 	AboutStore          AboutStore
 	HookStore           HookStore
-	Swarm               SwarmProvider   // nil when not in Swarm mode
-	Cluster             ClusterProvider // nil when clustering is disabled
+	Swarm               SwarmProvider      // nil when not in Swarm mode
+	Cluster             *ClusterController // thread-safe proxy; always non-nil, use .Enabled() to check
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string
@@ -232,6 +232,17 @@ type ClusterProvider interface {
 	DrainHost(id string) error
 	// UpdateRemoteContainer dispatches a container update to a remote agent.
 	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error
+	// AllHostContainers returns containers from all connected hosts.
+	AllHostContainers() []RemoteContainer
+}
+
+// RemoteContainer represents a container on a remote host.
+type RemoteContainer struct {
+	Name     string `json:"name"`
+	Image    string `json:"image"`
+	State    string `json:"state"` // "running", "exited", etc.
+	HostID   string `json:"host_id"`
+	HostName string `json:"host_name"`
 }
 
 // ClusterHost represents a remote agent host for the web layer.
@@ -310,6 +321,13 @@ type SettingsStore interface {
 	GetAllSettings() (map[string]string, error)
 }
 
+// ClusterLifecycle allows the settings API to start/stop the cluster
+// server at runtime without restarting the container.
+type ClusterLifecycle interface {
+	Start() error
+	Stop()
+}
+
 // LogEntry mirrors store.LogEntry.
 type LogEntry struct {
 	Timestamp time.Time `json:"timestamp"`
@@ -344,7 +362,8 @@ type UpdateRecord struct {
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
 	Type          string        `json:"type,omitempty"`      // "container" (default) or "service"
-	HostName      string        `json:"host_name,omitempty"` // cluster host (empty = local)
+	HostID        string        `json:"host_id,omitempty"`   // cluster host ID (empty = local)
+	HostName      string        `json:"host_name,omitempty"` // cluster host name (empty = local)
 }
 
 // SnapshotEntry represents a snapshot with a parsed image reference for display.
@@ -376,6 +395,15 @@ type PendingUpdate struct {
 	Type                   string    `json:"type,omitempty"`    // "container" (default) or "service"
 	HostID                 string    `json:"host_id,omitempty"` // cluster host ID (empty = local)
 	HostName               string    `json:"host_name,omitempty"`
+}
+
+// Key returns the queue map key. Remote containers use "hostID::name" to
+// avoid collisions with local or other-host containers of the same name.
+func (u PendingUpdate) Key() string {
+	if u.HostID == "" {
+		return u.ContainerName
+	}
+	return u.HostID + "::" + u.ContainerName
 }
 
 // ContainerLister lists containers.
@@ -446,15 +474,16 @@ type ConfigWriter interface {
 
 // Server is the web dashboard HTTP server.
 type Server struct {
-	deps          Dependencies
-	mux           *http.ServeMux
-	tmpl          *template.Template
-	server        *http.Server
-	startTime     time.Time          // when the server was created
-	setupDeadline time.Time          // setup page closes after this; zero = no window
-	webauthn      *webauthn.WebAuthn // nil when WebAuthn is not configured
-	tlsCert       string             // path to TLS certificate PEM (empty = plain HTTP)
-	tlsKey        string             // path to TLS private key PEM
+	deps             Dependencies
+	mux              *http.ServeMux
+	tmpl             *template.Template
+	server           *http.Server
+	startTime        time.Time          // when the server was created
+	setupDeadline    time.Time          // setup page closes after this; zero = no window
+	webauthn         *webauthn.WebAuthn // nil when WebAuthn is not configured
+	tlsCert          string             // path to TLS certificate PEM (empty = plain HTTP)
+	tlsKey           string             // path to TLS private key PEM
+	clusterLifecycle ClusterLifecycle   // nil until wired by main; enables dynamic start/stop
 }
 
 // SetSetupDeadline sets the time limit for first-run setup.
@@ -476,6 +505,11 @@ func (s *Server) setupWindowOpen() bool {
 func (s *Server) SetTLS(cert, key string) {
 	s.tlsCert = cert
 	s.tlsKey = key
+}
+
+// SetClusterLifecycle wires the dynamic start/stop callback for cluster mode.
+func (s *Server) SetClusterLifecycle(cl ClusterLifecycle) {
+	s.clusterLifecycle = cl
 }
 
 // SetWebAuthn configures WebAuthn support. When wa is nil, passkey routes return 404.
@@ -634,10 +668,10 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/scan", perm(auth.PermContainersUpdate, s.apiTriggerScan))
 	s.mux.Handle("POST /api/containers/{name}/switch-ghcr", perm(auth.PermContainersUpdate, s.apiSwitchToGHCR))
 
-	// containers.approve
-	s.mux.Handle("POST /api/approve/{name}", perm(auth.PermContainersApprove, s.apiApprove))
-	s.mux.Handle("POST /api/ignore/{name}", perm(auth.PermContainersApprove, s.apiIgnoreVersion))
-	s.mux.Handle("POST /api/reject/{name}", perm(auth.PermContainersApprove, s.apiReject))
+	// containers.approve — {key} is the queue key: plain name for local, "hostID::name" for remote.
+	s.mux.Handle("POST /api/approve/{key}", perm(auth.PermContainersApprove, s.apiApprove))
+	s.mux.Handle("POST /api/ignore/{key}", perm(auth.PermContainersApprove, s.apiIgnoreVersion))
+	s.mux.Handle("POST /api/reject/{key}", perm(auth.PermContainersApprove, s.apiReject))
 
 	// containers.rollback
 	s.mux.Handle("POST /api/containers/{name}/rollback", perm(auth.PermContainersRollback, s.apiRollback))
@@ -653,13 +687,14 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /service/{name}", perm(auth.PermContainersView, s.handleServiceDetail))
 
 	// Cluster management (requires settings.modify permission).
-	if s.deps.Cluster != nil {
-		s.mux.Handle("GET /api/cluster/hosts", perm(auth.PermSettingsModify, s.handleClusterHosts))
-		s.mux.Handle("POST /api/cluster/enroll-token", perm(auth.PermSettingsModify, s.handleGenerateEnrollToken))
-		s.mux.Handle("DELETE /api/cluster/hosts/{id}", perm(auth.PermSettingsModify, s.handleRemoveHost))
-		s.mux.Handle("POST /api/cluster/hosts/{id}/revoke", perm(auth.PermSettingsModify, s.handleRevokeHost))
-		s.mux.Handle("POST /api/cluster/hosts/{id}/drain", perm(auth.PermSettingsModify, s.handleDrainHost))
-	}
+	// Routes are registered unconditionally — the ClusterController returns
+	// 503 when no provider is active, so the API surface is always consistent.
+	s.mux.Handle("GET /cluster", perm(auth.PermSettingsModify, s.handleCluster))
+	s.mux.Handle("GET /api/cluster/hosts", perm(auth.PermSettingsModify, s.handleClusterHosts))
+	s.mux.Handle("POST /api/cluster/enroll-token", perm(auth.PermSettingsModify, s.handleGenerateEnrollToken))
+	s.mux.Handle("DELETE /api/cluster/hosts/{id}", perm(auth.PermSettingsModify, s.handleRemoveHost))
+	s.mux.Handle("POST /api/cluster/hosts/{id}/revoke", perm(auth.PermSettingsModify, s.handleRevokeHost))
+	s.mux.Handle("POST /api/cluster/hosts/{id}/drain", perm(auth.PermSettingsModify, s.handleDrainHost))
 
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))
@@ -709,6 +744,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/hooks-write-labels", perm(auth.PermSettingsModify, s.apiSetHooksWriteLabels))
 	s.mux.Handle("POST /api/settings/dependency-aware", perm(auth.PermSettingsModify, s.apiSetDependencyAware))
 	s.mux.Handle("POST /api/settings/rollback-policy", perm(auth.PermSettingsModify, s.apiSetRollbackPolicy))
+
+	// Cluster settings — always available so the admin can enable/configure cluster
+	// even when the cluster server is not yet running.
+	s.mux.Handle("GET /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettings))
+	s.mux.Handle("POST /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettingsSave))
+
 	s.mux.Handle("POST /api/hooks/{container}", perm(auth.PermSettingsModify, s.apiSaveHook))
 	s.mux.Handle("DELETE /api/hooks/{container}/{phase}", perm(auth.PermSettingsModify, s.apiDeleteHook))
 
@@ -812,6 +853,10 @@ func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *Server) handleClusterHosts(w http.ResponseWriter, _ *http.Request) {
+	if !s.deps.Cluster.Enabled() {
+		writeError(w, http.StatusServiceUnavailable, "cluster not enabled")
+		return
+	}
 	hosts := s.deps.Cluster.AllHosts()
 	connected := s.deps.Cluster.ConnectedHosts()
 	connectedSet := make(map[string]bool, len(connected))
@@ -825,6 +870,10 @@ func (s *Server) handleClusterHosts(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleGenerateEnrollToken(w http.ResponseWriter, _ *http.Request) {
+	if !s.deps.Cluster.Enabled() {
+		writeError(w, http.StatusServiceUnavailable, "cluster not enabled")
+		return
+	}
 	token, id, err := s.deps.Cluster.GenerateEnrollToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -837,6 +886,10 @@ func (s *Server) handleGenerateEnrollToken(w http.ResponseWriter, _ *http.Reques
 }
 
 func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
+	if !s.deps.Cluster.Enabled() {
+		writeError(w, http.StatusServiceUnavailable, "cluster not enabled")
+		return
+	}
 	id := r.PathValue("id")
 	if err := s.deps.Cluster.RemoveHost(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -846,6 +899,10 @@ func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRevokeHost(w http.ResponseWriter, r *http.Request) {
+	if !s.deps.Cluster.Enabled() {
+		writeError(w, http.StatusServiceUnavailable, "cluster not enabled")
+		return
+	}
 	id := r.PathValue("id")
 	if err := s.deps.Cluster.RevokeHost(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -855,6 +912,10 @@ func (s *Server) handleRevokeHost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDrainHost(w http.ResponseWriter, r *http.Request) {
+	if !s.deps.Cluster.Enabled() {
+		writeError(w, http.StatusServiceUnavailable, "cluster not enabled")
+		return
+	}
 	id := r.PathValue("id")
 	if err := s.deps.Cluster.DrainHost(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

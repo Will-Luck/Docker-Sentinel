@@ -26,6 +26,7 @@
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
             <a href="/settings" class="nav-link">Settings</a>
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // pageData is the common data structure passed to all page templates.
@@ -32,10 +33,30 @@ type pageData struct {
 	PendingUpdates    int
 	QueueCount        int // sidebar badge: number of items in queue
 
+	// Cluster state (populated by withCluster helper).
+	ClusterEnabled bool
+	ClusterHosts   []ClusterHost // populated only on /cluster page
+	HostGroups     []hostGroup   // populated only on dashboard when cluster active (Task 9)
+
+	// Cluster page stats (populated by handleCluster).
+	ClusterConnectedCount int
+	ClusterContainerCount int
+	ServerVersion         string
+
 	// Auth context (populated by withAuth helper).
 	CurrentUser *auth.User
 	AuthEnabled bool
 	CSRFToken   string
+}
+
+// hostGroup groups containers by host when cluster mode is active.
+// "local" is this server; remote hosts come from the cluster provider.
+type hostGroup struct {
+	ID        string       // "local" or host ID
+	Name      string       // display name
+	Connected bool         // always true for local
+	Stacks    []stackGroup // existing stack grouping within this host
+	Count     int          // total container count
 }
 
 // containerView is a container or Swarm service with computed display fields.
@@ -55,6 +76,8 @@ type containerView struct {
 	Registry        string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
 	IsService       bool   // true for Swarm services
 	Replicas        string // e.g. "3/3" for services, empty for containers
+	HostID          string // cluster host ID (empty = local)
+	HostName        string // cluster host name (empty = local)
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -385,7 +408,68 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		PendingUpdates:    pending,
 		QueueCount:        len(s.deps.Queue.List()),
 	}
+
+	// Build host groups when cluster mode is active. Each host gets its own
+	// accordion section on the dashboard containing its stacks/containers.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		// "local" group — this server's containers.
+		localGroup := hostGroup{
+			ID:        "local",
+			Name:      "local",
+			Connected: true,
+			Stacks:    data.Stacks,
+			Count:     len(data.Containers),
+		}
+		data.HostGroups = []hostGroup{localGroup}
+
+		// Remote groups from cluster.
+		hosts := s.deps.Cluster.AllHosts()
+		remoteContainers := s.deps.Cluster.AllHostContainers()
+
+		// Group remote containers by host ID.
+		byHost := make(map[string][]containerView)
+		for _, rc := range remoteContainers {
+			cv := containerView{
+				Name:     rc.Name,
+				Image:    rc.Image,
+				State:    rc.State,
+				HostID:   rc.HostID,
+				HostName: rc.HostName,
+			}
+			byHost[rc.HostID] = append(byHost[rc.HostID], cv)
+		}
+
+		for _, h := range hosts {
+			containers := byHost[h.ID]
+			// Build a single "Standalone" stack for remote containers
+			// (we don't have stack labels for remote containers yet).
+			var remoteStacks []stackGroup
+			if len(containers) > 0 {
+				remoteStacks = []stackGroup{{
+					Name:       "Standalone",
+					Containers: containers,
+				}}
+			}
+			data.HostGroups = append(data.HostGroups, hostGroup{
+				ID:        h.ID,
+				Name:      h.Name,
+				Connected: h.Connected,
+				Stacks:    remoteStacks,
+				Count:     len(containers),
+			})
+
+			// Update fleet-wide totals.
+			data.TotalContainers += len(containers)
+			for _, c := range containers {
+				if c.State == "running" {
+					data.RunningContainers++
+				}
+			}
+		}
+	}
+
 	s.withAuth(r, &data)
+	s.withCluster(&data)
 
 	s.renderTemplate(w, "index.html", data)
 }
@@ -403,6 +487,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		QueueCount: len(items),
 	}
 	s.withAuth(r, &data)
+	s.withCluster(&data)
 
 	s.renderTemplate(w, "queue.html", data)
 }
@@ -426,6 +511,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		QueueCount: len(s.deps.Queue.List()),
 	}
 	s.withAuth(r, &data)
+	s.withCluster(&data)
 
 	s.renderTemplate(w, "history.html", data)
 }
@@ -438,6 +524,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		QueueCount: len(s.deps.Queue.List()),
 	}
 	s.withAuth(r, &data)
+	s.withCluster(&data)
 	s.renderTemplate(w, "settings.html", data)
 }
 
@@ -461,6 +548,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		QueueCount: len(s.deps.Queue.List()),
 	}
 	s.withAuth(r, &data)
+	s.withCluster(&data)
 	s.renderTemplate(w, "logs.html", data)
 }
 
@@ -571,6 +659,48 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleCluster renders the cluster management page with host cards and enrollment.
+func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
+	if !s.deps.Cluster.Enabled() {
+		http.Redirect(w, r, "/settings", http.StatusSeeOther)
+		return
+	}
+
+	hosts := s.deps.Cluster.AllHosts()
+
+	// Mark connected state from the live connected set.
+	connected := s.deps.Cluster.ConnectedHosts()
+	connectedSet := make(map[string]bool, len(connected))
+	for _, id := range connected {
+		connectedSet[id] = true
+	}
+	for i := range hosts {
+		hosts[i].Connected = connectedSet[hosts[i].ID]
+	}
+
+	// Compute aggregate stats for stat cards.
+	connectedCount := 0
+	containerCount := 0
+	for _, h := range hosts {
+		if h.Connected {
+			connectedCount++
+		}
+		containerCount += h.Containers
+	}
+
+	data := pageData{
+		Page:                  "cluster",
+		QueueCount:            len(s.deps.Queue.List()),
+		ClusterHosts:          hosts,
+		ClusterConnectedCount: connectedCount,
+		ClusterContainerCount: containerCount,
+		ServerVersion:         s.deps.Version,
+	}
+	s.withAuth(r, &data)
+	s.withCluster(&data)
+	s.renderTemplate(w, "cluster.html", data)
+}
+
 // containerDetailData holds all data for the per-container detail page.
 type containerDetailData struct {
 	Container    containerView
@@ -580,10 +710,25 @@ type containerDetailData struct {
 	HasSnapshot  bool
 	ChangelogURL string
 
+	ClusterEnabled bool
+
 	// Auth context.
 	CurrentUser *auth.User
 	AuthEnabled bool
 	CSRFToken   string
+}
+
+// withCluster populates ClusterEnabled by checking the controller
+// and falling back to the DB setting.
+func (s *Server) withCluster(data *pageData) {
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		data.ClusterEnabled = true
+		return
+	}
+	if s.deps.SettingsStore != nil {
+		v, _ := s.deps.SettingsStore.LoadSetting(store.SettingClusterEnabled)
+		data.ClusterEnabled = v == "true"
+	}
 }
 
 // withAuth populates auth context fields on pageData from the request.
@@ -710,12 +855,13 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := containerDetailData{
-		Container:    view,
-		History:      history,
-		Snapshots:    snapshots,
-		Versions:     versions,
-		HasSnapshot:  len(snapshots) > 0,
-		ChangelogURL: ChangelogURL(found.Image),
+		Container:      view,
+		History:        history,
+		Snapshots:      snapshots,
+		Versions:       versions,
+		HasSnapshot:    len(snapshots) > 0,
+		ChangelogURL:   ChangelogURL(found.Image),
+		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthDetail(r, &data)
 
@@ -728,6 +874,8 @@ type serviceDetailData struct {
 	History      []UpdateRecord
 	Versions     []string
 	ChangelogURL string
+
+	ClusterEnabled bool
 
 	// Auth context.
 	CurrentUser *auth.User
@@ -805,10 +953,11 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := serviceDetailData{
-		Service:      view,
-		History:      history,
-		Versions:     versions,
-		ChangelogURL: ChangelogURL(found.Image),
+		Service:        view,
+		History:        history,
+		Versions:       versions,
+		ChangelogURL:   ChangelogURL(found.Image),
+		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthServiceDetail(r, &data)
 
