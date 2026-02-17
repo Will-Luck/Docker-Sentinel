@@ -18,9 +18,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
-	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/agent"
-	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
@@ -277,37 +275,33 @@ func main() {
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
 
-	// Start cluster gRPC server if enabled (before web so the adapter is available).
-	var clusterSrv *clusterserver.Server
-	if cfg.ClusterEnabled {
-		dataDir := cfg.ClusterDataDir
-		ca, caErr := cluster.EnsureCA(dataDir)
-		if caErr != nil {
-			log.Error("failed to initialise cluster CA", "error", caErr)
-			os.Exit(1)
-		}
-
-		clusterSrv = clusterserver.New(ca, db, bus, log.Logger)
-
-		clusterAddr := net.JoinHostPort("", cfg.ClusterPort)
-		if startErr := clusterSrv.Start(clusterAddr); startErr != nil {
-			log.Error("failed to start cluster gRPC server", "error", startErr)
-			os.Exit(1)
-		}
-		log.Info("cluster gRPC server started", "addr", clusterAddr)
-
-		// Wire cluster scanner into the engine for multi-host scanning.
-		updater.SetClusterScanner(&clusterScannerAdapter{srv: clusterSrv})
-		log.Info("cluster scanner enabled for multi-host scanning")
-
-		// Ensure graceful shutdown.
-		go func() {
-			<-ctx.Done()
-			clusterSrv.Stop()
-		}()
+	// Cluster lifecycle — centralised start/stop via clusterManager.
+	clusterCtrl := web.NewClusterController()
+	cm := &clusterManager{
+		db:      db,
+		bus:     bus,
+		log:     log.Logger,
+		updater: updater,
+		ctrl:    clusterCtrl,
+		dataDir: cfg.ClusterDataDir,
 	}
 
-	// Start web dashboard if enabled.
+	// Env var takes precedence; fall back to DB setting.
+	clusterEnabled := cfg.ClusterEnabled
+	if !clusterEnabled {
+		if v, _ := db.LoadSetting(store.SettingClusterEnabled); v == "true" {
+			clusterEnabled = true
+		}
+	}
+
+	if clusterEnabled {
+		if err := cm.Start(); err != nil {
+			log.Error("failed to start cluster", "error", err)
+			os.Exit(1)
+		}
+		defer cm.Stop()
+	}
+
 	if cfg.WebEnabled {
 		webDeps := web.Dependencies{
 			Store:               &storeAdapter{db},
@@ -338,6 +332,7 @@ func main() {
 			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
 			GHCRCache:           &ghcrCacheAdapter{c: ghcrCache},
 			HookStore:           &webHookStoreAdapter{db},
+			Cluster:             clusterCtrl,
 			MetricsEnabled:      cfg.MetricsEnabled,
 			Digest:              digestSched,
 			Auth:                authSvc,
@@ -347,10 +342,8 @@ func main() {
 		if isSwarm {
 			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
 		}
-		if clusterSrv != nil {
-			webDeps.Cluster = &clusterAdapter{srv: clusterSrv}
-		}
 		srv := web.NewServer(webDeps)
+		srv.SetClusterLifecycle(cm)
 
 		// Configure WebAuthn passkeys if RPID is set.
 		if cfg.WebAuthnEnabled() {

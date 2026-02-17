@@ -298,9 +298,9 @@ Requires Go 1.24+, Docker, and golangci-lint.
 | `POST` | `/api/containers/{name}/notify-pref` | Set per-container notification mode |
 | `POST` | `/api/check/{name}` | Manual registry check for single container |
 | `POST` | `/api/update/{name}` | Trigger immediate update |
-| `POST` | `/api/approve/{name}` | Approve queued update |
-| `POST` | `/api/reject/{name}` | Reject queued update |
-| `POST` | `/api/ignore/{name}` | Ignore this specific version (skip update) |
+| `POST` | `/api/approve/{key}` | Approve queued update (key = name or hostID::name) |
+| `POST` | `/api/reject/{key}` | Reject queued update (key = name or hostID::name) |
+| `POST` | `/api/ignore/{key}` | Ignore this specific version (key = name or hostID::name) |
 | `POST` | `/api/bulk/policy` | Bulk policy change for multiple containers |
 | `POST` | `/api/scan` | Trigger a full scan immediately |
 

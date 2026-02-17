@@ -3,10 +3,13 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	cron "github.com/robfig/cron/v3"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // apiSettings returns the current configuration values, merged with runtime overrides from BoltDB.
@@ -440,4 +443,128 @@ func (s *Server) apiSetRollbackPolicy(w http.ResponseWriter, r *http.Request) {
 	s.logEvent(r, "settings", "", msg)
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
+}
+
+// apiClusterSettings returns the current cluster configuration with defaults
+// for any keys not yet saved to BoltDB.
+func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
+	result := map[string]string{
+		"enabled":       "false",
+		"port":          "9443",
+		"grace_period":  "30m",
+		"remote_policy": "manual",
+	}
+
+	if s.deps.SettingsStore != nil {
+		keys := map[string]string{
+			"enabled":       store.SettingClusterEnabled,
+			"port":          store.SettingClusterPort,
+			"grace_period":  store.SettingClusterGracePeriod,
+			"remote_policy": store.SettingClusterRemotePolicy,
+		}
+		for field, dbKey := range keys {
+			if v, err := s.deps.SettingsStore.LoadSetting(dbKey); err == nil && v != "" {
+				result[field] = v
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// apiClusterSettingsSave validates and persists cluster configuration changes.
+// When the enabled state changes, it calls the ClusterLifecycle callback to
+// start or stop the gRPC server dynamically.
+func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled      *bool  `json:"enabled"`
+		Port         string `json:"port"`
+		GracePeriod  string `json:"grace_period"`
+		RemotePolicy string `json:"remote_policy"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusInternalServerError, "settings store not available")
+		return
+	}
+
+	// Validate port: must be an integer in 1024-65535.
+	if req.Port != "" {
+		p, err := strconv.Atoi(req.Port)
+		if err != nil || p < 1024 || p > 65535 {
+			writeError(w, http.StatusBadRequest, "port must be 1024-65535")
+			return
+		}
+	}
+
+	// Validate grace period against whitelist.
+	if req.GracePeriod != "" {
+		allowed := map[string]bool{"5m": true, "15m": true, "30m": true, "1h": true, "2h": true}
+		if !allowed[req.GracePeriod] {
+			writeError(w, http.StatusBadRequest, "invalid grace period")
+			return
+		}
+	}
+
+	// Validate remote policy against whitelist.
+	if req.RemotePolicy != "" {
+		switch req.RemotePolicy {
+		case "auto", "manual", "pinned":
+			// valid
+		default:
+			writeError(w, http.StatusBadRequest, "invalid remote policy — must be auto, manual, or pinned")
+			return
+		}
+	}
+
+	// Save each provided field, checking for errors.
+	if req.Enabled != nil {
+		val := "false"
+		if *req.Enabled {
+			val = "true"
+		}
+		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterEnabled, val); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+	if req.Port != "" {
+		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterPort, req.Port); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+	if req.GracePeriod != "" {
+		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterGracePeriod, req.GracePeriod); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+	if req.RemotePolicy != "" {
+		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterRemotePolicy, req.RemotePolicy); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+
+	// Dynamic start/stop via ClusterLifecycle callback.
+	if req.Enabled != nil && s.clusterLifecycle != nil {
+		if *req.Enabled {
+			if err := s.clusterLifecycle.Start(); err != nil {
+				// Rollback: save disabled state since start failed.
+				_ = s.deps.SettingsStore.SaveSetting(store.SettingClusterEnabled, "false")
+				writeError(w, http.StatusInternalServerError, "failed to start cluster: "+err.Error())
+				return
+			}
+		} else {
+			s.clusterLifecycle.Stop()
+		}
+	}
+
+	s.logEvent(r, "cluster-settings", "", "Cluster settings updated")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }

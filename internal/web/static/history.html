@@ -29,6 +29,7 @@
             <a href="/history" class="nav-link active" aria-current="page">History</a>
             <a href="/logs" class="nav-link">Logs</a>
             <a href="/settings" class="nav-link">Settings</a>
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -82,7 +83,7 @@
                             {{range $i, $r := .History}}
                             <tr class="container-row" onclick="onRowClick(event, 'history-{{$i}}')">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
-                                <td><a href="{{serviceOrContainer $r.Type $r.ContainerName}}" class="container-link">{{$r.ContainerName}}</a></td>
+                                <td><a href="{{serviceOrContainer $r.Type $r.ContainerName}}" class="container-link">{{$r.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td>
                                     {{if eq $r.Outcome "success"}}
                                         <span class="badge badge-success">Success</span>

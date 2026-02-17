@@ -34,6 +34,14 @@ var (
 	bucketClusterRevoked     = []byte("cluster_revoked")
 )
 
+// Cluster settings keys (stored in bucketSettings).
+const (
+	SettingClusterEnabled      = "cluster_enabled"       // "true" / "false"
+	SettingClusterPort         = "cluster_port"          // e.g. "9443"
+	SettingClusterGracePeriod  = "cluster_grace_period"  // e.g. "30m"
+	SettingClusterRemotePolicy = "cluster_remote_policy" // "auto" / "manual" / "pinned"
+)
+
 // UpdateRecord represents a completed (or failed) container update.
 type UpdateRecord struct {
 	Timestamp     time.Time     `json:"timestamp"`
@@ -45,7 +53,9 @@ type UpdateRecord struct {
 	Outcome       string        `json:"outcome"` // "success", "rollback", "failed", or "finalise_warning"
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
-	Type          string        `json:"type,omitempty"` // "container" (default) or "service"
+	Type          string        `json:"type,omitempty"`      // "container" (default) or "service"
+	HostID        string        `json:"host_id,omitempty"`   // cluster host (empty = local)
+	HostName      string        `json:"host_name,omitempty"` // cluster host name (empty = local)
 }
 
 // Store wraps a BoltDB database for Sentinel persistence.

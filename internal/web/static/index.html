@@ -29,6 +29,7 @@
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
             <a href="/settings" class="nav-link">Settings</a>
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -141,7 +142,42 @@
                             <th>Actions</th>
                         </tr>
                     </thead>
-                    {{if .Stacks}}
+                    {{if .HostGroups}}
+                        {{range .HostGroups}}
+                        <tbody class="host-group" data-host="{{.ID}}">
+                            <tr class="host-header" onclick="toggleHostGroup(this)">
+                                <td colspan="6">
+                                    <div class="host-header-inner">
+                                        <span class="expand-icon">&#9656;</span>
+                                        <span class="host-status-dot {{if .Connected}}connected{{else}}disconnected{{end}}"></span>
+                                        <span class="host-name">{{.Name}}</span>
+                                        <span class="host-count badge">{{.Count}}</span>
+                                    </div>
+                                </td>
+                            </tr>
+                            {{range .Stacks}}
+                            <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" data-stack="{{.Name}}" onclick="toggleStack(this)">
+                                <td colspan="6">
+                                    <div class="stack-header-inner">
+                                        <span class="stack-drag-handle" title="Drag to reorder">&#10495;</span>
+                                        <input type="checkbox" class="stack-select" data-stack="{{.Name}}" title="Select all in {{.Name}}" onclick="event.stopPropagation()">
+                                        <span class="stack-chevron">&#9656;</span>
+                                        <span class="stack-name">{{.Name}}</span>
+                                        <span class="stack-counts">
+                                            <span class="stack-indicator stack-indicator-running">{{.RunningCount}}</span>
+                                            {{if .StoppedCount}}<span class="stack-indicator stack-indicator-stopped">{{.StoppedCount}}</span>{{end}}
+                                            {{if .PendingCount}}<span class="stack-indicator stack-indicator-pending">{{.PendingCount}}</span>{{end}}
+                                        </span>
+                                    </div>
+                                </td>
+                            </tr>
+                            {{range .Containers}}
+                            {{template "container-row" .}}
+                            {{end}}
+                            {{end}}
+                        </tbody>
+                        {{end}}
+                    {{else if .Stacks}}
                         {{range .Stacks}}
                         <tbody class="stack-group stack-collapsed{{if gt .StoppedCount 0}} stack-has-stopped{{else if .HasPending}} stack-has-pending{{else}} stack-healthy{{end}}" data-stack="{{.Name}}">
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">

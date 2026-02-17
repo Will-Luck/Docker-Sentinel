@@ -1,0 +1,242 @@
+{{define "cluster.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cluster — Docker-Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <img src="/favicon.svg" alt="S" class="nav-logo">
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">
+                Pending Updates
+                {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
+            </a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/logs" class="nav-link">Logs</a>
+            <a href="/settings" class="nav-link">Settings</a>
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link active" aria-current="page">Cluster</a>{{end}}
+        </div>
+        <div class="nav-status" aria-live="polite">
+            <span id="sse-indicator" class="status-dot disconnected"></span>
+            <span id="sse-label" class="nav-status-text">Disconnected</span>
+        </div>
+        {{if .AuthEnabled}}{{if .CurrentUser}}
+        <div class="nav-user">
+            <button class="nav-user-btn" onclick="toggleUserDropdown(event)" aria-haspopup="true" aria-expanded="false">
+                <span>{{.CurrentUser.Username}}</span>
+                <span class="nav-user-role">{{.CurrentUser.RoleID}}</span>
+                <span class="nav-user-chevron">&#9662;</span>
+            </button>
+            <div class="nav-user-dropdown" id="user-dropdown">
+                <a href="/account">My Account</a>
+                <div class="dropdown-divider"></div>
+                <form method="POST" action="/logout" style="margin:0">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <button type="submit">Logout</button>
+                </form>
+            </div>
+        </div>
+        {{end}}{{else}}
+        <div class="nav-auth-off">Auth: Off</div>
+        {{end}}
+    </nav>
+
+    <main class="main-content" id="main-content">
+        <div class="page-header">
+            <div>
+                <h1>Cluster</h1>
+                <p class="subtitle">Manage agent hosts and enrollment</p>
+            </div>
+        </div>
+
+        <!-- Stat cards -->
+        <dl class="stats">
+            <div class="stat-card">
+                <dt class="stat-label">Hosts</dt>
+                <dd class="stat-value info" id="stat-hosts">{{len .ClusterHosts}}</dd>
+            </div>
+            <div class="stat-card">
+                <dt class="stat-label">Connected</dt>
+                <dd class="stat-value success" id="stat-connected">{{.ClusterConnectedCount}}</dd>
+            </div>
+            <div class="stat-card">
+                <dt class="stat-label">Containers</dt>
+                <dd class="stat-value warning" id="stat-containers">{{.ClusterContainerCount}}</dd>
+            </div>
+            <div class="stat-card">
+                <dt class="stat-label">Server</dt>
+                <dd class="stat-value" id="stat-version">{{.ServerVersion}}</dd>
+            </div>
+        </dl>
+
+        <!-- Host cards -->
+        <div class="host-grid">
+            {{range .ClusterHosts}}
+            <div class="host-card" data-host-id="{{.ID}}">
+                <div class="host-card-header">
+                    <div class="host-card-name">
+                        <span class="host-status-dot {{if eq .State "draining"}}draining{{else if .Connected}}connected{{else}}disconnected{{end}}"></span>
+                        <strong>{{.Name}}</strong>
+                    </div>
+                    <span class="host-state-badge {{if eq .State "draining"}}badge-draining{{else if .Connected}}badge-active{{end}}">{{.State}}</span>
+                </div>
+                <div class="host-card-meta">
+                    <span>{{.Address}}</span>
+                    {{if .AgentVersion}}<span>v{{.AgentVersion}}</span>{{end}}
+                </div>
+                <div class="host-card-stats">
+                    <span>{{.Containers}} containers</span>
+                    <span>Enrolled {{fmtTimeAgo .EnrolledAt}}</span>
+                    {{if not .Connected}}<span class="text-muted">Last seen {{fmtTimeAgo .LastSeen}}</span>{{end}}
+                </div>
+                <div class="host-card-actions">
+                    {{if eq .State "active"}}
+                    <button class="btn btn-sm btn-warning" onclick="drainHost('{{.ID}}', '{{.Name}}')">Drain</button>
+                    {{end}}
+                    <button class="btn btn-sm btn-error" onclick="revokeHost('{{.ID}}', '{{.Name}}')">Revoke</button>
+                    <button class="btn btn-sm btn-error" onclick="removeHost('{{.ID}}', '{{.Name}}')">Remove</button>
+                </div>
+            </div>
+            {{else}}
+            <div class="empty-state">
+                <h3>No hosts enrolled</h3>
+                <p>Generate an enrollment token below to get started.</p>
+            </div>
+            {{end}}
+        </div>
+
+        <!-- Enrollment section -->
+        <div class="card enroll-section">
+            <div class="card-header">
+                <h2>Enroll New Host</h2>
+            </div>
+            <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
+                <p class="setting-desc" style="margin-bottom: var(--sp-4)">Generate a one-time token to enroll a new agent. The agent uses this token to authenticate and receive its mTLS certificate.</p>
+                <button class="btn btn-info" onclick="generateToken()">Generate Token</button>
+                <div id="token-display" style="display:none">
+                    <div class="token-display">
+                        <code id="token-value"></code>
+                        <button class="btn btn-sm" onclick="copyToken()">Copy</button>
+                    </div>
+                    <pre class="agent-command" id="agent-command"></pre>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+    <script>
+    var csrfToken = '{{.CSRFToken}}';
+
+    function generateToken() {
+        fetch('/api/cluster/enroll-token', {
+            method: 'POST',
+            headers: {'X-CSRF-Token': csrfToken}
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            document.getElementById('token-value').textContent = data.token;
+            document.getElementById('agent-command').textContent =
+                'SENTINEL_MODE=agent \\\n' +
+                'SENTINEL_SERVER_ADDR=' + window.location.hostname + ':9443 \\\n' +
+                'SENTINEL_ENROLL_TOKEN=' + data.token + ' \\\n' +
+                'SENTINEL_HOST_NAME=my-host \\\n' +
+                './sentinel';
+            document.getElementById('token-display').style.display = 'block';
+        })
+        .catch(function(err) { showToast('Failed: ' + err, 'error'); });
+    }
+
+    function copyToken() {
+        var text = document.getElementById('token-value').textContent;
+        navigator.clipboard.writeText(text).then(function() {
+            showToast('Token copied');
+        });
+    }
+
+    function drainHost(id, name) {
+        if (!confirm('Drain host "' + name + '"? No new updates will be sent to it.')) return;
+        fetch('/api/cluster/hosts/' + id + '/drain', {
+            method: 'POST',
+            headers: {'X-CSRF-Token': csrfToken}
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            showToast('Host ' + name + ' set to draining');
+            setTimeout(function() { window.location.reload(); }, 500);
+        })
+        .catch(function(err) { showToast('Failed: ' + err, 'error'); });
+    }
+
+    function revokeHost(id, name) {
+        if (!confirm('Revoke host "' + name + '"? Its certificate will be invalidated and it cannot reconnect.')) return;
+        fetch('/api/cluster/hosts/' + id + '/revoke', {
+            method: 'POST',
+            headers: {'X-CSRF-Token': csrfToken}
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            showToast('Host ' + name + ' revoked');
+            setTimeout(function() { window.location.reload(); }, 500);
+        })
+        .catch(function(err) { showToast('Failed: ' + err, 'error'); });
+    }
+
+    function removeHost(id, name) {
+        if (!confirm('Remove host "' + name + '" from the cluster? This cannot be undone.')) return;
+        fetch('/api/cluster/hosts/' + id, {
+            method: 'DELETE',
+            headers: {'X-CSRF-Token': csrfToken}
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) { showToast(data.error, 'error'); return; }
+            showToast('Host ' + name + ' removed');
+            setTimeout(function() { window.location.reload(); }, 500);
+        })
+        .catch(function(err) { showToast('Failed: ' + err, 'error'); });
+    }
+
+    // SSE: listen for cluster_host events to refresh host cards in real-time.
+    if (typeof EventSource !== "undefined") {
+        var es = new EventSource("/api/events");
+        es.addEventListener("cluster_host", function() {
+            window.location.reload();
+        });
+        es.addEventListener("connected", function() {
+            var dot = document.getElementById("sse-indicator");
+            var label = document.getElementById("sse-label");
+            if (dot) { dot.className = "status-dot connected"; }
+            if (label) { label.textContent = "Connected"; }
+        });
+        es.onerror = function() {
+            var dot = document.getElementById("sse-indicator");
+            var label = document.getElementById("sse-label");
+            if (dot) { dot.className = "status-dot disconnected"; }
+            if (label) { label.textContent = "Disconnected"; }
+        };
+    }
+    </script>
+</body>
+</html>
+{{end}}

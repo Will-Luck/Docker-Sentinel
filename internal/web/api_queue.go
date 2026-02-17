@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 )
@@ -17,10 +18,23 @@ func (s *Server) apiQueue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, items)
 }
 
+// queueKeyName extracts the queue key and plain container name from the
+// request path. The key is the full queue identifier ("hostID::name" for
+// remote containers, just "name" for local ones). The name is always the
+// plain container name, used for protection checks and user-facing messages.
+func queueKeyName(r *http.Request) (key, name string) {
+	key = r.PathValue("key")
+	name = key
+	if idx := strings.Index(key, "::"); idx >= 0 {
+		name = key[idx+2:]
+	}
+	return key, name
+}
+
 // apiApprove approves a pending update and triggers the update.
 func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if name == "" {
+	key, name := queueKeyName(r)
+	if key == "" {
 		writeError(w, http.StatusBadRequest, "container name required")
 		return
 	}
@@ -30,7 +44,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	update, ok := s.deps.Queue.Approve(name)
+	update, ok := s.deps.Queue.Approve(key)
 	if !ok {
 		writeError(w, http.StatusNotFound, "no pending update for "+name)
 		return
@@ -47,7 +61,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 	// Route to service updater, remote agent, or local container updater.
 	go func() {
 		var err error
-		if update.HostID != "" && s.deps.Cluster != nil {
+		if update.HostID != "" && s.deps.Cluster.Enabled() {
 			// Remote container — dispatch to the agent via cluster.
 			err = s.deps.Cluster.UpdateRemoteContainer(context.Background(), update.HostID, update.ContainerName, approveTarget, update.RemoteDigest)
 		} else if update.Type == "service" && s.deps.Swarm != nil {
@@ -76,13 +90,13 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 
 // apiIgnoreVersion ignores a specific version for a container and removes it from the queue.
 func (s *Server) apiIgnoreVersion(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if name == "" {
+	key, name := queueKeyName(r)
+	if key == "" {
 		writeError(w, http.StatusBadRequest, "container name required")
 		return
 	}
 
-	update, ok := s.deps.Queue.Get(name)
+	update, ok := s.deps.Queue.Get(key)
 	if !ok {
 		writeError(w, http.StatusNotFound, "no pending update for "+name)
 		return
@@ -102,7 +116,7 @@ func (s *Server) apiIgnoreVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.deps.Queue.Remove(name)
+	s.deps.Queue.Remove(key)
 	s.logEvent(r, "ignore", name, "Ignored version "+ignoredVersion)
 
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -115,13 +129,13 @@ func (s *Server) apiIgnoreVersion(w http.ResponseWriter, r *http.Request) {
 
 // apiReject rejects and removes a pending update from the queue.
 func (s *Server) apiReject(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if name == "" {
+	key, name := queueKeyName(r)
+	if key == "" {
 		writeError(w, http.StatusBadRequest, "container name required")
 		return
 	}
 
-	s.deps.Queue.Remove(name)
+	s.deps.Queue.Remove(key)
 	s.logEvent(r, "reject", name, "Update rejected")
 
 	writeJSON(w, http.StatusOK, map[string]string{

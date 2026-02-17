@@ -29,6 +29,7 @@
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
             <a href="/settings" class="nav-link active" aria-current="page">Settings</a>
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -69,6 +70,7 @@
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-registries" data-tab="registries">Registries</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-general" data-tab="general">General</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-cluster" data-tab="cluster">Cluster</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-about" data-tab="about">About</button>
             {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-security" data-tab="security">Security</button>
@@ -587,6 +589,66 @@
             </div>
         </div>
         {{end}}{{end}}{{end}}
+
+        <!-- Cluster tab -->
+        <div class="tab-panel" id="tab-cluster" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Multi-Host Monitoring</h2>
+                </div>
+                <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
+                    <p class="accordion-intro">Monitor containers across multiple Docker hosts using lightweight agents that report back over encrypted gRPC (mTLS).</p>
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Enable cluster mode</div>
+                                <div class="setting-desc">Starts a gRPC server for agent connections. No container restart needed.</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="cluster-enabled" class="channel-toggle" onchange="onClusterToggle(this.checked)">
+                                <span id="cluster-enabled-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="cluster-fields" class="cluster-fields disabled">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">gRPC port</div>
+                                    <div class="setting-desc">Port for agent connections. Change requires restart.</div>
+                                </div>
+                                <input type="number" id="cluster-port" class="setting-input" style="max-width:120px" value="9443" min="1024" max="65535" onchange="saveClusterSettings()">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Grace period</div>
+                                    <div class="setting-desc">How long agents wait before entering autonomous mode when this server is unreachable.</div>
+                                </div>
+                                <select id="cluster-grace" class="setting-select" onchange="saveClusterSettings()">
+                                    <option value="5m">5 minutes</option>
+                                    <option value="15m">15 minutes</option>
+                                    <option value="30m" selected>30 minutes</option>
+                                    <option value="1h">1 hour</option>
+                                    <option value="2h">2 hours</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Default remote policy</div>
+                                    <div class="setting-desc">Update policy applied to containers discovered on newly enrolled hosts.</div>
+                                </div>
+                                <select id="cluster-policy" class="setting-select" onchange="saveClusterSettings()">
+                                    <option value="manual" selected>manual</option>
+                                    <option value="auto">auto</option>
+                                    <option value="pinned">pinned</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <!-- About tab -->
         <div class="tab-panel" id="tab-about" role="tabpanel">
