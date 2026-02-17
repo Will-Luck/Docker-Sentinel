@@ -697,8 +697,10 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			}
 		}
 
-		// Registry check (server-side).
-		check := u.checker.CheckVersioned(ctx, c.Image)
+		// Registry check (server-side). Use the agent-reported digest
+		// instead of local Docker inspect — the image may not exist on
+		// the server's Docker daemon.
+		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest)
 		if check.Error != nil {
 			u.log.Warn("registry check failed for remote container",
 				"host", host.HostName, "name", c.Name, "error", check.Error)

@@ -44,10 +44,13 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 
 	// Trigger the update in background — don't block the HTTP response.
 	// Use a detached context because r.Context() is cancelled when the handler returns.
-	// Route to service updater or container updater based on type.
+	// Route to service updater, remote agent, or local container updater.
 	go func() {
 		var err error
-		if update.Type == "service" && s.deps.Swarm != nil {
+		if update.HostID != "" && s.deps.Cluster != nil {
+			// Remote container — dispatch to the agent via cluster.
+			err = s.deps.Cluster.UpdateRemoteContainer(context.Background(), update.HostID, update.ContainerName, approveTarget, update.RemoteDigest)
+		} else if update.Type == "service" && s.deps.Swarm != nil {
 			err = s.deps.Swarm.UpdateService(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
 		} else {
 			err = s.deps.Updater.UpdateContainer(context.Background(), update.ContainerID, update.ContainerName, approveTarget)

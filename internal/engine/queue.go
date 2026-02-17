@@ -51,7 +51,7 @@ func NewQueue(s *store.Store, bus *events.Bus, log *slog.Logger) *Queue {
 		var items []PendingUpdate
 		if json.Unmarshal(data, &items) == nil {
 			for _, item := range items {
-				q.pending[item.ContainerName] = item
+				q.pending[item.Key()] = item
 			}
 		}
 	}
@@ -63,9 +63,18 @@ func NewQueue(s *store.Store, bus *events.Bus, log *slog.Logger) *Queue {
 func (q *Queue) Add(update PendingUpdate) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.pending[update.ContainerName] = update
+	q.pending[update.Key()] = update
 	q.persist()
-	q.publishEvent(update.ContainerName, "added")
+	q.publishEvent(update.Key(), "added")
+}
+
+// Key returns the queue map key for this update. Remote containers use
+// "hostID::name" to avoid collisions with local or other-host containers.
+func (u PendingUpdate) Key() string {
+	if u.HostID == "" {
+		return u.ContainerName
+	}
+	return u.HostID + "::" + u.ContainerName
 }
 
 // Remove removes a pending update by container name.

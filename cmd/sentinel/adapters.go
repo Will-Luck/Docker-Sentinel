@@ -858,6 +858,68 @@ func (a *swarmAdapter) ScaleService(ctx context.Context, name string, replicas u
 	return a.client.UpdateService(ctx, id, svc.Meta.Version, svc.Spec, "")
 }
 
+// clusterScannerAdapter bridges cluster/server.Server to engine.ClusterScanner.
+// This enables the engine's multi-host scanning to send synchronous
+// ListContainers and UpdateContainer requests to remote agents.
+type clusterScannerAdapter struct {
+	srv *clusterserver.Server
+}
+
+func (a *clusterScannerAdapter) ConnectedHosts() []string {
+	return a.srv.ConnectedHosts()
+}
+
+func (a *clusterScannerAdapter) HostInfo(hostID string) (engine.HostContext, bool) {
+	hs, ok := a.srv.GetHost(hostID)
+	if !ok {
+		return engine.HostContext{}, false
+	}
+	return engine.HostContext{
+		HostID:   hs.Info.ID,
+		HostName: hs.Info.Name,
+	}, true
+}
+
+func (a *clusterScannerAdapter) ListContainers(ctx context.Context, hostID string) ([]engine.RemoteContainer, error) {
+	containers, err := a.srv.ListContainersSync(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]engine.RemoteContainer, len(containers))
+	for i, c := range containers {
+		result[i] = engine.RemoteContainer{
+			ID:          c.ID,
+			Name:        c.Name,
+			Image:       c.Image,
+			ImageDigest: c.ImageDigest,
+			State:       c.State,
+			Labels:      c.Labels,
+		}
+	}
+	return result, nil
+}
+
+func (a *clusterScannerAdapter) UpdateContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (engine.RemoteUpdateResult, error) {
+	ur, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
+	if err != nil {
+		return engine.RemoteUpdateResult{}, err
+	}
+	var dur time.Duration
+	if ur.Duration != nil {
+		dur = ur.Duration.AsDuration()
+	}
+	return engine.RemoteUpdateResult{
+		ContainerName: ur.ContainerName,
+		OldImage:      ur.OldImage,
+		OldDigest:     ur.OldDigest,
+		NewImage:      ur.NewImage,
+		NewDigest:     ur.NewDigest,
+		Outcome:       ur.Outcome,
+		Error:         ur.Error,
+		Duration:      dur,
+	}, nil
+}
+
 // clusterAdapter bridges cluster/server.Server to web.ClusterProvider.
 type clusterAdapter struct {
 	srv *clusterserver.Server
@@ -865,16 +927,22 @@ type clusterAdapter struct {
 
 func (a *clusterAdapter) AllHosts() []web.ClusterHost {
 	infos := a.srv.AllHosts()
-	result := make([]web.ClusterHost, len(infos))
-	for i, h := range infos {
-		result[i] = web.ClusterHost{
-			ID:           h.ID,
-			Name:         h.Name,
-			Address:      h.Address,
-			State:        string(h.State),
-			EnrolledAt:   h.EnrolledAt,
-			LastSeen:     h.LastSeen,
-			AgentVersion: h.AgentVersion,
+	result := make([]web.ClusterHost, 0, len(infos))
+	for _, h := range infos {
+		// Use GetHost to get full HostState (includes ephemeral
+		// fields like Connected and in-memory Containers).
+		if hs, ok := a.srv.GetHost(h.ID); ok {
+			result = append(result, web.ClusterHost{
+				ID:           hs.Info.ID,
+				Name:         hs.Info.Name,
+				Address:      hs.Info.Address,
+				State:        string(hs.Info.State),
+				Connected:    hs.Connected,
+				EnrolledAt:   hs.Info.EnrolledAt,
+				LastSeen:     hs.Info.LastSeen,
+				AgentVersion: hs.Info.AgentVersion,
+				Containers:   len(hs.Containers),
+			})
 		}
 	}
 	return result
@@ -916,4 +984,9 @@ func (a *clusterAdapter) RevokeHost(id string) error {
 
 func (a *clusterAdapter) DrainHost(id string) error {
 	return a.srv.DrainHost(id)
+}
+
+func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
+	_, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
+	return err
 }

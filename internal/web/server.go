@@ -230,6 +230,8 @@ type ClusterProvider interface {
 	RevokeHost(id string) error
 	// DrainHost sets a host to draining state (no new updates).
 	DrainHost(id string) error
+	// UpdateRemoteContainer dispatches a container update to a remote agent.
+	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error
 }
 
 // ClusterHost represents a remote agent host for the web layer.
