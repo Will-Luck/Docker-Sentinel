@@ -63,6 +63,13 @@ type Server struct {
 	grpcSrv *grpc.Server
 	mu      sync.RWMutex            // protects streams map
 	streams map[string]*agentStream // hostID -> active stream
+
+	// pendingMu protects the pending map. Separate from mu to avoid holding
+	// the streams lock while waiting for responses.
+	pendingMu sync.Mutex
+	// pending maps hostID to a channel that receives the next response from
+	// that agent. Only one outstanding synchronous request per host at a time.
+	pending map[string]chan *proto.AgentMessage
 }
 
 // agentStream tracks an active bidirectional stream with an agent.
@@ -84,6 +91,7 @@ func New(ca *cluster.CA, store ClusterStore, bus *events.Bus, log *slog.Logger) 
 		bus:      bus,
 		log:      log.With("component", "cluster-server"),
 		streams:  make(map[string]*agentStream),
+		pending:  make(map[string]chan *proto.AgentMessage),
 	}
 }
 
@@ -528,10 +536,10 @@ func (s *Server) handleAgentMessage(hostID string, as *agentStream, msg *proto.A
 		s.handleHeartbeat(hostID, as, p.Heartbeat)
 
 	case *proto.AgentMessage_ContainerList:
-		s.handleContainerList(hostID, p.ContainerList)
+		s.handleContainerList(hostID, msg, p.ContainerList)
 
 	case *proto.AgentMessage_UpdateResult:
-		s.handleUpdateResult(hostID, p.UpdateResult)
+		s.handleUpdateResult(hostID, msg, p.UpdateResult)
 
 	case *proto.AgentMessage_HookResult:
 		s.handleHookResult(hostID, p.HookResult)
@@ -558,7 +566,7 @@ func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heart
 	_ = s.registry.UpdateLastSeen(hostID, time.Now())
 }
 
-func (s *Server) handleContainerList(hostID string, cl *proto.ContainerList) {
+func (s *Server) handleContainerList(hostID string, msg *proto.AgentMessage, cl *proto.ContainerList) {
 	containers := protoToContainers(cl.Containers)
 	s.registry.UpdateContainers(hostID, containers)
 
@@ -567,9 +575,14 @@ func (s *Server) handleContainerList(hostID string, cl *proto.ContainerList) {
 		"count", len(containers),
 		"requestID", cl.RequestId,
 	)
+
+	// Route to a pending synchronous caller if one is waiting.
+	if cl.RequestId != "" {
+		s.deliverPending(hostID, msg)
+	}
 }
 
-func (s *Server) handleUpdateResult(hostID string, ur *proto.UpdateResult) {
+func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *proto.UpdateResult) {
 	s.log.Info("update result",
 		"hostID", hostID,
 		"container", ur.ContainerName,
@@ -584,6 +597,11 @@ func (s *Server) handleUpdateResult(hostID string, ur *proto.UpdateResult) {
 		Message:       fmt.Sprintf("update %s: %s", ur.ContainerName, ur.Outcome),
 		Timestamp:     time.Now(),
 	})
+
+	// Route to a pending synchronous caller if one is waiting.
+	if ur.RequestId != "" {
+		s.deliverPending(hostID, msg)
+	}
 }
 
 func (s *Server) handleHookResult(hostID string, hr *proto.HookResult) {
@@ -669,6 +687,145 @@ func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.Ce
 	}
 
 	s.log.Info("cert renewed", "hostID", hostID, "newSerial", serial)
+}
+
+// ---------------------------------------------------------------------------
+// Synchronous request/response helpers
+// ---------------------------------------------------------------------------
+
+// deliverPending sends an agent response to a waiting synchronous caller.
+// Non-blocking: if nobody is waiting (or the channel is already full), the
+// message is silently dropped (the fire-and-forget handlers already processed
+// the response above).
+func (s *Server) deliverPending(hostID string, msg *proto.AgentMessage) {
+	s.pendingMu.Lock()
+	ch, ok := s.pending[hostID]
+	if ok {
+		delete(s.pending, hostID)
+	}
+	s.pendingMu.Unlock()
+
+	if ok {
+		// Non-blocking send. Channel is buffered (size 1), so this only
+		// drops if something went very wrong (double delivery).
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+}
+
+// registerPending creates a response channel for the given host.
+// Must be called before sending the command to avoid a race where
+// the agent responds before the channel is registered.
+func (s *Server) registerPending(hostID string) chan *proto.AgentMessage {
+	ch := make(chan *proto.AgentMessage, 1)
+	s.pendingMu.Lock()
+	s.pending[hostID] = ch
+	s.pendingMu.Unlock()
+	return ch
+}
+
+// cancelPending removes the pending channel for a host and returns it.
+// Used for cleanup when SendCommand fails after registration.
+func (s *Server) cancelPending(hostID string, ch chan *proto.AgentMessage) {
+	s.pendingMu.Lock()
+	if cur, ok := s.pending[hostID]; ok && cur == ch {
+		delete(s.pending, hostID)
+	}
+	s.pendingMu.Unlock()
+}
+
+// awaitPending blocks on an already-registered response channel until a
+// response arrives or the context is cancelled.
+func (s *Server) awaitPending(ctx context.Context, hostID string, ch chan *proto.AgentMessage) (*proto.AgentMessage, error) {
+	select {
+	case resp := <-ch:
+		return resp, nil
+	case <-ctx.Done():
+		s.cancelPending(hostID, ch)
+		return nil, ctx.Err()
+	}
+}
+
+// ListContainersSync sends a ListContainersRequest to the agent and blocks
+// until the agent responds with a ContainerList or the context is cancelled.
+// The request_id on the ServerMessage is used for correlation.
+func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]cluster.ContainerInfo, error) {
+	reqID := generateRequestID()
+
+	// Register the response channel BEFORE sending, so a fast agent
+	// response doesn't race with registration.
+	ch := s.registerPending(hostID)
+
+	msg := &proto.ServerMessage{
+		RequestId: reqID,
+		Payload: &proto.ServerMessage_ListContainers{
+			ListContainers: &proto.ListContainersRequest{},
+		},
+	}
+
+	if err := s.SendCommand(hostID, msg); err != nil {
+		s.cancelPending(hostID, ch)
+		return nil, fmt.Errorf("send list containers: %w", err)
+	}
+
+	resp, err := s.awaitPending(ctx, hostID, ch)
+	if err != nil {
+		return nil, fmt.Errorf("await container list: %w", err)
+	}
+
+	cl, ok := resp.Payload.(*proto.AgentMessage_ContainerList)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type %T (wanted ContainerList)", resp.Payload)
+	}
+
+	return protoToContainers(cl.ContainerList.Containers), nil
+}
+
+// UpdateContainerSync sends an UpdateContainerRequest to the agent and blocks
+// until the agent responds with an UpdateResult or the context is cancelled.
+func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (*proto.UpdateResult, error) {
+	reqID := generateRequestID()
+
+	// Register the response channel BEFORE sending, so a fast agent
+	// response doesn't race with registration.
+	ch := s.registerPending(hostID)
+
+	msg := &proto.ServerMessage{
+		RequestId: reqID,
+		Payload: &proto.ServerMessage_UpdateContainer{
+			UpdateContainer: &proto.UpdateContainerRequest{
+				ContainerName: containerName,
+				TargetImage:   targetImage,
+				TargetDigest:  targetDigest,
+			},
+		},
+	}
+
+	if err := s.SendCommand(hostID, msg); err != nil {
+		s.cancelPending(hostID, ch)
+		return nil, fmt.Errorf("send update container: %w", err)
+	}
+
+	resp, err := s.awaitPending(ctx, hostID, ch)
+	if err != nil {
+		return nil, fmt.Errorf("await update result: %w", err)
+	}
+
+	ur, ok := resp.Payload.(*proto.AgentMessage_UpdateResult)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type %T (wanted UpdateResult)", resp.Payload)
+	}
+
+	return ur.UpdateResult, nil
+}
+
+// generateRequestID creates a random 8-byte hex string for request correlation.
+func generateRequestID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // ---------------------------------------------------------------------------

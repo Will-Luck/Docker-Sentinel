@@ -296,6 +296,10 @@ func main() {
 		}
 		log.Info("cluster gRPC server started", "addr", clusterAddr)
 
+		// Wire cluster scanner into the engine for multi-host scanning.
+		updater.SetClusterScanner(&clusterScannerAdapter{srv: clusterSrv})
+		log.Info("cluster scanner enabled for multi-host scanning")
+
 		// Ensure graceful shutdown.
 		go func() {
 			<-ctx.Done()

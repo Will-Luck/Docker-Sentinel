@@ -28,7 +28,6 @@ import (
 	"github.com/moby/moby/api/types/network"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -305,11 +304,17 @@ func (a *Agent) enroll(ctx context.Context) error {
 		return fmt.Errorf("create csr: %w", err)
 	}
 
-	// Connect without mTLS for enrollment (the enrollment service is
-	// unauthenticated — token-based verification only).
+	// Connect with TLS but no client cert for enrollment. The server
+	// uses TLS on the gRPC port (VerifyClientCertIfGiven), so we must
+	// speak TLS — but we skip server verification because we don't have
+	// the CA cert yet (it comes back in the enrollment response).
+	enrollTLS := &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // bootstrapping — no CA yet
+		MinVersion:         tls.VersionTLS13,
+	}
 	conn, err := grpc.NewClient(
 		a.cfg.ServerAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(credentials.NewTLS(enrollTLS)),
 	)
 	if err != nil {
 		return fmt.Errorf("dial for enrollment: %w", err)
