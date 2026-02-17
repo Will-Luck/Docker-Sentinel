@@ -149,14 +149,20 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 	var blocked []blockedEntry
 	var unchanged []unchangedEntry
 
+	// Build label cache once from all sources (local, Swarm, cluster)
+	// so we don't re-query per container.
+	allLabels := s.allContainerLabels(r.Context())
+
 	for _, name := range body.Containers {
+		labels := allLabels[name]
+
 		// Self-protection check.
-		if s.isProtectedContainer(r.Context(), name) {
+		if labels != nil && labels["sentinel.self"] == "true" {
 			blocked = append(blocked, blockedEntry{Name: name, Reason: "self-protected"})
 			continue
 		}
 
-		current := containerPolicy(s.getContainerLabels(r.Context(), name))
+		current := containerPolicy(labels)
 		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
 			current = p
 		}

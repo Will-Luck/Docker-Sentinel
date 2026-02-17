@@ -52,18 +52,75 @@ func (s *Server) resolvedPolicy(labels map[string]string, name string) string {
 	return containerPolicy(labels)
 }
 
-// getContainerLabels fetches labels for a named container.
+// getContainerLabels fetches labels for a named container, checking local
+// Docker, Swarm services, and remote cluster containers in order.
 func (s *Server) getContainerLabels(ctx context.Context, name string) map[string]string {
+	// Local containers.
 	containers, err := s.deps.Docker.ListAllContainers(ctx)
-	if err != nil {
-		return nil
-	}
-	for _, c := range containers {
-		if containerName(c) == name {
-			return c.Labels
+	if err == nil {
+		for _, c := range containers {
+			if containerName(c) == name {
+				return c.Labels
+			}
 		}
 	}
+
+	// Swarm services.
+	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
+		if services, svcErr := s.deps.Swarm.ListServiceDetail(ctx); svcErr == nil {
+			for _, svc := range services {
+				if svc.Name == name {
+					return svc.Labels
+				}
+			}
+		}
+	}
+
+	// Remote cluster containers.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			if rc.Name == name {
+				return rc.Labels
+			}
+		}
+	}
+
 	return nil
+}
+
+// allContainerLabels builds a consolidated name→labels map from local Docker,
+// Swarm services, and remote cluster containers. Local entries take precedence.
+func (s *Server) allContainerLabels(ctx context.Context) map[string]map[string]string {
+	result := make(map[string]map[string]string)
+
+	// Local containers (highest priority).
+	if containers, err := s.deps.Docker.ListAllContainers(ctx); err == nil {
+		for _, c := range containers {
+			result[containerName(c)] = c.Labels
+		}
+	}
+
+	// Swarm services.
+	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
+		if services, err := s.deps.Swarm.ListServiceDetail(ctx); err == nil {
+			for _, svc := range services {
+				if _, exists := result[svc.Name]; !exists {
+					result[svc.Name] = svc.Labels
+				}
+			}
+		}
+	}
+
+	// Remote cluster containers.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			if _, exists := result[rc.Name]; !exists {
+				result[rc.Name] = rc.Labels
+			}
+		}
+	}
+
+	return result
 }
 
 // logEvent appends a log entry if the EventLog dependency is available.

@@ -1098,6 +1098,12 @@ td:nth-child(6) {
     margin-top: var(--sp-2);
 }
 
+.section-divider .expand-icon {
+    font-size: 0.9rem;
+    color: var(--fg-tertiary);
+    transition: transform 0.15s ease;
+}
+
 .section-title {
     font-weight: 700;
     font-size: 0.8rem;
