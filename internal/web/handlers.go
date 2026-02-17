@@ -426,12 +426,33 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		hosts := s.deps.Cluster.AllHosts()
 		remoteContainers := s.deps.Cluster.AllHostContainers()
 
-		// Group remote containers by host ID.
+		// Group remote containers by host ID, extracting tag/registry
+		// the same way we do for local containers.
 		byHost := make(map[string][]containerView)
 		for _, rc := range remoteContainers {
+			tag := registry.ExtractTag(rc.Image)
+			if tag == "" {
+				if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {
+					tag = rc.Image[idx+1:]
+				} else {
+					tag = rc.Image
+				}
+			}
+			// Resolve policy the same way we do for local containers:
+			// label first, then DB override.
+			policy := containerPolicy(rc.Labels)
+			if s.deps.Policy != nil {
+				if p, ok := s.deps.Policy.GetPolicyOverride(rc.Name); ok {
+					policy = p
+				}
+			}
+
 			cv := containerView{
 				Name:     rc.Name,
 				Image:    rc.Image,
+				Tag:      tag,
+				Registry: registry.RegistryHost(rc.Image),
+				Policy:   policy,
 				State:    rc.State,
 				HostID:   rc.HostID,
 				HostName: rc.HostName,
@@ -445,10 +466,18 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			// (we don't have stack labels for remote containers yet).
 			var remoteStacks []stackGroup
 			if len(containers) > 0 {
-				remoteStacks = []stackGroup{{
+				sg := stackGroup{
 					Name:       "Standalone",
 					Containers: containers,
-				}}
+				}
+				for _, c := range containers {
+					if c.State == "running" {
+						sg.RunningCount++
+					} else {
+						sg.StoppedCount++
+					}
+				}
+				remoteStacks = []stackGroup{sg}
 			}
 			data.HostGroups = append(data.HostGroups, hostGroup{
 				ID:        h.ID,
@@ -636,6 +665,40 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				Registry:      registry.RegistryHost(c.Image),
 			}
 			targetView = &v
+		}
+	}
+
+	// Fallback: search cluster remote containers if not found locally.
+	if targetView == nil && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			if rc.Name == name {
+				policy := containerPolicy(rc.Labels)
+				if s.deps.Policy != nil {
+					if p, ok := s.deps.Policy.GetPolicyOverride(rc.Name); ok {
+						policy = p
+					}
+				}
+				tag := registry.ExtractTag(rc.Image)
+				if tag == "" {
+					if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {
+						tag = rc.Image[idx+1:]
+					} else {
+						tag = rc.Image
+					}
+				}
+				v := containerView{
+					Name:     rc.Name,
+					Image:    rc.Image,
+					Tag:      tag,
+					Policy:   policy,
+					State:    rc.State,
+					HostID:   rc.HostID,
+					HostName: rc.HostName,
+					Registry: registry.RegistryHost(rc.Image),
+				}
+				targetView = &v
+				break
+			}
 		}
 	}
 

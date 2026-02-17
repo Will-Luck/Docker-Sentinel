@@ -991,6 +991,7 @@ func (a *clusterAdapter) AllHostContainers() []web.RemoteContainer {
 				State:    c.State,
 				HostID:   info.ID,
 				HostName: info.Name,
+				Labels:   c.Labels,
 			})
 		}
 	}

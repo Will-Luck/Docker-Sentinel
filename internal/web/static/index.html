@@ -214,8 +214,9 @@
                     {{end}}
 
                     {{if .SwarmServices}}
-                    <tbody class="section-separator">
-                        <tr><td colspan="6"><div class="section-divider">
+                    <tbody class="section-separator swarm-section">
+                        <tr onclick="toggleSwarmSection(this)" style="cursor:pointer"><td colspan="6"><div class="section-divider">
+                            <span class="expand-icon">&#9662;</span>
                             <span class="section-title">Swarm Services</span>
                             <span class="section-summary">{{len .SwarmServices}} services</span>
                         </div></td></tr>

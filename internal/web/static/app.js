@@ -1503,6 +1503,20 @@ function toggleStack(headerRow) {
     }
 }
 
+function toggleSwarmSection(row) {
+    var section = row.closest(".swarm-section");
+    if (!section) return;
+    var isCollapsed = section.classList.toggle("swarm-collapsed");
+    var icon = section.querySelector(".expand-icon");
+    if (icon) icon.textContent = isCollapsed ? "\u25B8" : "\u25BE";
+    // Hide/show all following svc-group tbody elements until the next non-svc-group.
+    var sibling = section.nextElementSibling;
+    while (sibling && sibling.classList.contains("svc-group")) {
+        sibling.style.display = isCollapsed ? "none" : "";
+        sibling = sibling.nextElementSibling;
+    }
+}
+
 function toggleHostGroup(header) {
     var hostGroup = header.closest(".host-group");
     if (!hostGroup) return;
@@ -3835,7 +3849,7 @@ function renderRegistryCredentials() {
         emptyDiv.appendChild(emptyH3);
         emptyDiv.appendChild(emptyP);
         container.appendChild(emptyDiv);
-        return;
+        // Don't return — dropdown population code below must still run.
     }
 
     registryCredentials.forEach(function(cred, index) {
