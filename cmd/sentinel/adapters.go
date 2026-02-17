@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
+	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
@@ -152,6 +154,8 @@ func (a *queueAdapter) Add(update web.PendingUpdate) {
 		ResolvedCurrentVersion: update.ResolvedCurrentVersion,
 		ResolvedTargetVersion:  update.ResolvedTargetVersion,
 		Type:                   update.Type,
+		HostID:                 update.HostID,
+		HostName:               update.HostName,
 	})
 }
 
@@ -185,6 +189,8 @@ func convertPendingUpdate(item engine.PendingUpdate) web.PendingUpdate {
 		ResolvedCurrentVersion: item.ResolvedCurrentVersion,
 		ResolvedTargetVersion:  item.ResolvedTargetVersion,
 		Type:                   item.Type,
+		HostID:                 item.HostID,
+		HostName:               item.HostName,
 	}
 }
 
@@ -850,4 +856,64 @@ func (a *swarmAdapter) ScaleService(ctx context.Context, name string, replicas u
 	}
 	svc.Spec.Mode.Replicated.Replicas = &replicas
 	return a.client.UpdateService(ctx, id, svc.Meta.Version, svc.Spec, "")
+}
+
+// clusterAdapter bridges cluster/server.Server to web.ClusterProvider.
+type clusterAdapter struct {
+	srv *clusterserver.Server
+}
+
+func (a *clusterAdapter) AllHosts() []web.ClusterHost {
+	infos := a.srv.AllHosts()
+	result := make([]web.ClusterHost, len(infos))
+	for i, h := range infos {
+		result[i] = web.ClusterHost{
+			ID:           h.ID,
+			Name:         h.Name,
+			Address:      h.Address,
+			State:        string(h.State),
+			EnrolledAt:   h.EnrolledAt,
+			LastSeen:     h.LastSeen,
+			AgentVersion: h.AgentVersion,
+		}
+	}
+	return result
+}
+
+func (a *clusterAdapter) GetHost(id string) (web.ClusterHost, bool) {
+	hs, ok := a.srv.GetHost(id)
+	if !ok {
+		return web.ClusterHost{}, false
+	}
+	return web.ClusterHost{
+		ID:           hs.Info.ID,
+		Name:         hs.Info.Name,
+		Address:      hs.Info.Address,
+		State:        string(hs.Info.State),
+		Connected:    hs.Connected,
+		EnrolledAt:   hs.Info.EnrolledAt,
+		LastSeen:     hs.Info.LastSeen,
+		AgentVersion: hs.Info.AgentVersion,
+		Containers:   len(hs.Containers),
+	}, true
+}
+
+func (a *clusterAdapter) ConnectedHosts() []string {
+	return a.srv.ConnectedHosts()
+}
+
+func (a *clusterAdapter) GenerateEnrollToken() (string, string, error) {
+	return a.srv.GenerateEnrollToken(24 * time.Hour)
+}
+
+func (a *clusterAdapter) RemoveHost(id string) error {
+	return a.srv.RemoveHost(id)
+}
+
+func (a *clusterAdapter) RevokeHost(id string) error {
+	return a.srv.RevokeHost(id)
+}
+
+func (a *clusterAdapter) DrainHost(id string) error {
+	return a.srv.DrainHost(id)
 }

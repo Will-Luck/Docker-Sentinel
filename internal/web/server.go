@@ -55,7 +55,8 @@ type Dependencies struct {
 	GHCRCache           GHCRAlternativeProvider
 	AboutStore          AboutStore
 	HookStore           HookStore
-	Swarm               SwarmProvider // nil when not in Swarm mode
+	Swarm               SwarmProvider   // nil when not in Swarm mode
+	Cluster             ClusterProvider // nil when clustering is disabled
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string
@@ -211,6 +212,39 @@ type SchedulerController interface {
 	SetSchedule(sched string)
 }
 
+// ClusterProvider provides access to cluster host management.
+// Nil when clustering is disabled.
+type ClusterProvider interface {
+	// AllHosts returns info about all registered agent hosts.
+	AllHosts() []ClusterHost
+	// GetHost returns info about a specific host.
+	GetHost(id string) (ClusterHost, bool)
+	// ConnectedHosts returns the IDs of currently connected agents.
+	ConnectedHosts() []string
+	// GenerateEnrollToken creates a new one-time enrollment token.
+	// Returns the plaintext token (shown to admin once) and the token ID.
+	GenerateEnrollToken() (token string, id string, err error)
+	// RemoveHost removes a host from the cluster.
+	RemoveHost(id string) error
+	// RevokeHost revokes a host's certificate and removes it.
+	RevokeHost(id string) error
+	// DrainHost sets a host to draining state (no new updates).
+	DrainHost(id string) error
+}
+
+// ClusterHost represents a remote agent host for the web layer.
+type ClusterHost struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Address      string    `json:"address"`
+	State        string    `json:"state"` // "active", "draining", "decommissioned"
+	Connected    bool      `json:"connected"`
+	EnrolledAt   time.Time `json:"enrolled_at"`
+	LastSeen     time.Time `json:"last_seen"`
+	AgentVersion string    `json:"agent_version,omitempty"`
+	Containers   int       `json:"containers"` // count of known containers
+}
+
 // SwarmProvider provides Swarm service operations for the dashboard.
 // Nil when the daemon is not a Swarm manager.
 type SwarmProvider interface {
@@ -307,7 +341,8 @@ type UpdateRecord struct {
 	Outcome       string        `json:"outcome"`
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
-	Type          string        `json:"type,omitempty"` // "container" (default) or "service"
+	Type          string        `json:"type,omitempty"`      // "container" (default) or "service"
+	HostName      string        `json:"host_name,omitempty"` // cluster host (empty = local)
 }
 
 // SnapshotEntry represents a snapshot with a parsed image reference for display.
@@ -336,7 +371,9 @@ type PendingUpdate struct {
 	NewerVersions          []string  `json:"newer_versions,omitempty"`
 	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
 	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
-	Type                   string    `json:"type,omitempty"` // "container" (default) or "service"
+	Type                   string    `json:"type,omitempty"`    // "container" (default) or "service"
+	HostID                 string    `json:"host_id,omitempty"` // cluster host ID (empty = local)
+	HostName               string    `json:"host_name,omitempty"`
 }
 
 // ContainerLister lists containers.
@@ -613,6 +650,15 @@ func (s *Server) registerRoutes() {
 
 	s.mux.Handle("GET /service/{name}", perm(auth.PermContainersView, s.handleServiceDetail))
 
+	// Cluster management (requires settings.modify permission).
+	if s.deps.Cluster != nil {
+		s.mux.Handle("GET /api/cluster/hosts", perm(auth.PermSettingsModify, s.handleClusterHosts))
+		s.mux.Handle("POST /api/cluster/enroll-token", perm(auth.PermSettingsModify, s.handleGenerateEnrollToken))
+		s.mux.Handle("DELETE /api/cluster/hosts/{id}", perm(auth.PermSettingsModify, s.handleRemoveHost))
+		s.mux.Handle("POST /api/cluster/hosts/{id}/revoke", perm(auth.PermSettingsModify, s.handleRevokeHost))
+		s.mux.Handle("POST /api/cluster/hosts/{id}/drain", perm(auth.PermSettingsModify, s.handleDrainHost))
+	}
+
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))
 	s.mux.Handle("POST /api/containers/{name}/stop", perm(auth.PermContainersManage, s.apiStop))
@@ -757,6 +803,62 @@ func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	_, _ = w.Write(data)
+}
+
+// ---------------------------------------------------------------------------
+// Cluster handlers
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleClusterHosts(w http.ResponseWriter, _ *http.Request) {
+	hosts := s.deps.Cluster.AllHosts()
+	connected := s.deps.Cluster.ConnectedHosts()
+	connectedSet := make(map[string]bool, len(connected))
+	for _, id := range connected {
+		connectedSet[id] = true
+	}
+	for i := range hosts {
+		hosts[i].Connected = connectedSet[hosts[i].ID]
+	}
+	writeJSON(w, http.StatusOK, hosts)
+}
+
+func (s *Server) handleGenerateEnrollToken(w http.ResponseWriter, _ *http.Request) {
+	token, id, err := s.deps.Cluster.GenerateEnrollToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"token": token,
+		"id":    id,
+	})
+}
+
+func (s *Server) handleRemoveHost(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.deps.Cluster.RemoveHost(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+func (s *Server) handleRevokeHost(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.deps.Cluster.RevokeHost(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (s *Server) handleDrainHost(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.deps.Cluster.DrainHost(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "draining"})
 }
 
 // writeJSON encodes v as JSON and writes it to the response.

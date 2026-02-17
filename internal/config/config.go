@@ -50,6 +50,16 @@ type Config struct {
 	WebAuthnOrigins     string // comma-separated allowed origins
 	MetricsEnabled      bool
 
+	// Cluster / multi-host
+	Mode               string        // "server" or "agent" — set via subcommand or SENTINEL_MODE env
+	ClusterEnabled     bool          // server: whether to start the gRPC listener
+	ClusterPort        string        // gRPC port (default "9443")
+	ClusterDataDir     string        // CA/cert storage directory (default "/data/cluster")
+	ServerAddr         string        // agent: server gRPC address (host:port)
+	EnrollToken        string        // agent: one-time enrollment token
+	HostName           string        // agent: human-readable label for this host
+	GracePeriodOffline time.Duration // agent: time before switching to autonomous mode (default 30m)
+
 	// mu protects the mutable runtime fields below.
 	mu               sync.RWMutex
 	pollInterval     time.Duration // how often to scan for updates
@@ -109,6 +119,16 @@ func Load() *Config {
 		dependencyAware:     envBool("SENTINEL_DEPS", true),
 		rollbackPolicy:      envStr("SENTINEL_ROLLBACK_POLICY", ""),
 		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
+
+		// Cluster / multi-host
+		Mode:               envStr("SENTINEL_MODE", ""),
+		ClusterEnabled:     envBool("SENTINEL_CLUSTER", false),
+		ClusterPort:        envStr("SENTINEL_CLUSTER_PORT", "9443"),
+		ClusterDataDir:     envStr("SENTINEL_CLUSTER_DIR", "/data/cluster"),
+		ServerAddr:         envStr("SENTINEL_SERVER_ADDR", ""),
+		EnrollToken:        envStr("SENTINEL_ENROLL_TOKEN", ""),
+		HostName:           envStr("SENTINEL_HOST_NAME", ""),
+		GracePeriodOffline: envDuration("SENTINEL_GRACE_PERIOD_OFFLINE", 30*time.Minute),
 	}
 }
 
@@ -143,6 +163,20 @@ func (c *Config) Validate() error {
 	if c.WebAuthnRPID == "" && c.WebAuthnOrigins != "" {
 		errs = append(errs, fmt.Errorf("SENTINEL_WEBAUTHN_RPID is required when SENTINEL_WEBAUTHN_ORIGINS is set"))
 	}
+
+	// Cluster mode validation.
+	if c.Mode != "" && c.Mode != "server" && c.Mode != "agent" {
+		errs = append(errs, fmt.Errorf("SENTINEL_MODE must be 'server' or 'agent', got %q", c.Mode))
+	}
+	if c.Mode == "agent" {
+		if c.ServerAddr == "" {
+			errs = append(errs, fmt.Errorf("SENTINEL_SERVER_ADDR is required in agent mode"))
+		}
+		if c.WebEnabled {
+			errs = append(errs, fmt.Errorf("web dashboard cannot be enabled in agent mode (SENTINEL_WEB_ENABLED must be false)"))
+		}
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -186,6 +220,15 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_DEPS":                  fmt.Sprintf("%t", da),
 		"SENTINEL_ROLLBACK_POLICY":       rp,
 		"SENTINEL_METRICS":               fmt.Sprintf("%t", c.MetricsEnabled),
+
+		// Cluster / multi-host
+		"SENTINEL_MODE":                 c.Mode,
+		"SENTINEL_CLUSTER":              fmt.Sprintf("%t", c.ClusterEnabled),
+		"SENTINEL_CLUSTER_PORT":         c.ClusterPort,
+		"SENTINEL_CLUSTER_DIR":          c.ClusterDataDir,
+		"SENTINEL_SERVER_ADDR":          c.ServerAddr,
+		"SENTINEL_HOST_NAME":            c.HostName,
+		"SENTINEL_GRACE_PERIOD_OFFLINE": c.GracePeriodOffline.String(),
 	}
 }
 
@@ -391,4 +434,14 @@ func (c *Config) WebAuthnOriginList() []string {
 		}
 	}
 	return origins
+}
+
+// IsAgent returns true when running in agent mode.
+func (c *Config) IsAgent() bool {
+	return c.Mode == "agent"
+}
+
+// IsServer returns true when running in server mode (explicit or default).
+func (c *Config) IsServer() bool {
+	return c.Mode == "" || c.Mode == "server"
 }

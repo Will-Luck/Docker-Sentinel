@@ -1,0 +1,221 @@
+syntax = "proto3";
+
+package sentinel.cluster;
+
+option go_package = "github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// EnrollmentService handles one-time agent registration.
+// This service is unauthenticated — token-based verification only.
+service EnrollmentService {
+  // Enroll registers a new agent with the server using a one-time token.
+  // The agent sends its CSR and receives back signed certificates.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+}
+
+// AgentService handles ongoing communication between server and agents.
+// Requires mTLS authentication.
+service AgentService {
+  // Channel establishes a bidirectional stream for real-time commands and events.
+  // Server sends commands (list containers, update, rollback, etc.)
+  // Agent sends events (heartbeat, container state, update results, etc.)
+  rpc Channel(stream AgentMessage) returns (stream ServerMessage);
+
+  // ReportState sends a full state snapshot. Used on initial connect and
+  // periodically as a reconciliation checkpoint.
+  rpc ReportState(StateReport) returns (StateAck);
+}
+
+// --- Enrollment messages ---
+
+message EnrollRequest {
+  string token = 1;      // one-time enrollment token
+  string host_name = 2;  // human-readable agent label
+  bytes csr = 3;         // PKCS#10 certificate signing request (DER)
+}
+
+message EnrollResponse {
+  string host_id = 1;
+  bytes ca_cert = 2;     // CA certificate PEM
+  bytes agent_cert = 3;  // signed agent certificate PEM
+}
+
+// --- Stream messages (bidirectional) ---
+
+// AgentMessage is a wrapper for all agent-to-server stream messages.
+message AgentMessage {
+  oneof payload {
+    Heartbeat heartbeat = 1;
+    ContainerList container_list = 2;
+    UpdateResult update_result = 3;
+    HookResult hook_result = 4;
+    RollbackResult rollback_result = 5;
+    OfflineJournal offline_journal = 6;
+    CertRenewalCSR cert_renewal = 7;
+  }
+}
+
+// ServerMessage is a wrapper for all server-to-agent stream messages.
+message ServerMessage {
+  string request_id = 1; // unique ID for idempotency + correlation
+  oneof payload {
+    Heartbeat heartbeat = 2;
+    ListContainersRequest list_containers = 3;
+    UpdateContainerRequest update_container = 4;
+    PullImageRequest pull_image = 5;
+    RunHookRequest run_hook = 6;
+    RollbackRequest rollback = 7;
+    PolicySync policy_sync = 8;
+    SettingsSync settings_sync = 9;
+    CertRenewalResponse cert_renewal_response = 10;
+  }
+}
+
+// --- Common types ---
+
+message Heartbeat {
+  google.protobuf.Timestamp timestamp = 1;
+  string agent_version = 2;           // semver of agent binary
+  repeated string supported_features = 3; // capability negotiation
+  string host_id = 4;                 // identifies which agent
+}
+
+message ContainerInfo {
+  string id = 1;
+  string name = 2;
+  string image = 3;          // full image reference (e.g. "nginx:1.25")
+  string image_digest = 4;   // currently running digest
+  string state = 5;          // "running", "stopped", etc.
+  map<string, string> labels = 6;
+  google.protobuf.Timestamp created = 7;
+}
+
+message ContainerList {
+  string request_id = 1;  // echoes the server's request_id
+  repeated ContainerInfo containers = 2;
+}
+
+// --- Container operations ---
+
+message ListContainersRequest {
+  // No fields needed — agent lists all containers.
+}
+
+message UpdateContainerRequest {
+  string container_name = 1;
+  string target_image = 2;    // image reference to update to
+  string target_digest = 3;   // expected digest of the new image
+  bool skip_hooks = 4;        // skip pre/post-update hooks
+}
+
+message UpdateResult {
+  string request_id = 1;      // echoes the server's request_id
+  string container_name = 2;
+  string old_image = 3;
+  string old_digest = 4;
+  string new_image = 5;
+  string new_digest = 6;
+  string outcome = 7;         // "success", "rollback", "failed"
+  string error = 8;
+  google.protobuf.Duration duration = 9;
+}
+
+message PullImageRequest {
+  string image_ref = 1;  // image to pull (e.g. "nginx:1.26")
+}
+
+// --- Hooks ---
+
+message RunHookRequest {
+  string container_name = 1;
+  string phase = 2;           // "pre-update" or "post-update"
+  string command = 3;
+  int32 timeout_seconds = 4;
+}
+
+message HookResult {
+  string request_id = 1;
+  string container_name = 2;
+  string phase = 3;
+  int32 exit_code = 4;
+  string output = 5;
+  string error = 6;
+}
+
+// --- Rollback ---
+
+message RollbackRequest {
+  string container_name = 1;
+}
+
+message RollbackResult {
+  string request_id = 1;
+  string container_name = 2;
+  string outcome = 3;  // "success" or "failed"
+  string error = 4;
+}
+
+// --- State reporting ---
+
+message StateReport {
+  string host_id = 1;
+  repeated ContainerInfo containers = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  string agent_version = 4;
+  repeated string supported_features = 5;
+}
+
+message StateAck {
+  bool accepted = 1;
+  string message = 2;   // e.g. "state received" or error detail
+}
+
+// --- Policy + settings sync ---
+
+message PolicySync {
+  // Per-container policy overrides pushed from server to agent.
+  map<string, string> policies = 1; // container_name -> "auto"/"manual"/"pinned"
+  string default_policy = 2;
+}
+
+message SettingsSync {
+  google.protobuf.Duration poll_interval = 1;
+  google.protobuf.Duration grace_period = 2;
+  bool latest_auto_update = 3;
+  bool image_cleanup = 4;
+  bool hooks_enabled = 5;
+  bool dependency_aware = 6;
+  string rollback_policy = 7;
+}
+
+// --- Offline journal ---
+
+message OfflineJournal {
+  repeated JournalEntry entries = 1;
+}
+
+message JournalEntry {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string action = 3;       // "update", "rollback", "hook"
+  string container = 4;
+  string old_image = 5;
+  string new_image = 6;
+  string old_digest = 7;
+  string new_digest = 8;
+  string outcome = 9;
+  string error = 10;
+  google.protobuf.Duration duration = 11;
+}
+
+// --- Certificate renewal ---
+
+message CertRenewalCSR {
+  bytes csr = 1;  // new PKCS#10 CSR (DER)
+}
+
+message CertRenewalResponse {
+  bytes agent_cert = 1;  // newly signed certificate PEM
+}
