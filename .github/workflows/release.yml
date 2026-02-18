@@ -56,7 +56,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -82,7 +84,7 @@ jobs:
               GOARM="${ARCH_RAW##*v}"
               export GOARM
             fi
-            CGO_ENABLED=0 GOOS="$OS" GOARCH="${ARCH_RAW%%/*}" go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o "dist/docker-sentinel-${OS}-${ARCH}" ./cmd/sentinel
+            CGO_ENABLED=0 GOOS="$OS" GOARCH="${ARCH_RAW%%/*}" go build -ldflags="-s -w -X main.version=${{ github.ref_name }} -X main.commit=${{ github.sha }}" -o "dist/docker-sentinel-${OS}-${ARCH}" ./cmd/sentinel
           done
       - name: Create release
         run: gh release create ${{ github.ref_name }} dist/* --generate-notes
