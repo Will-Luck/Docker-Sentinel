@@ -59,7 +59,8 @@ type Dependencies struct {
 	Cluster             *ClusterController // thread-safe proxy; always non-nil, use .Enabled() to check
 	MetricsEnabled      bool
 	Auth                *auth.Service
-	Version             string
+	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
+	Commit              string // short git commit hash, e.g. "abc1234" or "unknown"
 	Log                 *slog.Logger
 }
 

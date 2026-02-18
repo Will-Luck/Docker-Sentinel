@@ -9,7 +9,8 @@ RUN go mod download
 COPY . .
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o /sentinel ./cmd/sentinel
+ARG COMMIT=unknown
+RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /sentinel ./cmd/sentinel
 
 FROM alpine:3.21
 

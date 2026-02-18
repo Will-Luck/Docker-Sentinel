@@ -17,6 +17,7 @@ func (s *Server) apiAbout(w http.ResponseWriter, r *http.Request) {
 
 	type aboutResponse struct {
 		Version        string        `json:"version"`
+		Commit         string        `json:"commit,omitempty"` // short git hash, omitted when "unknown"
 		GoVersion      string        `json:"go_version"`
 		DataDirectory  string        `json:"data_directory"`
 		Uptime         string        `json:"uptime"`
@@ -30,8 +31,15 @@ func (s *Server) apiAbout(w http.ResponseWriter, r *http.Request) {
 		Registries     []string      `json:"registries"`
 	}
 
+	// Only include commit hash in response if it's actually known.
+	commitVal := s.deps.Commit
+	if commitVal == "unknown" {
+		commitVal = ""
+	}
+
 	resp := aboutResponse{
 		Version:    s.deps.Version,
+		Commit:     commitVal,
 		GoVersion:  runtime.Version(),
 		Uptime:     formatUptime(time.Since(s.startTime)),
 		StartedAt:  s.startTime,

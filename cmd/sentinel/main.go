@@ -32,7 +32,25 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
 )
 
+// version and commit are set at build time via ldflags:
+//
+//	-X main.version=$(VERSION) -X main.commit=$(COMMIT)
+//
+// version defaults to "dev" for untagged local builds.
+// commit defaults to "unknown" when git info isn't available (e.g. Docker build
+// without --build-arg COMMIT=...).
 var version = "dev"
+var commit = "unknown"
+
+// versionString returns the formatted version for display, including the
+// short commit hash in parentheses when available.
+// Examples: "v2.0.1 (abc1234)", "dev (abc1234)", "dev" (no git info).
+func versionString() string {
+	if commit != "" && commit != "unknown" {
+		return version + " (" + commit + ")"
+	}
+	return version
+}
 
 func main() {
 	// Subcommand dispatch: "sentinel server" or "sentinel agent".
@@ -70,7 +88,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
-	fmt.Println("Docker-Sentinel " + version)
+	fmt.Println("Docker-Sentinel " + versionString())
 	if cfg.Mode != "" {
 		fmt.Printf("Mode: %s\n", cfg.Mode)
 	}
@@ -336,7 +354,8 @@ func main() {
 			MetricsEnabled:      cfg.MetricsEnabled,
 			Digest:              digestSched,
 			Auth:                authSvc,
-			Version:             version,
+			Version:             versionString(),
+			Commit:              commit,
 			Log:                 log.Logger,
 		}
 		if isSwarm {
@@ -431,7 +450,7 @@ func main() {
 		}()
 	}
 
-	log.Info("sentinel started", "version", version)
+	log.Info("sentinel started", "version", version, "commit", commit)
 
 	if err := scheduler.Run(ctx); err != nil {
 		log.Error("sentinel exited with error", "error", err)
@@ -445,7 +464,7 @@ func main() {
 // code path from the server — it connects to a remote Sentinel server
 // over gRPC and executes update commands on the local Docker host.
 func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
-	fmt.Println("Docker-Sentinel Agent " + version)
+	fmt.Println("Docker-Sentinel Agent " + versionString())
 	fmt.Println("=============================================")
 	fmt.Printf("SENTINEL_SERVER_ADDR=%s\n", cfg.ServerAddr)
 	fmt.Printf("SENTINEL_HOST_NAME=%s\n", cfg.HostName)
@@ -465,7 +484,7 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		DataDir:            cfg.ClusterDataDir,
 		GracePeriodOffline: cfg.GracePeriodOffline,
 		DockerSock:         cfg.DockerSock,
-		Version:            version,
+		Version:            versionString(),
 	}
 
 	a := agent.New(agentCfg, client, log.Logger)
