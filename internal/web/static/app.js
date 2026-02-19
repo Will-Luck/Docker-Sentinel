@@ -98,10 +98,15 @@ function initAccordionPersistence() {
     var mode = localStorage.getItem("sentinel-sections") || "remember";
     var accordions = document.querySelectorAll("details.accordion");
 
+    // If there's only one accordion on the page, always expand it.
+    var forceOpen = accordions.length === 1;
+
     for (var i = 0; i < accordions.length; i++) {
         var details = accordions[i];
 
-        if (mode === "remember") {
+        if (forceOpen) {
+            details.open = true;
+        } else if (mode === "remember") {
             // Restore saved state if available
             var key = getAccordionKey(details);
             if (key) {
@@ -2107,6 +2112,7 @@ function applyFiltersAndSort() {
 
     if (filterState.sort !== "default") {
         sortRows(stacks);
+        sortSwarmServices(table);
     }
 }
 
@@ -2135,6 +2141,38 @@ function sortRows(stacks) {
             tbody.appendChild(rows[i]);
         }
     }
+}
+
+function sortSwarmServices(table) {
+    var groups = table.querySelectorAll("tbody.svc-group");
+    if (groups.length < 2) return;
+    var arr = [];
+    for (var i = 0; i < groups.length; i++) {
+        if (groups[i].style.display === "none") continue;
+        arr.push(groups[i]);
+    }
+    if (filterState.sort === "alpha") {
+        arr.sort(function(a, b) {
+            return (a.getAttribute("data-service") || "").localeCompare(b.getAttribute("data-service") || "");
+        });
+    } else if (filterState.sort === "status") {
+        arr.sort(function(a, b) {
+            var sa = svcStatusScore(a), sb = svcStatusScore(b);
+            return sa !== sb ? sb - sa : (a.getAttribute("data-service") || "").localeCompare(b.getAttribute("data-service") || "");
+        });
+    }
+    for (var j = 0; j < arr.length; j++) {
+        arr[j].parentNode.appendChild(arr[j]);
+    }
+}
+
+function svcStatusScore(svcGroup) {
+    var header = svcGroup.querySelector(".svc-header");
+    if (!header) return 0;
+    var rep = header.querySelector(".svc-replicas");
+    if (rep && rep.classList.contains("svc-replicas-down")) return 3;
+    if (header.classList.contains("has-update")) return 2;
+    return 1;
 }
 
 function statusScore(row) {
@@ -2363,6 +2401,29 @@ function updateStats(total, running, pending) {
             values[i].classList.add("stat-changed");
         }
     }
+    updatePendingColor(pending);
+}
+
+function refreshDashboardStats() {
+    if (!document.getElementById("stats")) return;
+    fetch("/api/stats", {credentials: "same-origin"})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            updateStats(data.total, data.running, data.pending);
+        })
+        .catch(function() {});
+}
+
+function updatePendingColor(pending) {
+    var stats = document.getElementById("stats");
+    if (!stats) return;
+    var pendingEl = stats.querySelectorAll(".stat-value")[2];
+    if (!pendingEl) return;
+    if (pending === 0 || pending === "0") {
+        pendingEl.className = "stat-value success";
+    } else {
+        pendingEl.className = "stat-value warning";
+    }
 }
 
 function showBadgeSpinner(wrap) {
@@ -2439,8 +2500,9 @@ function initSSE() {
             queueBatchToast(data.message || "Queue updated", "info");
         } catch (_) {}
         // On the dashboard, container_update already patches rows individually.
-        // Only update the digest banner and nav badge — no full reload needed.
+        // Refresh stats and nav badge to keep counts in sync.
         if (document.getElementById("container-table")) {
+            refreshDashboardStats();
             scheduleDigestBannerRefresh();
             updateQueueBadge();
         } else {
@@ -2457,8 +2519,9 @@ function initSSE() {
         checkPauseState();
         refreshLastScan();
         // On dashboard, rows are already patched by container_update events.
-        // Just refresh the banner — no full page reload needed.
+        // Refresh stats and banner to ensure counts are accurate.
         if (document.getElementById("container-table")) {
+            refreshDashboardStats();
             scheduleDigestBannerRefresh();
         } else {
             scheduleReload();
@@ -2779,6 +2842,16 @@ document.addEventListener("DOMContentLoaded", function () {
 
     initSettingsPage();
     initAccordionPersistence();
+
+    // Color the pending stat card based on initial value.
+    var stats = document.getElementById("stats");
+    if (stats) {
+        var pendingEl = stats.querySelectorAll(".stat-value")[2];
+        if (pendingEl) {
+            var val = parseInt(pendingEl.textContent.trim(), 10);
+            updatePendingColor(val);
+        }
+    }
 
     // Keyboard support for stack headers.
     var stackHeaders = document.querySelectorAll(".stack-header");
@@ -3963,7 +4036,12 @@ function renderRegistryCredentials() {
 
 function addRegistryCredential() {
     var select = document.getElementById("registry-type-select");
-    if (!select || !select.value) return;
+    if (!select) return;
+    if (!select.value) {
+        showToast("Select a registry from the dropdown first", "warning");
+        select.focus();
+        return;
+    }
     var reg = select.value;
     var id = "reg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
     registryCredentials.push({ id: id, registry: reg, username: "", secret: "" });

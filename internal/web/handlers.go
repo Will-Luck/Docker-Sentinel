@@ -722,6 +722,49 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleDashboardStats returns lightweight container counts for live stat card updates.
+func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	pendingNames := make(map[string]bool)
+	for _, p := range s.deps.Queue.List() {
+		pendingNames[p.ContainerName] = true
+	}
+
+	total, running, pending := len(containers), 0, 0
+	for _, c := range containers {
+		if c.State == "running" {
+			running++
+		}
+		if pendingNames[containerName(c)] {
+			pending++
+		}
+	}
+
+	// Include Swarm services in total count.
+	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
+		services, err := s.deps.Swarm.ListServices(r.Context())
+		if err == nil {
+			total += len(services)
+			for _, svc := range services {
+				if pendingNames[svc.Name] {
+					pending++
+				}
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total":   total,
+		"running": running,
+		"pending": pending,
+	})
+}
+
 // handleCluster renders the cluster management page with host cards and enrollment.
 func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 	if !s.deps.Cluster.Enabled() {
