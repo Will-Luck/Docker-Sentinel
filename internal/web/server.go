@@ -660,6 +660,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/containers/{name}", perm(auth.PermContainersView, s.apiContainerDetail))
 	s.mux.Handle("GET /api/containers/{name}/versions", perm(auth.PermContainersView, s.apiContainerVersions))
 	s.mux.Handle("GET /api/containers/{name}/row", perm(auth.PermContainersView, s.handleContainerRow))
+	s.mux.Handle("GET /api/stats", perm(auth.PermContainersView, s.handleDashboardStats))
 	s.mux.Handle("GET /api/events", perm(auth.PermContainersView, s.apiSSE))
 	s.mux.Handle("GET /api/queue", perm(auth.PermContainersView, s.apiQueue))
 	s.mux.Handle("GET /api/last-scan", perm(auth.PermContainersView, s.apiLastScan))
