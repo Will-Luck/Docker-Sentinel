@@ -1245,3 +1245,27 @@ func TestMultipleAgents(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+// ---------------------------------------------------------------------------
+// TestRegisterPending_RejectsExisting verifies that a second registerPending
+// call for the same host returns an error while the first is still outstanding.
+// ---------------------------------------------------------------------------
+
+func TestRegisterPending_RejectsExisting(t *testing.T) {
+	s := &Server{
+		pending: make(map[string]chan *proto.AgentMessage),
+	}
+
+	ch1, err := s.registerPending("h1")
+	if err != nil {
+		t.Fatalf("first registerPending: unexpected error: %v", err)
+	}
+	if ch1 == nil {
+		t.Fatal("first registerPending: expected non-nil channel")
+	}
+
+	_, err = s.registerPending("h1")
+	if err == nil {
+		t.Fatal("second registerPending: expected error, got nil")
+	}
+}

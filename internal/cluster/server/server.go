@@ -370,6 +370,13 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		}
 		s.mu.Unlock()
 
+		s.pendingMu.Lock()
+		if ch, ok := s.pending[hostID]; ok {
+			delete(s.pending, hostID)
+			close(ch)
+		}
+		s.pendingMu.Unlock()
+
 		s.registry.SetConnected(hostID, false)
 		_ = s.registry.UpdateLastSeen(hostID, time.Now())
 
@@ -739,12 +746,15 @@ func (s *Server) deliverPending(hostID string, msg *proto.AgentMessage) {
 // registerPending creates a response channel for the given host.
 // Must be called before sending the command to avoid a race where
 // the agent responds before the channel is registered.
-func (s *Server) registerPending(hostID string) chan *proto.AgentMessage {
+func (s *Server) registerPending(hostID string) (chan *proto.AgentMessage, error) {
 	ch := make(chan *proto.AgentMessage, 1)
 	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	if _, exists := s.pending[hostID]; exists {
+		return nil, fmt.Errorf("agent %s already has an outstanding request", hostID)
+	}
 	s.pending[hostID] = ch
-	s.pendingMu.Unlock()
-	return ch
+	return ch, nil
 }
 
 // cancelPending removes the pending channel for a host and returns it.
@@ -761,7 +771,11 @@ func (s *Server) cancelPending(hostID string, ch chan *proto.AgentMessage) {
 // response arrives or the context is cancelled.
 func (s *Server) awaitPending(ctx context.Context, hostID string, ch chan *proto.AgentMessage) (*proto.AgentMessage, error) {
 	select {
-	case resp := <-ch:
+	case resp, ok := <-ch:
+		if !ok {
+			// Channel was closed by the disconnect cleanup — agent dropped.
+			return nil, fmt.Errorf("agent %s disconnected", hostID)
+		}
 		return resp, nil
 	case <-ctx.Done():
 		s.cancelPending(hostID, ch)
@@ -777,7 +791,10 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 
 	// Register the response channel BEFORE sending, so a fast agent
 	// response doesn't race with registration.
-	ch := s.registerPending(hostID)
+	ch, err := s.registerPending(hostID)
+	if err != nil {
+		return nil, err
+	}
 
 	msg := &proto.ServerMessage{
 		RequestId: reqID,
@@ -811,7 +828,10 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 
 	// Register the response channel BEFORE sending, so a fast agent
 	// response doesn't race with registration.
-	ch := s.registerPending(hostID)
+	ch, err := s.registerPending(hostID)
+	if err != nil {
+		return nil, err
+	}
 
 	msg := &proto.ServerMessage{
 		RequestId: reqID,
@@ -846,7 +866,10 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 // until the agent responds with a ContainerActionResult or the context is cancelled.
 func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName, action string) error {
 	reqID := generateRequestID()
-	ch := s.registerPending(hostID)
+	ch, err := s.registerPending(hostID)
+	if err != nil {
+		return err
+	}
 
 	msg := &proto.ServerMessage{
 		RequestId: reqID,
