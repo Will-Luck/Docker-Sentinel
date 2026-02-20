@@ -994,3 +994,19 @@ func clampInt32(v int) int32 {
 	}
 	return int32(v) //nolint:gosec // bounds checked above
 }
+
+// Connected reports whether the agent currently has an active server connection.
+func (a *Agent) Connected() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.connected
+}
+
+// ContainerCount returns the number of running containers on the local host.
+func (a *Agent) ContainerCount() int {
+	containers, err := a.docker.ListContainers(context.Background())
+	if err != nil {
+		return 0
+	}
+	return len(containers)
+}

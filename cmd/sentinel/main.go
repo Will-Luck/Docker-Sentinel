@@ -522,6 +522,49 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	}
 	defer client.Close()
 
+	db, err := store.Open(cfg.DBPath)
+	if err != nil {
+		log.Error("failed to open database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := db.EnsureAuthBuckets(); err != nil {
+		log.Error("failed to create auth buckets", "error", err)
+		os.Exit(1)
+	}
+
+	authSvc := auth.NewService(auth.ServiceConfig{
+		Users:         db,
+		Sessions:      db,
+		Roles:         db,
+		Settings:      db,
+		Log:           log.Logger,
+		CookieSecure:  cfg.CookieSecure,
+		SessionExpiry: cfg.SessionExpiry,
+		AuthEnabledEnv: cfg.AuthEnabled,
+	})
+
+	agentWeb := web.NewAgentServer(web.AgentDeps{
+		Auth:          authSvc,
+		SettingsStore: &settingsStoreAdapter{db},
+		Log:           log.Logger,
+		Version:       versionString(),
+	})
+
+	go func() {
+		addr := net.JoinHostPort("", cfg.WebPort)
+		if err := agentWeb.ListenAndServe(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("agent web server error", "error", err)
+		}
+	}()
+
+	defer func() {
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = agentWeb.Shutdown(shutCtx)
+	}()
+
 	agentCfg := agent.Config{
 		ServerAddr:         cfg.ServerAddr,
 		EnrollToken:        cfg.EnrollToken,
@@ -533,6 +576,7 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	}
 
 	a := agent.New(agentCfg, client, log.Logger)
+	agentWeb.SetStatusProvider(a)
 
 	log.Info("starting agent mode", "server", cfg.ServerAddr, "host", cfg.HostName)
 	if err := a.Run(ctx); err != nil {

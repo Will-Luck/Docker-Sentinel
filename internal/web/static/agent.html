@@ -1,0 +1,350 @@
+{{define "agent.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent — Docker-Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <style>
+        .agent-wrap {
+            display: flex;
+            min-height: 100vh;
+            align-items: flex-start;
+            justify-content: center;
+            padding: var(--sp-6) var(--sp-4);
+            background: var(--bg-body);
+        }
+        .agent-card {
+            width: 100%;
+            max-width: 520px;
+            background: var(--bg-surface);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            padding: var(--sp-8);
+            box-shadow: var(--shadow-md);
+        }
+        .agent-logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--sp-3);
+            margin-bottom: var(--sp-2);
+        }
+        .agent-logo-text {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--fg-primary);
+        }
+        .agent-subtitle {
+            text-align: center;
+            font-size: 0.875rem;
+            color: var(--fg-muted);
+            margin-bottom: var(--sp-6);
+        }
+        .agent-section {
+            margin-bottom: var(--sp-6);
+        }
+        .agent-section-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--fg-muted);
+            margin-bottom: var(--sp-3);
+        }
+        .status-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--sp-2) 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+        .status-row:last-child { border-bottom: none; }
+        .status-label { color: var(--fg-muted); }
+        .status-value { color: var(--fg-primary); font-family: var(--font-mono); }
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: var(--sp-2);
+            background: var(--fg-muted);
+        }
+        .status-dot.connected { background: #4caf50; }
+        .status-dot.disconnected { background: #f44336; }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: var(--sp-1);
+            margin-bottom: var(--sp-3);
+        }
+        .form-label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--fg-secondary);
+        }
+        .form-input {
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-body);
+            color: var(--fg-primary);
+            font-size: 0.9rem;
+            font-family: var(--font-mono);
+            outline: none;
+            transition: border-color 150ms ease;
+        }
+        .form-input:focus { border-color: var(--accent); }
+        .btn {
+            padding: 9px 18px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: opacity 150ms ease;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+        .btn-secondary {
+            background: transparent;
+            color: var(--fg-secondary);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover:not(:disabled) { background: var(--bg-hover); }
+        .btn-danger { background: #f44336; color: #fff; }
+        .btn-danger:hover:not(:disabled) { opacity: 0.88; }
+        .btn-full { width: 100%; }
+        .inline-msg {
+            font-size: 0.85rem;
+            margin-top: var(--sp-2);
+            padding: 6px 10px;
+            border-radius: var(--radius);
+        }
+        .inline-msg.ok { background: rgba(76,175,80,0.12); color: #4caf50; }
+        .inline-msg.err { background: rgba(244,67,54,0.12); color: #f44336; }
+        .inline-msg.info { background: rgba(var(--accent-rgb, 103,80,164), 0.12); color: var(--accent); }
+        .restart-banner {
+            background: rgba(255,152,0,0.12);
+            border: 1px solid rgba(255,152,0,0.3);
+            color: #ff9800;
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            font-size: 0.875rem;
+            margin-bottom: var(--sp-4);
+            display: none;
+        }
+        .agent-footer {
+            text-align: center;
+            font-size: 0.75rem;
+            color: var(--fg-muted);
+            margin-top: var(--sp-6);
+            padding-top: var(--sp-4);
+            border-top: 1px solid var(--border);
+        }
+        .divider {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: var(--sp-6) 0;
+        }
+    </style>
+</head>
+<body>
+<div class="agent-wrap">
+    <div class="agent-card">
+        <div class="agent-logo">
+            <svg width="200" height="40" viewBox="0 0 360 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sentinel">
+                <text x="50%" y="44" text-anchor="middle" font-family="Inter, Roboto, system-ui, sans-serif" font-weight="500" font-size="36" letter-spacing="0.01em" fill="var(--accent, #6750A4)">Sentinel</text>
+            </svg>
+        </div>
+        <div class="agent-subtitle">Agent Mode</div>
+
+        <div id="restart-banner" class="restart-banner">
+            Settings saved — restart the container to apply changes.
+        </div>
+
+        <!-- Status -->
+        <div class="agent-section">
+            <div class="agent-section-title">Status</div>
+            <div class="status-row">
+                <span class="status-label">Connection</span>
+                <span class="status-value">
+                    <span id="status-dot" class="status-dot disconnected"></span>
+                    <span id="status-text">--</span>
+                </span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Server</span>
+                <span class="status-value" id="status-server">--</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Host Name</span>
+                <span class="status-value" id="status-host">--</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Containers</span>
+                <span class="status-value" id="status-containers">--</span>
+            </div>
+            <div class="status-row">
+                <span class="status-label">Version</span>
+                <span class="status-value" id="status-version">{{.Version}}</span>
+            </div>
+        </div>
+
+        <hr class="divider">
+
+        <!-- Settings -->
+        <div class="agent-section">
+            <div class="agent-section-title">Settings</div>
+            <div class="form-group">
+                <label class="form-label" for="inp-server-addr">Server Address</label>
+                <input class="form-input" type="text" id="inp-server-addr" placeholder="host:port" value="{{.ServerAddr}}">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="inp-host-name">Host Name</label>
+                <input class="form-input" type="text" id="inp-host-name" placeholder="my-agent-host" value="{{.HostName}}">
+            </div>
+            <button class="btn btn-primary" id="btn-save-settings" onclick="saveSettings()">Save</button>
+            <div id="settings-msg" class="inline-msg" style="display:none"></div>
+        </div>
+
+        <hr class="divider">
+
+        <!-- Switch role -->
+        <div class="agent-section">
+            <div class="agent-section-title">Instance Role</div>
+            <button class="btn btn-secondary btn-full" onclick="switchToServer()">Switch to Server Mode</button>
+            <div id="role-msg" class="inline-msg" style="display:none"></div>
+        </div>
+
+        <hr class="divider">
+
+        <!-- Change Password -->
+        <div class="agent-section">
+            <div class="agent-section-title">Change Password</div>
+            <div class="form-group">
+                <label class="form-label" for="inp-cur-pw">Current Password</label>
+                <input class="form-input" type="password" id="inp-cur-pw" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="inp-new-pw">New Password</label>
+                <input class="form-input" type="password" id="inp-new-pw" autocomplete="new-password">
+            </div>
+            <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
+            <div id="pw-msg" class="inline-msg" style="display:none"></div>
+        </div>
+
+        <hr class="divider">
+
+        <!-- Logout -->
+        <form method="POST" action="/logout">
+            <button class="btn btn-danger btn-full" type="submit">Logout</button>
+        </form>
+
+        <div class="agent-footer">{{.Version}}</div>
+    </div>
+</div>
+<script>
+(function() {
+    function showMsg(id, text, type) {
+        var el = document.getElementById(id);
+        el.textContent = text;
+        el.className = 'inline-msg ' + type;
+        el.style.display = 'block';
+        setTimeout(function() { el.style.display = 'none'; }, 4000);
+    }
+
+    function fetchStatus() {
+        fetch('/api/agent/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var dot = document.getElementById('status-dot');
+                dot.className = 'status-dot ' + (d.connected ? 'connected' : 'disconnected');
+                document.getElementById('status-text').textContent = d.connected ? 'Connected' : 'Disconnected';
+                document.getElementById('status-server').textContent = d.server_addr || '--';
+                document.getElementById('status-host').textContent = d.host_name || '--';
+                document.getElementById('status-containers').textContent = d.containers;
+                document.getElementById('status-version').textContent = d.version;
+            })
+            .catch(function() {
+                document.getElementById('status-text').textContent = 'Error';
+            });
+    }
+
+    window.saveSettings = function() {
+        var serverAddr = document.getElementById('inp-server-addr').value.trim();
+        var hostName = document.getElementById('inp-host-name').value.trim();
+        fetch('/api/agent/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({server_addr: serverAddr, host_name: hostName})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) {
+                showMsg('settings-msg', d.error, 'err');
+            } else {
+                showMsg('settings-msg', 'Saved', 'ok');
+                if (d.restart_required) {
+                    document.getElementById('restart-banner').style.display = 'block';
+                }
+            }
+        })
+        .catch(function() { showMsg('settings-msg', 'Request failed', 'err'); });
+    };
+
+    window.switchToServer = function() {
+        fetch('/api/agent/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({instance_role: 'server'})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) {
+                showMsg('role-msg', d.error, 'err');
+            } else {
+                showMsg('role-msg', 'Role saved — restart to apply', 'info');
+                document.getElementById('restart-banner').style.display = 'block';
+            }
+        })
+        .catch(function() { showMsg('role-msg', 'Request failed', 'err'); });
+    };
+
+    window.changePassword = function() {
+        var cur = document.getElementById('inp-cur-pw').value;
+        var nw = document.getElementById('inp-new-pw').value;
+        fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({current_password: cur, new_password: nw})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) {
+                showMsg('pw-msg', d.error, 'err');
+            } else {
+                showMsg('pw-msg', 'Password updated', 'ok');
+                document.getElementById('inp-cur-pw').value = '';
+                document.getElementById('inp-new-pw').value = '';
+            }
+        })
+        .catch(function() { showMsg('pw-msg', 'Request failed', 'err'); });
+    };
+
+    fetchStatus();
+    setInterval(fetchStatus, 5000);
+})();
+</script>
+</body>
+</html>
+{{end}}
