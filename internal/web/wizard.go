@@ -78,6 +78,7 @@ func (ws *WizardServer) handleSetup(w http.ResponseWriter, r *http.Request) {
 	_ = ws.tmpl.ExecuteTemplate(w, "setup.html", map[string]any{
 		"Expired":          !ws.setupWindowOpen(),
 		"RemainingSeconds": int(remaining.Seconds()),
+		"Version":          ws.deps.Version,
 	})
 }
 
