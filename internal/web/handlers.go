@@ -33,6 +33,10 @@ type pageData struct {
 	PendingUpdates    int
 	QueueCount        int // sidebar badge: number of items in queue
 
+	// Per-tab stats for the dashboard tab navigation.
+	TabStats []tabStats
+	HasSwarm bool
+
 	// Cluster state (populated by withCluster helper).
 	ClusterEnabled bool
 	ClusterHosts   []ClusterHost // populated only on /cluster page
@@ -47,6 +51,17 @@ type pageData struct {
 	CurrentUser *auth.User
 	AuthEnabled bool
 	CSRFToken   string
+}
+
+// tabStats holds per-tab container counts for the dashboard tab navigation.
+// ID is "local", "swarm", or the cluster host ID. Label is the human-readable
+// display name shown on the tab.
+type tabStats struct {
+	ID      string // "local", "swarm", or host ID
+	Label   string // "Local", "Swarm Services", or host name
+	Total   int
+	Running int
+	Pending int
 }
 
 // hostGroup groups containers by host when cluster mode is active.
@@ -495,6 +510,73 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Compute per-tab stats for the dashboard tab navigation.
+	// Tabs are only rendered when there are two or more distinct sources.
+	data.HasSwarm = len(svcViews) > 0
+
+	// Local tab — always present when there are local containers.
+	if len(views) > 0 {
+		localStats := tabStats{
+			ID:    "local",
+			Label: "Local",
+			Total: len(views),
+		}
+		for _, v := range views {
+			if v.State == "running" {
+				localStats.Running++
+			}
+			if v.HasUpdate {
+				localStats.Pending++
+			}
+		}
+		data.TabStats = append(data.TabStats, localStats)
+	}
+
+	// Swarm tab — present when there are Swarm services.
+	if len(svcViews) > 0 {
+		swarmStats := tabStats{
+			ID:    "swarm",
+			Label: "Swarm",
+			Total: len(svcViews),
+		}
+		for _, sv := range svcViews {
+			if sv.RunningReplicas > 0 {
+				swarmStats.Running++
+			}
+			if sv.HasUpdate {
+				swarmStats.Pending++
+			}
+		}
+		data.TabStats = append(data.TabStats, swarmStats)
+	}
+
+	// Cluster host tabs — one per remote host.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, hg := range data.HostGroups {
+			ts := tabStats{
+				ID:    hg.ID,
+				Label: hg.Name,
+				Total: hg.Count,
+			}
+			for _, sg := range hg.Stacks {
+				ts.Running += sg.RunningCount
+				ts.Pending += sg.PendingCount
+			}
+			data.TabStats = append(data.TabStats, ts)
+		}
+	}
+
+	// Prepend "All" tab with aggregate stats.
+	if len(data.TabStats) >= 2 {
+		allStats := tabStats{ID: "all", Label: "All"}
+		for _, ts := range data.TabStats {
+			allStats.Total += ts.Total
+			allStats.Running += ts.Running
+			allStats.Pending += ts.Pending
+		}
+		data.TabStats = append([]tabStats{allStats}, data.TabStats...)
 	}
 
 	s.withAuth(r, &data)
@@ -1087,6 +1169,10 @@ func (s *Server) renderTemplate(w http.ResponseWriter, name string, data any) {
 
 // renderError renders the error page with nav bar and a link back to the dashboard.
 func (s *Server) renderError(w http.ResponseWriter, status int, title, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	s.renderTemplate(w, "error.html", errorPageData{Title: title, Message: message})
+	if err := s.tmpl.ExecuteTemplate(w, "error.html", errorPageData{Title: title, Message: message}); err != nil {
+		s.deps.Log.Error("error template render failed", "error", err)
+		fmt.Fprintf(w, "Internal server error")
+	}
 }
