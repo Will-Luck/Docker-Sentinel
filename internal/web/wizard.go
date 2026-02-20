@@ -43,7 +43,7 @@ func NewWizardServer(deps WizardDeps) *WizardServer {
 		setupDeadline: time.Now().Add(5 * time.Minute),
 		done:          make(chan struct{}),
 	}
-	ws.tmpl = template.Must(template.New("").ParseFS(staticFS, "static/*.html"))
+	ws.tmpl = template.Must(template.New("").ParseFS(staticFS, "static/setup.html", "static/login.html"))
 	ws.registerRoutes()
 	return ws
 }
