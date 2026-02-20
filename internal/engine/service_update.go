@@ -286,8 +286,12 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 
 		// Housekeeping.
 		u.queue.Remove(name)
-		_ = u.store.ClearNotifyState(name)
-		_ = u.store.ClearIgnoredVersions(name)
+		if err := u.store.ClearNotifyState(name); err != nil {
+			u.log.Warn("failed to clear service notify state after update", "name", name, "error", err)
+		}
+		if err := u.store.ClearIgnoredVersions(name); err != nil {
+			u.log.Warn("failed to clear service ignored versions after update", "name", name, "error", err)
+		}
 
 	case "rollback":
 		// Apply rollback policy setting — change the service's policy to prevent

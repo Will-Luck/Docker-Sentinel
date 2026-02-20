@@ -647,6 +647,9 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		logs, err = s.deps.EventLog.ListLogs(200)
 		if err != nil {
 			s.deps.Log.Error("failed to list logs", "error", err)
+			s.renderError(w, http.StatusInternalServerError, "Database Error",
+				"Failed to load activity logs. The database may be temporarily unavailable.")
+			return
 		}
 	}
 	if logs == nil {
