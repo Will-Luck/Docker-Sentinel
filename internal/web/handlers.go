@@ -808,6 +808,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
+		s.deps.Log.Error("failed to list containers for stats", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
 		return
 	}

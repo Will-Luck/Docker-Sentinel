@@ -381,7 +381,9 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		s.pendingMu.Unlock()
 
 		s.registry.SetConnected(hostID, false)
-		_ = s.registry.UpdateLastSeen(hostID, time.Now())
+		if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
+			s.log.Warn("failed to update last seen on disconnect", "hostID", hostID, "error", err)
+		}
 
 		s.log.Info("agent disconnected", "hostID", hostID)
 		s.bus.Publish(events.SSEEvent{
@@ -441,7 +443,9 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 
 	containers := protoToContainers(report.Containers)
 	s.registry.UpdateContainers(hostID, containers)
-	_ = s.registry.UpdateLastSeen(hostID, time.Now())
+	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
+		s.log.Warn("failed to update last seen on state report", "hostID", hostID, "error", err)
+	}
 
 	s.log.Info("state report received",
 		"hostID", hostID,
@@ -575,7 +579,9 @@ func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heart
 	as.version = hb.AgentVersion
 	as.features = hb.SupportedFeatures
 
-	_ = s.registry.UpdateLastSeen(hostID, time.Now())
+	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
+		s.log.Warn("failed to update last seen on heartbeat", "hostID", hostID, "error", err)
+	}
 }
 
 func (s *Server) handleContainerList(hostID string, msg *proto.AgentMessage, cl *proto.ContainerList) {
