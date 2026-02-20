@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"html/template"
 	"log/slog"
 	"net"
@@ -217,6 +216,11 @@ func (ws *WizardServer) apiSetup(w http.ResponseWriter, r *http.Request) {
 
 // apiTestEnrollment dials the configured server address to verify connectivity.
 func (ws *WizardServer) apiTestEnrollment(w http.ResponseWriter, r *http.Request) {
+	if !ws.setupWindowOpen() {
+		writeWizardError(w, http.StatusForbidden, "setup window has expired")
+		return
+	}
+
 	var req struct {
 		ServerAddr string `json:"server_addr"`
 	}
@@ -229,7 +233,7 @@ func (ws *WizardServer) apiTestEnrollment(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeWizardJSON(w, http.StatusOK, map[string]any{
 			"reachable": false,
-			"error":     fmt.Sprintf("connection failed: %v", err),
+			"error":     "connection failed",
 		})
 		return
 	}

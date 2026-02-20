@@ -589,10 +589,25 @@ func (s *Server) apiSaveGeneralSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.Key == "web_port" {
+	switch body.Key {
+	case "web_port":
 		p, err := strconv.Atoi(body.Value)
 		if err != nil || p < 1 || p > 65535 {
 			writeError(w, http.StatusBadRequest, "invalid port number")
+			return
+		}
+	case "tls_mode":
+		switch body.Value {
+		case "off", "auto", "manual":
+		default:
+			writeError(w, http.StatusBadRequest, "tls_mode must be off, auto, or manual")
+			return
+		}
+	case "log_format":
+		switch body.Value {
+		case "json", "text":
+		default:
+			writeError(w, http.StatusBadRequest, "log_format must be json or text")
 			return
 		}
 	}

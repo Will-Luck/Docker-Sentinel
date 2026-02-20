@@ -183,16 +183,27 @@ func main() {
 
 		// Generate random admin credentials for the agent mini-UI.
 		randomPass := generateRandomPassword()
-		hash, _ := auth.HashPassword(randomPass)
-		userID, _ := auth.GenerateUserID()
-		_ = db.CreateFirstUser(auth.User{
+		hash, err := auth.HashPassword(randomPass)
+		if err != nil {
+			log.Error("auto-enroll: failed to hash password", "error", err)
+			os.Exit(1)
+		}
+		userID, err := auth.GenerateUserID()
+		if err != nil {
+			log.Error("auto-enroll: failed to generate user ID", "error", err)
+			os.Exit(1)
+		}
+		if err := db.CreateFirstUser(auth.User{
 			ID:           userID,
 			Username:     "admin",
 			PasswordHash: hash,
 			RoleID:       auth.RoleAdminID,
 			CreatedAt:    time.Now().UTC(),
 			UpdatedAt:    time.Now().UTC(),
-		})
+		}); err != nil {
+			log.Error("auto-enroll: failed to create admin user", "error", err)
+			os.Exit(1)
+		}
 
 		fmt.Println("=============================================")
 		fmt.Println("Auto-enrolled as agent.")
@@ -572,13 +583,14 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	}
 
 	authSvc := auth.NewService(auth.ServiceConfig{
-		Users:         db,
-		Sessions:      db,
-		Roles:         db,
-		Settings:      db,
-		Log:           log.Logger,
-		CookieSecure:  cfg.CookieSecure,
-		SessionExpiry: cfg.SessionExpiry,
+		Users:          db,
+		Sessions:       db,
+		Roles:          db,
+		Tokens:         db,
+		Settings:       db,
+		Log:            log.Logger,
+		CookieSecure:   cfg.CookieSecure,
+		SessionExpiry:  cfg.SessionExpiry,
 		AuthEnabledEnv: cfg.AuthEnabled,
 	})
 
