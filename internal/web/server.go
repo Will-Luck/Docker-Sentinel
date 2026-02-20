@@ -750,6 +750,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/hooks-write-labels", perm(auth.PermSettingsModify, s.apiSetHooksWriteLabels))
 	s.mux.Handle("POST /api/settings/dependency-aware", perm(auth.PermSettingsModify, s.apiSetDependencyAware))
 	s.mux.Handle("POST /api/settings/rollback-policy", perm(auth.PermSettingsModify, s.apiSetRollbackPolicy))
+	s.mux.Handle("POST /api/settings/general", perm(auth.PermSettingsModify, s.apiSaveGeneralSetting))
+	s.mux.Handle("POST /api/settings/switch-role", perm(auth.PermSettingsModify, s.apiSwitchRole))
 
 	// Cluster settings — always available so the admin can enable/configure cluster
 	// even when the cluster server is not yet running.

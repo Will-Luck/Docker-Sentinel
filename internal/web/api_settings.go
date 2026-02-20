@@ -570,3 +570,60 @@ func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) 
 	s.logEvent(r, "cluster-settings", "", "Cluster settings updated")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
+
+func (s *Server) apiSaveGeneralSetting(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	allowed := map[string]bool{
+		"web_port": true, "tls_mode": true, "log_format": true,
+	}
+	if !allowed[body.Key] {
+		writeError(w, http.StatusBadRequest, "unknown setting: "+body.Key)
+		return
+	}
+
+	if body.Key == "web_port" {
+		p, err := strconv.Atoi(body.Value)
+		if err != nil || p < 1 || p > 65535 {
+			writeError(w, http.StatusBadRequest, "invalid port number")
+			return
+		}
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting(body.Key, body.Value); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+
+	s.logEvent(r, "settings", "", "General setting changed: "+body.Key+"="+body.Value)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "restart_required": "true"})
+}
+
+func (s *Server) apiSwitchRole(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if body.Role != "server" && body.Role != "agent" {
+		writeError(w, http.StatusBadRequest, "role must be 'server' or 'agent'")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("instance_role", body.Role); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save role")
+		return
+	}
+
+	s.logEvent(r, "settings", "", "Instance role changed to "+body.Role)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "restart_required": "true"})
+}
