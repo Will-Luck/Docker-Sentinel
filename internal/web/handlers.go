@@ -46,6 +46,8 @@ type pageData struct {
 	ClusterConnectedCount int
 	ClusterContainerCount int
 	ServerVersion         string
+	ClusterPort           string // gRPC port for enrollment snippets
+	ImageTag              string // stripped version tag for GHCR image snippets
 
 	// Auth context (populated by withAuth helper).
 	CurrentUser *auth.User
@@ -889,6 +891,18 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		containerCount += h.Containers
 	}
 
+	// Compute image tag for enrollment snippets.
+	imageTag := s.deps.Version
+	if strings.HasPrefix(imageTag, "v") {
+		imageTag = imageTag[1:]
+	}
+	if idx := strings.IndexByte(imageTag, ' '); idx >= 0 {
+		imageTag = imageTag[:idx]
+	}
+	if imageTag == "" || imageTag == "dev" {
+		imageTag = "latest"
+	}
+
 	data := pageData{
 		Page:                  "cluster",
 		QueueCount:            len(s.deps.Queue.List()),
@@ -896,6 +910,8 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		ClusterConnectedCount: connectedCount,
 		ClusterContainerCount: containerCount,
 		ServerVersion:         s.deps.Version,
+		ClusterPort:           s.deps.ClusterPort,
+		ImageTag:              imageTag,
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
