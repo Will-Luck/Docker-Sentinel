@@ -44,7 +44,7 @@ func NewAgentServer(deps AgentDeps) *AgentServer {
 		deps: deps,
 		mux:  http.NewServeMux(),
 	}
-	as.tmpl = template.Must(template.New("").ParseFS(staticFS, "static/*.html"))
+	as.tmpl = template.Must(template.New("").ParseFS(staticFS, "static/agent.html", "static/login.html"))
 	as.registerRoutes()
 	return as
 }
