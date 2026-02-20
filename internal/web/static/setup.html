@@ -590,6 +590,7 @@
 
         <div class="setup-timer">
             Setup window closes in <strong id="countdown"></strong>
+            <br><span style="opacity:0.5">{{.Version}}</span>
         </div>
 
         {{end}}
@@ -691,6 +692,15 @@
                 return false;
             }
             if (p !== c) { showError('Passwords do not match.'); return false; }
+            return true;
+        }
+        if (step === 2 && wizardState.role === 'agent') {
+            var sa = document.getElementById('serverAddr').value.trim();
+            var et = document.getElementById('enrollToken').value.trim();
+            var hn = document.getElementById('hostName').value.trim();
+            if (!sa) { showError('Server address is required.'); return false; }
+            if (!et) { showError('Enrollment token is required.'); return false; }
+            if (!hn) { showError('Host name is required.'); return false; }
             return true;
         }
         return true;
