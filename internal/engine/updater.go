@@ -798,7 +798,10 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []container.Summary) {
 	// Check if GHCR detection is enabled (default: true).
 	if u.settings != nil {
-		val, _ := u.settings.LoadSetting("ghcr_check_enabled")
+		val, err := u.settings.LoadSetting("ghcr_check_enabled")
+		if err != nil {
+			u.log.Debug("failed to load ghcr_check_enabled", "error", err)
+		}
 		if val == "false" {
 			return
 		}
