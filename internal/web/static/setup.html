@@ -748,6 +748,10 @@
         .then(function(res) { return res.json().then(function(d) { return { ok: res.ok, data: d }; }); })
         .then(function(r) {
             if (!r.ok) {
+                if (r.data.error && r.data.error.indexOf('already complete') !== -1) {
+                    window.location.href = '/login';
+                    return;
+                }
                 if (btn) { btn.disabled = false; btn.textContent = 'Continue'; }
                 showError(r.data.error || 'Setup failed. Please try again.');
                 return;

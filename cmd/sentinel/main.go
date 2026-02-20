@@ -171,6 +171,18 @@ func main() {
 		}
 	}
 
+	// If users already exist but instance_role is empty (upgrade from older version),
+	// default to server mode and skip the wizard.
+	if needsWizard {
+		if n, _ := db.UserCount(); n > 0 {
+			needsWizard = false
+			instanceRole = "server"
+			_ = db.SaveSetting("instance_role", "server")
+			_ = db.SaveSetting("auth_setup_complete", "true")
+			log.Info("existing users found, defaulting to server mode")
+		}
+	}
+
 	// Auto-enrollment: if SENTINEL_ENROLL_TOKEN is set on a fresh container, skip wizard.
 	if needsWizard && cfg.EnrollToken != "" && cfg.ServerAddr != "" {
 		log.Info("auto-enrolling as agent", "server", cfg.ServerAddr)
