@@ -312,16 +312,24 @@ func (s *Server) apiSaveDigestSettings(w http.ResponseWriter, r *http.Request) {
 		if !*body.Enabled {
 			val = "false"
 		}
-		_ = s.deps.SettingsStore.SaveSetting("digest_enabled", val)
+		if err := s.deps.SettingsStore.SaveSetting("digest_enabled", val); err != nil {
+			s.deps.Log.Warn("failed to save digest setting", "key", "digest_enabled", "error", err)
+		}
 	}
 	if body.Time != "" {
-		_ = s.deps.SettingsStore.SaveSetting("digest_time", body.Time)
+		if err := s.deps.SettingsStore.SaveSetting("digest_time", body.Time); err != nil {
+			s.deps.Log.Warn("failed to save digest setting", "key", "digest_time", "error", err)
+		}
 	}
 	if body.Interval != "" {
-		_ = s.deps.SettingsStore.SaveSetting("digest_interval", body.Interval)
+		if err := s.deps.SettingsStore.SaveSetting("digest_interval", body.Interval); err != nil {
+			s.deps.Log.Warn("failed to save digest setting", "key", "digest_interval", "error", err)
+		}
 	}
 	if body.DefaultNotifyMode != "" {
-		_ = s.deps.SettingsStore.SaveSetting("default_notify_mode", body.DefaultNotifyMode)
+		if err := s.deps.SettingsStore.SaveSetting("default_notify_mode", body.DefaultNotifyMode); err != nil {
+			s.deps.Log.Warn("failed to save digest setting", "key", "default_notify_mode", "error", err)
+		}
 	}
 
 	// Signal digest scheduler to reconfigure.
@@ -379,7 +387,9 @@ func (s *Server) apiGetDigestBanner(w http.ResponseWriter, r *http.Request) {
 	var dismissed []string
 	if s.deps.SettingsStore != nil {
 		if val, loadErr := s.deps.SettingsStore.LoadSetting("digest_banner_dismissed"); loadErr == nil && val != "" {
-			_ = json.Unmarshal([]byte(val), &dismissed)
+			if err := json.Unmarshal([]byte(val), &dismissed); err != nil {
+				s.deps.Log.Debug("failed to parse dismissed banners", "error", err)
+			}
 		}
 	}
 	dismissedSet := make(map[string]bool, len(dismissed))
@@ -418,7 +428,9 @@ func (s *Server) apiDismissDigestBanner(w http.ResponseWriter, r *http.Request) 
 		dismissed = append(dismissed, name+"::"+state.LastDigest)
 	}
 	data, _ := json.Marshal(dismissed)
-	_ = s.deps.SettingsStore.SaveSetting("digest_banner_dismissed", string(data))
+	if err := s.deps.SettingsStore.SaveSetting("digest_banner_dismissed", string(data)); err != nil {
+		s.deps.Log.Warn("failed to save banner dismissed state", "error", err)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "banner dismissed"})
 }

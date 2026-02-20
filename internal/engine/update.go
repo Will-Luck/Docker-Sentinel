@@ -96,7 +96,10 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	}
 
 	// Get new image digest for the record.
-	newDigest, _ := u.docker.ImageDigest(ctx, pullImage)
+	newDigest, err := u.docker.ImageDigest(ctx, pullImage)
+	if err != nil {
+		u.log.Debug("could not resolve new image digest", "image", pullImage, "error", err)
+	}
 
 	// 4. Stop and remove the old container.
 	u.log.Info("stopping old container", "name", name)
@@ -280,10 +283,14 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	})
 
 	// Clear notification state so re-detection gets a fresh notification.
-	_ = u.store.ClearNotifyState(name)
+	if err := u.store.ClearNotifyState(name); err != nil {
+		u.log.Warn("failed to clear notify state after update", "name", name, "error", err)
+	}
 
 	// Clear ignored versions — container moved past them.
-	_ = u.store.ClearIgnoredVersions(name)
+	if err := u.store.ClearIgnoredVersions(name); err != nil {
+		u.log.Warn("failed to clear ignored versions after update", "name", name, "error", err)
+	}
 
 	// 9. Clean old snapshots — keep only the most recent one.
 	if err := u.store.DeleteOldSnapshots(name, 1); err != nil {
@@ -572,7 +579,10 @@ func (u *Updater) effectiveNotifyMode(name string) string {
 		return pref.Mode
 	}
 	if u.settings != nil {
-		val, _ := u.settings.LoadSetting("default_notify_mode")
+		val, err := u.settings.LoadSetting("default_notify_mode")
+		if err != nil {
+			u.log.Debug("failed to load default_notify_mode", "error", err)
+		}
 		if val != "" {
 			return val
 		}

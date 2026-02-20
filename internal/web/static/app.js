@@ -2072,10 +2072,21 @@ function activateFilter(key, value) {
 function applyFiltersAndSort() {
     var table = document.getElementById("container-table");
     if (!table) return;
-    var stacks = table.querySelectorAll("tbody.stack-group");
 
+    // Scope filtering to the active tab; null means no tabs (process everything).
+    var activeTab = activeDashboardTab;
+
+    var stacks = table.querySelectorAll("tbody.stack-group");
     for (var s = 0; s < stacks.length; s++) {
         var stack = stacks[s];
+
+        // Skip tbodies belonging to a different tab.
+        var stackTab = stack.getAttribute("data-tab");
+        if (activeTab !== null && activeTab !== "all" && stackTab !== null && stackTab !== activeTab) continue;
+
+        // Skip tbodies hidden by tab switching.
+        if (stack.style.display === "none") continue;
+
         var rows = stack.querySelectorAll(".container-row");
         var visibleCount = 0;
         for (var r = 0; r < rows.length; r++) {
@@ -2094,6 +2105,14 @@ function applyFiltersAndSort() {
     var svcGroups = table.querySelectorAll("tbody.svc-group");
     for (var g = 0; g < svcGroups.length; g++) {
         var svcGroup = svcGroups[g];
+
+        // Skip tbodies belonging to a different tab.
+        var svcTab = svcGroup.getAttribute("data-tab");
+        if (activeTab !== null && activeTab !== "all" && svcTab !== null && svcTab !== activeTab) continue;
+
+        // Skip tbodies hidden by tab switching.
+        if (svcGroup.style.display === "none") continue;
+
         var svcHeader = svcGroup.querySelector(".svc-header");
         if (!svcHeader) continue;
         var showSvc = true;
@@ -2108,6 +2127,28 @@ function applyFiltersAndSort() {
             showSvc = svcHeader.classList.contains("has-update");
         }
         svcGroup.style.display = showSvc ? "" : "none";
+    }
+
+    // Filter host-group tbodies (cluster mode).
+    var hostGroups = table.querySelectorAll("tbody.host-group");
+    for (var h = 0; h < hostGroups.length; h++) {
+        var hg = hostGroups[h];
+
+        var hgTab = hg.getAttribute("data-tab");
+        if (activeTab !== null && activeTab !== "all" && hgTab !== null && hgTab !== activeTab) continue;
+        if (hg.style.display === "none") continue;
+
+        var hgRows = hg.querySelectorAll(".container-row");
+        var hgVisible = 0;
+        for (var hr = 0; hr < hgRows.length; hr++) {
+            var hRow = hgRows[hr];
+            var hShow = true;
+            if (filterState.status === "running") hShow = hRow.classList.contains("state-running");
+            else if (filterState.status === "stopped") hShow = !hRow.classList.contains("state-running");
+            if (hShow && filterState.updates === "pending") hShow = hRow.classList.contains("has-update");
+            hRow.style.display = hShow ? "" : "none";
+            if (hShow) hgVisible++;
+        }
     }
 
     if (filterState.sort !== "default") {
@@ -2179,6 +2220,179 @@ function statusScore(row) {
     if (!row.classList.contains("state-running")) return 3;
     if (row.classList.contains("has-update")) return 2;
     return 1;
+}
+
+/* ------------------------------------------------------------
+   9b. Dashboard Tabs
+   ------------------------------------------------------------ */
+
+var activeDashboardTab = null;
+
+function initDashboardTabs() {
+    var tabsEl = document.getElementById("dashboard-tabs");
+    if (!tabsEl) return; // Standalone mode — no tabs
+
+    var saved = localStorage.getItem("sentinel-dashboard-tab") || "all";
+
+    // Validate saved tab exists; fall back to first tab button if not found.
+    var buttons = tabsEl.querySelectorAll(".tab-btn");
+    var found = false;
+    for (var i = 0; i < buttons.length; i++) {
+        if (buttons[i].getAttribute("data-tab") === saved) {
+            found = true;
+            break;
+        }
+    }
+    if (!found && buttons.length > 0) {
+        saved = buttons[0].getAttribute("data-tab");
+    }
+
+    switchDashboardTab(saved);
+
+    for (var j = 0; j < buttons.length; j++) {
+        buttons[j].addEventListener("click", function() {
+            switchDashboardTab(this.getAttribute("data-tab"));
+        });
+    }
+}
+
+function switchDashboardTab(tabId) {
+    var tabsEl = document.getElementById("dashboard-tabs");
+    if (!tabsEl) return;
+
+    activeDashboardTab = tabId;
+
+    // Update tab button active states and aria-selected attributes.
+    var buttons = tabsEl.querySelectorAll(".tab-btn");
+    var activeBtn = null;
+    for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        if (btn.getAttribute("data-tab") === tabId) {
+            btn.classList.add("active");
+            btn.setAttribute("aria-selected", "true");
+            activeBtn = btn;
+        } else {
+            btn.classList.remove("active");
+            btn.setAttribute("aria-selected", "false");
+        }
+    }
+
+    // Update stat cards from the active button's data attributes.
+    if (activeBtn) {
+        var total   = activeBtn.getAttribute("data-stats-total")   || "0";
+        var running = activeBtn.getAttribute("data-stats-running") || "0";
+        var pending = activeBtn.getAttribute("data-stats-pending") || "0";
+        updateStats(parseInt(total, 10), parseInt(running, 10), parseInt(pending, 10));
+    }
+
+    // Show/hide tbody elements based on their data-tab attribute.
+    var table = document.getElementById("container-table");
+    if (table) {
+        var tbodies = table.querySelectorAll("tbody");
+        for (var t = 0; t < tbodies.length; t++) {
+            var tb = tbodies[t];
+            var tbTab = tb.getAttribute("data-tab");
+            if (tbTab === null) {
+                // No data-tab (e.g. thead-equivalent tbodies) — always visible.
+                continue;
+            }
+            tb.style.display = (tabId === "all" || tbTab === tabId) ? "" : "none";
+        }
+    }
+
+    localStorage.setItem("sentinel-dashboard-tab", tabId);
+
+    applyFiltersAndSort();
+}
+
+function recalcTabStats() {
+    var tabsEl = document.getElementById("dashboard-tabs");
+    if (!tabsEl) return;
+
+    var table = document.getElementById("container-table");
+    if (!table) return;
+
+    var buttons = tabsEl.querySelectorAll(".tab-btn");
+    for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        var tabId = btn.getAttribute("data-tab");
+
+        var total = 0, running = 0, pending = 0;
+
+        // Count stack-group container rows for this tab.
+        var stacks = table.querySelectorAll('tbody.stack-group[data-tab="' + tabId + '"]');
+        for (var s = 0; s < stacks.length; s++) {
+            if (stacks[s].style.display === "none") continue;
+            var rows = stacks[s].querySelectorAll(".container-row");
+            for (var r = 0; r < rows.length; r++) {
+                if (rows[r].style.display === "none") continue;
+                total++;
+                if (rows[r].classList.contains("state-running")) running++;
+                if (rows[r].classList.contains("has-update")) pending++;
+            }
+        }
+
+        // Count svc-group Swarm services for this tab.
+        var svcGroups = table.querySelectorAll('tbody.svc-group[data-tab="' + tabId + '"]');
+        for (var g = 0; g < svcGroups.length; g++) {
+            if (svcGroups[g].style.display === "none") continue;
+            total++;
+            var svcHeader = svcGroups[g].querySelector(".svc-header");
+            if (svcHeader) {
+                var replicas = svcHeader.querySelector(".svc-replicas");
+                if (replicas && replicas.classList.contains("svc-replicas-healthy")) running++;
+                if (svcHeader.classList.contains("has-update")) pending++;
+            }
+        }
+
+        // Count host-group container rows (cluster hosts) for this tab.
+        var hostGroups = table.querySelectorAll('tbody.host-group[data-tab="' + tabId + '"]');
+        for (var hg = 0; hg < hostGroups.length; hg++) {
+            if (hostGroups[hg].style.display === "none") continue;
+            var hgRows = hostGroups[hg].querySelectorAll(".container-row");
+            for (var hr = 0; hr < hgRows.length; hr++) {
+                if (hgRows[hr].style.display === "none") continue;
+                total++;
+                if (hgRows[hr].classList.contains("state-running")) running++;
+                if (hgRows[hr].classList.contains("has-update")) pending++;
+            }
+        }
+
+        btn.setAttribute("data-stats-total",   String(total));
+        btn.setAttribute("data-stats-running",  String(running));
+        btn.setAttribute("data-stats-pending",  String(pending));
+
+        // Refresh displayed stat cards if this is the active tab.
+        if (tabId === activeDashboardTab) {
+            updateStats(total, running, pending);
+        }
+
+        // Update the badge text for non-"all" tabs immediately.
+        if (tabId !== "all") {
+            var badge = btn.querySelector(".tab-badge");
+            if (badge) badge.textContent = String(total);
+        }
+    }
+
+    // Update the "all" tab by summing all other tabs.
+    var allBtn = tabsEl.querySelector('.tab-btn[data-tab="all"]');
+    if (allBtn) {
+        var allTotal = 0, allRunning = 0, allPending = 0;
+        var nonAllBtns = tabsEl.querySelectorAll(".tab-btn:not([data-tab='all'])");
+        for (var k = 0; k < nonAllBtns.length; k++) {
+            allTotal += parseInt(nonAllBtns[k].getAttribute("data-stats-total") || "0", 10);
+            allRunning += parseInt(nonAllBtns[k].getAttribute("data-stats-running") || "0", 10);
+            allPending += parseInt(nonAllBtns[k].getAttribute("data-stats-pending") || "0", 10);
+        }
+        allBtn.setAttribute("data-stats-total", String(allTotal));
+        allBtn.setAttribute("data-stats-running", String(allRunning));
+        allBtn.setAttribute("data-stats-pending", String(allPending));
+        var allBadge = allBtn.querySelector(".tab-badge");
+        if (allBadge) allBadge.textContent = String(allTotal);
+        if (activeDashboardTab === "all") {
+            updateStats(allTotal, allRunning, allPending);
+        }
+    }
 }
 
 /* ------------------------------------------------------------
@@ -2380,6 +2594,7 @@ function updateContainerRow(name) {
             // Reapply badges and filters after DOM patch.
             applyRegistryBadges();
             applyFiltersAndSort();
+            recalcTabStats();
         })
         .catch(function() {
             // Fallback: full reload on error.
@@ -2522,6 +2737,7 @@ function initSSE() {
         // Refresh stats and banner to ensure counts are accurate.
         if (document.getElementById("container-table")) {
             refreshDashboardStats();
+            recalcTabStats();
             scheduleDigestBannerRefresh();
         } else {
             scheduleReload();
@@ -2832,6 +3048,7 @@ document.addEventListener("DOMContentLoaded", function () {
     loadFooterVersion();
     loadDigestBanner();
     initFilters();
+    initDashboardTabs();
     refreshLastScan();
 
     // Apply stack default preference.
@@ -2961,7 +3178,9 @@ document.addEventListener("DOMContentLoaded", function () {
         // Show inline spinner immediately.
         showBadgeSpinner(wrap);
 
+        var hostId = wrap.getAttribute("data-host-id");
         var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
+        if (hostId) endpoint += "?host=" + encodeURIComponent(hostId);
         var label = action.charAt(0).toUpperCase() + action.slice(1);
         apiPost(
             endpoint,

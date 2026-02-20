@@ -33,6 +33,10 @@ type pageData struct {
 	PendingUpdates    int
 	QueueCount        int // sidebar badge: number of items in queue
 
+	// Per-tab stats for the dashboard tab navigation.
+	TabStats []tabStats
+	HasSwarm bool
+
 	// Cluster state (populated by withCluster helper).
 	ClusterEnabled bool
 	ClusterHosts   []ClusterHost // populated only on /cluster page
@@ -42,11 +46,24 @@ type pageData struct {
 	ClusterConnectedCount int
 	ClusterContainerCount int
 	ServerVersion         string
+	ClusterPort           string // gRPC port for enrollment snippets
+	ImageTag              string // stripped version tag for GHCR image snippets
 
 	// Auth context (populated by withAuth helper).
 	CurrentUser *auth.User
 	AuthEnabled bool
 	CSRFToken   string
+}
+
+// tabStats holds per-tab container counts for the dashboard tab navigation.
+// ID is "local", "swarm", or the cluster host ID. Label is the human-readable
+// display name shown on the tab.
+type tabStats struct {
+	ID      string // "local", "swarm", or host ID
+	Label   string // "Local", "Swarm Services", or host name
+	Total   int
+	Running int
+	Pending int
 }
 
 // hostGroup groups containers by host when cluster mode is active.
@@ -229,7 +246,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 
 		name := containerName(c)
-		maintenance, _ := s.deps.Store.GetMaintenance(name)
+		maintenance, err := s.deps.Store.GetMaintenance(name)
+		if err != nil {
+			s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
+		}
 
 		policy := containerPolicy(c.Labels)
 		if s.deps.Policy != nil {
@@ -324,7 +344,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		stackMap[key] = append(stackMap[key], v)
 	}
 	// Apply saved stack order if available, falling back to alphabetical.
-	savedJSON, _ := s.deps.SettingsStore.LoadSetting("stack_order")
+	savedJSON, err := s.deps.SettingsStore.LoadSetting("stack_order")
+	if err != nil {
+		s.deps.Log.Debug("failed to load stack order", "error", err)
+	}
 	var savedOrder []string
 	if savedJSON != "" {
 		if err := json.Unmarshal([]byte(savedJSON), &savedOrder); err != nil {
@@ -497,6 +520,76 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Compute per-tab stats for the dashboard tab navigation.
+	// Tabs are only rendered when there are two or more distinct sources.
+	data.HasSwarm = len(svcViews) > 0
+
+	// Local tab — always present when there are local containers.
+	if len(views) > 0 {
+		localStats := tabStats{
+			ID:    "local",
+			Label: "Local",
+			Total: len(views),
+		}
+		for _, v := range views {
+			if v.State == "running" {
+				localStats.Running++
+			}
+			if v.HasUpdate {
+				localStats.Pending++
+			}
+		}
+		data.TabStats = append(data.TabStats, localStats)
+	}
+
+	// Swarm tab — present when there are Swarm services.
+	if len(svcViews) > 0 {
+		swarmStats := tabStats{
+			ID:    "swarm",
+			Label: "Swarm",
+			Total: len(svcViews),
+		}
+		for _, sv := range svcViews {
+			if sv.RunningReplicas > 0 {
+				swarmStats.Running++
+			}
+			if sv.HasUpdate {
+				swarmStats.Pending++
+			}
+		}
+		data.TabStats = append(data.TabStats, swarmStats)
+	}
+
+	// Cluster host tabs — one per remote host (skip "local", already added above).
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, hg := range data.HostGroups {
+			if hg.ID == "local" {
+				continue
+			}
+			ts := tabStats{
+				ID:    hg.ID,
+				Label: hg.Name,
+				Total: hg.Count,
+			}
+			for _, sg := range hg.Stacks {
+				ts.Running += sg.RunningCount
+				ts.Pending += sg.PendingCount
+			}
+			data.TabStats = append(data.TabStats, ts)
+		}
+	}
+
+	// Prepend "All" tab with aggregate stats.
+	if len(data.TabStats) >= 2 {
+		allStats := tabStats{ID: "all", Label: "All"}
+		for _, ts := range data.TabStats {
+			allStats.Total += ts.Total
+			allStats.Running += ts.Running
+			allStats.Pending += ts.Pending
+		}
+		data.TabStats = append([]tabStats{allStats}, data.TabStats...)
+	}
+
 	s.withAuth(r, &data)
 	s.withCluster(&data)
 
@@ -565,6 +658,9 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		logs, err = s.deps.EventLog.ListLogs(200)
 		if err != nil {
 			s.deps.Log.Error("failed to list logs", "error", err)
+			s.renderError(w, http.StatusInternalServerError, "Database Error",
+				"Failed to load activity logs. The database may be temporarily unavailable.")
+			return
 		}
 	}
 	if logs == nil {
@@ -631,7 +727,10 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 			pending++
 		}
 		if n == name {
-			maintenance, _ := s.deps.Store.GetMaintenance(n)
+			maintenance, err := s.deps.Store.GetMaintenance(n)
+			if err != nil {
+				s.deps.Log.Debug("failed to load maintenance state", "name", n, "error", err)
+			}
 			policy := containerPolicy(c.Labels)
 			if s.deps.Policy != nil {
 				if p, ok := s.deps.Policy.GetPolicyOverride(n); ok {
@@ -726,6 +825,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
+		s.deps.Log.Error("failed to list containers for stats", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
 		return
 	}
@@ -794,6 +894,16 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		containerCount += h.Containers
 	}
 
+	// Compute image tag for enrollment snippets.
+	imageTag := s.deps.Version
+	imageTag = strings.TrimPrefix(imageTag, "v")
+	if idx := strings.IndexByte(imageTag, ' '); idx >= 0 {
+		imageTag = imageTag[:idx]
+	}
+	if imageTag == "" || imageTag == "dev" {
+		imageTag = "latest"
+	}
+
 	data := pageData{
 		Page:                  "cluster",
 		QueueCount:            len(s.deps.Queue.List()),
@@ -801,6 +911,8 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 		ClusterConnectedCount: connectedCount,
 		ClusterContainerCount: containerCount,
 		ServerVersion:         s.deps.Version,
+		ClusterPort:           s.deps.ClusterPort,
+		ImageTag:              imageTag,
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
@@ -832,7 +944,10 @@ func (s *Server) withCluster(data *pageData) {
 		return
 	}
 	if s.deps.SettingsStore != nil {
-		v, _ := s.deps.SettingsStore.LoadSetting(store.SettingClusterEnabled)
+		v, err := s.deps.SettingsStore.LoadSetting(store.SettingClusterEnabled)
+		if err != nil {
+			s.deps.Log.Debug("failed to load cluster enabled setting", "error", err)
+		}
 		data.ClusterEnabled = v == "true"
 	}
 }
@@ -889,7 +1004,10 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maintenance, _ := s.deps.Store.GetMaintenance(name)
+	maintenance, err := s.deps.Store.GetMaintenance(name)
+	if err != nil {
+		s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
+	}
 
 	detailPolicy := containerPolicy(found.Labels)
 	if s.deps.Policy != nil {
@@ -1087,6 +1205,10 @@ func (s *Server) renderTemplate(w http.ResponseWriter, name string, data any) {
 
 // renderError renders the error page with nav bar and a link back to the dashboard.
 func (s *Server) renderError(w http.ResponseWriter, status int, title, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	s.renderTemplate(w, "error.html", errorPageData{Title: title, Message: message})
+	if err := s.tmpl.ExecuteTemplate(w, "error.html", errorPageData{Title: title, Message: message}); err != nil {
+		s.deps.Log.Error("error template render failed", "error", err)
+		fmt.Fprintf(w, "Internal server error")
+	}
 }

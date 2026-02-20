@@ -2312,6 +2312,48 @@ table.managing .stack-drag-handle:active {
     border-bottom-color: var(--accent);
 }
 
+.dashboard-tabs {
+    margin-bottom: var(--sp-4);
+    background: color-mix(in srgb, #6750A4 15%, var(--md-surface-container-highest));
+    border-radius: var(--radius-lg);
+    padding: 0 var(--sp-2);
+    border-bottom: none;
+}
+.dashboard-tabs .tab-btn {
+    padding: var(--sp-2) var(--sp-4);
+    border-right: 1px solid var(--border);
+    color: var(--fg-primary);
+    border-radius: var(--radius-md);
+}
+.dashboard-tabs .tab-btn:hover {
+    background: var(--bg-hover);
+}
+.dashboard-tabs .tab-btn:last-child {
+    border-right: none;
+}
+.dashboard-tabs .tab-btn.active {
+    color: var(--success);
+    border-bottom-color: var(--success);
+}
+.tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 var(--sp-1);
+    margin-left: var(--sp-1);
+    border-radius: var(--radius-full);
+    background: var(--border);
+    color: var(--fg-primary);
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+.dashboard-tabs .tab-btn.active .tab-badge {
+    background: var(--success);
+    color: #fff;
+}
+
 .tab-panel {
     display: none;
 }
@@ -3597,6 +3639,44 @@ input[type="checkbox"] {
     color: var(--fg-secondary);
     line-height: 1.6;
 }
+.snippet-tabs {
+    display: flex;
+    gap: 0;
+    margin-top: var(--sp-4);
+    margin-bottom: 0;
+}
+.snippet-tab {
+    padding: 8px 16px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: var(--radius) var(--radius) 0 0;
+    background: var(--bg-body);
+    color: var(--fg-muted);
+    cursor: pointer;
+}
+.snippet-tab.active {
+    background: var(--bg-input);
+    color: var(--fg-primary);
+}
+.snippet-pane {
+    display: none;
+    position: relative;
+}
+.snippet-pane.active {
+    display: block;
+}
+.snippet-pane .agent-command {
+    margin-top: 0;
+    border-top-left-radius: 0;
+}
+.snippet-pane .btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+}
+
 
 /* --------------------------------------------------------------------------
    Dashboard Host Groups (cluster mode)
@@ -3661,4 +3741,31 @@ input[type="checkbox"] {
     align-items: center;
     gap: var(--sp-2);
     margin-left: var(--sp-3);
+}
+
+
+/* --------------------------------------------------------------------------
+   General Settings — restart badge and inline banner
+   -------------------------------------------------------------------------- */
+
+.restart-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(255,152,0,0.15);
+    color: #ff9800;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
+.restart-banner-inline {
+    background: rgba(255,152,0,0.12);
+    border: 1px solid rgba(255,152,0,0.3);
+    color: #ff9800;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-bottom: var(--sp-4);
 }
