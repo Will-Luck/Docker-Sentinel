@@ -153,6 +153,45 @@ func main() {
 		AuthEnabledEnv: cfg.AuthEnabled,
 	})
 
+	// Check if instance has been configured via the wizard.
+	instanceRole, _ := db.LoadSetting("instance_role")
+	needsWizard := instanceRole == ""
+
+	// Env var overrides: if SENTINEL_MODE is explicitly set AND auth_setup_complete is true,
+	// skip wizard (backwards compat for existing deployments).
+	if cfg.Mode != "" {
+		if v, _ := db.LoadSetting("auth_setup_complete"); v == "true" {
+			needsWizard = false
+			if instanceRole == "" {
+				_ = db.SaveSetting("instance_role", cfg.Mode)
+				instanceRole = cfg.Mode
+			}
+		}
+	}
+
+	if needsWizard {
+		runWizard(ctx, cfg, db, authSvc, log)
+		// Re-read role from DB after wizard completes.
+		instanceRole, _ = db.LoadSetting("instance_role")
+	}
+
+	// If instance_role is now "agent", hand off to agent mode.
+	if instanceRole == "agent" {
+		// Load agent settings from DB if not set via env.
+		if cfg.ServerAddr == "" {
+			cfg.ServerAddr, _ = db.LoadSetting("server_addr")
+		}
+		if cfg.EnrollToken == "" {
+			cfg.EnrollToken, _ = db.LoadSetting("enroll_token")
+		}
+		if cfg.HostName == "" {
+			cfg.HostName, _ = db.LoadSetting("host_name")
+		}
+		cfg.Mode = "agent"
+		runAgent(ctx, cfg, log)
+		return
+	}
+
 	// Set up a 5-minute setup window if no admin user exists yet.
 	var setupDeadline time.Time
 	if authSvc.NeedsSetup() {
@@ -495,6 +534,46 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		os.Exit(1)
 	}
 	log.Info("agent shutdown complete")
+}
+
+// runWizard starts the setup wizard server and blocks until setup completes
+// or ctx is cancelled.
+func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc *auth.Service, log *logging.Logger) {
+	fmt.Println("=============================================")
+	fmt.Println("First-run setup required!")
+	fmt.Println("")
+	fmt.Printf("  Open http://<your-host>:%s/setup\n", cfg.WebPort)
+	fmt.Println("  to configure this instance.")
+	fmt.Println("")
+	fmt.Println("  This page will be available for 5 minutes.")
+	fmt.Println("  Restart the container to get a new window.")
+	fmt.Println("=============================================")
+
+	ws := web.NewWizardServer(web.WizardDeps{
+		SettingsStore: &settingsStoreAdapter{db},
+		Auth:          authSvc,
+		Log:           log.Logger,
+		Version:       versionString(),
+		ClusterPort:   cfg.ClusterPort,
+	})
+
+	addr := net.JoinHostPort("", cfg.WebPort)
+	go func() {
+		if err := ws.ListenAndServe(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("wizard server error", "error", err)
+		}
+	}()
+
+	select {
+	case <-ws.Done():
+		log.Info("wizard setup complete")
+	case <-ctx.Done():
+		log.Info("wizard cancelled by signal")
+	}
+
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutCancel()
+	_ = ws.Shutdown(shutCtx)
 }
 
 // parseHeaders parses comma-separated "Key:Value" pairs into a map.
