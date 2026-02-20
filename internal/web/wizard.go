@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -74,10 +75,12 @@ func (ws *WizardServer) registerRoutes() {
 
 func (ws *WizardServer) handleSetup(w http.ResponseWriter, r *http.Request) {
 	remaining := time.Until(ws.setupDeadline)
+	hostname, _ := os.Hostname()
 	_ = ws.tmpl.ExecuteTemplate(w, "setup.html", map[string]any{
 		"Expired":          !ws.setupWindowOpen(),
 		"RemainingSeconds": int(remaining.Seconds()),
 		"Version":          ws.deps.Version,
+		"Hostname":         hostname,
 	})
 }
 
