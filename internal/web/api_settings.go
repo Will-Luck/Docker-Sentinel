@@ -557,8 +557,8 @@ func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) 
 			if err := s.clusterLifecycle.Start(); err != nil {
 				// Rollback: save disabled state since start failed.
 				if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterEnabled, "false"); err != nil {
-				s.deps.Log.Warn("failed to rollback cluster enabled setting", "error", err)
-			}
+					s.deps.Log.Warn("failed to rollback cluster enabled setting", "error", err)
+				}
 				writeError(w, http.StatusInternalServerError, "failed to start cluster: "+err.Error())
 				return
 			}
