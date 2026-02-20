@@ -734,18 +734,21 @@ function saveGeneralSetting(key, value) {
 }
 
 function switchRole() {
-    if (!confirm('Switch this instance to agent mode? This will take effect after a container restart.')) return;
+    var current = document.getElementById('general-role-label').textContent.trim();
+    var target = (current === 'server') ? 'agent' : 'server';
+    if (!confirm('Switch this instance to ' + target + ' mode? This will take effect after a container restart.')) return;
     fetch('/api/settings/switch-role', {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
-        body: JSON.stringify({role: 'agent'})
+        body: JSON.stringify({role: target})
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
         if (d.error) { showToast(d.error, 'error'); return; }
         showToast('Role saved — restart to apply');
-        document.getElementById('general-role-label').textContent = 'agent';
-        document.getElementById('general-switch-role-btn').textContent = 'Switch to Server';
+        document.getElementById('general-role-label').textContent = target;
+        var opposite = (target === 'server') ? 'Agent' : 'Server';
+        document.getElementById('general-switch-role-btn').textContent = 'Switch to ' + opposite;
         document.getElementById('general-restart-banner').style.display = 'block';
     })
     .catch(function() { showToast('Failed to save', 'error'); });

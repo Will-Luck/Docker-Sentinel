@@ -88,8 +88,9 @@ type Agent struct {
 	keyPath  string
 	caPath   string
 
-	mu        sync.Mutex
-	connected bool
+	mu             sync.RWMutex
+	connected      bool
+	containerCount int
 
 	// offlineSince tracks when server connectivity was lost.
 	// Zero value means currently connected.
@@ -538,6 +539,10 @@ func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentServ
 	if err != nil {
 		return fmt.Errorf("list containers: %w", err)
 	}
+
+	a.mu.Lock()
+	a.containerCount = len(containers)
+	a.mu.Unlock()
 
 	msg := &proto.AgentMessage{
 		Payload: &proto.AgentMessage_ContainerList{
@@ -997,16 +1002,14 @@ func clampInt32(v int) int32 {
 
 // Connected reports whether the agent currently has an active server connection.
 func (a *Agent) Connected() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return a.connected
 }
 
-// ContainerCount returns the number of running containers on the local host.
+// ContainerCount returns the cached number of containers on the local host.
 func (a *Agent) ContainerCount() int {
-	containers, err := a.docker.ListContainers(context.Background())
-	if err != nil {
-		return 0
-	}
-	return len(containers)
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.containerCount
 }
