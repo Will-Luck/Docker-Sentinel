@@ -55,7 +55,7 @@ Also available from GHCR: `ghcr.io/will-luck/docker-sentinel:latest`
 - **[Docker-Guardian](https://github.com/Will-Luck/Docker-Guardian) integration** — maintenance labels prevent restart conflicts during updates
 - **Image cleanup** — automatically removes old images after successful updates (toggle via settings)
 - **Dependency-aware updates** — topological sort ensures dependencies update first; dependents auto-restart on network/volume changes
-- **Cron scheduling** — optional cron expressions (e.g. `0 2 * * *`) alongside poll interval for precise scan timing
+- **Cron scheduling** — optional cron expression via `SENTINEL_SCHEDULE` (e.g. `0 2 * * *`) alongside poll interval for precise scan timing
 
 ### Docker Swarm
 - **Automatic detection** — runs in Swarm mode when deployed on a manager node
@@ -96,7 +96,7 @@ Also available from GHCR: `ghcr.io/will-luck/docker-sentinel:latest`
 | <img src="docs/screenshots/setup.png" alt="First-run setup wizard" width="400"> | <img src="docs/screenshots/service-detail.png" alt="Service detail — tasks across Swarm nodes" width="400"> |
 | <img src="docs/screenshots/queue.png" alt="Pending Updates" width="400"> | <img src="docs/screenshots/history.png" alt="Update History" width="400"> |
 | <img src="docs/screenshots/logs.png" alt="Activity Log" width="400"> | <img src="docs/screenshots/container-detail.png" alt="Container Detail" width="400"> |
-| <img src="docs/screenshots/settings-registries.png" alt="Registry rate limits and credentials" width="400"> | |
+| <img src="docs/screenshots/settings-registries.png" alt="Registry rate limits and credentials" width="400"> | <img src="docs/screenshots/cluster-two-hosts.png" alt="Cluster — multi-host management" width="400"> |
 
 </details>
 
@@ -111,6 +111,14 @@ Also available from GHCR: `ghcr.io/will-luck/docker-sentinel:latest`
 - **Exit code 75 skip** — hooks returning exit 75 abort the update without error (useful for conditional updates)
 - **Hook management UI** — create, edit, test, and delete hooks from the settings page
 - **Label persistence** — optionally write hook config as container labels for portability across recreations
+
+### Cluster Mode
+- **Multi-host management** — deploy a central server and lightweight agents to monitor containers across multiple Docker hosts from a single dashboard
+- **mTLS security** — all cluster communication uses gRPC over mutual TLS (TLS 1.3); the server acts as its own certificate authority
+- **One-time enrollment** — agents enroll with a single-use token and receive a signed certificate via PKCS#10 CSR exchange
+- **Autonomous mode** — agents continue monitoring and applying auto-policy updates when disconnected from the server
+- **Host lifecycle** — drain, revoke, or remove agents from the cluster page; revoked certificates are added to a CRL
+- **Setup wizard** — guided first-run wizard supports both server and agent roles with connection testing
 
 ### Observability
 - **Prometheus metrics** — 10 metrics at `/metrics` endpoint (containers total, updates total/duration, scan duration, queue length, image cleanups, registry errors)
@@ -172,7 +180,9 @@ All configuration is via environment variables. Settings marked with * can also 
 | `SENTINEL_LOG_JSON` | `true` | JSON structured logging |
 | `SENTINEL_DOCKER_SOCK` | `/var/run/docker.sock` | Docker socket path |
 | `SENTINEL_IMAGE_CLEANUP` | `true` | Remove old images after successful updates * |
-| `SENTINEL_CRON` | | Cron expression for scan scheduling (overrides poll interval when set) * |
+| `SENTINEL_SCHEDULE` | | Cron expression for scan scheduling (overrides poll interval when set) * |
+| `SENTINEL_ROLLBACK_POLICY` | | Policy to set after a rollback (e.g. `pinned`) to prevent retry loops |
+| `SENTINEL_HOOKS_WRITE_LABELS` | `false` | Write hook config back to container labels for portability * |
 | `SENTINEL_METRICS` | `false` | Enable Prometheus metrics at `/metrics` * |
 | `SENTINEL_HOOKS` | `false` | Enable lifecycle hooks * |
 | `SENTINEL_DEPS` | `true` | Enable dependency-aware update ordering * |
@@ -202,6 +212,19 @@ All configuration is via environment variables. Settings marked with * can also 
 | `SENTINEL_WEBHOOK_URL` | | Webhook URL for JSON POST |
 | `SENTINEL_WEBHOOK_HEADERS` | | Custom webhook headers, comma-separated `Key:Value` pairs |
 
+### Cluster
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SENTINEL_MODE` | (auto) | Instance role: `server` or `agent`. Omit for standalone |
+| `SENTINEL_CLUSTER` | `false` | Enable cluster mode on the server |
+| `SENTINEL_CLUSTER_PORT` | `9443` | gRPC listen port for the cluster server |
+| `SENTINEL_CLUSTER_DIR` | `/data/cluster` | Directory for mTLS certificates and cluster state |
+| `SENTINEL_SERVER_ADDR` | | Server address for agents (`host:port`) |
+| `SENTINEL_ENROLL_TOKEN` | | One-time enrollment token (from server's cluster page) |
+| `SENTINEL_HOST_NAME` | | Display name for this agent in the cluster view |
+| `SENTINEL_GRACE_PERIOD_OFFLINE` | `30m` | How long before a disconnected agent enters autonomous mode |
+
 ## Container Labels
 
 | Label | Values | Default | Description |
@@ -210,6 +233,9 @@ All configuration is via environment variables. Settings marked with * can also 
 | `sentinel.maintenance` | `true` | (absent) | Set during updates, read by Docker-Guardian |
 | `sentinel.self` | `true` | (absent) | Prevents Sentinel from updating itself |
 | `sentinel.depends-on` | comma-separated names | (absent) | Container dependencies for ordered updates |
+| `sentinel.hook.pre-update` | shell command | (absent) | Command to run inside the container before updating |
+| `sentinel.hook.post-update` | shell command | (absent) | Command to run inside the new container after updating |
+| `sentinel.hook.timeout` | integer (seconds) | `30` | Timeout for hook commands |
 
 - **auto** — updates applied automatically when a new image is detected
 - **manual** — updates queued for approval in the dashboard
@@ -327,9 +353,13 @@ Requires Go 1.24+, Docker, and golangci-lint.
 | `POST` | `/api/settings/stack-order` | Save custom stack ordering |
 | `POST` | `/api/settings/latest-auto-update` | Toggle auto-update for `:latest` tags |
 | `POST` | `/api/settings/image-cleanup` | Toggle image cleanup * |
-| `POST` | `/api/settings/cron` | Set cron schedule * |
-| `POST` | `/api/settings/hooks` | Toggle hooks * |
-| `POST` | `/api/settings/deps` | Toggle dependency-aware updates * |
+| `POST` | `/api/settings/schedule` | Set cron schedule * |
+| `POST` | `/api/settings/hooks-enabled` | Toggle hooks * |
+| `POST` | `/api/settings/hooks-write-labels` | Toggle hook label persistence * |
+| `POST` | `/api/settings/dependency-aware` | Toggle dependency-aware updates * |
+| `POST` | `/api/settings/rollback-policy` | Set post-rollback policy * |
+| `POST` | `/api/settings/general` | Save a general setting by key * |
+| `POST` | `/api/settings/switch-role` | Switch between server and agent mode * |
 | `POST` | `/api/settings/metrics` | Toggle Prometheus metrics * |
 
 **Notifications**
@@ -406,12 +436,38 @@ Requires Go 1.24+, Docker, and golangci-lint.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/hooks` | List lifecycle hooks |
-| `POST` | `/api/hooks` | Create a hook |
-| `GET` | `/api/hooks/{id}` | Get hook details |
-| `PUT` | `/api/hooks/{id}` | Update a hook |
-| `DELETE` | `/api/hooks/{id}` | Delete a hook |
-| `POST` | `/api/hooks/{id}/test` | Test hook execution |
+| `GET` | `/api/hooks/{container}` | List hooks for a container |
+| `POST` | `/api/hooks/{container}` | Create or update a hook |
+| `DELETE` | `/api/hooks/{container}/{phase}` | Delete a hook phase (pre-update or post-update) |
+
+**Cluster**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/cluster/hosts` | List enrolled hosts |
+| `POST` | `/api/cluster/enroll-token` | Generate a one-time enrollment token |
+| `DELETE` | `/api/cluster/hosts/{id}` | Remove a host from the cluster |
+| `POST` | `/api/cluster/hosts/{id}/revoke` | Revoke a host's certificate |
+| `POST` | `/api/cluster/hosts/{id}/drain` | Drain a host (stop scheduling updates) |
+| `GET` | `/api/settings/cluster` | Get cluster settings |
+| `POST` | `/api/settings/cluster` | Save cluster settings |
+
+**Services (Swarm)**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/services` | List Swarm services |
+| `GET` | `/api/services/{name}/detail` | Service detail (tasks, replicas) |
+| `POST` | `/api/services/{name}/update` | Trigger service update |
+| `POST` | `/api/services/{name}/rollback` | Rollback a service |
+| `POST` | `/api/services/{name}/scale` | Scale service replicas |
+
+**Dependencies**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/deps` | Get the dependency graph |
+| `GET` | `/api/deps/{container}` | Get dependencies for a container |
 
 **Observability**
 
@@ -430,6 +486,10 @@ Docker-Sentinel/
 ├── internal/
 │   ├── auth/              # Authentication, sessions, passkeys, permissions
 │   ├── clock/             # Time abstraction (testable)
+│   ├── cluster/           # Multi-host cluster (gRPC, mTLS, enrollment)
+│   │   ├── agent/         # Agent-side connection and autonomous mode
+│   │   ├── server/        # Server-side host registry and CA
+│   │   └── proto/         # Protobuf service definitions
 │   ├── config/            # Environment variable configuration
 │   ├── deps/              # Dependency graph, topological sort
 │   ├── docker/            # Docker API client, labels, snapshots
