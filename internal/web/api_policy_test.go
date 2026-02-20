@@ -133,6 +133,10 @@ func (m *mockClusterProviderWithContainers) UpdateRemoteContainer(_ context.Cont
 	return nil
 }
 
+func (m *mockClusterProviderWithContainers) RemoteContainerAction(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func (m *mockClusterProviderWithContainers) AllHostContainers() []RemoteContainer {
 	return m.containers
 }
