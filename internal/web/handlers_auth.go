@@ -196,10 +196,14 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Seed built-in roles.
-	_ = s.deps.Auth.Roles.SeedBuiltinRoles()
+	if err := s.deps.Auth.Roles.SeedBuiltinRoles(); err != nil {
+		s.deps.Log.Warn("failed to seed builtin roles", "error", err)
+	}
 
 	// Mark setup complete.
-	_ = s.deps.Auth.Settings.SaveSetting("auth_setup_complete", "true")
+	if err := s.deps.Auth.Settings.SaveSetting("auth_setup_complete", "true"); err != nil {
+		s.deps.Log.Warn("failed to save auth setup complete", "error", err)
+	}
 
 	// Close the setup window.
 	s.setupDeadline = time.Time{}
@@ -236,7 +240,9 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 // handleLogout processes logout.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if token := auth.GetSessionToken(r); token != "" {
-		_ = s.deps.Auth.Logout(token)
+		if err := s.deps.Auth.Logout(token); err != nil {
+			s.deps.Log.Debug("failed to clear session on logout", "error", err)
+		}
 	}
 	auth.ClearSessionCookie(w, s.deps.Auth.CookieSecure)
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
@@ -375,7 +381,9 @@ func (s *Server) apiRevokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	sessions, _ := s.deps.Auth.Sessions.ListSessionsForUser(rc.User.ID)
 	for _, sess := range sessions {
 		if sess.Token != currentToken {
-			_ = s.deps.Auth.Sessions.DeleteSession(sess.Token)
+			if err := s.deps.Auth.Sessions.DeleteSession(sess.Token); err != nil {
+				s.deps.Log.Debug("failed to delete revoked session", "error", err)
+			}
 		}
 	}
 
