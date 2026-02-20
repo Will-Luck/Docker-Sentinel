@@ -323,7 +323,10 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 	}
 
 	// Check CRL -- agent's cert might have been revoked since it was issued.
-	if revoked, _ := s.isCertRevoked(stream.Context()); revoked {
+	if revoked, err := s.isCertRevoked(stream.Context()); err != nil {
+		s.log.Error("cert revocation check failed", "error", err)
+		return status.Error(codes.Internal, "revocation check unavailable")
+	} else if revoked {
 		return status.Error(codes.PermissionDenied, "certificate has been revoked")
 	}
 
@@ -429,7 +432,10 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 		return nil, status.Errorf(codes.Unauthenticated, "no valid client certificate: %v", err)
 	}
 
-	if revoked, _ := s.isCertRevoked(ctx); revoked {
+	if revoked, err := s.isCertRevoked(ctx); err != nil {
+		s.log.Error("cert revocation check failed", "error", err)
+		return nil, status.Error(codes.Internal, "revocation check unavailable")
+	} else if revoked {
 		return nil, status.Error(codes.PermissionDenied, "certificate has been revoked")
 	}
 
@@ -930,8 +936,8 @@ func (s *Server) verifyCRL(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 	serial := fmt.Sprintf("%x", leaf.SerialNumber)
 	revoked, err := s.store.IsRevokedCert(serial)
 	if err != nil {
-		s.log.Error("CRL check failed", "serial", serial, "error", err)
-		return nil // fail open -- don't deny service on store errors
+		s.log.Error("CRL check failed, rejecting connection", "serial", serial, "error", err)
+		return fmt.Errorf("CRL check unavailable")
 	}
 	if revoked {
 		return fmt.Errorf("certificate %s has been revoked", serial)

@@ -9,8 +9,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net"
 	"testing"
 	"time"
@@ -1267,5 +1269,51 @@ func TestRegisterPending_RejectsExisting(t *testing.T) {
 	_, err = s.registerPending("h1")
 	if err == nil {
 		t.Fatal("second registerPending: expected error, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestVerifyCRL_FailsClosed verifies that verifyCRL returns an error (fails
+// closed) when the store's IsRevokedCert returns an error.
+// ---------------------------------------------------------------------------
+
+// errStore is a minimal ClusterStore stub whose IsRevokedCert always errors.
+type errStore struct{ err error }
+
+func (e *errStore) SaveClusterHost(string, []byte) error             { return nil }
+func (e *errStore) GetClusterHost(string) ([]byte, error)            { return nil, nil }
+func (e *errStore) ListClusterHosts() (map[string][]byte, error)     { return nil, nil }
+func (e *errStore) DeleteClusterHost(string) error                   { return nil }
+func (e *errStore) SaveEnrollToken(string, []byte) error             { return nil }
+func (e *errStore) GetEnrollToken(string) ([]byte, error)            { return nil, nil }
+func (e *errStore) DeleteEnrollToken(string) error                   { return nil }
+func (e *errStore) AddRevokedCert(string) error                      { return nil }
+func (e *errStore) IsRevokedCert(string) (bool, error)               { return false, e.err }
+func (e *errStore) ListRevokedCerts() (map[string]string, error)     { return nil, nil }
+
+func TestVerifyCRL_FailsClosed(t *testing.T) {
+	storeErr := errors.New("store unavailable")
+	s := &Server{
+		store: &errStore{err: storeErr},
+		log:   slog.Default(),
+	}
+
+	// Generate a self-signed cert to use as the raw DER bytes.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-agent"},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+
+	gotErr := s.verifyCRL([][]byte{certDER}, nil)
+	if gotErr == nil {
+		t.Fatal("verifyCRL should return an error when the store fails, but got nil")
 	}
 }
