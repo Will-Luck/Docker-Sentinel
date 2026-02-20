@@ -140,8 +140,12 @@ func (pc *policyCache) resolvePolicy(containerName string, labels map[string]str
 // The loop exits when ctx is cancelled (typically because reconnection
 // succeeded or the agent is shutting down).
 func (a *Agent) runAutonomous(ctx context.Context) error {
+	a.mu.Lock()
+	offlineSince := a.offlineSince
+	a.mu.Unlock()
+
 	a.log.Warn("entering autonomous mode -- server unreachable",
-		"offline_since", a.offlineSince,
+		"offline_since", offlineSince,
 		"grace_period", a.cfg.GracePeriodOffline,
 	)
 
