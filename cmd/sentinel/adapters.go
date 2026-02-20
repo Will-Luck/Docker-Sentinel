@@ -571,8 +571,10 @@ func (a *rateLimitAdapter) ProbeAndRecord(ctx context.Context, host string, cred
 	a.t.SetAuth(host, true)
 	// Persist updated rate limits to DB.
 	if a.saver != nil {
-		if data, exportErr := a.t.Export(); exportErr == nil {
-			_ = a.saver(data)
+		if data, exportErr := a.t.Export(); exportErr != nil {
+			slog.Warn("failed to export rate limit state", "error", exportErr)
+		} else if err := a.saver(data); err != nil {
+			slog.Warn("failed to persist rate limit state", "error", err)
 		}
 	}
 	return nil
@@ -1021,6 +1023,10 @@ func (a *clusterAdapter) DrainHost(id string) error {
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
 	_, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
 	return err
+}
+
+func (a *clusterAdapter) RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error {
+	return a.srv.ContainerActionSync(ctx, hostID, containerName, action)
 }
 
 // clusterManager implements web.ClusterLifecycle for dynamic cluster

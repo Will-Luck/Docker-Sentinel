@@ -522,11 +522,13 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		if notifyOK {
 			lastNotified = now
 		}
-		_ = u.store.SetNotifyState(name, &store.NotifyState{
+		if err := u.store.SetNotifyState(name, &store.NotifyState{
 			LastDigest:   check.RemoteDigest,
 			LastNotified: lastNotified,
 			FirstSeen:    firstSeen,
-		})
+		}); err != nil {
+			u.log.Warn("failed to persist notify state", "name", name, "error", err)
+		}
 
 		// Build target image for semver version bumps.
 		scanTarget := ""
@@ -738,7 +740,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			}
 
 			// Record update in host-scoped history.
-			_ = u.store.RecordUpdate(store.UpdateRecord{
+			if err := u.store.RecordUpdate(store.UpdateRecord{
 				Timestamp:     u.clock.Now(),
 				ContainerName: scopedName,
 				OldImage:      ur.OldImage,
@@ -747,7 +749,9 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				NewDigest:     ur.NewDigest,
 				Outcome:       ur.Outcome,
 				Duration:      ur.Duration,
-			})
+			}); err != nil {
+				u.log.Warn("failed to record remote update history", "name", scopedName, "error", err)
+			}
 
 			// SSE event with host context.
 			if u.events != nil {
