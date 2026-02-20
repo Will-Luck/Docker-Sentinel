@@ -89,13 +89,15 @@ func (s *Server) apiServiceUpdate(w http.ResponseWriter, r *http.Request) {
 				msg = fmt.Sprintf("service %s: %s → %s", name, currentTag, newTag)
 			}
 		}
-		_ = s.deps.EventLog.AppendLog(LogEntry{
+		if err := s.deps.EventLog.AppendLog(LogEntry{
 			Type:      "update",
 			Message:   msg,
 			Container: name,
 			User:      user,
 			Kind:      "service",
-		})
+		}); err != nil {
+			s.deps.Log.Warn("failed to append event log", "error", err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updating"})
@@ -152,7 +154,7 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Record in update history so rollbacks appear on the history page.
-		_ = s.deps.Store.RecordUpdate(UpdateRecord{
+		if err := s.deps.Store.RecordUpdate(UpdateRecord{
 			Timestamp:     time.Now(),
 			ContainerName: name,
 			OldImage:      currentImage,
@@ -161,26 +163,35 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 			Duration:      duration,
 			Error:         errMsg,
 			Type:          "service",
-		})
+		}); err != nil {
+			s.deps.Log.Warn("failed to record service rollback history", "name", name, "error", err)
+		}
 
 		// Apply rollback policy setting — change the service's policy to prevent
 		// the next scan from immediately retrying the same broken update.
 		if outcome == "success" && s.deps.SettingsStore != nil && s.deps.Policy != nil {
-			if rp, _ := s.deps.SettingsStore.LoadSetting("rollback_policy"); rp == "manual" || rp == "pinned" {
-				_ = s.deps.Policy.SetPolicyOverride(name, rp)
-				s.deps.Log.Info("policy changed after manual rollback", "name", name, "policy", rp)
+			if rp, err := s.deps.SettingsStore.LoadSetting("rollback_policy"); err != nil {
+				s.deps.Log.Warn("failed to load rollback policy", "name", name, "error", err)
+			} else if rp == "manual" || rp == "pinned" {
+				if err := s.deps.Policy.SetPolicyOverride(name, rp); err != nil {
+					s.deps.Log.Warn("failed to set policy after rollback", "name", name, "error", err)
+				} else {
+					s.deps.Log.Info("policy changed after manual rollback", "name", name, "policy", rp)
+				}
 			}
 		}
 	}()
 
 	if s.deps.EventLog != nil {
-		_ = s.deps.EventLog.AppendLog(LogEntry{
+		if err := s.deps.EventLog.AppendLog(LogEntry{
 			Type:      "rollback",
 			Message:   "service rollback triggered for " + name,
 			Container: name,
 			User:      user,
 			Kind:      "service",
-		})
+		}); err != nil {
+			s.deps.Log.Warn("failed to append event log", "error", err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rolling back"})
@@ -283,11 +294,15 @@ func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
 
 	// Scaling to 0: save previous replica count so "Scale up" can restore it.
 	if body.Replicas == 0 && prevReplicas > 0 && s.deps.SettingsStore != nil {
-		_ = s.deps.SettingsStore.SaveSetting("svc_prev_replicas::"+name, fmt.Sprintf("%d", prevReplicas))
+		if err := s.deps.SettingsStore.SaveSetting("svc_prev_replicas::"+name, fmt.Sprintf("%d", prevReplicas)); err != nil {
+			s.deps.Log.Warn("failed to save previous replica count", "name", name, "error", err)
+		}
 	}
 	// Scaling back up: clear the saved count.
 	if body.Replicas > 0 && s.deps.SettingsStore != nil {
-		_ = s.deps.SettingsStore.SaveSetting("svc_prev_replicas::"+name, "")
+		if err := s.deps.SettingsStore.SaveSetting("svc_prev_replicas::"+name, ""); err != nil {
+			s.deps.Log.Warn("failed to clear previous replica count", "name", name, "error", err)
+		}
 	}
 
 	if err := s.deps.Swarm.ScaleService(r.Context(), name, body.Replicas); err != nil {
@@ -301,13 +316,15 @@ func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
 		if rc := auth.GetRequestContext(r.Context()); rc != nil && rc.User != nil {
 			user = rc.User.Username
 		}
-		_ = s.deps.EventLog.AppendLog(LogEntry{
+		if err := s.deps.EventLog.AppendLog(LogEntry{
 			Type:      "scale",
 			Message:   fmt.Sprintf("service %s scaled to %d replicas", name, body.Replicas),
 			Container: name,
 			User:      user,
 			Kind:      "service",
-		})
+		}); err != nil {
+			s.deps.Log.Warn("failed to append event log", "error", err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

@@ -9,8 +9,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net"
 	"testing"
 	"time"
@@ -1086,6 +1088,102 @@ func TestSendCommand_DisconnectedAgent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TestHandleCertRenewal_NoDataRace verifies that concurrent cert renewal and
+// heartbeat processing do not produce a data race on HostState fields.
+// Run with: go test -race ./internal/cluster/server/ -run TestHandleCertRenewal_NoDataRace
+// ---------------------------------------------------------------------------
+
+func TestHandleCertRenewal_NoDataRace(t *testing.T) {
+	srv, addr, _, _ := testServer(t)
+
+	token, _, err := srv.GenerateEnrollToken(5 * time.Minute)
+	if err != nil {
+		t.Fatalf("GenerateEnrollToken: %v", err)
+	}
+
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+
+	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
+	client := proto.NewAgentServiceClient(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := client.Channel(ctx)
+	if err != nil {
+		t.Fatalf("Channel: %v", err)
+	}
+
+	// Wait for the server to register the stream.
+	time.Sleep(50 * time.Millisecond)
+
+	// Agent goroutine: drain the stream so the server's send goroutine
+	// doesn't block. Discard all messages — we only care about races.
+	go func() {
+		for {
+			_, err := stream.Recv()
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	const iters = 50
+
+	// Goroutine 1: repeatedly fire cert renewal CSRs at the server.
+	renewDone := make(chan struct{})
+	go func() {
+		defer close(renewDone)
+		for i := 0; i < iters; i++ {
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				return
+			}
+			csrDER, err := x509.CreateCertificateRequest(rand.Reader,
+				&x509.CertificateRequest{Subject: pkix.Name{CommonName: hostID}},
+				key,
+			)
+			if err != nil {
+				return
+			}
+			_ = stream.Send(&proto.AgentMessage{
+				Payload: &proto.AgentMessage_CertRenewal{
+					CertRenewal: &proto.CertRenewalCSR{Csr: csrDER},
+				},
+			})
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	// Goroutine 2: concurrently call UpdateLastSeen, which takes a write lock
+	// and mutates hs.Info.LastSeen — the field also touched by the old buggy
+	// handleCertRenewal after the lock was released.
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		for i := 0; i < iters; i++ {
+			_ = srv.Registry().UpdateLastSeen(hostID, time.Now())
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	<-renewDone
+	<-heartbeatDone
+
+	// Wait for any in-flight renewals to be processed.
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify the host is still in the registry and has a cert serial.
+	hs, ok := srv.Registry().Get(hostID)
+	if !ok {
+		t.Fatalf("host %s not in registry after concurrent renewals", hostID)
+	}
+	if hs.Info.CertSerial == "" {
+		t.Error("host should have a cert serial after renewal")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // TestMultipleAgents verifies that multiple agents can enroll and connect
 // concurrently without interfering with each other.
 // ---------------------------------------------------------------------------
@@ -1147,5 +1245,75 @@ func TestMultipleAgents(t *testing.T) {
 			t.Errorf("duplicate host ID: %s", id)
 		}
 		seen[id] = true
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestRegisterPending_RejectsExisting verifies that a second registerPending
+// call for the same host returns an error while the first is still outstanding.
+// ---------------------------------------------------------------------------
+
+func TestRegisterPending_RejectsExisting(t *testing.T) {
+	s := &Server{
+		pending: make(map[string]chan *proto.AgentMessage),
+	}
+
+	ch1, err := s.registerPending("h1")
+	if err != nil {
+		t.Fatalf("first registerPending: unexpected error: %v", err)
+	}
+	if ch1 == nil {
+		t.Fatal("first registerPending: expected non-nil channel")
+	}
+
+	_, err = s.registerPending("h1")
+	if err == nil {
+		t.Fatal("second registerPending: expected error, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestVerifyCRL_FailsClosed verifies that verifyCRL returns an error (fails
+// closed) when the store's IsRevokedCert returns an error.
+// ---------------------------------------------------------------------------
+
+// errStore is a minimal ClusterStore stub whose IsRevokedCert always errors.
+type errStore struct{ err error }
+
+func (e *errStore) SaveClusterHost(string, []byte) error         { return nil }
+func (e *errStore) GetClusterHost(string) ([]byte, error)        { return nil, nil }
+func (e *errStore) ListClusterHosts() (map[string][]byte, error) { return nil, nil }
+func (e *errStore) DeleteClusterHost(string) error               { return nil }
+func (e *errStore) SaveEnrollToken(string, []byte) error         { return nil }
+func (e *errStore) GetEnrollToken(string) ([]byte, error)        { return nil, nil }
+func (e *errStore) DeleteEnrollToken(string) error               { return nil }
+func (e *errStore) AddRevokedCert(string) error                  { return nil }
+func (e *errStore) IsRevokedCert(string) (bool, error)           { return false, e.err }
+func (e *errStore) ListRevokedCerts() (map[string]string, error) { return nil, nil }
+
+func TestVerifyCRL_FailsClosed(t *testing.T) {
+	storeErr := errors.New("store unavailable")
+	s := &Server{
+		store: &errStore{err: storeErr},
+		log:   slog.Default(),
+	}
+
+	// Generate a self-signed cert to use as the raw DER bytes.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test-agent"},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+
+	gotErr := s.verifyCRL([][]byte{certDER}, nil)
+	if gotErr == nil {
+		t.Fatal("verifyCRL should return an error when the store fails, but got nil")
 	}
 }

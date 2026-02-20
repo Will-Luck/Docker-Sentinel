@@ -323,7 +323,10 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 	}
 
 	// Check CRL -- agent's cert might have been revoked since it was issued.
-	if revoked, _ := s.isCertRevoked(stream.Context()); revoked {
+	if revoked, err := s.isCertRevoked(stream.Context()); err != nil {
+		s.log.Error("cert revocation check failed", "error", err)
+		return status.Error(codes.Internal, "revocation check unavailable")
+	} else if revoked {
 		return status.Error(codes.PermissionDenied, "certificate has been revoked")
 	}
 
@@ -370,8 +373,17 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		}
 		s.mu.Unlock()
 
+		s.pendingMu.Lock()
+		if ch, ok := s.pending[hostID]; ok {
+			delete(s.pending, hostID)
+			close(ch)
+		}
+		s.pendingMu.Unlock()
+
 		s.registry.SetConnected(hostID, false)
-		_ = s.registry.UpdateLastSeen(hostID, time.Now())
+		if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
+			s.log.Warn("failed to update last seen on disconnect", "hostID", hostID, "error", err)
+		}
 
 		s.log.Info("agent disconnected", "hostID", hostID)
 		s.bus.Publish(events.SSEEvent{
@@ -422,13 +434,18 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 		return nil, status.Errorf(codes.Unauthenticated, "no valid client certificate: %v", err)
 	}
 
-	if revoked, _ := s.isCertRevoked(ctx); revoked {
+	if revoked, err := s.isCertRevoked(ctx); err != nil {
+		s.log.Error("cert revocation check failed", "error", err)
+		return nil, status.Error(codes.Internal, "revocation check unavailable")
+	} else if revoked {
 		return nil, status.Error(codes.PermissionDenied, "certificate has been revoked")
 	}
 
 	containers := protoToContainers(report.Containers)
 	s.registry.UpdateContainers(hostID, containers)
-	_ = s.registry.UpdateLastSeen(hostID, time.Now())
+	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
+		s.log.Warn("failed to update last seen on state report", "hostID", hostID, "error", err)
+	}
 
 	s.log.Info("state report received",
 		"hostID", hostID,
@@ -499,16 +516,12 @@ func (s *Server) DrainHost(id string) error {
 // removes it from the registry. The cert serial is added to the CRL so
 // the agent can no longer authenticate.
 func (s *Server) RevokeHost(id string) error {
-	// Look up the cert serial before removing the host record.
-	hs, ok := s.registry.Get(id)
-	if !ok {
-		return fmt.Errorf("host %s not found", id)
-	}
-	if hs.Info.CertSerial != "" {
-		if err := s.store.AddRevokedCert(hs.Info.CertSerial); err != nil {
-			return fmt.Errorf("revoke cert for host %s: %w", id, err)
+	serial := s.registry.GetCertSerial(id)
+	if serial != "" {
+		if err := s.store.AddRevokedCert(serial); err != nil {
+			return fmt.Errorf("revoke cert: %w", err)
 		}
-		s.log.Info("revoked certificate", "hostID", id, "serial", hs.Info.CertSerial)
+		s.log.Info("revoked certificate", "hostID", id, "serial", serial)
 	}
 
 	s.disconnectAgent(id)
@@ -541,6 +554,9 @@ func (s *Server) handleAgentMessage(hostID string, as *agentStream, msg *proto.A
 	case *proto.AgentMessage_UpdateResult:
 		s.handleUpdateResult(hostID, msg, p.UpdateResult)
 
+	case *proto.AgentMessage_ContainerActionResult:
+		s.handleContainerActionResult(hostID, msg, p.ContainerActionResult)
+
 	case *proto.AgentMessage_HookResult:
 		s.handleHookResult(hostID, p.HookResult)
 
@@ -563,7 +579,9 @@ func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heart
 	as.version = hb.AgentVersion
 	as.features = hb.SupportedFeatures
 
-	_ = s.registry.UpdateLastSeen(hostID, time.Now())
+	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
+		s.log.Warn("failed to update last seen on heartbeat", "hostID", hostID, "error", err)
+	}
 }
 
 func (s *Server) handleContainerList(hostID string, msg *proto.AgentMessage, cl *proto.ContainerList) {
@@ -600,6 +618,29 @@ func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *
 
 	// Route to a pending synchronous caller if one is waiting.
 	if ur.RequestId != "" {
+		s.deliverPending(hostID, msg)
+	}
+}
+
+func (s *Server) handleContainerActionResult(hostID string, msg *proto.AgentMessage, ar *proto.ContainerActionResult) {
+	s.log.Info("container action result",
+		"hostID", hostID,
+		"container", ar.ContainerName,
+		"action", ar.Action,
+		"outcome", ar.Outcome,
+		"requestID", ar.RequestId,
+	)
+
+	s.bus.Publish(events.SSEEvent{
+		Type:          events.EventContainerState,
+		ContainerName: ar.ContainerName,
+		HostName:      hostID,
+		Message:       fmt.Sprintf("%s %s: %s", ar.Action, ar.ContainerName, ar.Outcome),
+		Timestamp:     time.Now(),
+	})
+
+	// Route to a pending synchronous caller if one is waiting.
+	if ar.RequestId != "" {
 		s.deliverPending(hostID, msg)
 	}
 }
@@ -665,25 +706,24 @@ func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.Ce
 		return
 	}
 
-	// Update the stored cert serial for this host.
-	if hs, ok := s.registry.Get(hostID); ok {
-		// Revoke the old serial so it can't be reused.
-		if hs.Info.CertSerial != "" {
-			_ = s.store.AddRevokedCert(hs.Info.CertSerial)
-		}
-
-		hs.Info.CertSerial = serial
-		data, _ := json.Marshal(hs.Info)
-		_ = s.store.SaveClusterHost(hostID, data)
+	if err := s.registry.UpdateCertSerial(hostID, serial); err != nil {
+		s.log.Error("cert renewal: failed to update serial", "hostID", hostID, "error", err)
+		return
 	}
 
-	// Send the new cert back through the stream.
-	as.send <- &proto.ServerMessage{
+	// Non-blocking send — matches SendCommand pattern.
+	msg := &proto.ServerMessage{
 		Payload: &proto.ServerMessage_CertRenewalResponse{
 			CertRenewalResponse: &proto.CertRenewalResponse{
 				AgentCert: certPEM,
 			},
 		},
+	}
+	select {
+	case as.send <- msg:
+	default:
+		s.log.Error("cert renewal: send buffer full", "hostID", hostID)
+		return
 	}
 
 	s.log.Info("cert renewed", "hostID", hostID, "newSerial", serial)
@@ -718,12 +758,15 @@ func (s *Server) deliverPending(hostID string, msg *proto.AgentMessage) {
 // registerPending creates a response channel for the given host.
 // Must be called before sending the command to avoid a race where
 // the agent responds before the channel is registered.
-func (s *Server) registerPending(hostID string) chan *proto.AgentMessage {
+func (s *Server) registerPending(hostID string) (chan *proto.AgentMessage, error) {
 	ch := make(chan *proto.AgentMessage, 1)
 	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	if _, exists := s.pending[hostID]; exists {
+		return nil, fmt.Errorf("agent %s already has an outstanding request", hostID)
+	}
 	s.pending[hostID] = ch
-	s.pendingMu.Unlock()
-	return ch
+	return ch, nil
 }
 
 // cancelPending removes the pending channel for a host and returns it.
@@ -740,7 +783,11 @@ func (s *Server) cancelPending(hostID string, ch chan *proto.AgentMessage) {
 // response arrives or the context is cancelled.
 func (s *Server) awaitPending(ctx context.Context, hostID string, ch chan *proto.AgentMessage) (*proto.AgentMessage, error) {
 	select {
-	case resp := <-ch:
+	case resp, ok := <-ch:
+		if !ok {
+			// Channel was closed by the disconnect cleanup — agent dropped.
+			return nil, fmt.Errorf("agent %s disconnected", hostID)
+		}
 		return resp, nil
 	case <-ctx.Done():
 		s.cancelPending(hostID, ch)
@@ -756,7 +803,10 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 
 	// Register the response channel BEFORE sending, so a fast agent
 	// response doesn't race with registration.
-	ch := s.registerPending(hostID)
+	ch, err := s.registerPending(hostID)
+	if err != nil {
+		return nil, err
+	}
 
 	msg := &proto.ServerMessage{
 		RequestId: reqID,
@@ -790,7 +840,10 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 
 	// Register the response channel BEFORE sending, so a fast agent
 	// response doesn't race with registration.
-	ch := s.registerPending(hostID)
+	ch, err := s.registerPending(hostID)
+	if err != nil {
+		return nil, err
+	}
 
 	msg := &proto.ServerMessage{
 		RequestId: reqID,
@@ -819,6 +872,45 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 	}
 
 	return ur.UpdateResult, nil
+}
+
+// ContainerActionSync sends a ContainerActionRequest to the agent and blocks
+// until the agent responds with a ContainerActionResult or the context is cancelled.
+func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName, action string) error {
+	reqID := generateRequestID()
+	ch, err := s.registerPending(hostID)
+	if err != nil {
+		return err
+	}
+
+	msg := &proto.ServerMessage{
+		RequestId: reqID,
+		Payload: &proto.ServerMessage_ContainerAction{
+			ContainerAction: &proto.ContainerActionRequest{
+				ContainerName: containerName,
+				Action:        action,
+			},
+		},
+	}
+
+	if err := s.SendCommand(hostID, msg); err != nil {
+		s.cancelPending(hostID, ch)
+		return fmt.Errorf("send container action: %w", err)
+	}
+
+	resp, err := s.awaitPending(ctx, hostID, ch)
+	if err != nil {
+		return fmt.Errorf("await container action result: %w", err)
+	}
+
+	ar, ok := resp.Payload.(*proto.AgentMessage_ContainerActionResult)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T (wanted ContainerActionResult)", resp.Payload)
+	}
+	if ar.ContainerActionResult.Outcome != "success" {
+		return fmt.Errorf("%s failed: %s", action, ar.ContainerActionResult.Error)
+	}
+	return nil
 }
 
 // generateRequestID creates a random 8-byte hex string for request correlation.
@@ -850,8 +942,8 @@ func (s *Server) verifyCRL(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 	serial := fmt.Sprintf("%x", leaf.SerialNumber)
 	revoked, err := s.store.IsRevokedCert(serial)
 	if err != nil {
-		s.log.Error("CRL check failed", "serial", serial, "error", err)
-		return nil // fail open -- don't deny service on store errors
+		s.log.Error("CRL check failed, rejecting connection", "serial", serial, "error", err)
+		return fmt.Errorf("CRL check unavailable")
 	}
 	if revoked {
 		return fmt.Errorf("certificate %s has been revoked", serial)

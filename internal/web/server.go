@@ -60,6 +60,7 @@ type Dependencies struct {
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
+	ClusterPort         string // gRPC listen port, e.g. "9443"
 	Commit              string // short git commit hash, e.g. "abc1234" or "unknown"
 	Log                 *slog.Logger
 }
@@ -233,6 +234,8 @@ type ClusterProvider interface {
 	DrainHost(id string) error
 	// UpdateRemoteContainer dispatches a container update to a remote agent.
 	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error
+	// RemoteContainerAction dispatches a lifecycle action to a container on a remote agent.
+	RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error
 	// AllHostContainers returns containers from all connected hosts.
 	AllHostContainers() []RemoteContainer
 }
@@ -747,6 +750,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/hooks-write-labels", perm(auth.PermSettingsModify, s.apiSetHooksWriteLabels))
 	s.mux.Handle("POST /api/settings/dependency-aware", perm(auth.PermSettingsModify, s.apiSetDependencyAware))
 	s.mux.Handle("POST /api/settings/rollback-policy", perm(auth.PermSettingsModify, s.apiSetRollbackPolicy))
+	s.mux.Handle("POST /api/settings/general", perm(auth.PermSettingsModify, s.apiSaveGeneralSetting))
+	s.mux.Handle("POST /api/settings/switch-role", perm(auth.PermSettingsModify, s.apiSwitchRole))
 
 	// Cluster settings — always available so the admin can enable/configure cluster
 	// even when the cluster server is not yet running.

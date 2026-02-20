@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,6 +154,112 @@ func main() {
 		SessionExpiry:  cfg.SessionExpiry,
 		AuthEnabledEnv: cfg.AuthEnabled,
 	})
+
+	// Check if instance has been configured via the wizard.
+	instanceRole, _ := db.LoadSetting("instance_role")
+	needsWizard := instanceRole == ""
+
+	// Env var overrides: if SENTINEL_MODE is explicitly set AND auth_setup_complete is true,
+	// skip wizard (backwards compat for existing deployments).
+	if cfg.Mode != "" {
+		if v, _ := db.LoadSetting("auth_setup_complete"); v == "true" {
+			needsWizard = false
+			if instanceRole == "" {
+				_ = db.SaveSetting("instance_role", cfg.Mode)
+				instanceRole = cfg.Mode
+			}
+		}
+	}
+
+	// If users already exist but instance_role is empty (upgrade from older version),
+	// default to server mode and skip the wizard.
+	if needsWizard {
+		if n, _ := db.UserCount(); n > 0 {
+			needsWizard = false
+			instanceRole = "server"
+			_ = db.SaveSetting("instance_role", "server")
+			_ = db.SaveSetting("auth_setup_complete", "true")
+			log.Info("existing users found, defaulting to server mode")
+		}
+	}
+
+	// Auto-enrollment: if SENTINEL_ENROLL_TOKEN is set on a fresh container, skip wizard.
+	if needsWizard && cfg.EnrollToken != "" && cfg.ServerAddr != "" {
+		log.Info("auto-enrolling as agent", "server", cfg.ServerAddr)
+		_ = db.SaveSetting("instance_role", "agent")
+		_ = db.SaveSetting("server_addr", cfg.ServerAddr)
+		_ = db.SaveSetting("auth_setup_complete", "true")
+		if cfg.HostName != "" {
+			_ = db.SaveSetting("host_name", cfg.HostName)
+		}
+
+		// Generate random admin credentials for the agent mini-UI.
+		randomPass := generateRandomPassword()
+		hash, err := auth.HashPassword(randomPass)
+		if err != nil {
+			log.Error("auto-enroll: failed to hash password", "error", err)
+			os.Exit(1)
+		}
+		userID, err := auth.GenerateUserID()
+		if err != nil {
+			log.Error("auto-enroll: failed to generate user ID", "error", err)
+			os.Exit(1)
+		}
+		if err := db.CreateFirstUser(auth.User{
+			ID:           userID,
+			Username:     "admin",
+			PasswordHash: hash,
+			RoleID:       auth.RoleAdminID,
+			CreatedAt:    time.Now().UTC(),
+			UpdatedAt:    time.Now().UTC(),
+		}); err != nil {
+			log.Error("auto-enroll: failed to create admin user", "error", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("=============================================")
+		fmt.Println("Auto-enrolled as agent.")
+		fmt.Printf("Agent UI login: admin / %s\n", randomPass)
+		fmt.Println("Change this password after first login.")
+		fmt.Println("=============================================")
+
+		cfg.Mode = "agent"
+		needsWizard = false
+		instanceRole = "agent"
+	}
+
+	if needsWizard {
+		runWizard(ctx, cfg, db, authSvc, log)
+		// Re-read role from DB after wizard completes.
+		instanceRole, _ = db.LoadSetting("instance_role")
+		if instanceRole == "" {
+			// Wizard was cancelled or timed out — exit cleanly.
+			log.Info("wizard did not complete, exiting")
+			return
+		}
+		cfg.Mode = instanceRole
+	}
+
+	// If instance_role is now "agent", hand off to agent mode.
+	if instanceRole == "agent" {
+		// Load agent settings from DB if not set via env.
+		if cfg.ServerAddr == "" {
+			cfg.ServerAddr, _ = db.LoadSetting("server_addr")
+		}
+		if cfg.EnrollToken == "" {
+			cfg.EnrollToken, _ = db.LoadSetting("enroll_token")
+		}
+		if cfg.HostName == "" {
+			cfg.HostName, _ = db.LoadSetting("host_name")
+		}
+		cfg.Mode = "agent"
+		// Close DB and Docker client before runAgent opens its own handles.
+		// BoltDB uses file-level locking — two open handles deadlock.
+		db.Close()
+		client.Close()
+		runAgent(ctx, cfg, log)
+		return
+	}
 
 	// Set up a 5-minute setup window if no admin user exists yet.
 	var setupDeadline time.Time
@@ -355,6 +463,7 @@ func main() {
 			Digest:              digestSched,
 			Auth:                authSvc,
 			Version:             versionString(),
+			ClusterPort:         cfg.ClusterPort,
 			Commit:              commit,
 			Log:                 log.Logger,
 		}
@@ -477,6 +586,50 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	}
 	defer client.Close()
 
+	db, err := store.Open(cfg.DBPath)
+	if err != nil {
+		log.Error("failed to open database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := db.EnsureAuthBuckets(); err != nil {
+		log.Error("failed to create auth buckets", "error", err)
+		os.Exit(1)
+	}
+
+	authSvc := auth.NewService(auth.ServiceConfig{
+		Users:          db,
+		Sessions:       db,
+		Roles:          db,
+		Tokens:         db,
+		Settings:       db,
+		Log:            log.Logger,
+		CookieSecure:   cfg.CookieSecure,
+		SessionExpiry:  cfg.SessionExpiry,
+		AuthEnabledEnv: cfg.AuthEnabled,
+	})
+
+	agentWeb := web.NewAgentServer(web.AgentDeps{
+		Auth:          authSvc,
+		SettingsStore: &settingsStoreAdapter{db},
+		Log:           log.Logger,
+		Version:       versionString(),
+	})
+
+	go func() {
+		addr := net.JoinHostPort("", cfg.WebPort)
+		if err := agentWeb.ListenAndServe(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("agent web server error", "error", err)
+		}
+	}()
+
+	defer func() {
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = agentWeb.Shutdown(shutCtx)
+	}()
+
 	agentCfg := agent.Config{
 		ServerAddr:         cfg.ServerAddr,
 		EnrollToken:        cfg.EnrollToken,
@@ -488,6 +641,7 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	}
 
 	a := agent.New(agentCfg, client, log.Logger)
+	agentWeb.SetStatusProvider(a)
 
 	log.Info("starting agent mode", "server", cfg.ServerAddr, "host", cfg.HostName)
 	if err := a.Run(ctx); err != nil {
@@ -495,6 +649,52 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		os.Exit(1)
 	}
 	log.Info("agent shutdown complete")
+}
+
+func generateRandomPassword() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// runWizard starts the setup wizard server and blocks until setup completes
+// or ctx is cancelled.
+func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc *auth.Service, log *logging.Logger) {
+	fmt.Println("=============================================")
+	fmt.Println("First-run setup required!")
+	fmt.Println("")
+	fmt.Printf("  Open http://<your-host>:%s/setup\n", cfg.WebPort)
+	fmt.Println("  to configure this instance.")
+	fmt.Println("")
+	fmt.Println("  This page will be available for 5 minutes.")
+	fmt.Println("  Restart the container to get a new window.")
+	fmt.Println("=============================================")
+
+	ws := web.NewWizardServer(web.WizardDeps{
+		SettingsStore: &settingsStoreAdapter{db},
+		Auth:          authSvc,
+		Log:           log.Logger,
+		Version:       versionString(),
+		ClusterPort:   cfg.ClusterPort,
+	})
+
+	addr := net.JoinHostPort("", cfg.WebPort)
+	go func() {
+		if err := ws.ListenAndServe(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("wizard server error", "error", err)
+		}
+	}()
+
+	select {
+	case <-ws.Done():
+		log.Info("wizard setup complete")
+	case <-ctx.Done():
+		log.Info("wizard cancelled by signal")
+	}
+
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutCancel()
+	_ = ws.Shutdown(shutCtx)
 }
 
 // parseHeaders parses comma-separated "Key:Value" pairs into a map.

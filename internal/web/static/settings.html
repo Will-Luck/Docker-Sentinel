@@ -249,7 +249,58 @@
         <div class="tab-panel" id="tab-general" role="tabpanel">
             <div class="accordion-stack">
 
-                <!-- Environment Variables -->
+                <!-- System Settings -->
+                <details class="accordion card" open>
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>System Settings</h2>
+                        <span class="accordion-preview">Port, TLS, logging, instance role</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div id="general-restart-banner" class="restart-banner-inline" style="display:none">
+                            Settings saved — restart the container to apply.
+                        </div>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Web Port</div>
+                                    <div class="setting-desc">Dashboard port <span class="restart-badge">Restart required</span></div>
+                                </div>
+                                <input type="number" id="general-web-port" class="setting-input" style="max-width:120px" min="1" max="65535" onchange="saveGeneralSetting('web_port', this.value)">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">TLS</div>
+                                    <div class="setting-desc">HTTPS encryption <span class="restart-badge">Restart required</span></div>
+                                </div>
+                                <select id="general-tls-mode" class="setting-select" onchange="saveGeneralSetting('tls_mode', this.value)">
+                                    <option value="off">Off</option>
+                                    <option value="auto">Auto (self-signed)</option>
+                                    <option value="manual">Manual (provide certs)</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Log Format</div>
+                                    <div class="setting-desc">Structured JSON or plain text <span class="restart-badge">Restart required</span></div>
+                                </div>
+                                <select id="general-log-format" class="setting-select" onchange="saveGeneralSetting('log_format', this.value)">
+                                    <option value="json">JSON</option>
+                                    <option value="text">Plain text</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Instance Role</div>
+                                    <div class="setting-desc">Currently running as <strong id="general-role-label">server</strong> <span class="restart-badge">Restart required</span></div>
+                                </div>
+                                <button class="btn btn-sm btn-warning" id="general-switch-role-btn" onclick="switchRole()">Switch to Agent</button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                                <!-- Environment Variables -->
                 <details class="accordion card">
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -665,6 +716,78 @@
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
+    <script>
+// General settings
+function saveGeneralSetting(key, value) {
+    fetch('/api/settings/general', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({key: key, value: value})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Setting saved');
+        document.getElementById('general-restart-banner').style.display = 'block';
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function switchRole() {
+    var current = document.getElementById('general-role-label').textContent.trim();
+    var target = (current === 'server') ? 'agent' : 'server';
+    if (!confirm('Switch this instance to ' + target + ' mode? This will take effect after a container restart.')) return;
+    fetch('/api/settings/switch-role', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({role: target})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Role saved — restart to apply');
+        document.getElementById('general-role-label').textContent = target;
+        var opposite = (target === 'server') ? 'Agent' : 'Server';
+        document.getElementById('general-switch-role-btn').textContent = 'Switch to ' + opposite;
+        document.getElementById('general-restart-banner').style.display = 'block';
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+// Load current values
+(function() {
+    fetch('/api/settings')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var port = document.getElementById('general-web-port');
+            if (port) port.value = d['SENTINEL_WEB_PORT'] || d['web_port'] || '8080';
+
+            var tls = document.getElementById('general-tls-mode');
+            if (tls) {
+                var mode = d['tls_mode'] || 'off';
+                if (!d['tls_mode']) {
+                    if (d['SENTINEL_TLS_AUTO'] === 'true') mode = 'auto';
+                    else if (d['SENTINEL_TLS_CERT'] && d['SENTINEL_TLS_CERT'] !== '') mode = 'manual';
+                }
+                tls.value = mode;
+            }
+
+            var log = document.getElementById('general-log-format');
+            if (log) {
+                var fmt = d['log_format'] || (d['SENTINEL_LOG_JSON'] === 'true' ? 'json' : 'text');
+                log.value = fmt;
+            }
+
+            var role = document.getElementById('general-role-label');
+            var roleBtn = document.getElementById('general-switch-role-btn');
+            var currentRole = d['instance_role'] || 'server';
+            if (role) role.textContent = currentRole;
+            if (roleBtn) {
+                roleBtn.textContent = currentRole === 'agent' ? 'Switch to Server' : 'Switch to Agent';
+            }
+        });
+})();
+    </script>
 </body>
 </html>
 {{end}}

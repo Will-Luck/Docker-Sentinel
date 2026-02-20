@@ -169,12 +169,10 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("SENTINEL_MODE must be 'server' or 'agent', got %q", c.Mode))
 	}
 	if c.Mode == "agent" {
-		if c.ServerAddr == "" {
+		if c.ServerAddr == "" && c.EnrollToken == "" {
 			errs = append(errs, fmt.Errorf("SENTINEL_SERVER_ADDR is required in agent mode"))
 		}
-		if c.WebEnabled {
-			errs = append(errs, fmt.Errorf("web dashboard cannot be enabled in agent mode (SENTINEL_WEB_ENABLED must be false)"))
-		}
+		// Web UI check removed: agents now run a minimal web UI for setup.
 	}
 
 	return errors.Join(errs...)

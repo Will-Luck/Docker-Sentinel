@@ -28,6 +28,32 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route to remote agent if host parameter is present.
+	hostID := r.URL.Query().Get("host")
+	if hostID != "" && s.deps.Cluster != nil {
+		go func() {
+			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "restart"); err != nil {
+				s.deps.Log.Error("remote restart failed", "name", name, "host", hostID, "error", err)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerState,
+					ContainerName: name,
+					Message:       "restart failed on " + hostID + ": " + err.Error(),
+					Timestamp:     time.Now(),
+				})
+				return
+			}
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerState,
+				ContainerName: name,
+				Message:       "Container restarted: " + name,
+				Timestamp:     time.Now(),
+			})
+		}()
+		s.logEvent(r, "restart", name, "Container restarted on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "restarting", "name": name, "message": "restart initiated for " + name})
+		return
+	}
+
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers for restart", "error", err)
@@ -51,6 +77,12 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.deps.Restarter.RestartContainer(context.Background(), containerID); err != nil {
 			s.deps.Log.Error("restart failed", "name", name, "error", err)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerState,
+				ContainerName: name,
+				Message:       "restart failed: " + err.Error(),
+				Timestamp:     time.Now(),
+			})
 			return
 		}
 		s.deps.EventBus.Publish(events.SSEEvent{
@@ -88,6 +120,32 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route to remote agent if host parameter is present.
+	hostID := r.URL.Query().Get("host")
+	if hostID != "" && s.deps.Cluster != nil {
+		go func() {
+			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "stop"); err != nil {
+				s.deps.Log.Error("remote stop failed", "name", name, "host", hostID, "error", err)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerState,
+					ContainerName: name,
+					Message:       "stop failed on " + hostID + ": " + err.Error(),
+					Timestamp:     time.Now(),
+				})
+				return
+			}
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerState,
+				ContainerName: name,
+				Message:       "Container stopped: " + name,
+				Timestamp:     time.Now(),
+			})
+		}()
+		s.logEvent(r, "stop", name, "Container stopped on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "stopping", "name": name, "message": "stop initiated for " + name})
+		return
+	}
+
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers for stop", "error", err)
@@ -111,6 +169,12 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.deps.Stopper.StopContainer(context.Background(), containerID); err != nil {
 			s.deps.Log.Error("stop failed", "name", name, "error", err)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerState,
+				ContainerName: name,
+				Message:       "stop failed: " + err.Error(),
+				Timestamp:     time.Now(),
+			})
 			return
 		}
 		s.deps.EventBus.Publish(events.SSEEvent{
@@ -148,6 +212,32 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route to remote agent if host parameter is present.
+	hostID := r.URL.Query().Get("host")
+	if hostID != "" && s.deps.Cluster != nil {
+		go func() {
+			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "start"); err != nil {
+				s.deps.Log.Error("remote start failed", "name", name, "host", hostID, "error", err)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerState,
+					ContainerName: name,
+					Message:       "start failed on " + hostID + ": " + err.Error(),
+					Timestamp:     time.Now(),
+				})
+				return
+			}
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerState,
+				ContainerName: name,
+				Message:       "Container started: " + name,
+				Timestamp:     time.Now(),
+			})
+		}()
+		s.logEvent(r, "start", name, "Container started on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "starting", "name": name, "message": "start initiated for " + name})
+		return
+	}
+
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers for start", "error", err)
@@ -171,6 +261,12 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.deps.Starter.StartContainer(context.Background(), containerID); err != nil {
 			s.deps.Log.Error("start failed", "name", name, "error", err)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerState,
+				ContainerName: name,
+				Message:       "start failed: " + err.Error(),
+				Timestamp:     time.Now(),
+			})
 			return
 		}
 		s.deps.EventBus.Publish(events.SSEEvent{
@@ -239,6 +335,12 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			s.deps.Log.Error("manual update failed", "name", name, "error", err)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerUpdate,
+				ContainerName: name,
+				Message:       "update failed: " + err.Error(),
+				Timestamp:     time.Now(),
+			})
 		}
 	}()
 
@@ -277,9 +379,14 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 		// Apply rollback policy setting — change the container's policy to prevent
 		// the next scan from immediately retrying the same broken update.
 		if s.deps.SettingsStore != nil && s.deps.Policy != nil {
-			if rp, _ := s.deps.SettingsStore.LoadSetting("rollback_policy"); rp == "manual" || rp == "pinned" {
-				_ = s.deps.Policy.SetPolicyOverride(name, rp)
-				s.deps.Log.Info("policy changed after manual rollback", "name", name, "policy", rp)
+			if rp, err := s.deps.SettingsStore.LoadSetting("rollback_policy"); err != nil {
+				s.deps.Log.Error("failed to load rollback policy", "name", name, "error", err)
+			} else if rp == "manual" || rp == "pinned" {
+				if err := s.deps.Policy.SetPolicyOverride(name, rp); err != nil {
+					s.deps.Log.Error("failed to set policy after rollback", "name", name, "policy", rp, "error", err)
+				} else {
+					s.deps.Log.Info("policy changed after manual rollback", "name", name, "policy", rp)
+				}
 			}
 		}
 	}()
@@ -406,6 +513,11 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		if err := s.deps.SelfUpdater.Update(context.Background()); err != nil {
 			s.deps.Log.Error("self-update failed", "error", err)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:      events.EventContainerUpdate,
+				Message:   "self-update failed: " + err.Error(),
+				Timestamp: time.Now(),
+			})
 		}
 	}()
 
