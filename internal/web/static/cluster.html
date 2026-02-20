@@ -131,9 +131,33 @@
                 <div id="token-display" style="display:none">
                     <div class="token-display">
                         <code id="token-value"></code>
-                        <button class="btn btn-sm" onclick="copyToken()">Copy</button>
+                        <button class="btn btn-sm" onclick="copyToken()">Copy Token</button>
                     </div>
-                    <pre class="agent-command" id="agent-command"></pre>
+
+                    <div style="display:flex;gap:var(--sp-3);margin:var(--sp-3) 0">
+                        <div class="form-group" style="flex:1;margin-bottom:0">
+                            <label class="form-label">Host Name</label>
+                            <input class="form-input" type="text" id="enroll-hostname" value="my-agent" oninput="updateSnippets()">
+                        </div>
+                        <div class="form-group" style="width:120px;margin-bottom:0">
+                            <label class="form-label">Agent Port</label>
+                            <input class="form-input" type="number" id="enroll-port" value="8080" oninput="updateSnippets()">
+                        </div>
+                    </div>
+
+                    <div class="snippet-tabs">
+                        <button class="snippet-tab active" onclick="showSnippet('docker-run')">Docker Run</button>
+                        <button class="snippet-tab" onclick="showSnippet('docker-compose')">Docker Compose</button>
+                    </div>
+
+                    <div class="snippet-pane active" id="snippet-docker-run">
+                        <pre class="agent-command" id="snippet-run"></pre>
+                        <button class="btn btn-sm" onclick="copySnippet('snippet-run')">Copy</button>
+                    </div>
+                    <div class="snippet-pane" id="snippet-docker-compose">
+                        <pre class="agent-command" id="snippet-compose"></pre>
+                        <button class="btn btn-sm" onclick="copySnippet('snippet-compose')">Copy</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -154,21 +178,73 @@
         .then(function(data) {
             if (data.error) { showToast(data.error, 'error'); return; }
             document.getElementById('token-value').textContent = data.token;
-            document.getElementById('agent-command').textContent =
-                'SENTINEL_MODE=agent \\\n' +
-                'SENTINEL_SERVER_ADDR=' + window.location.hostname + ':9443 \\\n' +
-                'SENTINEL_ENROLL_TOKEN=' + data.token + ' \\\n' +
-                'SENTINEL_HOST_NAME=my-host \\\n' +
-                './sentinel';
+            window._enrollToken = data.token;
+            updateSnippets();
             document.getElementById('token-display').style.display = 'block';
         })
         .catch(function(err) { showToast('Failed: ' + err, 'error'); });
+    }
+
+    function updateSnippets() {
+        var token = window._enrollToken || '';
+        var host = window.location.hostname;
+        var port = document.getElementById('enroll-port').value || '8080';
+        var name = document.getElementById('enroll-hostname').value || 'my-agent';
+        var clusterPort = '{{.ClusterPort}}';
+        var imageTag = '{{.ImageTag}}';
+
+        document.getElementById('snippet-run').textContent =
+            'docker run -d \\\n' +
+            '  --name sentinel-agent \\\n' +
+            '  -v /var/run/docker.sock:/var/run/docker.sock \\\n' +
+            '  -v sentinel-agent-data:/data \\\n' +
+            '  -p ' + port + ':8080 \\\n' +
+            '  -e SENTINEL_ENROLL_TOKEN=' + token + ' \\\n' +
+            '  -e SENTINEL_SERVER_ADDR=' + host + ':' + clusterPort + ' \\\n' +
+            '  -e SENTINEL_HOST_NAME=' + name + ' \\\n' +
+            '  ghcr.io/will-luck/docker-sentinel:' + imageTag;
+
+        document.getElementById('snippet-compose').textContent =
+            'services:\n' +
+            '  sentinel-agent:\n' +
+            '    image: ghcr.io/will-luck/docker-sentinel:' + imageTag + '\n' +
+            '    restart: unless-stopped\n' +
+            '    volumes:\n' +
+            '      - /var/run/docker.sock:/var/run/docker.sock\n' +
+            '      - sentinel-agent-data:/data\n' +
+            '    ports:\n' +
+            '      - "' + port + ':8080"\n' +
+            '    environment:\n' +
+            '      SENTINEL_ENROLL_TOKEN: ' + token + '\n' +
+            '      SENTINEL_SERVER_ADDR: ' + host + ':' + clusterPort + '\n' +
+            '      SENTINEL_HOST_NAME: ' + name;
+    }
+
+    function showSnippet(id) {
+        var panes = document.querySelectorAll('.snippet-pane');
+        var tabs = document.querySelectorAll('.snippet-tab');
+        for (var i = 0; i < panes.length; i++) {
+            panes[i].classList.remove('active');
+            tabs[i].classList.remove('active');
+        }
+        document.getElementById('snippet-' + id).classList.add('active');
+        var tabText = id === 'docker-run' ? 'Docker Run' : 'Docker Compose';
+        for (var j = 0; j < tabs.length; j++) {
+            if (tabs[j].textContent.trim() === tabText) tabs[j].classList.add('active');
+        }
     }
 
     function copyToken() {
         var text = document.getElementById('token-value').textContent;
         navigator.clipboard.writeText(text).then(function() {
             showToast('Token copied');
+        });
+    }
+
+    function copySnippet(id) {
+        var text = document.getElementById(id).textContent;
+        navigator.clipboard.writeText(text).then(function() {
+            showToast('Snippet copied');
         });
     }
 

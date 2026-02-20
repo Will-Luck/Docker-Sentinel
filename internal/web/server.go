@@ -60,6 +60,7 @@ type Dependencies struct {
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
+	ClusterPort         string // gRPC listen port, e.g. "9443"
 	Commit              string // short git commit hash, e.g. "abc1234" or "unknown"
 	Log                 *slog.Logger
 }

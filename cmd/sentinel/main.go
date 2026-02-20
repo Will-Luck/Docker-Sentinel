@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -167,6 +169,40 @@ func main() {
 				instanceRole = cfg.Mode
 			}
 		}
+	}
+
+	// Auto-enrollment: if SENTINEL_ENROLL_TOKEN is set on a fresh container, skip wizard.
+	if needsWizard && cfg.EnrollToken != "" && cfg.ServerAddr != "" {
+		log.Info("auto-enrolling as agent", "server", cfg.ServerAddr)
+		_ = db.SaveSetting("instance_role", "agent")
+		_ = db.SaveSetting("server_addr", cfg.ServerAddr)
+		_ = db.SaveSetting("auth_setup_complete", "true")
+		if cfg.HostName != "" {
+			_ = db.SaveSetting("host_name", cfg.HostName)
+		}
+
+		// Generate random admin credentials for the agent mini-UI.
+		randomPass := generateRandomPassword()
+		hash, _ := auth.HashPassword(randomPass)
+		userID, _ := auth.GenerateUserID()
+		_ = db.CreateFirstUser(auth.User{
+			ID:           userID,
+			Username:     "admin",
+			PasswordHash: hash,
+			RoleID:       auth.RoleAdminID,
+			CreatedAt:    time.Now().UTC(),
+			UpdatedAt:    time.Now().UTC(),
+		})
+
+		fmt.Println("=============================================")
+		fmt.Println("Auto-enrolled as agent.")
+		fmt.Printf("Agent UI login: admin / %s\n", randomPass)
+		fmt.Println("Change this password after first login.")
+		fmt.Println("=============================================")
+
+		cfg.Mode = "agent"
+		needsWizard = false
+		instanceRole = "agent"
 	}
 
 	if needsWizard {
@@ -400,6 +436,7 @@ func main() {
 			Digest:              digestSched,
 			Auth:                authSvc,
 			Version:             versionString(),
+			ClusterPort:         cfg.ClusterPort,
 			Commit:              commit,
 			Log:                 log.Logger,
 		}
@@ -588,6 +625,12 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 
 // runWizard starts the setup wizard server and blocks until setup completes
 // or ctx is cancelled.
+func generateRandomPassword() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc *auth.Service, log *logging.Logger) {
 	fmt.Println("=============================================")
 	fmt.Println("First-run setup required!")
