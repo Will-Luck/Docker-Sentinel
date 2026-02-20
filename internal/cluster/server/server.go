@@ -499,16 +499,12 @@ func (s *Server) DrainHost(id string) error {
 // removes it from the registry. The cert serial is added to the CRL so
 // the agent can no longer authenticate.
 func (s *Server) RevokeHost(id string) error {
-	// Look up the cert serial before removing the host record.
-	hs, ok := s.registry.Get(id)
-	if !ok {
-		return fmt.Errorf("host %s not found", id)
-	}
-	if hs.Info.CertSerial != "" {
-		if err := s.store.AddRevokedCert(hs.Info.CertSerial); err != nil {
-			return fmt.Errorf("revoke cert for host %s: %w", id, err)
+	serial := s.registry.GetCertSerial(id)
+	if serial != "" {
+		if err := s.store.AddRevokedCert(serial); err != nil {
+			return fmt.Errorf("revoke cert: %w", err)
 		}
-		s.log.Info("revoked certificate", "hostID", id, "serial", hs.Info.CertSerial)
+		s.log.Info("revoked certificate", "hostID", id, "serial", serial)
 	}
 
 	s.disconnectAgent(id)
@@ -540,6 +536,9 @@ func (s *Server) handleAgentMessage(hostID string, as *agentStream, msg *proto.A
 
 	case *proto.AgentMessage_UpdateResult:
 		s.handleUpdateResult(hostID, msg, p.UpdateResult)
+
+	case *proto.AgentMessage_ContainerActionResult:
+		s.handleContainerActionResult(hostID, msg, p.ContainerActionResult)
 
 	case *proto.AgentMessage_HookResult:
 		s.handleHookResult(hostID, p.HookResult)
@@ -600,6 +599,29 @@ func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *
 
 	// Route to a pending synchronous caller if one is waiting.
 	if ur.RequestId != "" {
+		s.deliverPending(hostID, msg)
+	}
+}
+
+func (s *Server) handleContainerActionResult(hostID string, msg *proto.AgentMessage, ar *proto.ContainerActionResult) {
+	s.log.Info("container action result",
+		"hostID", hostID,
+		"container", ar.ContainerName,
+		"action", ar.Action,
+		"outcome", ar.Outcome,
+		"requestID", ar.RequestId,
+	)
+
+	s.bus.Publish(events.SSEEvent{
+		Type:          events.EventContainerState,
+		ContainerName: ar.ContainerName,
+		HostName:      hostID,
+		Message:       fmt.Sprintf("%s %s: %s", ar.Action, ar.ContainerName, ar.Outcome),
+		Timestamp:     time.Now(),
+	})
+
+	// Route to a pending synchronous caller if one is waiting.
+	if ar.RequestId != "" {
 		s.deliverPending(hostID, msg)
 	}
 }
@@ -665,25 +687,24 @@ func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.Ce
 		return
 	}
 
-	// Update the stored cert serial for this host.
-	if hs, ok := s.registry.Get(hostID); ok {
-		// Revoke the old serial so it can't be reused.
-		if hs.Info.CertSerial != "" {
-			_ = s.store.AddRevokedCert(hs.Info.CertSerial)
-		}
-
-		hs.Info.CertSerial = serial
-		data, _ := json.Marshal(hs.Info)
-		_ = s.store.SaveClusterHost(hostID, data)
+	if err := s.registry.UpdateCertSerial(hostID, serial); err != nil {
+		s.log.Error("cert renewal: failed to update serial", "hostID", hostID, "error", err)
+		return
 	}
 
-	// Send the new cert back through the stream.
-	as.send <- &proto.ServerMessage{
+	// Non-blocking send — matches SendCommand pattern.
+	msg := &proto.ServerMessage{
 		Payload: &proto.ServerMessage_CertRenewalResponse{
 			CertRenewalResponse: &proto.CertRenewalResponse{
 				AgentCert: certPEM,
 			},
 		},
+	}
+	select {
+	case as.send <- msg:
+	default:
+		s.log.Error("cert renewal: send buffer full", "hostID", hostID)
+		return
 	}
 
 	s.log.Info("cert renewed", "hostID", hostID, "newSerial", serial)
@@ -819,6 +840,42 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 	}
 
 	return ur.UpdateResult, nil
+}
+
+// ContainerActionSync sends a ContainerActionRequest to the agent and blocks
+// until the agent responds with a ContainerActionResult or the context is cancelled.
+func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName, action string) error {
+	reqID := generateRequestID()
+	ch := s.registerPending(hostID)
+
+	msg := &proto.ServerMessage{
+		RequestId: reqID,
+		Payload: &proto.ServerMessage_ContainerAction{
+			ContainerAction: &proto.ContainerActionRequest{
+				ContainerName: containerName,
+				Action:        action,
+			},
+		},
+	}
+
+	if err := s.SendCommand(hostID, msg); err != nil {
+		s.cancelPending(hostID, ch)
+		return fmt.Errorf("send container action: %w", err)
+	}
+
+	resp, err := s.awaitPending(ctx, hostID, ch)
+	if err != nil {
+		return fmt.Errorf("await container action result: %w", err)
+	}
+
+	ar, ok := resp.Payload.(*proto.AgentMessage_ContainerActionResult)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T (wanted ContainerActionResult)", resp.Payload)
+	}
+	if ar.ContainerActionResult.Outcome != "success" {
+		return fmt.Errorf("%s failed: %s", action, ar.ContainerActionResult.Error)
+	}
+	return nil
 }
 
 // generateRequestID creates a random 8-byte hex string for request correlation.

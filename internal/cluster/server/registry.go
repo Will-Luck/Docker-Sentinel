@@ -145,6 +145,41 @@ func (r *Registry) Get(hostID string) (*HostState, bool) {
 	return hs, ok
 }
 
+// UpdateCertSerial atomically updates the stored cert serial for a host,
+// revoking the old serial if one exists.
+func (r *Registry) UpdateCertSerial(hostID, newSerial string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		return fmt.Errorf("host %s not found", hostID)
+	}
+
+	if hs.Info.CertSerial != "" {
+		if err := r.store.AddRevokedCert(hs.Info.CertSerial); err != nil {
+			return fmt.Errorf("revoke old cert: %w", err)
+		}
+	}
+
+	hs.Info.CertSerial = newSerial
+	data, err := json.Marshal(hs.Info)
+	if err != nil {
+		return fmt.Errorf("marshal host info: %w", err)
+	}
+	return r.store.SaveClusterHost(hostID, data)
+}
+
+// GetCertSerial returns the current cert serial for a host, read under lock.
+func (r *Registry) GetCertSerial(hostID string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if hs, ok := r.hosts[hostID]; ok {
+		return hs.Info.CertSerial
+	}
+	return ""
+}
+
 // AllHosts returns HostInfo for all registered hosts.
 // Returned slice is a snapshot -- safe to use after the lock is released.
 func (r *Registry) AllHosts() []cluster.HostInfo {
