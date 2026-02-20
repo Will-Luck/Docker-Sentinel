@@ -173,6 +173,12 @@ func main() {
 		runWizard(ctx, cfg, db, authSvc, log)
 		// Re-read role from DB after wizard completes.
 		instanceRole, _ = db.LoadSetting("instance_role")
+		if instanceRole == "" {
+			// Wizard was cancelled or timed out — exit cleanly.
+			log.Info("wizard did not complete, exiting")
+			return
+		}
+		cfg.Mode = instanceRole
 	}
 
 	// If instance_role is now "agent", hand off to agent mode.
