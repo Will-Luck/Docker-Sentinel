@@ -60,9 +60,23 @@
         <div class="page-header">
             <div>
                 <h1>Containers</h1>
-                <p class="subtitle">Monitored containers and their update status</p>
             </div>
         </div>
+
+        {{if gt (len .TabStats) 1}}
+        <div class="tab-nav dashboard-tabs" role="tablist" id="dashboard-tabs">
+            {{range $i, $ts := .TabStats}}
+            <button class="tab-btn{{if eq $i 0}} active{{end}}"
+                    role="tab" data-tab="{{$ts.ID}}"
+                    data-stats-total="{{$ts.Total}}"
+                    data-stats-running="{{$ts.Running}}"
+                    data-stats-pending="{{$ts.Pending}}">
+                {{$ts.Label}}
+                <span class="tab-badge">{{$ts.Total}}</span>
+            </button>
+            {{end}}
+        </div>
+        {{end}}
 
         <dl class="stats" id="stats">
             <div class="stat-card stat-card-link" style="cursor:pointer" onclick="activateFilter('sort','status')">
@@ -144,7 +158,7 @@
                     </thead>
                     {{if .HostGroups}}
                         {{range .HostGroups}}
-                        <tbody class="host-group" data-host="{{.ID}}">
+                        <tbody class="host-group" data-host="{{.ID}}" data-tab="{{.ID}}">
                             <tr class="host-header" onclick="toggleHostGroup(this)">
                                 <td colspan="6">
                                     <div class="host-header-inner">
@@ -179,7 +193,7 @@
                         {{end}}
                     {{else if .Stacks}}
                         {{range .Stacks}}
-                        <tbody class="stack-group stack-collapsed{{if gt .StoppedCount 0}} stack-has-stopped{{else if .HasPending}} stack-has-pending{{else}} stack-healthy{{end}}" data-stack="{{.Name}}">
+                        <tbody class="stack-group stack-collapsed{{if gt .StoppedCount 0}} stack-has-stopped{{else if .HasPending}} stack-has-pending{{else}} stack-healthy{{end}}" data-stack="{{.Name}}" data-tab="local">
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
                                 <td colspan="6">
                                     <div class="stack-header-inner">
@@ -214,7 +228,7 @@
                     {{end}}
 
                     {{if .SwarmServices}}
-                    <tbody class="section-separator swarm-section">
+                    <tbody class="section-separator swarm-section" data-tab="swarm">
                         <tr onclick="toggleSwarmSection(this)" style="cursor:pointer"><td colspan="6"><div class="section-divider">
                             <span class="expand-icon">&#9662;</span>
                             <span class="section-title">Swarm Services</span>
@@ -223,7 +237,7 @@
                     </tbody>
 
                     {{range .SwarmServices}}
-                    <tbody class="svc-group svc-collapsed" data-service="{{.Name}}">
+                    <tbody class="svc-group svc-collapsed" data-service="{{.Name}}" data-tab="swarm">
                         <tr class="svc-header{{if .HasUpdate}} has-update{{end}}" data-registry="{{.Registry}}" onclick="toggleSvc(this)">
                             <td class="td-checkbox">
                                 <input type="checkbox" class="row-select" value="{{.Name}}" id="select-svc-{{.Name}}" aria-label="Select {{.Name}}">
@@ -407,13 +421,13 @@
                                         {{if .IsSelf}}
                                             <span class="badge badge-success">Running</span>
                                         {{else}}
-                                            <span class="status-badge-wrap" data-name="{{.Name}}" data-action="stop">
+                                            <span class="status-badge-wrap" data-name="{{.Name}}" data-action="stop" data-host-id="{{.HostID}}">
                                                 <span class="badge badge-success badge-default">Running</span>
                                                 <span class="badge badge-error badge-hover">Stop</span>
                                             </span>
                                         {{end}}
                                     {{else}}
-                                        <span class="status-badge-wrap" data-name="{{.Name}}" data-action="start">
+                                        <span class="status-badge-wrap" data-name="{{.Name}}" data-action="start" data-host-id="{{.HostID}}">
                                             <span class="badge badge-error badge-default">{{.State}}</span>
                                             <span class="badge badge-success badge-hover">Start</span>
                                         </span>
