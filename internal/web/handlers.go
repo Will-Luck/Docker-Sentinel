@@ -560,9 +560,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.TabStats = append(data.TabStats, swarmStats)
 	}
 
-	// Cluster host tabs — one per remote host.
+	// Cluster host tabs — one per remote host (skip "local", already added above).
 	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		for _, hg := range data.HostGroups {
+			if hg.ID == "local" {
+				continue
+			}
 			ts := tabStats{
 				ID:    hg.ID,
 				Label: hg.Name,
