@@ -233,6 +233,8 @@ type ClusterProvider interface {
 	DrainHost(id string) error
 	// UpdateRemoteContainer dispatches a container update to a remote agent.
 	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error
+	// RemoteContainerAction dispatches a lifecycle action to a container on a remote agent.
+	RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error
 	// AllHostContainers returns containers from all connected hosts.
 	AllHostContainers() []RemoteContainer
 }

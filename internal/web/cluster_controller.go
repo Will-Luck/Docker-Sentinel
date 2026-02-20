@@ -133,3 +133,14 @@ func (c *ClusterController) UpdateRemoteContainer(ctx context.Context, hostID, c
 	}
 	return c.provider.UpdateRemoteContainer(ctx, hostID, containerName, targetImage, targetDigest)
 }
+
+// RemoteContainerAction dispatches a lifecycle action to a container on a remote agent.
+// Returns an error when clustering is disabled.
+func (c *ClusterController) RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.provider == nil {
+		return fmt.Errorf("cluster not enabled")
+	}
+	return c.provider.RemoteContainerAction(ctx, hostID, containerName, action)
+}
