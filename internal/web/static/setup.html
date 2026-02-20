@@ -23,7 +23,7 @@
         }
         .setup-card {
             width: 100%;
-            max-width: 460px;
+            max-width: 560px;
             background: var(--bg-surface);
             border-radius: var(--radius-lg);
             border: 1px solid var(--border);
@@ -46,21 +46,108 @@
             font-weight: 700;
             color: var(--fg-primary);
         }
-        .setup-subtitle {
-            text-align: center;
-            color: var(--fg-secondary);
-            margin-bottom: var(--sp-6);
-            font-size: 0.9rem;
+
+        /* Progress dots */
+        .wizard-steps {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--sp-2);
+            margin: var(--sp-4) 0 var(--sp-6);
         }
-        .setup-form {
+        .wizard-step-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--border);
+            transition: background 250ms var(--md-motion-standard), transform 250ms var(--md-motion-standard);
+        }
+        .wizard-step-dot.active {
+            background: var(--accent);
+            transform: scale(1.3);
+        }
+        .wizard-step-dot.done {
+            background: color-mix(in srgb, var(--accent) 50%, transparent);
+        }
+
+        /* Step panes */
+        .wizard-pane {
+            display: none;
+        }
+        .wizard-pane.visible {
+            display: block;
+        }
+        .wizard-pane-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--fg-primary);
+            margin-bottom: var(--sp-2);
+        }
+        .wizard-pane-desc {
+            font-size: 0.875rem;
+            color: var(--fg-secondary);
+            margin-bottom: var(--sp-5);
+        }
+
+        /* Role cards */
+        .wizard-roles {
+            display: flex;
+            gap: var(--sp-4);
+            margin-bottom: var(--sp-6);
+        }
+        @media (max-width: 480px) {
+            .wizard-roles { flex-direction: column; }
+        }
+        .wizard-role-card {
+            flex: 1;
             display: flex;
             flex-direction: column;
-            gap: var(--sp-4);
+            align-items: center;
+            gap: var(--sp-2);
+            padding: var(--sp-5) var(--sp-4);
+            border: 2px solid var(--border);
+            border-radius: var(--radius-lg);
+            background: var(--bg-raised);
+            cursor: pointer;
+            text-align: center;
+            transition: border-color 150ms var(--md-motion-standard), background 150ms var(--md-motion-standard), box-shadow 150ms var(--md-motion-standard);
+            user-select: none;
         }
+        .wizard-role-card:hover {
+            border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+            background: var(--bg-hover);
+        }
+        .wizard-role-card.selected {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+        }
+        .wizard-role-icon {
+            width: 44px;
+            height: 44px;
+            color: var(--fg-secondary);
+            transition: color 150ms var(--md-motion-standard);
+        }
+        .wizard-role-card.selected .wizard-role-icon {
+            color: var(--accent);
+        }
+        .wizard-role-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--fg-primary);
+        }
+        .wizard-role-desc {
+            font-size: 0.8rem;
+            color: var(--fg-secondary);
+            line-height: 1.4;
+        }
+
+        /* Form */
         .form-group {
             display: flex;
             flex-direction: column;
             gap: var(--sp-1);
+            margin-bottom: var(--sp-4);
         }
         .form-label {
             font-size: 0.875rem;
@@ -81,21 +168,117 @@
             font-size: 0.95rem;
             font-family: inherit;
             outline: none;
+            width: 100%;
             transition: border-color 150ms var(--md-motion-standard);
         }
         .form-input:focus {
             border-color: var(--accent);
             box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
         }
-        .setup-error {
-            padding: 10px 14px;
-            border-radius: var(--radius);
-            background: var(--error-bg);
-            color: var(--error-fg);
-            font-size: 0.875rem;
-            border: 1px solid var(--error);
+        select.form-input {
+            cursor: pointer;
         }
-        .setup-btn {
+
+        /* Policy cards */
+        .wizard-policy-cards {
+            display: flex;
+            gap: var(--sp-3);
+            margin-bottom: var(--sp-5);
+        }
+        @media (max-width: 480px) {
+            .wizard-policy-cards { flex-direction: column; }
+        }
+        .wizard-policy-card {
+            flex: 1;
+            padding: var(--sp-3) var(--sp-3);
+            border: 2px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-raised);
+            cursor: pointer;
+            transition: border-color 150ms var(--md-motion-standard), background 150ms var(--md-motion-standard);
+            user-select: none;
+        }
+        .wizard-policy-card:hover {
+            border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+            background: var(--bg-hover);
+        }
+        .wizard-policy-card.selected {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+        }
+        .wizard-policy-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--fg-primary);
+            margin-bottom: 2px;
+        }
+        .wizard-policy-desc {
+            font-size: 0.75rem;
+            color: var(--fg-secondary);
+            line-height: 1.4;
+        }
+
+        /* Checkbox toggle row */
+        .wizard-toggle-row {
+            display: flex;
+            align-items: center;
+            gap: var(--sp-3);
+            padding: var(--sp-3) var(--sp-4);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-raised);
+            margin-bottom: var(--sp-5);
+            cursor: pointer;
+        }
+        .wizard-toggle-row input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .wizard-toggle-label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--fg-primary);
+        }
+        .wizard-toggle-hint {
+            font-size: 0.75rem;
+            color: var(--fg-secondary);
+        }
+
+        /* Test connection status */
+        .wizard-test-result {
+            margin-top: var(--sp-2);
+            font-size: 0.8rem;
+            display: none;
+        }
+        .wizard-test-result.success { color: var(--success-fg); }
+        .wizard-test-result.error   { color: var(--error-fg); }
+
+        /* Navigation */
+        .wizard-nav {
+            display: flex;
+            gap: var(--sp-3);
+            margin-top: var(--sp-6);
+        }
+        .wizard-nav-back {
+            padding: 10px var(--sp-5);
+            font-size: 0.9rem;
+            font-weight: 500;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: transparent;
+            color: var(--fg-secondary);
+            cursor: pointer;
+            transition: background 150ms var(--md-motion-standard), color 150ms var(--md-motion-standard);
+        }
+        .wizard-nav-back:hover {
+            background: var(--bg-hover);
+            color: var(--fg-primary);
+        }
+        .wizard-nav-continue {
+            flex: 1;
             padding: 12px;
             font-size: 1rem;
             font-weight: 500;
@@ -106,17 +289,79 @@
             cursor: pointer;
             transition: opacity 150ms var(--md-motion-standard);
         }
-        .setup-btn:hover { opacity: 0.9; }
+        .wizard-nav-continue:hover { opacity: 0.9; }
+        .wizard-nav-continue:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* Error / Success messages */
+        .wizard-error {
+            display: none;
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            background: var(--error-bg);
+            color: var(--error-fg);
+            font-size: 0.875rem;
+            border: 1px solid var(--error);
+            margin-bottom: var(--sp-4);
+        }
+        .wizard-error.visible { display: block; }
+
+        .wizard-success-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: var(--success-bg);
+            margin: 0 auto var(--sp-4);
+            color: var(--success-fg);
+        }
+        .wizard-success-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--fg-primary);
+            text-align: center;
+            margin-bottom: var(--sp-2);
+        }
+        .wizard-success-msg {
+            font-size: 0.9rem;
+            color: var(--fg-secondary);
+            text-align: center;
+            margin-bottom: var(--sp-6);
+        }
+        .wizard-success-btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            font-size: 1rem;
+            font-weight: 500;
+            border: none;
+            border-radius: var(--radius);
+            background: var(--accent);
+            color: var(--md-on-primary);
+            cursor: pointer;
+            text-align: center;
+            text-decoration: none;
+            transition: opacity 150ms var(--md-motion-standard);
+        }
+        .wizard-success-btn:hover { opacity: 0.9; color: var(--md-on-primary); }
+
+        /* Timer */
         .setup-timer {
             text-align: center;
             font-size: 0.8rem;
             color: var(--fg-secondary);
-            margin-top: var(--sp-2);
+            margin-top: var(--sp-5);
         }
         .setup-timer strong {
             font-family: 'Roboto Mono', monospace;
             color: var(--fg-primary);
         }
+
+        /* Expired */
         .setup-expired {
             text-align: center;
             padding: var(--sp-6) var(--sp-4);
@@ -132,67 +377,465 @@
             border-radius: var(--radius-sm);
             font-size: 0.85rem;
         }
+        .setup-error-box {
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            background: var(--error-bg);
+            color: var(--error-fg);
+            font-size: 0.875rem;
+            border: 1px solid var(--error);
+        }
+
+        /* Test connection button */
+        .btn-secondary {
+            padding: 8px var(--sp-4);
+            font-size: 0.875rem;
+            font-weight: 500;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: var(--bg-raised);
+            color: var(--fg-primary);
+            cursor: pointer;
+            transition: background 150ms var(--md-motion-standard), border-color 150ms var(--md-motion-standard);
+        }
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent);
+        }
+        .btn-secondary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
-    <div class="setup-wrap">
-        <div class="setup-card">
-            <div class="setup-logo">
-                <img src="/favicon.svg" alt="S" class="nav-logo">
-                <span class="setup-logo-text">Sentinel Setup</span>
-            </div>
+<div class="setup-wrap">
+    <div class="setup-card">
 
-            {{if .Expired}}
-            <div class="setup-expired">
-                <div class="setup-error">Setup window has expired</div>
-                <p>For security, the setup page is only available for 5 minutes after starting the container.</p>
-                <p>Restart the container to open a new setup window:</p>
-                <p><code>docker restart &lt;container&gt;</code></p>
-            </div>
-            {{else}}
-            <p class="setup-subtitle">Create your admin account to get started</p>
-
-            {{if .Error}}
-            <div class="setup-error" style="margin-bottom:var(--sp-4)">{{.Error}}</div>
-            {{end}}
-
-            <form class="setup-form" method="POST" action="/setup">
-                <div class="form-group">
-                    <label class="form-label" for="username">Admin Username</label>
-                    <input class="form-input" type="text" id="username" name="username" autocomplete="username" autofocus required>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="password">Password</label>
-                    <input class="form-input" type="password" id="password" name="password" autocomplete="new-password" required minlength="8">
-                    <span class="form-hint">Min 8 characters, must include a letter and a digit</span>
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="confirm">Confirm Password</label>
-                    <input class="form-input" type="password" id="confirm" name="confirm" autocomplete="new-password" required>
-                </div>
-                <button class="setup-btn" type="submit">Create Admin Account</button>
-            </form>
-            <div class="setup-timer">
-                Setup window closes in <strong id="countdown"></strong>
-            </div>
-            <script>
-                (function() {
-                    var left = {{.RemainingSeconds}};
-                    var el = document.getElementById('countdown');
-                    function tick() {
-                        if (left <= 0) { location.reload(); return; }
-                        var m = Math.floor(left / 60);
-                        var s = left % 60;
-                        el.textContent = m + ':' + (s < 10 ? '0' : '') + s;
-                        left--;
-                        setTimeout(tick, 1000);
-                    }
-                    tick();
-                })();
-            </script>
-            {{end}}
+        <div class="setup-logo">
+            <img src="/favicon.svg" alt="S" class="nav-logo">
+            <span class="setup-logo-text">Sentinel Setup</span>
         </div>
+
+        {{if .Expired}}
+        <div class="setup-expired">
+            <div class="setup-error-box">Setup window has expired</div>
+            <p>For security, the setup page is only available for 5 minutes after starting the container.</p>
+            <p>Restart the container to open a new setup window:</p>
+            <p><code>docker restart &lt;container&gt;</code></p>
+        </div>
+        {{else}}
+
+        <!-- Progress dots -->
+        <div class="wizard-steps" id="wizardSteps">
+            <div class="wizard-step-dot active" id="dot0"></div>
+            <div class="wizard-step-dot" id="dot1"></div>
+            <div class="wizard-step-dot" id="dot2"></div>
+            <div class="wizard-step-dot" id="dot3"></div>
+        </div>
+
+        <!-- Global error banner -->
+        <div class="wizard-error" id="wizardError"></div>
+
+        <!-- Step 0: Role Selection -->
+        <div class="wizard-pane visible" id="pane0">
+            <div class="wizard-pane-title">Choose your role</div>
+            <div class="wizard-pane-desc">How will this Sentinel instance be used?</div>
+
+            <div class="wizard-roles">
+                <div class="wizard-role-card" id="roleServer" onclick="selectRole('server')">
+                    <svg class="wizard-role-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <line x1="8" y1="21" x2="16" y2="21"/>
+                        <line x1="12" y1="17" x2="12" y2="21"/>
+                    </svg>
+                    <div class="wizard-role-title">Server</div>
+                    <div class="wizard-role-desc">Central dashboard that monitors and updates containers</div>
+                </div>
+                <div class="wizard-role-card" id="roleAgent" onclick="selectRole('agent')">
+                    <svg class="wizard-role-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2L12 6"/>
+                        <path d="M12 18L12 22"/>
+                        <path d="M4.93 4.93L7.76 7.76"/>
+                        <path d="M16.24 16.24L19.07 19.07"/>
+                        <path d="M2 12L6 12"/>
+                        <path d="M18 12L22 12"/>
+                        <path d="M4.93 19.07L7.76 16.24"/>
+                        <path d="M16.24 7.76L19.07 4.93"/>
+                        <circle cx="12" cy="12" r="4"/>
+                    </svg>
+                    <div class="wizard-role-title">Agent</div>
+                    <div class="wizard-role-desc">Connects to a Sentinel server and runs updates on this host</div>
+                </div>
+            </div>
+
+            <div class="wizard-nav">
+                <button class="wizard-nav-continue" id="continueStep0" disabled onclick="nextStep()">Continue</button>
+            </div>
+        </div>
+
+        <!-- Step 1: Admin Account -->
+        <div class="wizard-pane" id="pane1">
+            <div class="wizard-pane-title">Create admin account</div>
+            <div class="wizard-pane-desc">This will be your login for the Sentinel dashboard.</div>
+
+            <div class="form-group">
+                <label class="form-label" for="username">Username</label>
+                <input class="form-input" type="text" id="username" name="username" autocomplete="username" autofocus>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="password">Password</label>
+                <input class="form-input" type="password" id="password" name="password" autocomplete="new-password">
+                <span class="form-hint">Min 8 characters, must include a letter and a digit</span>
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="confirm">Confirm Password</label>
+                <input class="form-input" type="password" id="confirm" name="confirm" autocomplete="new-password">
+            </div>
+
+            <div class="wizard-nav">
+                <button class="wizard-nav-back" onclick="prevStep()">Back</button>
+                <button class="wizard-nav-continue" onclick="nextStep()">Continue</button>
+            </div>
+        </div>
+
+        <!-- Step 2a: Core Settings (server) -->
+        <div class="wizard-pane" id="pane2server">
+            <div class="wizard-pane-title">Server settings</div>
+            <div class="wizard-pane-desc">Configure how this server manages containers.</div>
+
+            <div class="form-group">
+                <label class="form-label">Default update policy</label>
+                <div class="wizard-policy-cards">
+                    <div class="wizard-policy-card selected" id="policyManual" onclick="selectPolicy('manual')">
+                        <div class="wizard-policy-title">Manual</div>
+                        <div class="wizard-policy-desc">Updates require manual approval</div>
+                    </div>
+                    <div class="wizard-policy-card" id="policyAuto" onclick="selectPolicy('auto')">
+                        <div class="wizard-policy-title">Auto</div>
+                        <div class="wizard-policy-desc">Updates apply automatically</div>
+                    </div>
+                    <div class="wizard-policy-card" id="policyPinned" onclick="selectPolicy('pinned')">
+                        <div class="wizard-policy-title">Pinned</div>
+                        <div class="wizard-policy-desc">Images are pinned, no updates</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="pollInterval">Scan interval</label>
+                <select class="form-input" id="pollInterval">
+                    <option value="15m">Every 15 minutes</option>
+                    <option value="30m">Every 30 minutes</option>
+                    <option value="1h">Every hour</option>
+                    <option value="6h" selected>Every 6 hours</option>
+                    <option value="12h">Every 12 hours</option>
+                    <option value="24h">Every 24 hours</option>
+                </select>
+            </div>
+
+            <label class="wizard-toggle-row" for="clusterEnabled">
+                <input type="checkbox" id="clusterEnabled">
+                <div>
+                    <div class="wizard-toggle-label">Enable cluster mode</div>
+                    <div class="wizard-toggle-hint">Allow agents to enroll and report to this server</div>
+                </div>
+            </label>
+
+            <div class="wizard-nav">
+                <button class="wizard-nav-back" onclick="prevStep()">Back</button>
+                <button class="wizard-nav-continue" onclick="nextStep()">Continue</button>
+            </div>
+        </div>
+
+        <!-- Step 2b: Server Connection (agent) -->
+        <div class="wizard-pane" id="pane2agent">
+            <div class="wizard-pane-title">Connect to server</div>
+            <div class="wizard-pane-desc">Point this agent at a running Sentinel server.</div>
+
+            <div class="form-group">
+                <label class="form-label" for="serverAddr">Server address</label>
+                <input class="form-input" type="text" id="serverAddr" placeholder="192.168.1.60:9443">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="enrollToken">Enrollment token</label>
+                <input class="form-input" type="text" id="enrollToken" placeholder="Paste token from server's cluster page">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="hostName">Host name</label>
+                <input class="form-input" type="text" id="hostName" placeholder="my-agent">
+                <span class="form-hint">Identifies this agent in the cluster view</span>
+            </div>
+
+            <button class="btn-secondary" id="testConnBtn" onclick="testEnrollment()">Test Connection</button>
+            <div class="wizard-test-result" id="testResult"></div>
+
+            <div class="wizard-nav">
+                <button class="wizard-nav-back" onclick="prevStep()">Back</button>
+                <button class="wizard-nav-continue" onclick="nextStep()">Continue</button>
+            </div>
+        </div>
+
+        <!-- Step 3: Done -->
+        <div class="wizard-pane" id="pane3">
+            <div class="wizard-success-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                </svg>
+            </div>
+            <div class="wizard-success-title" id="doneTitle">Setup complete!</div>
+            <div class="wizard-success-msg" id="doneMsg">Your Sentinel server is ready.</div>
+            <a class="wizard-success-btn" href="/" id="doneBtn">Go to Dashboard</a>
+        </div>
+
+        <div class="setup-timer">
+            Setup window closes in <strong id="countdown"></strong>
+        </div>
+
+        {{end}}
     </div>
+</div>
+
+{{if not .Expired}}
+<script>
+(function() {
+    var wizardState = {
+        step: 0,
+        role: '',
+        policy: 'manual'
+    };
+
+    // Total logical steps per role (0-indexed, last step = done)
+    // server: 0=role, 1=account, 2=settings, 3=done
+    // agent:  0=role, 1=account, 2=connect,  3=done
+    var MAX_STEP = 3;
+
+    function selectRole(role) {
+        wizardState.role = role;
+        document.getElementById('roleServer').classList.toggle('selected', role === 'server');
+        document.getElementById('roleAgent').classList.toggle('selected', role === 'agent');
+        document.getElementById('continueStep0').disabled = false;
+    }
+
+    function selectPolicy(policy) {
+        wizardState.policy = policy;
+        document.getElementById('policyManual').classList.toggle('selected', policy === 'manual');
+        document.getElementById('policyAuto').classList.toggle('selected', policy === 'auto');
+        document.getElementById('policyPinned').classList.toggle('selected', policy === 'pinned');
+    }
+
+    function updateDots(step) {
+        for (var i = 0; i <= MAX_STEP; i++) {
+            var dot = document.getElementById('dot' + i);
+            if (!dot) continue;
+            dot.classList.remove('active', 'done');
+            if (i < step) dot.classList.add('done');
+            else if (i === step) dot.classList.add('active');
+        }
+    }
+
+    function currentPaneId(step) {
+        if (step === 0) return 'pane0';
+        if (step === 1) return 'pane1';
+        if (step === 2) return wizardState.role === 'agent' ? 'pane2agent' : 'pane2server';
+        if (step === 3) return 'pane3';
+        return 'pane0';
+    }
+
+    function goToStep(step) {
+        // Hide all panes
+        var panes = document.querySelectorAll('.wizard-pane');
+        for (var i = 0; i < panes.length; i++) {
+            panes[i].classList.remove('visible');
+        }
+        hideError();
+        wizardState.step = step;
+        var pane = document.getElementById(currentPaneId(step));
+        if (pane) pane.classList.add('visible');
+        updateDots(step);
+
+        // Autofocus first input in new pane
+        if (pane) {
+            var first = pane.querySelector('input:not([type="checkbox"])');
+            if (first) setTimeout(function() { first.focus(); }, 50);
+        }
+    }
+
+    function showError(msg) {
+        var el = document.getElementById('wizardError');
+        el.textContent = msg;
+        el.classList.add('visible');
+    }
+
+    function hideError() {
+        var el = document.getElementById('wizardError');
+        el.classList.remove('visible');
+    }
+
+    function validateStep(step) {
+        if (step === 0) {
+            if (!wizardState.role) {
+                showError('Please select a role to continue.');
+                return false;
+            }
+            return true;
+        }
+        if (step === 1) {
+            var u = document.getElementById('username').value.trim();
+            var p = document.getElementById('password').value;
+            var c = document.getElementById('confirm').value;
+            if (!u) { showError('Username is required.'); return false; }
+            if (p.length < 8) { showError('Password must be at least 8 characters.'); return false; }
+            if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) {
+                showError('Password must include at least one letter and one digit.');
+                return false;
+            }
+            if (p !== c) { showError('Passwords do not match.'); return false; }
+            return true;
+        }
+        return true;
+    }
+
+    function nextStep() {
+        if (!validateStep(wizardState.step)) return;
+        var next = wizardState.step + 1;
+        if (next === MAX_STEP) {
+            submitWizard();
+        } else {
+            goToStep(next);
+        }
+    }
+
+    function prevStep() {
+        if (wizardState.step > 0) goToStep(wizardState.step - 1);
+    }
+
+    function submitWizard() {
+        var btn = document.querySelector('#' + currentPaneId(wizardState.step) + ' .wizard-nav-continue');
+        if (btn) { btn.disabled = true; btn.textContent = 'Setting up…'; }
+
+        var body = {
+            role:     wizardState.role,
+            username: document.getElementById('username').value.trim(),
+            password: document.getElementById('password').value
+        };
+
+        if (wizardState.role === 'server') {
+            body.default_policy  = wizardState.policy;
+            body.poll_interval   = document.getElementById('pollInterval').value;
+            body.cluster_enabled = document.getElementById('clusterEnabled').checked;
+        } else {
+            body.server_addr  = document.getElementById('serverAddr').value.trim();
+            body.enroll_token = document.getElementById('enrollToken').value.trim();
+            body.host_name    = document.getElementById('hostName').value.trim();
+        }
+
+        fetch('/api/setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+        .then(function(res) { return res.json().then(function(d) { return { ok: res.ok, data: d }; }); })
+        .then(function(r) {
+            if (!r.ok) {
+                if (btn) { btn.disabled = false; btn.textContent = 'Continue'; }
+                showError(r.data.error || 'Setup failed. Please try again.');
+                return;
+            }
+            showDone();
+        })
+        .catch(function() {
+            if (btn) { btn.disabled = false; btn.textContent = 'Continue'; }
+            showError('Network error. Please try again.');
+        });
+    }
+
+    function showDone() {
+        // Update done step content based on role
+        if (wizardState.role === 'agent') {
+            var addr = document.getElementById('serverAddr').value.trim();
+            var host = document.getElementById('hostName').value.trim() || 'this host';
+            document.getElementById('doneTitle').textContent = 'Agent connected!';
+            document.getElementById('doneMsg').textContent = 'Connected to ' + (addr || 'server') + ' as ' + host + '. Agent starting…';
+        } else {
+            document.getElementById('doneTitle').textContent = 'Setup complete!';
+            document.getElementById('doneMsg').textContent = 'Your Sentinel server is ready.';
+        }
+        goToStep(MAX_STEP);
+        // Auto-redirect after 2 seconds
+        setTimeout(function() { window.location.href = '/'; }, 2000);
+    }
+
+    function testEnrollment() {
+        var addr = document.getElementById('serverAddr').value.trim();
+        var resultEl = document.getElementById('testResult');
+        var btn = document.getElementById('testConnBtn');
+        if (!addr) {
+            resultEl.className = 'wizard-test-result error';
+            resultEl.style.display = 'block';
+            resultEl.textContent = 'Enter a server address first.';
+            return;
+        }
+        btn.disabled = true;
+        btn.textContent = 'Testing…';
+        resultEl.style.display = 'none';
+
+        fetch('/api/setup/test-enrollment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ server_addr: addr })
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(d) {
+            btn.disabled = false;
+            btn.textContent = 'Test Connection';
+            resultEl.style.display = 'block';
+            if (d.reachable) {
+                resultEl.className = 'wizard-test-result success';
+                resultEl.textContent = 'Connection successful.';
+            } else {
+                resultEl.className = 'wizard-test-result error';
+                resultEl.textContent = d.error || 'Could not reach server.';
+            }
+        })
+        .catch(function() {
+            btn.disabled = false;
+            btn.textContent = 'Test Connection';
+            resultEl.className = 'wizard-test-result error';
+            resultEl.style.display = 'block';
+            resultEl.textContent = 'Network error during test.';
+        });
+    }
+
+    // Expose functions called from HTML onclick attributes
+    window.selectRole = selectRole;
+    window.selectPolicy = selectPolicy;
+    window.nextStep = nextStep;
+    window.prevStep = prevStep;
+    window.testEnrollment = testEnrollment;
+
+    // Countdown timer
+    (function() {
+        var left = {{.RemainingSeconds}};
+        var el = document.getElementById('countdown');
+        if (!el) return;
+        function tick() {
+            if (left <= 0) { location.reload(); return; }
+            var m = Math.floor(left / 60);
+            var s = left % 60;
+            el.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+            left--;
+            setTimeout(tick, 1000);
+        }
+        tick();
+    })();
+
+    // Initialize first step
+    goToStep(0);
+})();
+</script>
+{{end}}
+
 </body>
 </html>
 {{end}}
