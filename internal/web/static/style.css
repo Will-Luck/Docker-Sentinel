@@ -3742,3 +3742,30 @@ input[type="checkbox"] {
     gap: var(--sp-2);
     margin-left: var(--sp-3);
 }
+
+
+/* --------------------------------------------------------------------------
+   General Settings — restart badge and inline banner
+   -------------------------------------------------------------------------- */
+
+.restart-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(255,152,0,0.15);
+    color: #ff9800;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
+.restart-banner-inline {
+    background: rgba(255,152,0,0.12);
+    border: 1px solid rgba(255,152,0,0.3);
+    color: #ff9800;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-bottom: var(--sp-4);
+}
