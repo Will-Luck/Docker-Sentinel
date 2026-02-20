@@ -160,11 +160,13 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		if notifyOK {
 			lastNotified = now
 		}
-		_ = u.store.SetNotifyState(name, &store.NotifyState{
+		if err := u.store.SetNotifyState(name, &store.NotifyState{
 			LastDigest:   check.RemoteDigest,
 			LastNotified: lastNotified,
 			FirstSeen:    firstSeen,
-		})
+		}); err != nil {
+			u.log.Warn("failed to persist service notify state", "name", name, "error", err)
+		}
 
 		scanTarget := ""
 		if len(check.NewerVersions) > 0 {
@@ -267,7 +269,9 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 	if pollErr != nil {
 		record.Error = pollErr.Error()
 	}
-	_ = u.store.RecordUpdate(record)
+	if err := u.store.RecordUpdate(record); err != nil {
+		u.log.Warn("failed to record service update history", "name", name, "error", err)
+	}
 
 	switch outcome {
 	case "success":
