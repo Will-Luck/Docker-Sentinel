@@ -47,11 +47,13 @@ var supportedFeatures = []string{
 // operations, not swarm, image cleanup, or distribution checks.
 type DockerAPI interface {
 	ListContainers(ctx context.Context) ([]container.Summary, error)
+	ListAllContainers(ctx context.Context) ([]container.Summary, error)
 	InspectContainer(ctx context.Context, id string) (container.InspectResponse, error)
 	StopContainer(ctx context.Context, id string, timeout int) error
 	RemoveContainer(ctx context.Context, id string) error
 	CreateContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig) (string, error)
 	StartContainer(ctx context.Context, id string) error
+	RestartContainer(ctx context.Context, id string) error
 	PullImage(ctx context.Context, refStr string) error
 	ImageDigest(ctx context.Context, imageRef string) (string, error)
 	ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error)
@@ -474,6 +476,11 @@ func (a *Agent) receiveLoop(ctx context.Context, stream proto.AgentService_Chann
 				return a.handleUpdateContainer(ctx, stream, p.UpdateContainer, reqID)
 			})
 
+		case *proto.ServerMessage_ContainerAction:
+			go a.safeHandle("container-action", reqID, func() error {
+				return a.handleContainerAction(ctx, stream, p.ContainerAction, reqID)
+			})
+
 		case *proto.ServerMessage_PullImage:
 			go a.safeHandle("pull-image", reqID, func() error {
 				return a.handlePullImage(ctx, p.PullImage)
@@ -579,6 +586,52 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		},
 	}
 	return stream.Send(msg)
+}
+
+// handleContainerAction executes a stop, start, or restart action on a
+// named container and sends the result back to the server.
+func (a *Agent) handleContainerAction(ctx context.Context, stream proto.AgentService_ChannelClient, req *proto.ContainerActionRequest, requestID string) error {
+	name := req.GetContainerName()
+	action := req.GetAction()
+	a.log.Info("container action", "name", name, "action", action, "request_id", requestID)
+
+	cID, err := a.findContainerID(ctx, name)
+	if err == nil {
+		switch action {
+		case "stop":
+			err = a.docker.StopContainer(ctx, cID, 10)
+		case "start":
+			err = a.docker.StartContainer(ctx, cID)
+		case "restart":
+			err = a.docker.RestartContainer(ctx, cID)
+		default:
+			err = fmt.Errorf("unknown action: %s", action)
+		}
+	}
+
+	result := &proto.ContainerActionResult{
+		RequestId:     requestID,
+		ContainerName: name,
+		Action:        action,
+	}
+	if err != nil {
+		result.Outcome = "failed"
+		result.Error = err.Error()
+		a.log.Error("container action failed", "name", name, "action", action, "error", err)
+	} else {
+		result.Outcome = "success"
+		a.log.Info("container action succeeded", "name", name, "action", action)
+	}
+
+	if err := stream.Send(&proto.AgentMessage{
+		Payload: &proto.AgentMessage_ContainerActionResult{ContainerActionResult: result},
+	}); err != nil {
+		return err
+	}
+
+	// Push a fresh container list so the server cache and UI reflect the
+	// new state immediately (e.g. a stopped container stays visible).
+	return a.handleListContainers(ctx, stream, "")
 }
 
 // handlePullImage pulls an image on the local Docker host.
@@ -711,8 +764,8 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 // env vars, volumes, ports, networks, and all other configuration from
 // the original container.
 func configFromInspect(inspect *container.InspectResponse, targetImage string) (*container.Config, *container.HostConfig, *network.NetworkingConfig) {
-	cfg := inspect.Config
-	cfg.Image = targetImage
+	cfgCopy := *inspect.Config
+	cfgCopy.Image = targetImage
 
 	hostCfg := inspect.HostConfig
 
@@ -727,15 +780,17 @@ func configFromInspect(inspect *container.InspectResponse, targetImage string) (
 		}
 	}
 
-	return cfg, hostCfg, netCfg
+	return &cfgCopy, hostCfg, netCfg
 }
 
 // --- Helpers ---
 
-// listLocalContainers fetches all containers from the local Docker daemon
-// and converts them to proto ContainerInfo messages.
+// listLocalContainers fetches all containers (regardless of state) from the
+// local Docker daemon and converts them to proto ContainerInfo messages.
+// Using ListAllContainers ensures stopped containers remain visible on the
+// dashboard after a stop action.
 func (a *Agent) listLocalContainers(ctx context.Context) ([]*proto.ContainerInfo, error) {
-	summaries, err := a.docker.ListContainers(ctx)
+	summaries, err := a.docker.ListAllContainers(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -776,8 +831,10 @@ func containerInfoFromSummary(c *container.Summary) *proto.ContainerInfo {
 }
 
 // findContainerID looks up a container by name and returns its ID.
+// Uses ListAllContainers so it can locate stopped containers (e.g. to
+// start them after a previous stop action).
 func (a *Agent) findContainerID(ctx context.Context, name string) (string, error) {
-	containers, err := a.docker.ListContainers(ctx)
+	containers, err := a.docker.ListAllContainers(ctx)
 	if err != nil {
 		return "", fmt.Errorf("list containers: %w", err)
 	}
