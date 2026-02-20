@@ -303,8 +303,12 @@ func (s *Server) apiPasskeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		stored, storeErr := s.deps.Auth.WebAuthnCreds.GetWebAuthnCredential(credential.ID)
 		if storeErr == nil && stored != nil {
 			stored.Authenticator.SignCount = credential.Authenticator.SignCount
-			_ = s.deps.Auth.WebAuthnCreds.DeleteWebAuthnCredential(stored.ID)
-			_ = s.deps.Auth.WebAuthnCreds.CreateWebAuthnCredential(*stored)
+			if err := s.deps.Auth.WebAuthnCreds.DeleteWebAuthnCredential(stored.ID); err != nil {
+				s.deps.Log.Warn("failed to delete old webauthn credential", "id", stored.ID, "error", err)
+			}
+			if err := s.deps.Auth.WebAuthnCreds.CreateWebAuthnCredential(*stored); err != nil {
+				s.deps.Log.Warn("failed to create updated webauthn credential", "id", stored.ID, "error", err)
+			}
 		}
 	}
 
