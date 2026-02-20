@@ -244,7 +244,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 
 		name := containerName(c)
-		maintenance, _ := s.deps.Store.GetMaintenance(name)
+		maintenance, err := s.deps.Store.GetMaintenance(name)
+		if err != nil {
+			s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
+		}
 
 		policy := containerPolicy(c.Labels)
 		if s.deps.Policy != nil {
@@ -339,7 +342,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		stackMap[key] = append(stackMap[key], v)
 	}
 	// Apply saved stack order if available, falling back to alphabetical.
-	savedJSON, _ := s.deps.SettingsStore.LoadSetting("stack_order")
+	savedJSON, err := s.deps.SettingsStore.LoadSetting("stack_order")
+	if err != nil {
+		s.deps.Log.Debug("failed to load stack order", "error", err)
+	}
 	var savedOrder []string
 	if savedJSON != "" {
 		if err := json.Unmarshal([]byte(savedJSON), &savedOrder); err != nil {
@@ -716,7 +722,10 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 			pending++
 		}
 		if n == name {
-			maintenance, _ := s.deps.Store.GetMaintenance(n)
+			maintenance, err := s.deps.Store.GetMaintenance(n)
+			if err != nil {
+				s.deps.Log.Debug("failed to load maintenance state", "name", n, "error", err)
+			}
 			policy := containerPolicy(c.Labels)
 			if s.deps.Policy != nil {
 				if p, ok := s.deps.Policy.GetPolicyOverride(n); ok {
@@ -918,7 +927,10 @@ func (s *Server) withCluster(data *pageData) {
 		return
 	}
 	if s.deps.SettingsStore != nil {
-		v, _ := s.deps.SettingsStore.LoadSetting(store.SettingClusterEnabled)
+		v, err := s.deps.SettingsStore.LoadSetting(store.SettingClusterEnabled)
+		if err != nil {
+			s.deps.Log.Debug("failed to load cluster enabled setting", "error", err)
+		}
 		data.ClusterEnabled = v == "true"
 	}
 }
@@ -975,7 +987,10 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maintenance, _ := s.deps.Store.GetMaintenance(name)
+	maintenance, err := s.deps.Store.GetMaintenance(name)
+	if err != nil {
+		s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
+	}
 
 	detailPolicy := containerPolicy(found.Labels)
 	if s.deps.Policy != nil {
