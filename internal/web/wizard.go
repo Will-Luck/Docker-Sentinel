@@ -89,7 +89,7 @@ func (ws *WizardServer) handleSetup(w http.ResponseWriter, r *http.Request) {
 func containerHint() string {
 	h, err := os.Hostname()
 	if err != nil || h == "" {
-		return "&lt;container&gt;"
+		return "<container>"
 	}
 	// Docker sets hostname to the short container ID (12 hex chars).
 	// If someone set --hostname explicitly, it won't be hex — fall back.

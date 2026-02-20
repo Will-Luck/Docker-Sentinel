@@ -896,9 +896,7 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 
 	// Compute image tag for enrollment snippets.
 	imageTag := s.deps.Version
-	if strings.HasPrefix(imageTag, "v") {
-		imageTag = imageTag[1:]
-	}
+	imageTag = strings.TrimPrefix(imageTag, "v")
 	if idx := strings.IndexByte(imageTag, ' '); idx >= 0 {
 		imageTag = imageTag[:idx]
 	}

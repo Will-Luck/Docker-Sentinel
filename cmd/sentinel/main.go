@@ -253,6 +253,10 @@ func main() {
 			cfg.HostName, _ = db.LoadSetting("host_name")
 		}
 		cfg.Mode = "agent"
+		// Close DB and Docker client before runAgent opens its own handles.
+		// BoltDB uses file-level locking — two open handles deadlock.
+		db.Close()
+		client.Close()
 		runAgent(ctx, cfg, log)
 		return
 	}
@@ -647,14 +651,14 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	log.Info("agent shutdown complete")
 }
 
-// runWizard starts the setup wizard server and blocks until setup completes
-// or ctx is cancelled.
 func generateRandomPassword() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+// runWizard starts the setup wizard server and blocks until setup completes
+// or ctx is cancelled.
 func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc *auth.Service, log *logging.Logger) {
 	fmt.Println("=============================================")
 	fmt.Println("First-run setup required!")

@@ -1280,16 +1280,16 @@ func TestRegisterPending_RejectsExisting(t *testing.T) {
 // errStore is a minimal ClusterStore stub whose IsRevokedCert always errors.
 type errStore struct{ err error }
 
-func (e *errStore) SaveClusterHost(string, []byte) error             { return nil }
-func (e *errStore) GetClusterHost(string) ([]byte, error)            { return nil, nil }
-func (e *errStore) ListClusterHosts() (map[string][]byte, error)     { return nil, nil }
-func (e *errStore) DeleteClusterHost(string) error                   { return nil }
-func (e *errStore) SaveEnrollToken(string, []byte) error             { return nil }
-func (e *errStore) GetEnrollToken(string) ([]byte, error)            { return nil, nil }
-func (e *errStore) DeleteEnrollToken(string) error                   { return nil }
-func (e *errStore) AddRevokedCert(string) error                      { return nil }
-func (e *errStore) IsRevokedCert(string) (bool, error)               { return false, e.err }
-func (e *errStore) ListRevokedCerts() (map[string]string, error)     { return nil, nil }
+func (e *errStore) SaveClusterHost(string, []byte) error         { return nil }
+func (e *errStore) GetClusterHost(string) ([]byte, error)        { return nil, nil }
+func (e *errStore) ListClusterHosts() (map[string][]byte, error) { return nil, nil }
+func (e *errStore) DeleteClusterHost(string) error               { return nil }
+func (e *errStore) SaveEnrollToken(string, []byte) error         { return nil }
+func (e *errStore) GetEnrollToken(string) ([]byte, error)        { return nil, nil }
+func (e *errStore) DeleteEnrollToken(string) error               { return nil }
+func (e *errStore) AddRevokedCert(string) error                  { return nil }
+func (e *errStore) IsRevokedCert(string) (bool, error)           { return false, e.err }
+func (e *errStore) ListRevokedCerts() (map[string]string, error) { return nil, nil }
 
 func TestVerifyCRL_FailsClosed(t *testing.T) {
 	storeErr := errors.New("store unavailable")
