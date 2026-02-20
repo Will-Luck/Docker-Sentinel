@@ -579,7 +579,10 @@ func (u *Updater) effectiveNotifyMode(name string) string {
 		return pref.Mode
 	}
 	if u.settings != nil {
-		val, _ := u.settings.LoadSetting("default_notify_mode")
+		val, err := u.settings.LoadSetting("default_notify_mode")
+		if err != nil {
+			u.log.Debug("failed to load default_notify_mode", "error", err)
+		}
 		if val != "" {
 			return val
 		}
