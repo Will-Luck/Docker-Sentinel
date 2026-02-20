@@ -139,7 +139,11 @@ func (s *Server) apiContainerDetail(w http.ResponseWriter, r *http.Request) {
 		snapshots = []SnapshotEntry{}
 	}
 
-	maintenance, _ := s.deps.Store.GetMaintenance(name)
+	var maintenance bool
+	maintenance, err = s.deps.Store.GetMaintenance(name)
+	if err != nil {
+		s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
+	}
 
 	type detailResponse struct {
 		ID          string          `json:"id"`
