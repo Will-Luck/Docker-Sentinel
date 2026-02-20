@@ -422,7 +422,7 @@
             <div class="setup-error-box">Setup window has expired</div>
             <p>For security, the setup page is only available for 5 minutes after starting the container.</p>
             <p>Restart the container to open a new setup window:</p>
-            <p><code>docker restart &lt;container&gt;</code></p>
+            <p><code>docker restart {{.Hostname}}</code></p>
         </div>
         {{else}}
 
