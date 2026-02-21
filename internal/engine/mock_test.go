@@ -27,9 +27,10 @@ type mockDocker struct {
 	removeCalls []string
 	removeErr   map[string]error
 
-	createResult map[string]string // name → id
-	createErr    map[string]error
-	createCalls  []string
+	createResult  map[string]string // name → id
+	createErr     map[string]error
+	createCalls   []string
+	createConfigs map[string]*container.Config
 
 	startCalls []string
 	startErr   map[string]error
@@ -80,6 +81,7 @@ func newMockDocker() *mockDocker {
 		removeErr:      make(map[string]error),
 		createResult:   make(map[string]string),
 		createErr:      make(map[string]error),
+		createConfigs:  make(map[string]*container.Config),
 		startErr:       make(map[string]error),
 		restartErr:     make(map[string]error),
 		pullErr:        make(map[string]error),
@@ -137,9 +139,12 @@ func (m *mockDocker) RemoveContainer(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockDocker) CreateContainer(_ context.Context, name string, _ *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
+func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
 	m.mu.Lock()
 	m.createCalls = append(m.createCalls, name)
+	if cfg != nil {
+		m.createConfigs[name] = cfg
+	}
 	m.mu.Unlock()
 	if err, ok := m.createErr[name]; ok {
 		return "", err

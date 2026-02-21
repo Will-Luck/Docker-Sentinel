@@ -2,13 +2,17 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 )
+
+var validTag = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
 
 // apiRestart restarts a container by name.
 func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
@@ -511,7 +515,7 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
-		if err := s.deps.SelfUpdater.Update(context.Background()); err != nil {
+		if err := s.deps.SelfUpdater.Update(context.Background(), ""); err != nil {
 			s.deps.Log.Error("self-update failed", "error", err)
 			s.deps.EventBus.Publish(events.SSEEvent{
 				Type:      events.EventContainerUpdate,
@@ -526,5 +530,106 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "started",
 		"message": "Self-update initiated — Sentinel will restart shortly",
+	})
+}
+
+// apiUpdateToVersion recreates a container with an explicit version tag.
+// For Sentinel containers, it routes through the self-updater helper.
+func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	var body struct {
+		Tag string `json:"tag"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Tag == "" {
+		writeError(w, http.StatusBadRequest, "tag required")
+		return
+	}
+	if !validTag.MatchString(body.Tag) {
+		writeError(w, http.StatusBadRequest, "invalid tag format")
+		return
+	}
+
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers for version update", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var containerID, imageRef string
+	for _, c := range containers {
+		if containerName(c) == name {
+			containerID = c.ID
+			imageRef = c.Image
+			break
+		}
+	}
+	if containerID == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	targetImage := webReplaceTag(imageRef, body.Tag)
+
+	if s.isProtectedContainer(r.Context(), name) {
+		// Sentinel — route through self-updater helper container.
+		if s.deps.SelfUpdater == nil {
+			writeError(w, http.StatusNotImplemented, "self-update not available")
+			return
+		}
+		go func() {
+			if err := s.deps.SelfUpdater.Update(context.Background(), targetImage); err != nil {
+				s.deps.Log.Error("self-update to version failed", "tag", body.Tag, "error", err)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:      events.EventContainerUpdate,
+					Message:   "self-update to " + body.Tag + " failed: " + err.Error(),
+					Timestamp: time.Now(),
+				})
+			}
+		}()
+		s.logEvent(r, "self_update", name, "Self-update to "+body.Tag+" initiated")
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "started",
+			"name":    name,
+			"message": "Self-update to " + body.Tag + " initiated — Sentinel will restart shortly",
+		})
+		return
+	}
+
+	// Regular container — use the standard update lifecycle.
+	go func() {
+		err := s.deps.Updater.UpdateContainer(context.Background(), containerID, name, targetImage)
+		if errors.Is(err, engine.ErrUpdateInProgress) {
+			s.deps.Log.Warn("version update skipped, already in progress", "name", name)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerUpdate,
+				ContainerName: name,
+				Message:       "update already in progress for " + name,
+				Timestamp:     time.Now(),
+			})
+			return
+		}
+		if err != nil {
+			s.deps.Log.Error("version update failed", "name", name, "tag", body.Tag, "error", err)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerUpdate,
+				ContainerName: name,
+				Message:       "update to " + body.Tag + " failed: " + err.Error(),
+				Timestamp:     time.Now(),
+			})
+		}
+	}()
+
+	s.logEvent(r, "update_to_version", name, "Update to "+body.Tag+" triggered")
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "started",
+		"name":    name,
+		"message": "Updating " + name + " to " + targetImage,
 	})
 }
