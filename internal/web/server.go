@@ -110,7 +110,7 @@ type EventLogger interface {
 
 // SelfUpdater triggers self-update via an ephemeral helper container.
 type SelfUpdater interface {
-	Update(ctx context.Context) error
+	Update(ctx context.Context, targetImage string) error
 }
 
 // NotificationConfigStore persists notification channel configuration.
@@ -688,6 +688,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/check/{name}", perm(auth.PermContainersUpdate, s.apiCheck))
 	s.mux.Handle("POST /api/scan", perm(auth.PermContainersUpdate, s.apiTriggerScan))
 	s.mux.Handle("POST /api/containers/{name}/switch-ghcr", perm(auth.PermContainersUpdate, s.apiSwitchToGHCR))
+	s.mux.Handle("POST /api/containers/{name}/update-to-version", perm(auth.PermContainersUpdate, s.apiUpdateToVersion))
 
 	// containers.approve — {key} is the queue key: plain name for local, "hostID::name" for remote.
 	s.mux.Handle("POST /api/approve/{key}", perm(auth.PermContainersApprove, s.apiApprove))
