@@ -399,8 +399,8 @@ type selfUpdateAdapter struct {
 	updater *engine.SelfUpdater
 }
 
-func (a *selfUpdateAdapter) Update(ctx context.Context) error {
-	return a.updater.Update(ctx)
+func (a *selfUpdateAdapter) Update(ctx context.Context, targetImage string) error {
+	return a.updater.Update(ctx, targetImage)
 }
 
 // stopAdapter bridges docker.Client to web.ContainerStopper.

@@ -1353,9 +1353,24 @@ function switchToGHCR(name, ghcrImage) {
 
 function updateToVersion(name) {
     var sel = document.getElementById("version-select");
-    if (!sel) return;
-    var version = sel.value;
-    showToast("Version pinning to " + version + " is not yet implemented", "info");
+    if (!sel || !sel.value) return;
+    var tag = sel.value;
+    showConfirm("Update to Version",
+        "<p>Update <strong>" + name + "</strong> to <code>" + tag + "</code>?</p>"
+    ).then(function(confirmed) {
+        if (!confirmed) return;
+        fetch("/api/containers/" + encodeURIComponent(name) + "/update-to-version", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({tag: tag})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) { showToast(data.error, "error"); }
+            else { showToast(data.message || "Update started", "success"); }
+        })
+        .catch(function() { showToast("Failed to trigger version update", "error"); });
+    });
 }
 
 function applyBulkPolicy() {
