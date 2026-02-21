@@ -134,7 +134,7 @@ func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownD
 
 	_, ok := ParseSemVer(tag)
 	if !ok {
-		if result.UpdateAvailable && (tag == "latest" || tag == "") {
+		if result.UpdateAvailable {
 			c.resolveLatestVersions(ctx, imageRef, &result)
 		}
 		return result
@@ -201,7 +201,7 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 	if !ok {
 		// Non-semver tag (e.g. "latest") — resolve digest-to-version if
 		// an update was detected so the UI can show meaningful versions.
-		if result.UpdateAvailable && (tag == "latest" || tag == "") {
+		if result.UpdateAvailable {
 			c.resolveLatestVersions(ctx, imageRef, &result)
 		}
 		return result
