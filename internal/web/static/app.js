@@ -46,9 +46,7 @@
    ------------------------------------------------------------ */
 
 function initTheme() {
-    var saved = localStorage.getItem("sentinel-theme") || "dark";
-    // Light theme disabled — force dark if previously set to light or auto
-    if (saved === "light" || saved === "auto") saved = "dark";
+    var saved = localStorage.getItem("sentinel-theme") || "auto";
     applyTheme(saved);
 }
 
