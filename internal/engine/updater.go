@@ -406,8 +406,15 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 					break // manual scan: stop entirely
 				}
 				u.log.Debug("rate limit low, skipping container", "name", name, "registry", host, "resets_in", wait)
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: name,
+					OldImage:      imageRef,
+					Outcome:       "skipped",
+					Error:         "rate limit low on " + host,
+				})
 				result.RateLimited++
-				continue // scheduled scan: skip silently
+				continue
 			}
 		}
 
@@ -416,6 +423,13 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 
 		if check.Error != nil {
 			u.log.Warn("registry check failed", "name", name, "image", imageRef, "error", check.Error)
+			_ = u.store.RecordUpdate(store.UpdateRecord{
+				Timestamp:     u.clock.Now(),
+				ContainerName: name,
+				OldImage:      imageRef,
+				Outcome:       "skipped",
+				Error:         check.Error.Error(),
+			})
 			result.Errors = append(result.Errors, fmt.Errorf("%s: %w", name, check.Error))
 			continue
 		}
@@ -575,7 +589,9 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.scanRemoteHosts(ctx, mode, &result, filters, reserve)
 	}
 
-	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf("total=%d updated=%d services=%d", result.Total, result.Updated, result.ServiceUpdates))
+	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf(
+		"total=%d updated=%d queued=%d skipped=%d rate_limited=%d failed=%d services=%d",
+		result.Total, result.Updated, result.Queued, result.Skipped, result.RateLimited, result.Failed, result.ServiceUpdates))
 
 	if u.rateTracker != nil {
 		u.publishEvent(events.EventRateLimits, "", u.rateTracker.OverallHealth())

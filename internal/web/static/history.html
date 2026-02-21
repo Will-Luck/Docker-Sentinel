@@ -97,6 +97,8 @@
                                         <span class="badge badge-error">Failed</span>
                                     {{else if eq $r.Outcome "finalise_warning"}}
                                         <span class="badge badge-warning">Warning</span>
+                                    {{else if eq $r.Outcome "skipped"}}
+                                        <span class="badge badge-warning">Skipped</span>
                                     {{else}}
                                         <span class="badge badge-muted">{{$r.Outcome}}</span>
                                     {{end}}
