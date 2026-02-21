@@ -25,7 +25,7 @@ docker run -d \
   willluck/docker-sentinel:latest
 ```
 
-Open `http://localhost:8080` and create your admin account. That's it — Sentinel will scan your containers immediately.
+Open `http://localhost:8080` and complete the setup wizard. Sentinel defers the first scan until you reach the dashboard, so nothing runs before you've chosen your settings.
 
 Also available from GHCR: `ghcr.io/will-luck/docker-sentinel:latest`
 
