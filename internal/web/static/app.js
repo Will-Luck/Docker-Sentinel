@@ -46,9 +46,7 @@
    ------------------------------------------------------------ */
 
 function initTheme() {
-    var saved = localStorage.getItem("sentinel-theme") || "dark";
-    // Light theme disabled — force dark if previously set to light or auto
-    if (saved === "light" || saved === "auto") saved = "dark";
+    var saved = localStorage.getItem("sentinel-theme") || "auto";
     applyTheme(saved);
 }
 
@@ -140,7 +138,7 @@ function initSettingsPage() {
     var sectionSelect = document.getElementById("section-default");
     if (!themeSelect) return;
 
-    themeSelect.value = localStorage.getItem("sentinel-theme") || "dark";
+    themeSelect.value = localStorage.getItem("sentinel-theme") || "auto";
     stackSelect.value = localStorage.getItem("sentinel-stacks") || "collapsed";
     if (sectionSelect) sectionSelect.value = localStorage.getItem("sentinel-sections") || "remember";
 

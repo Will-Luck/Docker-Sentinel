@@ -263,8 +263,17 @@ func main() {
 
 	// Set up a 5-minute setup window if no admin user exists yet.
 	var setupDeadline time.Time
+	freshSetup := needsWizard // wizard just ran — user hasn't seen the dashboard yet
 	if authSvc.NeedsSetup() {
 		setupDeadline = time.Now().Add(5 * time.Minute)
+		freshSetup = true
+	}
+
+	// Gate the initial scan: on fresh setup, wait until the user loads the
+	// dashboard so the scanner doesn't run wild before they've seen the UI.
+	scanGate := make(chan struct{})
+	if !freshSetup {
+		close(scanGate)
 	}
 
 	// Load persisted runtime settings (override env defaults).
@@ -398,6 +407,7 @@ func main() {
 
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
+	scheduler.SetReadyGate(scanGate)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
 
@@ -472,6 +482,7 @@ func main() {
 		}
 		srv := web.NewServer(webDeps)
 		srv.SetClusterLifecycle(cm)
+		srv.SetScanGate(scanGate)
 
 		// Configure WebAuthn passkeys if RPID is set.
 		if cfg.WebAuthnEnabled() {

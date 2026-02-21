@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -489,6 +490,8 @@ type Server struct {
 	tlsCert          string             // path to TLS certificate PEM (empty = plain HTTP)
 	tlsKey           string             // path to TLS private key PEM
 	clusterLifecycle ClusterLifecycle   // nil until wired by main; enables dynamic start/stop
+	scanGate         chan struct{}      // closed on first dashboard load to unblock the scheduler
+	scanGateOnce     sync.Once
 }
 
 // SetSetupDeadline sets the time limit for first-run setup.
@@ -510,6 +513,18 @@ func (s *Server) setupWindowOpen() bool {
 func (s *Server) SetTLS(cert, key string) {
 	s.tlsCert = cert
 	s.tlsKey = key
+}
+
+// SetScanGate sets the channel the server closes on the first dashboard load,
+// unblocking the scheduler's initial scan after fresh setup.
+func (s *Server) SetScanGate(ch chan struct{}) {
+	s.scanGate = ch
+}
+
+func (s *Server) signalScanReady() {
+	if s.scanGate != nil {
+		s.scanGateOnce.Do(func() { close(s.scanGate) })
+	}
 }
 
 // SetClusterLifecycle wires the dynamic start/stop callback for cluster mode.
