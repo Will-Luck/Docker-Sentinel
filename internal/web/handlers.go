@@ -225,6 +225,7 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 
 // handleDashboard renders the main container dashboard.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	s.signalScanReady()
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		s.deps.Log.Error("failed to list containers", "error", err)

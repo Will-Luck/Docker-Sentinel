@@ -19,13 +19,14 @@ type SettingsReader interface {
 
 // Scheduler runs scan cycles at the configured poll interval.
 type Scheduler struct {
-	updater  *Updater
-	cfg      *config.Config
-	log      *logging.Logger
-	clock    clock.Clock
-	settings SettingsReader
-	resetCh  chan struct{}
-	lastScan time.Time
+	updater   *Updater
+	cfg       *config.Config
+	log       *logging.Logger
+	clock     clock.Clock
+	settings  SettingsReader
+	resetCh   chan struct{}
+	lastScan  time.Time
+	readyGate <-chan struct{} // if set, wait for close before initial scan
 }
 
 // NewScheduler creates a Scheduler.
@@ -44,9 +45,26 @@ func (s *Scheduler) SetSettingsReader(sr SettingsReader) {
 	s.settings = sr
 }
 
+// SetReadyGate sets a channel the scheduler waits on before running the initial
+// scan. Used after fresh setup so that no scans fire until the user has loaded
+// the dashboard and can actually see the results.
+func (s *Scheduler) SetReadyGate(ch <-chan struct{}) {
+	s.readyGate = ch
+}
+
 // Run starts the scan loop. It performs an initial scan immediately,
 // then scans at every poll interval. Exits when ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
+	if s.readyGate != nil {
+		s.log.Info("deferring initial scan until dashboard is loaded")
+		select {
+		case <-s.readyGate:
+		case <-ctx.Done():
+			s.log.Info("scheduler stopped")
+			return nil
+		}
+	}
+
 	if !s.isPaused() {
 		s.log.Info("starting initial scan")
 		result := s.updater.Scan(ctx, ScanScheduled)
