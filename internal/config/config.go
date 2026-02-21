@@ -94,7 +94,7 @@ func Load() *Config {
 		pollInterval:        envDuration("SENTINEL_POLL_INTERVAL", 6*time.Hour),
 		gracePeriod:         envDuration("SENTINEL_GRACE_PERIOD", 30*time.Second),
 		defaultPolicy:       envStr("SENTINEL_DEFAULT_POLICY", "manual"),
-		latestAutoUpdate:    envBool("SENTINEL_LATEST_AUTO_UPDATE", true),
+		latestAutoUpdate:    envBool("SENTINEL_LATEST_AUTO_UPDATE", false),
 		DBPath:              envStr("SENTINEL_DB_PATH", "/data/sentinel.db"),
 		LogJSON:             envBool("SENTINEL_LOG_JSON", true),
 		GotifyURL:           envStr("SENTINEL_GOTIFY_URL", ""),
