@@ -2739,7 +2739,7 @@ function initSSE() {
         }
     });
 
-    es.addEventListener("scan_complete", function () {
+    es.addEventListener("scan_complete", function (e) {
         // Clear scan button spinner.
         var scanBtn = document.getElementById("scan-btn");
         if (scanBtn) { scanBtn.classList.remove("loading"); scanBtn.disabled = false; }
@@ -2754,6 +2754,16 @@ function initSSE() {
             scheduleDigestBannerRefresh();
         } else {
             scheduleReload();
+        }
+        // Show warning toast if containers were skipped or failed.
+        var msg = e.data || "";
+        var rl = (msg.match(/rate_limited=(\d+)/) || [])[1] | 0;
+        var failed = (msg.match(/failed=(\d+)/) || [])[1] | 0;
+        if (rl > 0 || failed > 0) {
+            var parts = [];
+            if (rl > 0) parts.push(rl + " skipped (rate limit)");
+            if (failed > 0) parts.push(failed + " failed");
+            showToast("Scan complete \u2014 " + parts.join(", "), "warning");
         }
     });
 
