@@ -4343,8 +4343,16 @@ function testRegistryCredential(index) {
     .then(function(data) {
         if (data.success) {
             showToast("Credentials valid for " + cred.registry, "success");
-            // Probe runs server-side in background; re-fetch after it completes.
-            setTimeout(function() { loadRegistries(); }, 3000);
+            // Refresh rate-limit status after background probe, but don't
+            // reload credentials — unsaved entries would be wiped.
+            setTimeout(function() {
+                fetch("/api/settings/registries")
+                    .then(function(r) { return r.json(); })
+                    .then(function(d) {
+                        registryData = d;
+                        renderRegistryStatus();
+                    });
+            }, 3000);
         } else {
             showToast("Test failed: " + (data.error || "unknown error"), "error");
         }
