@@ -26,7 +26,7 @@ func NewSelfUpdater(d docker.API, log *logging.Logger) *SelfUpdater {
 // Update performs a self-update by creating an ephemeral helper container.
 // The helper pulls the new image, stops/removes the current Sentinel container,
 // and recreates it with the same configuration.
-func (su *SelfUpdater) Update(ctx context.Context) error {
+func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	// 1. Find our own container.
 	containers, err := su.docker.ListContainers(ctx)
 	if err != nil {
@@ -61,6 +61,9 @@ func (su *SelfUpdater) Update(ctx context.Context) error {
 	}
 
 	imageRef := inspect.Config.Image
+	if targetImage != "" {
+		imageRef = targetImage
+	}
 	su.log.Info("self-update initiated", "name", selfName, "image", imageRef)
 
 	// 3. Build the docker run arguments from the inspect config.
