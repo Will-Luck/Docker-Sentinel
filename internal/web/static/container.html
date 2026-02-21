@@ -217,6 +217,7 @@
                                     <td>
                                         {{if eq .Outcome "success"}}<span class="badge badge-success">Success</span>
                                         {{else if eq .Outcome "rollback"}}<span class="badge badge-error">Rollback</span>
+                                        {{else if eq .Outcome "skipped"}}<span class="badge badge-warning">Skipped</span>
                                         {{else}}<span class="badge badge-muted">{{.Outcome}}</span>{{end}}
                                     </td>
                                     <td class="mono">{{fmtDuration .Duration}}</td>
