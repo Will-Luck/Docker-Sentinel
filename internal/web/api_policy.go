@@ -145,6 +145,7 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 
 	type changeEntry struct {
 		Name string `json:"name"`
+		Key  string `json:"-"`
 		From string `json:"from"`
 		To   string `json:"to"`
 	}
@@ -165,6 +166,15 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 	// so we don't re-query per container.
 	allLabels := s.allContainerLabels(r.Context())
 
+	remoteHostIDs := map[string]string{}
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			if _, exists := remoteHostIDs[rc.Name]; !exists {
+				remoteHostIDs[rc.Name] = rc.HostID
+			}
+		}
+	}
+
 	for _, name := range body.Containers {
 		labels := allLabels[name]
 
@@ -174,8 +184,13 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		policyKey := name
+		if hid, ok := remoteHostIDs[name]; ok {
+			policyKey = hid + "::" + name
+		}
+
 		current := containerPolicy(labels)
-		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+		if p, ok := s.deps.Policy.GetPolicyOverride(policyKey); ok {
 			current = p
 		}
 
@@ -184,7 +199,7 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		changes = append(changes, changeEntry{Name: name, From: current, To: body.Policy})
+		changes = append(changes, changeEntry{Name: name, Key: policyKey, From: current, To: body.Policy})
 	}
 
 	// Preview mode: show what would happen.
@@ -201,7 +216,7 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 	// Confirm mode: apply all changes.
 	applied := 0
 	for _, c := range changes {
-		if err := s.deps.Policy.SetPolicyOverride(c.Name, body.Policy); err != nil {
+		if err := s.deps.Policy.SetPolicyOverride(c.Key, body.Policy); err != nil {
 			s.deps.Log.Error("bulk policy change failed", "name", c.Name, "error", err)
 			continue
 		}

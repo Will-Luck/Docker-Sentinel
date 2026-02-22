@@ -688,7 +688,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 
 		// Skip based on policy (same resolution as local containers).
 		tag := registry.ExtractTag(c.Image)
-		resolved := ResolvePolicy(u.store, c.Labels, c.Name, tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())
+		resolved := ResolvePolicy(u.store, c.Labels, store.ScopedKey(hostID, c.Name), tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())
 		policy := docker.Policy(resolved.Policy)
 
 		if policy == docker.PolicyPinned {

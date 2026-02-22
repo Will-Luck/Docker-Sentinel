@@ -88,6 +88,7 @@ type containerView struct {
 	State           string
 	Maintenance     bool
 	HasUpdate       bool
+	DigestOnly      bool // true when update is digest-only (same tag, newer build)
 	IsSelf          bool
 	Stack           string // com.docker.compose.project label, or "" for standalone
 	Registry        string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
@@ -234,9 +235,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the pending update lookup for "update available" badges.
+	// Uses Key() (e.g. "hostID::name" for remote, bare "name" for local/service)
+	// to avoid remote entries falsely matching swarm services with the same name.
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.ContainerName] = true
+		pendingNames[p.Key()] = true
 	}
 
 	views := make([]containerView, 0, len(containers))
@@ -296,6 +299,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			State:           c.State,
 			Maintenance:     maintenance,
 			HasUpdate:       pendingNames[name],
+			DigestOnly:      pendingNames[name] && newestVersion == "",
 			IsSelf:          c.Labels["sentinel.self"] == "true",
 			Stack:           c.Labels["com.docker.compose.project"],
 			Registry:        registry.RegistryHost(c.Image),
@@ -473,9 +477,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 
 			var newestVersion string
+			var hasUpdate bool
 			queueKey := rc.HostID + "::" + rc.Name
-			if pend, ok := s.deps.Queue.Get(queueKey); ok && len(pend.NewerVersions) > 0 {
-				newestVersion = pend.NewerVersions[0]
+			if pend, ok := s.deps.Queue.Get(queueKey); ok {
+				hasUpdate = true
+				if len(pend.NewerVersions) > 0 {
+					newestVersion = pend.NewerVersions[0]
+				}
 			}
 
 			cv := containerView{
@@ -486,7 +494,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				Registry:      registry.RegistryHost(rc.Image),
 				Policy:        policy,
 				State:         rc.State,
-				HasUpdate:     newestVersion != "",
+				HasUpdate:     hasUpdate,
+				DigestOnly:    hasUpdate && newestVersion == "",
 				IsSelf:        rc.Labels["sentinel.self"] == "true",
 				HostID:        rc.HostID,
 				HostName:      rc.HostName,
@@ -732,7 +741,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.ContainerName] = true
+		pendingNames[p.Key()] = true
 	}
 
 	var targetView *containerView
@@ -778,6 +787,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				State:         c.State,
 				Maintenance:   maintenance,
 				HasUpdate:     pendingNames[n],
+				DigestOnly:    pendingNames[n] && newestVersion == "",
 				IsSelf:        c.Labels["sentinel.self"] == "true",
 				Stack:         c.Labels["com.docker.compose.project"],
 				Registry:      registry.RegistryHost(c.Image),
@@ -806,9 +816,13 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				var newestVersion string
+				var hasUpdate bool
 				queueKey := rc.HostID + "::" + rc.Name
-				if pend, ok := s.deps.Queue.Get(queueKey); ok && len(pend.NewerVersions) > 0 {
-					newestVersion = pend.NewerVersions[0]
+				if pend, ok := s.deps.Queue.Get(queueKey); ok {
+					hasUpdate = true
+					if len(pend.NewerVersions) > 0 {
+						newestVersion = pend.NewerVersions[0]
+					}
 				}
 				v := containerView{
 					Name:          rc.Name,
@@ -817,7 +831,8 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					NewestVersion: newestVersion,
 					Policy:        policy,
 					State:         rc.State,
-					HasUpdate:     newestVersion != "",
+					HasUpdate:     hasUpdate,
+					DigestOnly:    hasUpdate && newestVersion == "",
 					IsSelf:        rc.Labels["sentinel.self"] == "true",
 					HostID:        rc.HostID,
 					HostName:      rc.HostName,
@@ -860,7 +875,7 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.ContainerName] = true
+		pendingNames[p.Key()] = true
 	}
 
 	total, running, pending := len(containers), 0, 0
@@ -882,6 +897,20 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 				if pendingNames[svc.Name] {
 					pending++
 				}
+			}
+		}
+	}
+
+	// Include remote cluster containers.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			total++
+			if rc.State == "running" {
+				running++
+			}
+			queueKey := rc.HostID + "::" + rc.Name
+			if pendingNames[queueKey] {
+				pending++
 			}
 		}
 	}
@@ -1245,7 +1274,7 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.ContainerName] = true
+		pendingNames[p.Key()] = true
 	}
 	view := s.buildServiceView(*found, pendingNames)
 

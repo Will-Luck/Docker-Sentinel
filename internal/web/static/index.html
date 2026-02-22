@@ -388,6 +388,13 @@
                                         {{else}}
                                             <span class="version-new">{{$ver}}</span>
                                         {{end}}
+                                    {{else if .DigestOnly}}
+                                        {{with changelogURL $img}}
+                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}</a>
+                                        {{else}}
+                                            {{$tag}}
+                                        {{end}}
+                                        <span class="badge badge-muted" style="margin-left:6px;font-size:0.55rem">newer build</span>
                                     {{else}}
                                         {{with changelogURL $img}}
                                             <a href="{{.}}" target="_blank" rel="noopener" class="version-link">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</a>
