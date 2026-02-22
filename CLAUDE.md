@@ -6,7 +6,7 @@ Container update orchestrator with web dashboard, written in Go.
 
 Replaces Watchtower with per-container update policies, container snapshots with rollback, a web dashboard, pluggable notifications, and Docker-Guardian integration.
 
-See [docs/DESIGN.md](docs/DESIGN.md) for the full design document.
+Design document is in `docs/DESIGN.md` (local-only, gitignored).
 
 ## Tech Stack
 
@@ -58,7 +58,7 @@ make docker   # Build Docker image
 - **Pluggable notifications:** Interface-based — 7 providers (Gotify, Slack, Discord, Ntfy, Telegram, Pushover, webhook) + structured log. Events fired at 6 lifecycle points.
 - **Full container snapshots:** `docker inspect` JSON stored in BoltDB before every update, enabling exact rollback
 - **Web adapter pattern:** Web package uses mirror types to avoid import cycles; main.go has adapter structs bridging store/engine/docker to web interfaces
-- **innerHTML banned:** Security hook blocks innerHTML usage — all DOM rendering uses createElement/textContent/appendChild
+- **innerHTML for server HTML only:** innerHTML is used exclusively for inserting server-rendered HTML fragments (row replacements, modal content). Never use innerHTML with user-supplied or client-constructed strings.
 
 ## Release & CI
 
@@ -86,7 +86,7 @@ make docker   # Build Docker image
 | `SENTINEL_GOTIFY_TOKEN` | (empty) | Gotify app token |
 | `SENTINEL_WEBHOOK_URL` | (empty) | Webhook endpoint |
 | `SENTINEL_WEBHOOK_HEADERS` | (empty) | Comma-separated `Key:Value` pairs |
-| `SENTINEL_LATEST_AUTO_UPDATE` | `true` | Auto-update `:latest` tags on digest change |
+| `SENTINEL_LATEST_AUTO_UPDATE` | `false` | Auto-update `:latest` tags on digest change |
 | `SENTINEL_WEB_ENABLED` | `true` | Enable web dashboard |
 | `SENTINEL_WEB_PORT` | `8080` | Web dashboard port |
 | `SENTINEL_AUTH_ENABLED` | (auto) | Force auth on/off |
@@ -104,6 +104,15 @@ make docker   # Build Docker image
 | `SENTINEL_SERVER_ADDR` | (empty) | Controller address (agent mode) |
 | `SENTINEL_ENROLL_TOKEN` | (empty) | Enrollment token (agent mode) |
 | `SENTINEL_HOST_NAME` | (hostname) | Agent display name |
+| `SENTINEL_IMAGE_CLEANUP` | `true` | Remove old images after update |
+| `SENTINEL_SCHEDULE` | (empty) | Cron expression (overrides poll interval) |
+| `SENTINEL_HOOKS` | `false` | Enable update lifecycle hooks |
+| `SENTINEL_HOOKS_WRITE_LABELS` | `false` | Allow hooks to write Docker labels |
+| `SENTINEL_DEPS` | `true` | Dependency-aware restart ordering |
+| `SENTINEL_ROLLBACK_POLICY` | (empty) | Policy after rollback: `manual` or `pinned` |
+| `SENTINEL_METRICS` | `false` | Enable Prometheus metrics endpoint |
+| `SENTINEL_CLUSTER_DIR` | `/data/cluster` | CA/cert storage directory |
+| `SENTINEL_GRACE_PERIOD_OFFLINE` | `30m` | Agent autonomous mode threshold |
 
 ## Architecture Reference
 
@@ -313,3 +322,31 @@ all settings, all auth
 | Store | `internal/store/bolt.go` (BoltDB buckets and all persistence methods) |
 | Config | `internal/config/config.go` |
 | Frontend | `internal/web/static/app.js`, `index.html`, `container.html`, `queue.html`, `history.html`, `logs.html` |
+
+### Common Recipes
+
+**Adding a new API endpoint:**
+1. Add handler method on `*Server` in the appropriate `api_*.go` file
+2. Register route in `server.go` `registerRoutes()`
+3. If cluster-aware: add `?host=` routing pattern (see above)
+4. If cluster-aware: add JS function with `hostId` parameter in `app.js`
+5. Update Architecture Reference sections above
+
+**Adding a new SSE event:**
+1. Add event constant in `events/bus.go`
+2. Publish via `s.deps.EventBus.Publish()` from the relevant handler
+3. Add JS handler in `app.js` `setupSSE()` switch block
+4. Update SSE Events table above
+
+**Adding a new setting:**
+1. Add field to `Config` struct in `internal/config/config.go` with getter/setter
+2. Add `envStr`/`envBool`/`envDuration` call in `Load()`
+3. Add to `Values()` map for settings display
+4. Add API handler in `internal/web/api_settings.go`
+5. Add UI control in `settings.html`
+6. Update env var table above
+
+**Dev deploy to test server:**
+```bash
+make dev-deploy
+```
