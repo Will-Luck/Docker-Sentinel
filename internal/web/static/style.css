@@ -2857,6 +2857,29 @@ table.managing .td-checkbox {
     pointer-events: auto;
 }
 
+/* Pending action state — CSS-driven spinner, immune to JS DOM manipulation */
+.status-badge-wrap[data-pending] {
+    pointer-events: none;
+    cursor: default;
+}
+.status-badge-wrap[data-pending] .badge-default,
+.status-badge-wrap[data-pending] .badge-hover {
+    opacity: 0 !important;
+    display: none !important;
+}
+.status-badge-wrap[data-pending]::after {
+    content: "";
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--fg-muted);
+    border-top-color: var(--accent);
+    border-radius: var(--radius-full);
+    animation: badgeSpin 800ms linear infinite;
+}
+
 
 /* --------------------------------------------------------------------------
    24. Self-Protected Container

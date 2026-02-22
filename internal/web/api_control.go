@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
@@ -41,17 +42,12 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 				s.deps.EventBus.Publish(events.SSEEvent{
 					Type:          events.EventContainerState,
 					ContainerName: name,
+					HostID:        hostID,
 					Message:       "restart failed on " + hostID + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
-				return
 			}
-			s.deps.EventBus.Publish(events.SSEEvent{
-				Type:          events.EventContainerState,
-				ContainerName: name,
-				Message:       "Container restarted: " + name,
-				Timestamp:     time.Now(),
-			})
+			// Success event is published by handleContainerActionResult.
 		}()
 		s.logEvent(r, "restart", name, "Container restarted on "+hostID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "restarting", "name": name, "message": "restart initiated for " + name})
@@ -133,17 +129,12 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 				s.deps.EventBus.Publish(events.SSEEvent{
 					Type:          events.EventContainerState,
 					ContainerName: name,
+					HostID:        hostID,
 					Message:       "stop failed on " + hostID + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
-				return
 			}
-			s.deps.EventBus.Publish(events.SSEEvent{
-				Type:          events.EventContainerState,
-				ContainerName: name,
-				Message:       "Container stopped: " + name,
-				Timestamp:     time.Now(),
-			})
+			// Success event is published by handleContainerActionResult.
 		}()
 		s.logEvent(r, "stop", name, "Container stopped on "+hostID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stopping", "name": name, "message": "stop initiated for " + name})
@@ -225,17 +216,12 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 				s.deps.EventBus.Publish(events.SSEEvent{
 					Type:          events.EventContainerState,
 					ContainerName: name,
+					HostID:        hostID,
 					Message:       "start failed on " + hostID + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
-				return
 			}
-			s.deps.EventBus.Publish(events.SSEEvent{
-				Type:          events.EventContainerState,
-				ContainerName: name,
-				Message:       "Container started: " + name,
-				Timestamp:     time.Now(),
-			})
+			// Success event is published by handleContainerActionResult.
 		}()
 		s.logEvent(r, "start", name, "Container started on "+hostID)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "starting", "name": name, "message": "start initiated for " + name})
@@ -300,6 +286,49 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 
 	if s.isProtectedContainer(r.Context(), name) {
 		writeError(w, http.StatusForbidden, "cannot update sentinel itself via the dashboard")
+		return
+	}
+
+	// Route to remote agent if host parameter is present.
+	hostID := r.URL.Query().Get("host")
+	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		var rc *RemoteContainer
+		for _, c := range s.deps.Cluster.AllHostContainers() {
+			if c.HostID == hostID && c.Name == name {
+				rc = &c
+				break
+			}
+		}
+		if rc == nil {
+			writeError(w, http.StatusNotFound, "remote container not found: "+name)
+			return
+		}
+
+		targetImage := rc.Image
+		queueKey := hostID + "::" + name
+		if pending, ok := s.deps.Queue.Get(queueKey); ok && len(pending.NewerVersions) > 0 {
+			targetImage = webReplaceTag(rc.Image, pending.NewerVersions[0])
+		}
+
+		go func() {
+			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, ""); err != nil {
+				s.deps.Log.Error("remote update failed", "name", name, "host", hostID, "error", err)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: name,
+					HostID:        hostID,
+					Message:       "update failed on " + hostID + ": " + err.Error(),
+					Timestamp:     time.Now(),
+				})
+			}
+		}()
+
+		s.logEvent(r, "update", name, "Remote update triggered on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "started",
+			"name":    name,
+			"message": "update started for " + name,
+		})
 		return
 	}
 
@@ -413,13 +442,96 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isProtectedContainer(r.Context(), name) {
-		writeError(w, http.StatusForbidden, "cannot check sentinel itself")
+	if s.deps.RegistryChecker == nil {
+		writeError(w, http.StatusNotImplemented, "registry checker not available")
 		return
 	}
 
-	if s.deps.RegistryChecker == nil {
-		writeError(w, http.StatusNotImplemented, "registry checker not available")
+	// Route to remote container if host parameter is present.
+	hostID := r.URL.Query().Get("host")
+	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		var rc *RemoteContainer
+		for _, c := range s.deps.Cluster.AllHostContainers() {
+			if c.HostID == hostID && c.Name == name {
+				rc = &c
+				break
+			}
+		}
+		if rc == nil {
+			writeError(w, http.StatusNotFound, "remote container not found: "+name)
+			return
+		}
+
+		s.logEvent(r, "check", name, "Manual registry check for remote container on "+hostID)
+
+		updateAvailable, newerVersions, resolvedCurrent, resolvedTarget, checkErr :=
+			s.deps.RegistryChecker.CheckForUpdate(r.Context(), rc.Image)
+		if checkErr != nil {
+			s.deps.Log.Warn("registry check failed for remote container", "name", name, "host", hostID, "error", checkErr)
+			writeError(w, http.StatusBadGateway, "registry check failed: "+checkErr.Error())
+			return
+		}
+
+		if updateAvailable {
+			if len(newerVersions) > 0 && s.deps.IgnoredVersions != nil {
+				ignored, _ := s.deps.IgnoredVersions.GetIgnoredVersions(name)
+				if len(ignored) > 0 {
+					ignoredSet := make(map[string]bool, len(ignored))
+					for _, v := range ignored {
+						ignoredSet[v] = true
+					}
+					var filtered []string
+					for _, v := range newerVersions {
+						if !ignoredSet[v] {
+							filtered = append(filtered, v)
+						}
+					}
+					newerVersions = filtered
+				}
+			}
+
+			if len(newerVersions) == 0 {
+				writeJSON(w, http.StatusOK, map[string]any{
+					"status":  "up_to_date",
+					"name":    name,
+					"message": name + " is up to date (newer versions ignored)",
+				})
+				return
+			}
+
+			s.deps.Queue.Add(PendingUpdate{
+				ContainerName:          name,
+				CurrentImage:           rc.Image,
+				NewerVersions:          newerVersions,
+				ResolvedCurrentVersion: resolvedCurrent,
+				ResolvedTargetVersion:  resolvedTarget,
+				HostID:                 hostID,
+				HostName:               rc.HostName,
+			})
+			s.deps.Log.Info("update found via manual check for remote container", "name", name, "host", hostID)
+
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventContainerUpdate,
+				ContainerName: name,
+				HostID:        hostID,
+				Message:       "Update available for " + name,
+				Timestamp:     time.Now(),
+			})
+
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":         "update_available",
+				"name":           name,
+				"message":        "Update available for " + name,
+				"newer_versions": newerVersions,
+			})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":  "up_to_date",
+			"name":    name,
+			"message": name + " is up to date",
+		})
 		return
 	}
 
@@ -514,8 +626,29 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Find the sentinel container and build target image from queue.
+	var targetImage string
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err == nil {
+		for _, c := range containers {
+			name := containerName(c)
+			if c.Labels["sentinel.self"] == "true" {
+				if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
+					targetImage = webReplaceTag(c.Image, pending.NewerVersions[0])
+				}
+				break
+			}
+		}
+	}
+
+	msg := "Self-update initiated — Sentinel will restart shortly"
+	if targetImage != "" {
+		tag := targetImage[strings.LastIndex(targetImage, ":")+1:]
+		msg = "Self-update to " + tag + " initiated — Sentinel will restart shortly"
+	}
+
 	go func() {
-		if err := s.deps.SelfUpdater.Update(context.Background(), ""); err != nil {
+		if err := s.deps.SelfUpdater.Update(context.Background(), targetImage); err != nil {
 			s.deps.Log.Error("self-update failed", "error", err)
 			s.deps.EventBus.Publish(events.SSEEvent{
 				Type:      events.EventContainerUpdate,
@@ -525,11 +658,11 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	s.logEvent(r, "self_update", "sentinel", "Self-update initiated")
+	s.logEvent(r, "self_update", "sentinel", msg)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "started",
-		"message": "Self-update initiated — Sentinel will restart shortly",
+		"message": msg,
 	})
 }
 
@@ -551,6 +684,45 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validTag.MatchString(body.Tag) {
 		writeError(w, http.StatusBadRequest, "invalid tag format")
+		return
+	}
+
+	// Route to remote agent if host parameter is present.
+	hostID := r.URL.Query().Get("host")
+	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		var rc *RemoteContainer
+		for _, c := range s.deps.Cluster.AllHostContainers() {
+			if c.HostID == hostID && c.Name == name {
+				rc = &c
+				break
+			}
+		}
+		if rc == nil {
+			writeError(w, http.StatusNotFound, "remote container not found: "+name)
+			return
+		}
+
+		targetImage := webReplaceTag(rc.Image, body.Tag)
+
+		go func() {
+			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, ""); err != nil {
+				s.deps.Log.Error("remote version update failed", "name", name, "host", hostID, "tag", body.Tag, "error", err)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: name,
+					HostID:        hostID,
+					Message:       "update to " + body.Tag + " failed on " + hostID + ": " + err.Error(),
+					Timestamp:     time.Now(),
+				})
+			}
+		}()
+
+		s.logEvent(r, "update_to_version", name, "Remote update to "+body.Tag+" on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "started",
+			"name":    name,
+			"message": "Updating " + name + " to " + targetImage,
+		})
 		return
 	}
 

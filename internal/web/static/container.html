@@ -69,9 +69,11 @@
                     {{end}}
                 </div>
                 <div class="detail-overview-actions">
+                    {{if ne .Container.Policy "pinned"}}
+                    <button class="btn" onclick="triggerCheck('{{.Container.Name}}', event, '{{.Container.HostID}}')">Check for Updates</button>
+                    {{end}}
                     {{if and (ne .Container.Policy "pinned") (not .Container.IsSelf)}}
-                    <button class="btn" onclick="triggerCheck('{{.Container.Name}}', event)">Check for Updates</button>
-                    <button class="btn btn-warning" onclick="triggerUpdate('{{.Container.Name}}', event)">Update Now</button>
+                    <button class="btn btn-warning" onclick="triggerUpdate('{{.Container.Name}}', event, '{{.Container.HostID}}')">Update Now</button>
                     {{end}}
                     {{if .HasSnapshot}}
                     <button class="btn btn-warning" onclick="triggerRollback('{{.Container.Name}}', event)">Rollback</button>
@@ -182,7 +184,7 @@
                             <option value="{{.}}">{{.}}</option>
                             {{end}}
                         </select>
-                        <button class="btn btn-info" onclick="updateToVersion('{{.Container.Name}}')">Update to Version</button>
+                        <button class="btn btn-info" onclick="updateToVersion('{{.Container.Name}}', '{{.Container.HostID}}')">Update to Version</button>
                     </div>
                 </div>
             </details>
@@ -276,6 +278,7 @@
     <script src="/static/auth.js"></script>
     <script>
     var _containerName = "{{.Container.Name}}";
+    var _containerHostId = "{{.Container.HostID}}";
     var _containerFullID = "{{.Container.ID}}";
 
     var notifyLabels = {
@@ -310,7 +313,7 @@
     }
 
     function changePolicyRadio(policy) {
-        changePolicy(_containerName, policy);
+        changePolicy(_containerName, policy, _containerHostId);
         // Update the preview badge in the accordion header
         var preview = document.querySelector('[data-policy-preview]');
         if (preview) {
