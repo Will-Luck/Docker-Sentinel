@@ -35,7 +35,7 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil {
+	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "restart"); err != nil {
 				s.deps.Log.Error("remote restart failed", "name", name, "host", hostID, "error", err)
@@ -122,7 +122,7 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil {
+	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "stop"); err != nil {
 				s.deps.Log.Error("remote stop failed", "name", name, "host", hostID, "error", err)
@@ -209,7 +209,7 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil {
+	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "start"); err != nil {
 				s.deps.Log.Error("remote start failed", "name", name, "host", hostID, "error", err)

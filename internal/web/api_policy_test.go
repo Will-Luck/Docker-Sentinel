@@ -424,12 +424,12 @@ func TestBulkPolicy_RemoteContainers(t *testing.T) {
 		t.Errorf("applied = %v, want 2", result["applied"])
 	}
 
-	// Verify overrides were written.
-	if p, _ := policy.GetPolicyOverride("postgres"); p != "pinned" {
-		t.Errorf("postgres policy = %q, want %q", p, "pinned")
+	// Verify overrides were written under scoped keys.
+	if p, _ := policy.GetPolicyOverride("h1::postgres"); p != "pinned" {
+		t.Errorf("h1::postgres policy = %q, want %q", p, "pinned")
 	}
-	if p, _ := policy.GetPolicyOverride("mongo"); p != "pinned" {
-		t.Errorf("mongo policy = %q, want %q", p, "pinned")
+	if p, _ := policy.GetPolicyOverride("h1::mongo"); p != "pinned" {
+		t.Errorf("h1::mongo policy = %q, want %q", p, "pinned")
 	}
 }
 
@@ -577,5 +577,34 @@ func TestBulkPolicy_InvalidJSON(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestBulkPolicy_RemoteContainersScopedKeys(t *testing.T) {
+	docker := &mockContainerLister{}
+	policy := newMockPolicyStore()
+	remotes := []RemoteContainer{
+		{Name: "postgres", Image: "postgres:16", HostID: "h1", Labels: map[string]string{"sentinel.policy": "manual"}},
+	}
+	srv := newPolicyTestServer(docker, policy, nil, remotes)
+
+	// Confirm: set postgres to pinned.
+	body := `{"containers":["postgres"],"policy":"pinned","confirm":true}`
+	w := doBulkPolicy(srv, body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	result := decodeMap(t, w)
+	if result["applied"] != float64(1) {
+		t.Errorf("applied = %v, want 1", result["applied"])
+	}
+
+	// The override must be stored under "h1::postgres", not "postgres".
+	if _, ok := policy.GetPolicyOverride("postgres"); ok {
+		t.Error("override stored under bare name 'postgres', want scoped key 'h1::postgres'")
+	}
+	if p, ok := policy.GetPolicyOverride("h1::postgres"); !ok || p != "pinned" {
+		t.Errorf("h1::postgres policy = (%q, %v), want (\"pinned\", true)", p, ok)
 	}
 }
