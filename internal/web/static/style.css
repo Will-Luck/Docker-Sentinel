@@ -360,6 +360,15 @@ h4 { font-size: 0.875rem; font-weight: 500; letter-spacing: 0.1px; line-height: 
     table-layout: fixed;
 }
 
+.queue-expand {
+    cursor: pointer;
+    text-align: center;
+    color: var(--fg-secondary);
+    user-select: none;
+    width: 1%;
+    white-space: nowrap;
+}
+.queue-expand:hover { color: var(--fg-primary); }
 
 .card-header-top {
     display: flex;
@@ -2278,6 +2287,23 @@ table.managing .stack-drag-handle:active {
 .table-logs th:nth-child(2),
 .table-logs td:nth-child(2) {
     text-align: center;
+}
+
+.table-logs {
+    table-layout: fixed;
+}
+.table-logs th:nth-child(4),
+.table-logs td:nth-child(4) {
+    width: 12%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.table-logs th:nth-child(5),
+.table-logs td:nth-child(5) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Tab navigation for settings page */
