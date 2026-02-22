@@ -78,13 +78,15 @@
             <div class="table-wrap">
                 <table class="queue-table">
                     <colgroup>
-                        <col style="width:22%">
-                        <col style="width:25%">
-                        <col style="width:18%">
+                        <col style="width:3%">
+                        <col style="width:21%">
+                        <col style="width:24%">
+                        <col style="width:17%">
                         <col style="width:35%">
                     </colgroup>
                     <thead>
                         <tr>
+                            <th></th>
                             <th>Container</th>
                             <th>Image</th>
                             <th>Detected</th>
@@ -95,6 +97,7 @@
                         {{if .Queue}}
                             {{range $i, $q := .Queue}}
                             <tr class="container-row" data-queue-key="{{$q.Key}}" data-href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" onclick="onRowClick(event, '{{$q.ContainerName}}')">
+                                <td class="queue-expand" onclick="toggleQueueAccordion({{$i}}); event.stopPropagation();">&#9656;</td>
                                 <td><a href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" class="container-link">{{$q.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td class="cell-image mono" title="{{$q.CurrentImage}}">
                                     {{if $q.NewerVersions}}
@@ -135,7 +138,7 @@
                                 </td>
                             </tr>
                             <tr class="accordion-panel" id="accordion-queue-{{$i}}" style="display:none">
-                                <td colspan="4">
+                                <td colspan="5">
                                     <div class="accordion-content">
                                         <div class="accordion-grid">
                                             <div class="accordion-section">
@@ -163,7 +166,7 @@
                             {{end}}
                         {{else}}
                             <tr>
-                                <td colspan="4">
+                                <td colspan="5">
                                     <div class="empty-state">
                                         <h3>No pending updates</h3>
                                         <p>No containers are waiting for approval. Containers with a <strong>manual</strong> policy will appear here when updates are available.</p>

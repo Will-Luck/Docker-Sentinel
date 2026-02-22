@@ -84,7 +84,7 @@
                             <td>{{if .User}}{{.User}}{{else}}<span class="text-muted">system</span>{{end}}</td>
                             <td><span class="badge {{if eq .Type "policy_set"}}badge-info{{else if eq .Type "policy_delete"}}badge-muted{{else if eq .Type "approve"}}badge-success{{else if eq .Type "reject"}}badge-error{{else if eq .Type "update"}}badge-success{{else if eq .Type "rollback"}}badge-warning{{else}}badge-muted{{end}}">{{.Type}}</span></td>
                             <td class="mono">{{if .Container}}<a href="{{serviceOrContainer .Kind .Container}}">{{.Container}}</a>{{else}}-{{end}}</td>
-                            <td>{{.Message}}</td>
+                            <td title="{{.Message}}">{{.Message}}</td>
                         </tr>
                         {{end}}
                     </tbody>

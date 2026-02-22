@@ -1140,7 +1140,7 @@ function removeQueueRow(btn) {
         if (remaining === 0 && tbody) {
             var emptyRow = document.createElement("tr");
             var td = document.createElement("td");
-            td.setAttribute("colspan", "4");
+            td.setAttribute("colspan", "5");
             var wrapper = document.createElement("div");
             wrapper.className = "empty-state";
             var h3 = document.createElement("h3");
@@ -1161,6 +1161,16 @@ function removeQueueRow(btn) {
             tbody.appendChild(emptyRow);
         }
     }, 180);
+}
+
+function toggleQueueAccordion(index) {
+    var panel = document.getElementById("accordion-queue-" + index);
+    if (!panel) return;
+    var visible = panel.style.display !== "none";
+    panel.style.display = visible ? "none" : "";
+    var row = panel.previousElementSibling;
+    var chevron = row ? row.querySelector(".queue-expand") : null;
+    if (chevron) chevron.textContent = visible ? "\u25B8" : "\u25BE";
 }
 
 function approveUpdate(key, event) {
