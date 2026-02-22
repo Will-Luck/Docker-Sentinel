@@ -1499,6 +1499,8 @@ function onRowClick(e, name) {
         return;
     }
     var row = e.target.closest("tr.container-row");
+    var href = row ? row.getAttribute("data-href") : "";
+    if (href) { window.location.href = href; return; }
     var host = row ? row.getAttribute("data-host") : "";
     var url = "/container/" + encodeURIComponent(name);
     if (host) url += "?host=" + encodeURIComponent(host);

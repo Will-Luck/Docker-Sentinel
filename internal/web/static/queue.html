@@ -94,7 +94,7 @@
                     <tbody>
                         {{if .Queue}}
                             {{range $i, $q := .Queue}}
-                            <tr class="container-row" data-queue-key="{{$q.Key}}" onclick="onRowClick(event, 'queue-{{$i}}')">
+                            <tr class="container-row" data-queue-key="{{$q.Key}}" data-href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" onclick="onRowClick(event, '{{$q.ContainerName}}')">
                                 <td><a href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" class="container-link">{{$q.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td class="cell-image mono" title="{{$q.CurrentImage}}">
                                     {{if $q.NewerVersions}}
