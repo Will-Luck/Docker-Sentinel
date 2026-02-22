@@ -44,7 +44,14 @@ func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.deps.Policy.SetPolicyOverride(name, body.Policy); err != nil {
+	// For remote containers, key the policy override by hostID::name
+	// to avoid collisions with local containers of the same name.
+	policyKey := name
+	if hostID := r.URL.Query().Get("host"); hostID != "" {
+		policyKey = hostID + "::" + name
+	}
+
+	if err := s.deps.Policy.SetPolicyOverride(policyKey, body.Policy); err != nil {
 		s.deps.Log.Error("policy change failed", "name", name, "policy", body.Policy, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to set policy override")
 		return
@@ -81,12 +88,17 @@ func (s *Server) apiDeletePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := s.deps.Policy.GetPolicyOverride(name); !ok {
+	policyKey := name
+	if hostID := r.URL.Query().Get("host"); hostID != "" {
+		policyKey = hostID + "::" + name
+	}
+
+	if _, ok := s.deps.Policy.GetPolicyOverride(policyKey); !ok {
 		writeError(w, http.StatusNotFound, "no policy override for "+name)
 		return
 	}
 
-	if err := s.deps.Policy.DeletePolicyOverride(name); err != nil {
+	if err := s.deps.Policy.DeletePolicyOverride(policyKey); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete policy override")
 		return
 	}

@@ -368,14 +368,14 @@
 {{end}}
 
 {{define "container-row"}}
-                            <tr class="container-row state-{{.State}}{{if .HasUpdate}} has-update{{end}}" data-name="{{.Name}}" data-registry="{{.Registry}}" onclick="onRowClick(event, '{{.Name}}')">
+                            <tr class="container-row state-{{.State}}{{if .HasUpdate}} has-update{{end}}" data-name="{{.Name}}" data-host="{{.HostID}}" data-registry="{{.Registry}}" onclick="onRowClick(event, '{{.Name}}')">
                                 <td class="td-checkbox">
                                     {{if not .IsSelf}}
                                         <input type="checkbox" class="row-select" value="{{.Name}}" id="select-{{.Name}}" aria-label="Select {{.Name}}">
                                     {{end}}
                                 </td>
                                 <td>
-                                    <a href="/container/{{.Name}}" class="container-link">{{.Name}}</a>
+                                    <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="container-link">{{.Name}}</a>
                                     {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
                                 </td>
                                 <td class="cell-image mono" title="{{.Image}}">
@@ -404,7 +404,7 @@
                                         </span>
                                     {{else}}
                                         <select class="policy-select policy-{{.Policy}}"
-                                                onchange="this.className='policy-select policy-'+this.value; changePolicy('{{.Name}}', this.value)"
+                                                onchange="this.className='policy-select policy-'+this.value; changePolicy('{{.Name}}', this.value, '{{.HostID}}')"
                                                 data-current="{{.Policy}}">
                                             <option value="auto" {{if eq .Policy "auto"}}selected{{end}}>auto</option>
                                             <option value="manual" {{if eq .Policy "manual"}}selected{{end}}>manual</option>
@@ -415,11 +415,15 @@
                                 <td>
                                     {{if .Maintenance}}
                                         <span class="badge badge-warning">Updating</span>
-                                    {{else if .HasUpdate}}
+                                    {{else if and .HasUpdate (not .IsSelf)}}
                                         <span class="badge badge-warning">Update Available</span>
                                     {{else if eq .State "running"}}
                                         {{if .IsSelf}}
+                                            {{if .HasUpdate}}
+                                            <span class="badge badge-info">Update Ready</span>
+                                            {{else}}
                                             <span class="badge badge-success">Running</span>
+                                            {{end}}
                                         {{else}}
                                             <span class="status-badge-wrap" data-name="{{.Name}}" data-action="stop" data-host-id="{{.HostID}}">
                                                 <span class="badge badge-success badge-default">Running</span>
@@ -436,21 +440,21 @@
                                 <td>
                                     <div class="btn-group">
                                         {{if .IsSelf}}
-                                            {{if .HasUpdate}}
+                                            {{if and .HasUpdate (eq .HostID "")}}
                                             <button class="btn btn-info"
                                                     onclick="triggerSelfUpdate(event)">
                                                 Update Sentinel
                                             </button>
                                             {{else}}
-                                            <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Details</a>
+                                            <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="btn" onclick="event.stopPropagation()">Details</a>
                                             {{end}}
                                         {{else if and .HasUpdate (ne .Policy "pinned")}}
                                         <button class="btn btn-warning"
-                                                onclick="triggerUpdate('{{.Name}}', event)">
+                                                onclick="triggerUpdate('{{.Name}}', event, '{{.HostID}}')">
                                             Update
                                         </button>
                                         {{else}}
-                                        <a href="/container/{{.Name}}" class="btn" onclick="event.stopPropagation()">Details</a>
+                                        <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="btn" onclick="event.stopPropagation()">Details</a>
                                         {{end}}
                                     </div>
                                 </td>
