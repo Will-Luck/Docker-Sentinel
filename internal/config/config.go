@@ -73,6 +73,7 @@ type Config struct {
 	dependencyAware  bool
 	rollbackPolicy   string // "", "manual", or "pinned"
 	imageBackup      bool
+	showStopped      bool
 }
 
 // NewTestConfig creates a Config with sensible defaults for testing.
@@ -121,6 +122,7 @@ func Load() *Config {
 		rollbackPolicy:      envStr("SENTINEL_ROLLBACK_POLICY", ""),
 		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
 		imageBackup:         envBool("SENTINEL_IMAGE_BACKUP", false),
+		showStopped:         envBool("SENTINEL_SHOW_STOPPED", false),
 
 		// Cluster / multi-host
 		Mode:               envStr("SENTINEL_MODE", ""),
@@ -193,6 +195,7 @@ func (c *Config) Values() map[string]string {
 	da := c.dependencyAware
 	rp := c.rollbackPolicy
 	ib := c.imageBackup
+	ss := c.showStopped
 	c.mu.RUnlock()
 
 	return map[string]string{
@@ -231,6 +234,7 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_HOST_NAME":            c.HostName,
 		"SENTINEL_GRACE_PERIOD_OFFLINE": c.GracePeriodOffline.String(),
 		"SENTINEL_IMAGE_BACKUP":         fmt.Sprintf("%t", ib),
+		"SENTINEL_SHOW_STOPPED":         fmt.Sprintf("%t", ss),
 	}
 }
 
@@ -415,6 +419,18 @@ func (c *Config) ImageBackup() bool {
 func (c *Config) SetImageBackup(b bool) {
 	c.mu.Lock()
 	c.imageBackup = b
+	c.mu.Unlock()
+}
+
+func (c *Config) ShowStopped() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.showStopped
+}
+
+func (c *Config) SetShowStopped(b bool) {
+	c.mu.Lock()
+	c.showStopped = b
 	c.mu.Unlock()
 }
 

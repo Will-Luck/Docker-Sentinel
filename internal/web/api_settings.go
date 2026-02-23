@@ -780,6 +780,36 @@ func (s *Server) apiSetComposeSync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "compose file sync " + label})
 }
 
+// apiSetShowStopped enables or disables showing stopped containers in the dashboard.
+func (s *Server) apiSetShowStopped(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("show_stopped", value); err != nil {
+		s.deps.Log.Error("failed to save show_stopped", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Show stopped containers "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "show stopped containers " + label})
+}
+
 // apiSetImageBackup enables or disables image retag backup before updates.
 func (s *Server) apiSetImageBackup(w http.ResponseWriter, r *http.Request) {
 	var body struct {

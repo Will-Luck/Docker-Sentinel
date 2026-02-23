@@ -248,10 +248,23 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		pendingNames[p.Key()] = true
 	}
 
+	// Check if stopped containers should be shown (opt-in setting).
+	showStopped := false
+	if s.deps.SettingsStore != nil {
+		if v, err := s.deps.SettingsStore.LoadSetting("show_stopped"); err == nil {
+			showStopped = v == "true"
+		}
+	}
+
 	views := make([]containerView, 0, len(containers))
 	for _, c := range containers {
 		// Filter out Swarm task containers — they'll appear in the Swarm Services section.
 		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+
+		// Exclude stopped containers unless the setting is enabled.
+		if !showStopped && c.State != "running" {
 			continue
 		}
 

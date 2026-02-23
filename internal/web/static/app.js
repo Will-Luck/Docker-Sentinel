@@ -303,6 +303,14 @@ function initSettingsPage() {
                 updateToggleText("image-backup-text", imageBackup);
             }
 
+            // Show stopped toggle.
+            var showStoppedToggle = document.getElementById("show-stopped-toggle");
+            if (showStoppedToggle) {
+                var showStopped = settings["show_stopped"] === "true";
+                showStoppedToggle.checked = showStopped;
+                updateToggleText("show-stopped-text", showStopped);
+            }
+
             // HA discovery toggle.
             var haToggle = document.getElementById("ha-discovery-toggle");
             if (haToggle) {
@@ -888,6 +896,22 @@ function setComposeSync(enabled) {
 function setImageBackup(enabled) {
     updateToggleText("image-backup-text", enabled);
     fetch("/api/settings/image-backup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setShowStopped(enabled) {
+    updateToggleText("show-stopped-text", enabled);
+    fetch("/api/settings/show-stopped", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: enabled })
