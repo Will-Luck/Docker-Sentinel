@@ -61,6 +61,10 @@ type Config struct {
 	HostName           string        // agent: human-readable label for this host
 	GracePeriodOffline time.Duration // agent: time before switching to autonomous mode (default 30m)
 
+	// Portainer integration
+	PortainerURL   string
+	PortainerToken string
+
 	// mu protects the mutable runtime fields below.
 	mu               sync.RWMutex
 	pollInterval     time.Duration // how often to scan for updates
@@ -139,6 +143,10 @@ func Load() *Config {
 		EnrollToken:        envStr("SENTINEL_ENROLL_TOKEN", ""),
 		HostName:           envStr("SENTINEL_HOST_NAME", ""),
 		GracePeriodOffline: envDuration("SENTINEL_GRACE_PERIOD_OFFLINE", 30*time.Minute),
+
+		// Portainer integration
+		PortainerURL:   envStr("SENTINEL_PORTAINER_URL", ""),
+		PortainerToken: envStr("SENTINEL_PORTAINER_TOKEN", ""),
 	}
 }
 
@@ -245,6 +253,9 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_SHOW_STOPPED":         fmt.Sprintf("%t", ss),
 		"SENTINEL_REMOVE_VOLUMES":       fmt.Sprintf("%t", rv),
 		"SENTINEL_SCAN_CONCURRENCY":     fmt.Sprintf("%d", sc),
+
+		// Portainer
+		"SENTINEL_PORTAINER_URL": c.PortainerURL,
 	}
 }
 

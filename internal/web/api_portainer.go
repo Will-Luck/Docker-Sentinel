@@ -9,6 +9,7 @@ func (s *Server) handlePortainer(w http.ResponseWriter, r *http.Request) {
 	data := pageData{Page: "portainer"}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
+	s.withPortainer(&data)
 	s.renderTemplate(w, "portainer.html", data)
 }
 
