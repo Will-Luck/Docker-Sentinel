@@ -3716,6 +3716,10 @@ input[type="checkbox"] {
     background: var(--warning-bg);
     color: var(--warning-fg);
 }
+.host-state-badge.badge-offline {
+    background: var(--error-bg);
+    color: var(--error-fg);
+}
 
 .host-badge {
     display: inline-block;
@@ -3757,6 +3761,59 @@ input[type="checkbox"] {
     margin-top: var(--sp-4);
     border-top: 1px solid var(--border);
     padding-top: var(--sp-3);
+}
+
+/* Troubleshooter panel */
+
+.host-troubleshoot {
+    margin-top: var(--sp-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.host-troubleshoot summary {
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--bg-raised);
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+.host-troubleshoot summary:hover {
+    background: var(--bg-hover);
+}
+.troubleshoot-icon {
+    font-size: 1.1rem;
+}
+.troubleshoot-hint {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+.troubleshoot-body {
+    padding: var(--sp-3);
+}
+.troubleshoot-body ul {
+    margin: var(--sp-2) 0;
+    padding-left: var(--sp-5);
+}
+.troubleshoot-body li {
+    margin-bottom: var(--sp-1);
+    font-size: 0.9rem;
+}
+.troubleshoot-body code {
+    background: var(--bg-raised);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+}
+.troubleshoot-time {
+    margin-top: var(--sp-2);
+    font-size: 0.8rem;
+    color: var(--text-muted);
 }
 
 /* Enrollment section */
@@ -3875,6 +3932,29 @@ input[type="checkbox"] {
 
 .host-count {
     margin-left: auto;
+}
+
+.host-offline {
+    animation: host-pulse 2s ease-in-out infinite;
+}
+@keyframes host-pulse {
+    0%, 100% { background: var(--bg-surface); }
+    50% { background: color-mix(in srgb, var(--error) 15%, var(--bg-surface)); }
+}
+.host-offline-link {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--error);
+    text-decoration: none;
+    padding: 2px 10px;
+    border: 1px solid var(--error);
+    border-radius: var(--radius-full);
+}
+.host-offline-link:hover {
+    background: var(--error);
+    color: var(--bg);
 }
 
 

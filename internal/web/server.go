@@ -240,8 +240,8 @@ type ClusterProvider interface {
 	RemoveHost(id string) error
 	// RevokeHost revokes a host's certificate and removes it.
 	RevokeHost(id string) error
-	// DrainHost sets a host to draining state (no new updates).
-	DrainHost(id string) error
+	// PauseHost sets a host to paused state (no new updates).
+	PauseHost(id string) error
 	// UpdateRemoteContainer dispatches a container update to a remote agent.
 	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error
 	// RemoteContainerAction dispatches a lifecycle action to a container on a remote agent.
@@ -262,15 +262,18 @@ type RemoteContainer struct {
 
 // ClusterHost represents a remote agent host for the web layer.
 type ClusterHost struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Address      string    `json:"address"`
-	State        string    `json:"state"` // "active", "draining", "decommissioned"
-	Connected    bool      `json:"connected"`
-	EnrolledAt   time.Time `json:"enrolled_at"`
-	LastSeen     time.Time `json:"last_seen"`
-	AgentVersion string    `json:"agent_version,omitempty"`
-	Containers   int       `json:"containers"` // count of known containers
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Address       string    `json:"address"`
+	State         string    `json:"state"` // "active", "paused", "decommissioned"
+	Connected     bool      `json:"connected"`
+	EnrolledAt    time.Time `json:"enrolled_at"`
+	LastSeen      time.Time `json:"last_seen"`
+	AgentVersion  string    `json:"agent_version,omitempty"`
+	Containers    int       `json:"containers"` // count of known containers
+	DisconnectAt  time.Time `json:"disconnect_at,omitempty"`
+	DisconnectErr string    `json:"disconnect_err,omitempty"`
+	DisconnectCat string    `json:"disconnect_cat,omitempty"`
 }
 
 // SwarmProvider provides Swarm service operations for the dashboard.
@@ -773,7 +776,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/cluster/enroll-token", perm(auth.PermSettingsModify, s.handleGenerateEnrollToken))
 	s.mux.Handle("DELETE /api/cluster/hosts/{id}", perm(auth.PermSettingsModify, s.handleRemoveHost))
 	s.mux.Handle("POST /api/cluster/hosts/{id}/revoke", perm(auth.PermSettingsModify, s.handleRevokeHost))
-	s.mux.Handle("POST /api/cluster/hosts/{id}/drain", perm(auth.PermSettingsModify, s.handleDrainHost))
+	s.mux.Handle("POST /api/cluster/hosts/{id}/pause", perm(auth.PermSettingsModify, s.handlePauseHost))
 
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))
@@ -1014,17 +1017,17 @@ func (s *Server) handleRevokeHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
-func (s *Server) handleDrainHost(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePauseHost(w http.ResponseWriter, r *http.Request) {
 	if !s.deps.Cluster.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "cluster not enabled")
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.deps.Cluster.DrainHost(id); err != nil {
+	if err := s.deps.Cluster.PauseHost(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "draining"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
 }
 
 // writeJSON encodes v as JSON and writes it to the response.

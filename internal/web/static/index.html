@@ -160,12 +160,13 @@
                     {{if .HostGroups}}
                         {{range .HostGroups}}
                         <tbody class="host-group" data-host="{{.ID}}" data-tab="{{.ID}}">
-                            <tr class="host-header" onclick="toggleHostGroup(this)">
+                            <tr class="host-header{{if not .Connected}} host-offline{{end}}" onclick="toggleHostGroup(this)">
                                 <td colspan="6">
                                     <div class="host-header-inner">
                                         <span class="expand-icon">&#9656;</span>
                                         <span class="host-status-dot {{if .Connected}}connected{{else}}disconnected{{end}}"></span>
                                         <span class="host-name">{{.Name}}</span>
+                                        {{if not .Connected}}<a href="/cluster" class="host-offline-link" onclick="event.stopPropagation()">OFFLINE — TROUBLESHOOT</a>{{end}}
                                         <span class="host-count badge">{{.Count}}</span>
                                     </div>
                                 </td>
