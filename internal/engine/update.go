@@ -328,7 +328,8 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	return nil
 }
 
-// validateContainer checks that a container is running and not restarting.
+// validateContainer checks that a container is running, not restarting, and
+// healthy (if a healthcheck is defined).
 func (u *Updater) validateContainer(ctx context.Context, id string) (bool, error) {
 	inspect, err := u.docker.InspectContainer(ctx, id)
 	if err != nil {
@@ -338,7 +339,55 @@ func (u *Updater) validateContainer(ctx context.Context, id string) (bool, error
 	if state == nil {
 		return false, fmt.Errorf("container state is nil")
 	}
-	return state.Running && !state.Restarting, nil
+	if !state.Running || state.Restarting {
+		return false, nil
+	}
+	if state.Health == nil || state.Health.Status == "" {
+		return true, nil
+	}
+	switch state.Health.Status {
+	case "healthy":
+		return true, nil
+	case "unhealthy":
+		return false, nil
+	case "starting":
+		return u.waitForHealthy(ctx, id)
+	default:
+		return true, nil
+	}
+}
+
+const healthPollInterval = 2 * time.Second
+const healthPollTimeout = 60 * time.Second
+
+// waitForHealthy polls the container's healthcheck status until it resolves
+// to healthy/unhealthy or the timeout expires.
+func (u *Updater) waitForHealthy(ctx context.Context, id string) (bool, error) {
+	deadline := u.clock.Now().Add(healthPollTimeout)
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-u.clock.After(healthPollInterval):
+			if u.clock.Now().After(deadline) {
+				u.log.Warn("healthcheck timeout waiting for healthy", "id", id)
+				return false, nil
+			}
+			inspect, err := u.docker.InspectContainer(ctx, id)
+			if err != nil {
+				return false, err
+			}
+			if inspect.State == nil || inspect.State.Health == nil {
+				return true, nil
+			}
+			switch inspect.State.Health.Status {
+			case "healthy":
+				return true, nil
+			case "unhealthy":
+				return false, nil
+			}
+		}
+	}
 }
 
 // doRollback performs a rollback and records the failure.
