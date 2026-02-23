@@ -749,3 +749,39 @@ func (s *Server) apiSwitchRole(w http.ResponseWriter, r *http.Request) {
 	s.logEvent(r, "settings", "", "Instance role changed to "+body.Role)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "restart_required": "true"})
 }
+
+// apiSetHADiscovery enables or disables Home Assistant MQTT auto-discovery.
+func (s *Server) apiSetHADiscovery(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool   `json:"enabled"`
+		Prefix  string `json:"prefix"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if req.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("ha_discovery_enabled", value); err != nil {
+		s.deps.Log.Error("failed to save ha_discovery_enabled", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if req.Prefix != "" {
+		if err := s.deps.SettingsStore.SaveSetting("ha_discovery_prefix", req.Prefix); err != nil {
+			s.deps.Log.Warn("failed to save ha_discovery_prefix", "error", err)
+		}
+	}
+	label := "disabled"
+	if req.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Home Assistant discovery "+label)
+	w.WriteHeader(http.StatusNoContent)
+}

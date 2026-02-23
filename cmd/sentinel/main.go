@@ -399,6 +399,39 @@ func main() {
 	hookRunner := hooks.NewRunner(client, &hookStoreAdapter{db}, log.Logger)
 	updater.SetHookRunner(hookRunner)
 
+	// Set up HA discovery if enabled and an MQTT channel is configured.
+	if haEnabled, _ := db.LoadSetting("ha_discovery_enabled"); haEnabled == "true" {
+		if haChannels, haErr := db.GetNotificationChannels(); haErr == nil {
+			for _, ch := range haChannels {
+				if ch.Type == notify.ProviderMQTT && ch.Enabled {
+					var mqttSettings notify.MQTTSettings
+					if json.Unmarshal(ch.Settings, &mqttSettings) == nil {
+						haPrefix, _ := db.LoadSetting("ha_discovery_prefix")
+						clientID := mqttSettings.ClientID
+						if clientID == "" {
+							clientID = "docker-sentinel"
+						}
+						ha, haConnErr := notify.NewHADiscovery(notify.HADiscoveryConfig{
+							Broker:   mqttSettings.Broker,
+							ClientID: clientID,
+							Username: mqttSettings.Username,
+							Password: mqttSettings.Password,
+							Prefix:   haPrefix,
+						})
+						if haConnErr != nil {
+							log.Warn("failed to start HA discovery", "error", haConnErr)
+						} else {
+							updater.SetHADiscovery(ha)
+							defer ha.Close()
+							log.Info("home assistant MQTT discovery enabled", "broker", mqttSettings.Broker)
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+
 	// Detect Swarm mode.
 	isSwarm := client.IsSwarmManager(ctx)
 	if isSwarm {
