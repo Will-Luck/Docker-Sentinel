@@ -3334,7 +3334,12 @@ var PROVIDER_FIELDS = {
         { key: "username", label: "Username", type: "text", placeholder: "Username (optional)" },
         { key: "password", label: "Password", type: "password", placeholder: "Password (optional)" },
         { key: "tls", label: "Use TLS", type: "text", placeholder: "true or false" }
-    ]
+    ],
+    apprise: [
+        { key: "url", label: "Apprise API URL", type: "text", placeholder: "http://apprise:8000" },
+        { key: "tag", label: "Config Tag", type: "text", placeholder: "Tag for persistent config (optional)" },
+        { key: "urls", label: "Apprise URLs", type: "text", placeholder: "Apprise URL(s) for stateless mode (optional)" }
+    ],
 };
 
 var notificationChannels = [];
