@@ -18,6 +18,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
@@ -1179,4 +1180,155 @@ func (m *clusterManager) Stop() {
 	m.srv = nil
 
 	m.log.Info("cluster gRPC server stopped")
+}
+
+// portainerAdapter bridges portainer.Scanner to web.PortainerProvider.
+type portainerAdapter struct {
+	scanner *portainer.Scanner
+}
+
+func (a *portainerAdapter) TestConnection(ctx context.Context) error {
+	return a.scanner.Client().TestConnection(ctx)
+}
+
+func (a *portainerAdapter) Endpoints(ctx context.Context) ([]web.PortainerEndpoint, error) {
+	eps, err := a.scanner.Endpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return convertPortainerEndpoints(eps), nil
+}
+
+func (a *portainerAdapter) AllEndpoints(ctx context.Context) ([]web.PortainerEndpoint, error) {
+	eps, err := a.scanner.AllEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return convertPortainerEndpoints(eps), nil
+}
+
+func (a *portainerAdapter) EndpointContainers(ctx context.Context, endpointID int) ([]web.PortainerContainerInfo, error) {
+	ep, err := a.findEndpoint(ctx, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	containers, err := a.scanner.EndpointContainers(ctx, ep)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.PortainerContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		out = append(out, web.PortainerContainerInfo{
+			ID:           c.ID,
+			Name:         c.Name,
+			Image:        c.Image,
+			State:        c.State,
+			Labels:       c.Labels,
+			EndpointID:   c.EndpointID,
+			EndpointName: c.EndpointName,
+			StackID:      c.StackID,
+			StackName:    c.StackName,
+		})
+	}
+	return out, nil
+}
+
+func (a *portainerAdapter) findEndpoint(ctx context.Context, endpointID int) (portainer.Endpoint, error) {
+	all, err := a.scanner.AllEndpoints(ctx)
+	if err != nil {
+		return portainer.Endpoint{}, err
+	}
+	for _, ep := range all {
+		if ep.ID == endpointID {
+			return ep, nil
+		}
+	}
+	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
+}
+
+func convertPortainerEndpoints(eps []portainer.Endpoint) []web.PortainerEndpoint {
+	out := make([]web.PortainerEndpoint, 0, len(eps))
+	for _, ep := range eps {
+		status := "down"
+		if ep.Status == portainer.StatusUp {
+			status = "up"
+		}
+		out = append(out, web.PortainerEndpoint{
+			ID:     ep.ID,
+			Name:   ep.Name,
+			URL:    ep.URL,
+			Status: status,
+		})
+	}
+	return out
+}
+
+// portainerScannerAdapter bridges portainer.Scanner to engine.PortainerScanner.
+type portainerScannerAdapter struct {
+	scanner *portainer.Scanner
+}
+
+func (a *portainerScannerAdapter) Endpoints(ctx context.Context) ([]engine.PortainerEndpointInfo, error) {
+	eps, err := a.scanner.Endpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]engine.PortainerEndpointInfo, 0, len(eps))
+	for _, ep := range eps {
+		out = append(out, engine.PortainerEndpointInfo{
+			ID:   ep.ID,
+			Name: ep.Name,
+		})
+	}
+	return out, nil
+}
+
+func (a *portainerScannerAdapter) EndpointContainers(ctx context.Context, endpointID int) ([]engine.PortainerContainerResult, error) {
+	ep, err := a.findEndpoint(ctx, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	containers, err := a.scanner.EndpointContainers(ctx, ep)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]engine.PortainerContainerResult, 0, len(containers))
+	for _, c := range containers {
+		out = append(out, engine.PortainerContainerResult{
+			ID:         c.ID,
+			Name:       c.Name,
+			Image:      c.Image,
+			State:      c.State,
+			Labels:     c.Labels,
+			EndpointID: c.EndpointID,
+			StackID:    c.StackID,
+			StackName:  c.StackName,
+		})
+	}
+	return out, nil
+}
+
+func (a *portainerScannerAdapter) ResetCache() {
+	a.scanner.ResetCache()
+}
+
+func (a *portainerScannerAdapter) RedeployStack(ctx context.Context, stackID, endpointID int) error {
+	return a.scanner.RedeployStack(ctx, stackID, endpointID)
+}
+
+func (a *portainerScannerAdapter) UpdateStandaloneContainer(ctx context.Context, endpointID int, containerID, newImage string) error {
+	return a.scanner.UpdateStandaloneContainer(ctx, endpointID, containerID, newImage)
+}
+
+func (a *portainerScannerAdapter) findEndpoint(ctx context.Context, endpointID int) (portainer.Endpoint, error) {
+	all, err := a.scanner.AllEndpoints(ctx)
+	if err != nil {
+		return portainer.Endpoint{}, err
+	}
+	for _, ep := range all {
+		if ep.ID == endpointID {
+			return ep, nil
+		}
+	}
+	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	portainerpkg "github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
@@ -479,6 +480,28 @@ func main() {
 		defer cm.Stop()
 	}
 
+	// Portainer integration.
+	portainerURL := cfg.PortainerURL
+	portainerToken := cfg.PortainerToken
+	if portainerURL == "" {
+		if v, err := db.LoadSetting("portainer_url"); err == nil && v != "" {
+			portainerURL = v
+		}
+	}
+	if portainerToken == "" {
+		if v, err := db.LoadSetting("portainer_token"); err == nil && v != "" {
+			portainerToken = v
+		}
+	}
+	var portainerProvider *portainerAdapter
+	if portainerURL != "" && portainerToken != "" {
+		pc := portainerpkg.NewClient(portainerURL, portainerToken)
+		ps := portainerpkg.NewScanner(pc)
+		portainerProvider = &portainerAdapter{scanner: ps}
+		updater.SetPortainerScanner(&portainerScannerAdapter{scanner: ps})
+		log.Info("portainer integration enabled", "url", portainerURL)
+	}
+
 	if cfg.WebEnabled {
 		webDeps := web.Dependencies{
 			Store:               &storeAdapter{db},
@@ -512,6 +535,7 @@ func main() {
 			HookStore:           &webHookStoreAdapter{db},
 			ReleaseSources:      &releaseSourceAdapter{db},
 			Cluster:             clusterCtrl,
+			Portainer:           portainerProvider,
 			MetricsEnabled:      cfg.MetricsEnabled,
 			Digest:              digestSched,
 			Auth:                authSvc,
@@ -525,7 +549,9 @@ func main() {
 		}
 		srv := web.NewServer(webDeps)
 		srv.SetClusterLifecycle(cm)
-		srv.SetScanGate(scanGate)
+		if freshSetup {
+			srv.SetScanGate(scanGate)
+		}
 
 		// Configure WebAuthn passkeys if RPID is set.
 		if cfg.WebAuthnEnabled() {
