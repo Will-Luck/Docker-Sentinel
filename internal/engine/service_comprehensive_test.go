@@ -34,16 +34,19 @@ func TestScanServicesRegistryCheckFails(t *testing.T) {
 	mock.services = []swarm.Service{
 		{ID: "svc-1", Spec: svcSpec("broken-svc", "ghcr.io/owner/app:latest", nil)},
 	}
+	// Both local and remote lookups fail.
 	mock.imageDigestErr["ghcr.io/owner/app:latest"] = fmt.Errorf("image not found locally")
+	mock.distErr["ghcr.io/owner/app:latest"] = fmt.Errorf("401 unauthorized")
 
 	u, _ := newSwarmTestUpdater(t, mock)
 	result := u.Scan(context.Background(), ScanScheduled)
 
 	if result.Queued != 0 {
-		t.Errorf("Queued = %d, want 0 (registry check failed)", result.Queued)
+		t.Errorf("Queued = %d, want 0 (both lookups failed)", result.Queued)
 	}
-	if len(result.Errors) == 0 {
-		t.Error("expected registry error in result.Errors")
+	// Both lookups failed: service silently skipped, not reported as error.
+	if len(result.Errors) != 0 {
+		t.Errorf("expected no errors (silent skip), got %v", result.Errors)
 	}
 }
 
@@ -462,5 +465,48 @@ func TestScanServicesNoDigestSuffix(t *testing.T) {
 
 	if result.Queued != 1 {
 		t.Errorf("Queued = %d, want 1", result.Queued)
+	}
+}
+
+// --- Multi-node swarm: local ImageDigest fails ---
+
+// Service on multi-node swarm where image only exists on worker nodes.
+// Local ImageDigest fails but DistributionDigest works - should not error.
+func TestScanServicesNoLocalDigestFallsBack(t *testing.T) {
+	mock := newMockDocker()
+	mock.swarmManager = true
+	mock.services = []swarm.Service{
+		{ID: "svc-remote", Spec: svcSpec("remote-svc", "fake.local/web:1.0", nil)},
+	}
+	mock.imageDigestErr["fake.local/web:1.0"] = fmt.Errorf("No such image: fake.local/web:1.0")
+	mock.distDigests["fake.local/web:1.0"] = "sha256:remote999"
+
+	u, _ := newSwarmTestUpdater(t, mock)
+	result := u.Scan(context.Background(), ScanScheduled)
+
+	if len(result.Errors) > 0 {
+		t.Errorf("expected no errors, got %v", result.Errors)
+	}
+}
+
+// When local inspect fails and registry returns same digest for both
+// the fallback and remote check, no update should be detected.
+func TestScanServicesNoLocalDigestSameRegistryDigest(t *testing.T) {
+	mock := newMockDocker()
+	mock.swarmManager = true
+	mock.services = []swarm.Service{
+		{ID: "svc-fb", Spec: svcSpec("fb-svc", "fake.local/fb:2.0", nil)},
+	}
+	mock.imageDigestErr["fake.local/fb:2.0"] = fmt.Errorf("No such image: fake.local/fb:2.0")
+	mock.distDigests["fake.local/fb:2.0"] = "sha256:same999"
+
+	u, _ := newSwarmTestUpdater(t, mock)
+	result := u.Scan(context.Background(), ScanScheduled)
+
+	if len(result.Errors) > 0 {
+		t.Errorf("expected no errors, got %v", result.Errors)
+	}
+	if result.Queued != 0 {
+		t.Errorf("Queued = %d, want 0 (no digest change)", result.Queued)
 	}
 }
