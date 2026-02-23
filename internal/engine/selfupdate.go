@@ -89,11 +89,18 @@ docker run -d --name "%s" %s "%s"
 echo "Self-update complete!"
 `, selfName, imageRef, imageRef, selfName, selfName, selfName, dockerArgs, imageRef)
 
-	// 5. Create the ephemeral helper container.
+	// 5. Pull the helper image (docker:cli) — it may not be present locally.
+	const helperImage = "docker:cli"
+	su.log.Info("pulling helper image", "image", helperImage)
+	if err := su.docker.PullImage(ctx, helperImage); err != nil {
+		return fmt.Errorf("pull helper image: %w", err)
+	}
+
+	// 6. Create the ephemeral helper container.
 	helperName := fmt.Sprintf("sentinel-updater-%d", time.Now().Unix())
 
 	helperConfig := &container.Config{
-		Image: "docker:cli",
+		Image: helperImage,
 		Cmd:   []string{"/bin/sh", "-c", script},
 		Labels: map[string]string{
 			"sentinel.helper": "true",
@@ -118,7 +125,7 @@ echo "Self-update complete!"
 		return fmt.Errorf("create helper: %w", err)
 	}
 
-	// 6. Start the helper — it runs independently of Sentinel.
+	// 7. Start the helper — it runs independently of Sentinel.
 	if err := su.docker.StartContainer(ctx, helperID); err != nil {
 		_ = su.docker.RemoveContainer(ctx, helperID)
 		return fmt.Errorf("start helper: %w", err)

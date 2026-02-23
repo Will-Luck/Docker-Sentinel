@@ -1021,8 +1021,17 @@ func (a *clusterAdapter) DrainHost(id string) error {
 }
 
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
-	_, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
-	return err
+	ur, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
+	if err != nil {
+		return err
+	}
+	if ur.Outcome != "success" {
+		if ur.Error != "" {
+			return fmt.Errorf("%s", ur.Error)
+		}
+		return fmt.Errorf("update failed")
+	}
+	return nil
 }
 
 func (a *clusterAdapter) RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error {

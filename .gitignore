@@ -1,13 +1,14 @@
 bin/
 docker-sentinel
+sentinel-bin
 *.exe
 *.test
 *.out
 .env
-CLAUDE.md
 docs/DESIGN.md
 docs/mood-board.md
 .gitea/
+.claude/
 sentinel
 docs/wiki/
 docs/reddit-post.md

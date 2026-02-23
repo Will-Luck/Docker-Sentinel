@@ -28,6 +28,7 @@ type SSEEvent struct {
 	Type          EventType `json:"type"`
 	ContainerName string    `json:"container_name,omitempty"`
 	Message       string    `json:"message,omitempty"`
+	HostID        string    `json:"host_id,omitempty"`   // source host ID (empty = local)
 	HostName      string    `json:"host_name,omitempty"` // source host (empty = local)
 	Timestamp     time.Time `json:"timestamp"`
 }

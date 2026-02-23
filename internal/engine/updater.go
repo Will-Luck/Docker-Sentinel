@@ -380,12 +380,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			continue
 		}
 
-		// Skip Sentinel itself (avoid self-update loops).
-		if isSentinel(labels) {
-			u.log.Debug("skipping sentinel container", "name", name)
-			result.Skipped++
-			continue
-		}
+		// Sentinel is checked for updates but never auto-updated via the scan loop.
+		selfContainer := isSentinel(labels)
 
 		// Skip containers matching filter patterns.
 		if MatchesFilter(name, filters) {
@@ -550,6 +546,24 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			scanTarget = replaceTag(imageRef, check.NewerVersions[0])
 		}
 
+		// Sentinel is always queued (never auto-updated via scan).
+		if selfContainer {
+			u.queue.Add(PendingUpdate{
+				ContainerID:            c.ID,
+				ContainerName:          name,
+				CurrentImage:           imageRef,
+				CurrentDigest:          check.LocalDigest,
+				RemoteDigest:           check.RemoteDigest,
+				DetectedAt:             u.clock.Now(),
+				NewerVersions:          check.NewerVersions,
+				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+				ResolvedTargetVersion:  check.ResolvedTargetVersion,
+			})
+			u.log.Info("sentinel update detected, queued for manual action", "name", name)
+			result.Queued++
+			continue
+		}
+
 		switch policy {
 		case docker.PolicyAuto:
 			result.AutoCount++
@@ -674,7 +688,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 
 		// Skip based on policy (same resolution as local containers).
 		tag := registry.ExtractTag(c.Image)
-		resolved := ResolvePolicy(u.store, c.Labels, c.Name, tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())
+		resolved := ResolvePolicy(u.store, c.Labels, store.ScopedKey(hostID, c.Name), tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())
 		policy := docker.Policy(resolved.Policy)
 
 		if policy == docker.PolicyPinned {
@@ -683,12 +697,8 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			continue
 		}
 
-		// Skip sentinel self-update on remote hosts too.
-		if isSentinel(c.Labels) {
-			u.log.Debug("skipping sentinel on remote host", "host", host.HostName, "name", c.Name)
-			result.Skipped++
-			continue
-		}
+		// Sentinel on remote hosts is checked for updates but never auto-updated.
+		remoteSelf := isSentinel(c.Labels)
 
 		// Skip containers matching filter patterns.
 		if MatchesFilter(c.Name, filters) {
@@ -740,6 +750,26 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		}
 
 		scopedName := store.ScopedKey(hostID, c.Name)
+
+		// Remote sentinel is always queued (never auto-updated via scan).
+		if remoteSelf {
+			u.queue.Add(PendingUpdate{
+				ContainerName:          c.Name,
+				CurrentImage:           c.Image,
+				CurrentDigest:          c.ImageDigest,
+				RemoteDigest:           check.RemoteDigest,
+				DetectedAt:             u.clock.Now(),
+				NewerVersions:          check.NewerVersions,
+				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+				ResolvedTargetVersion:  check.ResolvedTargetVersion,
+				HostID:                 hostID,
+				HostName:               host.HostName,
+			})
+			u.log.Info("remote sentinel update detected, queued for manual action",
+				"host", host.HostName, "name", c.Name)
+			result.Queued++
+			continue
+		}
 
 		switch policy {
 		case docker.PolicyAuto:

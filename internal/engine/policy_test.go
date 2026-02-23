@@ -153,6 +153,19 @@ func TestResolvePolicyNonLatestUsesDefault(t *testing.T) {
 	}
 }
 
+func TestResolvePolicyScopedKey(t *testing.T) {
+	db := newTestStore(t)
+	_ = db.SetPolicyOverride("host1::myapp", "pinned")
+
+	r := ResolvePolicy(db, nil, "host1::myapp", "v1.0", "manual", false)
+	if r.Policy != "pinned" {
+		t.Fatalf("expected pinned, got %s", r.Policy)
+	}
+	if r.Source != SourceOverride {
+		t.Fatalf("expected override source, got %s", r.Source)
+	}
+}
+
 func TestValidatePolicy(t *testing.T) {
 	for _, p := range []string{"auto", "manual", "pinned"} {
 		if err := ValidatePolicy(p); err != nil {

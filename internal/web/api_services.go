@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
@@ -70,6 +71,12 @@ func (s *Server) apiServiceUpdate(w http.ResponseWriter, r *http.Request) {
 		// Detach from request context — the update runs long after the HTTP response.
 		if err := s.deps.Swarm.UpdateService(context.Background(), serviceID, name, targetImage); err != nil {
 			s.deps.Log.Error("service update failed", "name", name, "error", err)
+			s.deps.EventBus.Publish(events.SSEEvent{
+				Type:          events.EventServiceUpdate,
+				ContainerName: name,
+				Message:       "service update failed: " + err.Error(),
+				Timestamp:     time.Now(),
+			})
 		}
 	}()
 

@@ -1140,7 +1140,7 @@ function removeQueueRow(btn) {
         if (remaining === 0 && tbody) {
             var emptyRow = document.createElement("tr");
             var td = document.createElement("td");
-            td.setAttribute("colspan", "4");
+            td.setAttribute("colspan", "5");
             var wrapper = document.createElement("div");
             wrapper.className = "empty-state";
             var h3 = document.createElement("h3");
@@ -1161,6 +1161,16 @@ function removeQueueRow(btn) {
             tbody.appendChild(emptyRow);
         }
     }, 180);
+}
+
+function toggleQueueAccordion(index) {
+    var panel = document.getElementById("accordion-queue-" + index);
+    if (!panel) return;
+    var visible = panel.style.display !== "none";
+    panel.style.display = visible ? "none" : "";
+    var row = panel.previousElementSibling;
+    var chevron = row ? row.querySelector(".queue-expand") : null;
+    if (chevron) chevron.textContent = visible ? "\u25B8" : "\u25BE";
 }
 
 function approveUpdate(key, event) {
@@ -1246,10 +1256,12 @@ function rejectAll(event) {
     bulkQueueAction(rejectUpdate, btn);
 }
 
-function triggerUpdate(name, event) {
+function triggerUpdate(name, event, hostId) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
+    var url = "/api/update/" + encodeURIComponent(name);
+    if (hostId) url += "?host=" + encodeURIComponent(hostId);
     apiPost(
-        "/api/update/" + encodeURIComponent(name),
+        url,
         null,
         "Update started for " + name,
         "Failed to trigger update",
@@ -1257,10 +1269,12 @@ function triggerUpdate(name, event) {
     );
 }
 
-function triggerCheck(name, event) {
+function triggerCheck(name, event, hostId) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
+    var url = "/api/check/" + encodeURIComponent(name);
+    if (hostId) url += "?host=" + encodeURIComponent(hostId);
     apiPost(
-        "/api/check/" + encodeURIComponent(name),
+        url,
         null,
         "Checking for updates on " + name,
         "Failed to check for updates",
@@ -1279,9 +1293,11 @@ function triggerRollback(name, event) {
     );
 }
 
-function changePolicy(name, newPolicy) {
+function changePolicy(name, newPolicy, hostId) {
+    var url = "/api/containers/" + encodeURIComponent(name) + "/policy";
+    if (hostId) url += "?host=" + encodeURIComponent(hostId);
     apiPost(
-        "/api/containers/" + encodeURIComponent(name) + "/policy",
+        url,
         { policy: newPolicy },
         "Policy changed to " + newPolicy + " for " + name,
         "Failed to change policy"
@@ -1318,6 +1334,7 @@ function triggerSelfUpdate(event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     showConfirm("Self-Update", "<p>This will restart Sentinel to apply the update. Continue?</p>").then(function(confirmed) {
         if (!confirmed) return;
+        localStorage.setItem("sentinel-self-updating", "1");
         apiPost(
             "/api/self-update",
             null,
@@ -1351,15 +1368,17 @@ function switchToGHCR(name, ghcrImage) {
     });
 }
 
-function updateToVersion(name) {
+function updateToVersion(name, hostId) {
     var sel = document.getElementById("version-select");
     if (!sel || !sel.value) return;
     var tag = sel.value;
+    var url = "/api/containers/" + encodeURIComponent(name) + "/update-to-version";
+    if (hostId) url += "?host=" + encodeURIComponent(hostId);
     showConfirm("Update to Version",
         "<p>Update <strong>" + name + "</strong> to <code>" + tag + "</code>?</p>"
     ).then(function(confirmed) {
         if (!confirmed) return;
-        fetch("/api/containers/" + encodeURIComponent(name) + "/update-to-version", {
+        fetch(url, {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({tag: tag})
@@ -1489,7 +1508,13 @@ function onRowClick(e, name) {
     if (e.target.closest(".status-badge-wrap")) {
         return;
     }
-    window.location.href = "/container/" + encodeURIComponent(name);
+    var row = e.target.closest("tr.container-row");
+    var href = row ? row.getAttribute("data-href") : "";
+    if (href) { window.location.href = href; return; }
+    var host = row ? row.getAttribute("data-host") : "";
+    var url = "/container/" + encodeURIComponent(name);
+    if (host) url += "?host=" + encodeURIComponent(host);
+    window.location.href = url;
 }
 
 /* ------------------------------------------------------------
@@ -1754,7 +1779,8 @@ function refreshServiceRow(name) {
             // Fully rebuild the scale badge wrap to ensure hover button is always present.
             var wrap = group.querySelector(".status-badge-wrap[data-service]");
             if (wrap) {
-                wrap.style.pointerEvents = ""; // Clear spinner lock from showBadgeSpinner.
+                wrap.style.pointerEvents = "";
+                wrap.removeAttribute("data-pending");
                 var prevReplicas = svc.PrevReplicas || parseInt(wrap.getAttribute("data-prev-replicas"), 10) || 1;
                 if (svc.DesiredReplicas > 0) {
                     var replicaClass = (svc.RunningReplicas === svc.DesiredReplicas) ? "svc-replicas-healthy" :
@@ -2571,9 +2597,11 @@ function scheduleReload() {
    11a. Live Row Updates — targeted DOM patching via partial endpoint
    ------------------------------------------------------------ */
 
-function updateContainerRow(name) {
+function updateContainerRow(name, hostId) {
     var enc = encodeURIComponent(name);
-    fetch("/api/containers/" + enc + "/row")
+    var url = "/api/containers/" + enc + "/row";
+    if (hostId) url += "?host=" + encodeURIComponent(hostId);
+    fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(data) {
             if (!data.html) return;
@@ -2586,7 +2614,13 @@ function updateContainerRow(name) {
             var temp = document.createElement("tbody");
             temp.innerHTML = data.html; // Safe: server-rendered Go template HTML, no user content
 
-            var oldRow = document.querySelector('tr.container-row[data-name="' + name + '"]');
+            var selector = 'tr.container-row[data-name="' + name + '"]';
+            if (hostId) {
+                selector += '[data-host="' + hostId + '"]';
+            } else {
+                selector += '[data-host=""]';
+            }
+            var oldRow = document.querySelector(selector);
 
             if (oldRow) {
                 var newRow = temp.querySelector(".container-row");
@@ -2608,6 +2642,10 @@ function updateContainerRow(name) {
             applyRegistryBadges();
             applyFiltersAndSort();
             recalcTabStats();
+
+            // Clear completed action and re-apply spinners for still-pending ones.
+            clearPendingBadge(name, hostId);
+            reapplyBadgeSpinners();
         })
         .catch(function() {
             // Fallback: full reload on error.
@@ -2654,16 +2692,26 @@ function updatePendingColor(pending) {
     }
 }
 
-function showBadgeSpinner(wrap) {
-    var defaultBadge = wrap.querySelector(".badge-default");
-    var hoverBadge = wrap.querySelector(".badge-hover");
-    if (defaultBadge) defaultBadge.style.display = "none";
-    if (hoverBadge) hoverBadge.style.display = "none";
+var pendingBadgeActions = {};
 
-    var spinner = document.createElement("span");
-    spinner.className = "badge-loading";
-    wrap.appendChild(spinner);
-    wrap.style.pointerEvents = "none";
+function showBadgeSpinner(wrap) {
+    wrap.setAttribute("data-pending", "");
+}
+
+function reapplyBadgeSpinners() {
+    for (var key in pendingBadgeActions) {
+        var parts = key.split("::");
+        var h = parts[0], n = parts[1];
+        var selector = '.status-badge-wrap[data-name="' + n + '"]';
+        if (h) selector += '[data-host-id="' + h + '"]';
+        var wrap = document.querySelector(selector);
+        if (wrap) wrap.setAttribute("data-pending", "");
+    }
+}
+
+function clearPendingBadge(name, hostId) {
+    var key = (hostId || "") + "::" + name;
+    delete pendingBadgeActions[key];
 }
 
 function setConnectionStatus(connected) {
@@ -2694,6 +2742,11 @@ function initSSE() {
     var es = new EventSource("/api/events");
 
     es.addEventListener("connected", function () {
+        if (localStorage.getItem("sentinel-self-updating")) {
+            localStorage.removeItem("sentinel-self-updating");
+            window.location.reload();
+            return;
+        }
         setConnectionStatus(true);
     });
 
@@ -2703,7 +2756,7 @@ function initSSE() {
             // Batch toasts to avoid spamming during scans.
             queueBatchToast(data.message || ("Update: " + data.container_name), "info");
             if (data.container_name) {
-                updateContainerRow(data.container_name);
+                updateContainerRow(data.container_name, data.host_id);
                 return;
             }
         } catch (_) {}
@@ -2714,7 +2767,7 @@ function initSSE() {
         try {
             var data = JSON.parse(e.data);
             if (data.container_name) {
-                updateContainerRow(data.container_name);
+                updateContainerRow(data.container_name, data.host_id);
                 return;
             }
         } catch (_) {}
@@ -2791,7 +2844,7 @@ function initSSE() {
             var data = JSON.parse(e.data);
             showToast(data.message || ("Policy changed: " + data.container_name), "info");
             if (data.container_name) {
-                updateContainerRow(data.container_name);
+                updateContainerRow(data.container_name, data.host_id);
                 return;
             }
         } catch (_) {}
@@ -3198,10 +3251,13 @@ document.addEventListener("DOMContentLoaded", function () {
         if (!name) return;
         var action = wrap.getAttribute("data-action") || "restart";
 
-        // Show inline spinner immediately.
-        showBadgeSpinner(wrap);
-
         var hostId = wrap.getAttribute("data-host-id");
+
+        // Track pending action so spinner survives DOM updates on other rows.
+        var actionKey = (hostId || "") + "::" + name;
+        pendingBadgeActions[actionKey] = true;
+
+        showBadgeSpinner(wrap);
         var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
         if (hostId) endpoint += "?host=" + encodeURIComponent(hostId);
         var label = action.charAt(0).toUpperCase() + action.slice(1);

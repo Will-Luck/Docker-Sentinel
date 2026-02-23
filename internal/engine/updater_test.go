@@ -46,18 +46,25 @@ func TestScanSkipsPinned(t *testing.T) {
 	}
 }
 
-func TestScanSkipsSentinelSelf(t *testing.T) {
+func TestScanChecksSentinelButNeverAutoUpdates(t *testing.T) {
 	mock := newMockDocker()
 	mock.containers = []container.Summary{
-		{ID: "aaa", Names: []string{"/sentinel"}, Image: "docker-sentinel:latest",
+		{ID: "aaa", Names: []string{"/sentinel"}, Image: "ghcr.io/will-luck/docker-sentinel:2.3.2",
 			Labels: map[string]string{"sentinel.self": "true"}},
 	}
+	// Simulate an update being available.
+	mock.distDigests["ghcr.io/will-luck/docker-sentinel:2.3.2"] = "sha256:remote999"
+	mock.imageDigests["ghcr.io/will-luck/docker-sentinel:2.3.2"] = "sha256:local123"
 
 	u, _ := newTestUpdater(t, mock)
 	result := u.Scan(context.Background(), ScanScheduled)
 
-	if result.Skipped != 1 {
-		t.Errorf("Skipped = %d, want 1 (sentinel self)", result.Skipped)
+	// Sentinel should be queued, not auto-updated.
+	if result.Queued != 1 {
+		t.Errorf("Queued = %d, want 1 (sentinel queued for manual action)", result.Queued)
+	}
+	if result.Updated != 0 {
+		t.Errorf("Updated = %d, want 0 (sentinel must never be auto-updated)", result.Updated)
 	}
 }
 

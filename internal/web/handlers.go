@@ -88,6 +88,7 @@ type containerView struct {
 	State           string
 	Maintenance     bool
 	HasUpdate       bool
+	DigestOnly      bool // true when update is digest-only (same tag, newer build)
 	IsSelf          bool
 	Stack           string // com.docker.compose.project label, or "" for standalone
 	Registry        string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
@@ -234,9 +235,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the pending update lookup for "update available" badges.
+	// Uses Key() (e.g. "hostID::name" for remote, bare "name" for local/service)
+	// to avoid remote entries falsely matching swarm services with the same name.
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.ContainerName] = true
+		pendingNames[p.Key()] = true
 	}
 
 	views := make([]containerView, 0, len(containers))
@@ -296,6 +299,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			State:           c.State,
 			Maintenance:     maintenance,
 			HasUpdate:       pendingNames[name],
+			DigestOnly:      pendingNames[name] && newestVersion == "",
 			IsSelf:          c.Labels["sentinel.self"] == "true",
 			Stack:           c.Labels["com.docker.compose.project"],
 			Registry:        registry.RegistryHost(c.Image),
@@ -463,23 +467,38 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			// Resolve policy the same way we do for local containers:
-			// label first, then DB override.
+			// label first, then DB override (keyed by hostID::name for remote).
 			policy := containerPolicy(rc.Labels)
 			if s.deps.Policy != nil {
-				if p, ok := s.deps.Policy.GetPolicyOverride(rc.Name); ok {
+				policyKey := rc.HostID + "::" + rc.Name
+				if p, ok := s.deps.Policy.GetPolicyOverride(policyKey); ok {
 					policy = p
 				}
 			}
 
+			var newestVersion string
+			var hasUpdate bool
+			queueKey := rc.HostID + "::" + rc.Name
+			if pend, ok := s.deps.Queue.Get(queueKey); ok {
+				hasUpdate = true
+				if len(pend.NewerVersions) > 0 {
+					newestVersion = pend.NewerVersions[0]
+				}
+			}
+
 			cv := containerView{
-				Name:     rc.Name,
-				Image:    rc.Image,
-				Tag:      tag,
-				Registry: registry.RegistryHost(rc.Image),
-				Policy:   policy,
-				State:    rc.State,
-				HostID:   rc.HostID,
-				HostName: rc.HostName,
+				Name:          rc.Name,
+				Image:         rc.Image,
+				Tag:           tag,
+				NewestVersion: newestVersion,
+				Registry:      registry.RegistryHost(rc.Image),
+				Policy:        policy,
+				State:         rc.State,
+				HasUpdate:     hasUpdate,
+				DigestOnly:    hasUpdate && newestVersion == "",
+				IsSelf:        rc.Labels["sentinel.self"] == "true",
+				HostID:        rc.HostID,
+				HostName:      rc.HostName,
 			}
 			byHost[rc.HostID] = append(byHost[rc.HostID], cv)
 		}
@@ -500,6 +519,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					} else {
 						sg.StoppedCount++
 					}
+					if c.HasUpdate {
+						sg.HasPending = true
+						sg.PendingCount++
+					}
 				}
 				remoteStacks = []stackGroup{sg}
 			}
@@ -516,6 +539,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			for _, c := range containers {
 				if c.State == "running" {
 					data.RunningContainers++
+				}
+				if c.HasUpdate {
+					data.PendingUpdates++
 				}
 			}
 		}
@@ -704,6 +730,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name required")
 		return
 	}
+	hostFilter := r.URL.Query().Get("host")
 
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
@@ -714,7 +741,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.ContainerName] = true
+		pendingNames[p.Key()] = true
 	}
 
 	var targetView *containerView
@@ -727,7 +754,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 		if pendingNames[n] {
 			pending++
 		}
-		if n == name {
+		if n == name && hostFilter == "" {
 			maintenance, err := s.deps.Store.GetMaintenance(n)
 			if err != nil {
 				s.deps.Log.Debug("failed to load maintenance state", "name", n, "error", err)
@@ -760,6 +787,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				State:         c.State,
 				Maintenance:   maintenance,
 				HasUpdate:     pendingNames[n],
+				DigestOnly:    pendingNames[n] && newestVersion == "",
 				IsSelf:        c.Labels["sentinel.self"] == "true",
 				Stack:         c.Labels["com.docker.compose.project"],
 				Registry:      registry.RegistryHost(c.Image),
@@ -771,10 +799,11 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 	// Fallback: search cluster remote containers if not found locally.
 	if targetView == nil && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		for _, rc := range s.deps.Cluster.AllHostContainers() {
-			if rc.Name == name {
+			if rc.Name == name && (hostFilter == "" || rc.HostID == hostFilter) {
 				policy := containerPolicy(rc.Labels)
 				if s.deps.Policy != nil {
-					if p, ok := s.deps.Policy.GetPolicyOverride(rc.Name); ok {
+					policyKey := rc.HostID + "::" + rc.Name
+					if p, ok := s.deps.Policy.GetPolicyOverride(policyKey); ok {
 						policy = p
 					}
 				}
@@ -786,15 +815,28 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 						tag = rc.Image
 					}
 				}
+				var newestVersion string
+				var hasUpdate bool
+				queueKey := rc.HostID + "::" + rc.Name
+				if pend, ok := s.deps.Queue.Get(queueKey); ok {
+					hasUpdate = true
+					if len(pend.NewerVersions) > 0 {
+						newestVersion = pend.NewerVersions[0]
+					}
+				}
 				v := containerView{
-					Name:     rc.Name,
-					Image:    rc.Image,
-					Tag:      tag,
-					Policy:   policy,
-					State:    rc.State,
-					HostID:   rc.HostID,
-					HostName: rc.HostName,
-					Registry: registry.RegistryHost(rc.Image),
+					Name:          rc.Name,
+					Image:         rc.Image,
+					Tag:           tag,
+					NewestVersion: newestVersion,
+					Policy:        policy,
+					State:         rc.State,
+					HasUpdate:     hasUpdate,
+					DigestOnly:    hasUpdate && newestVersion == "",
+					IsSelf:        rc.Labels["sentinel.self"] == "true",
+					HostID:        rc.HostID,
+					HostName:      rc.HostName,
+					Registry:      registry.RegistryHost(rc.Image),
 				}
 				targetView = &v
 				break
@@ -833,7 +875,7 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.ContainerName] = true
+		pendingNames[p.Key()] = true
 	}
 
 	total, running, pending := len(containers), 0, 0
@@ -855,6 +897,20 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 				if pendingNames[svc.Name] {
 					pending++
 				}
+			}
+		}
+	}
+
+	// Include remote cluster containers.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			total++
+			if rc.State == "running" {
+				running++
+			}
+			queueKey := rc.HostID + "::" + rc.Name
+			if pendingNames[queueKey] {
+				pending++
 			}
 		}
 	}
@@ -984,67 +1040,131 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		s.renderError(w, http.StatusBadRequest, "Bad Request", "Container name is required.")
 		return
 	}
+	hostFilter := r.URL.Query().Get("host")
 
-	// Find container by name.
-	containers, err := s.deps.Docker.ListAllContainers(r.Context())
-	if err != nil {
-		s.deps.Log.Error("failed to list containers", "error", err)
-		s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load containers.")
-		return
-	}
+	var view containerView
+	var image string // for changelog/version lookups
 
-	var found *ContainerSummary
-	for _, c := range containers {
-		if containerName(c) == name {
-			found = &c
-			break
+	if hostFilter != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		// Remote container: look up from cluster cache.
+		var rc *RemoteContainer
+		for _, c := range s.deps.Cluster.AllHostContainers() {
+			if c.Name == name && c.HostID == hostFilter {
+				rc = &c
+				break
+			}
 		}
-	}
-	if found == nil {
-		s.renderError(w, http.StatusNotFound, "Container Not Found", "The container \""+name+"\" was not found. It may have been removed.")
-		return
-	}
-
-	maintenance, err := s.deps.Store.GetMaintenance(name)
-	if err != nil {
-		s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
-	}
-
-	detailPolicy := containerPolicy(found.Labels)
-	if s.deps.Policy != nil {
-		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-			detailPolicy = p
+		if rc == nil {
+			s.renderError(w, http.StatusNotFound, "Container Not Found",
+				"The container \""+name+"\" was not found on host \""+hostFilter+"\". It may have been removed.")
+			return
 		}
-	}
 
-	detailTag := registry.ExtractTag(found.Image)
-	if detailTag == "" {
-		if idx := strings.LastIndex(found.Image, "/"); idx >= 0 {
-			detailTag = found.Image[idx+1:]
-		} else {
-			detailTag = found.Image
+		policy := containerPolicy(rc.Labels)
+		if s.deps.Policy != nil {
+			policyKey := rc.HostID + "::" + rc.Name
+			if p, ok := s.deps.Policy.GetPolicyOverride(policyKey); ok {
+				policy = p
+			}
 		}
-	}
-
-	// Resolve the actual version behind non-semver tags like "latest".
-	var detailResolved string
-	if _, isSemver := registry.ParseSemVer(detailTag); !isSemver {
-		if v := found.Labels["org.opencontainers.image.version"]; v != "" && v != detailTag {
-			detailResolved = v
+		tag := registry.ExtractTag(rc.Image)
+		if tag == "" {
+			if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {
+				tag = rc.Image[idx+1:]
+			} else {
+				tag = rc.Image
+			}
 		}
-	}
+		var resolved string
+		if _, isSemver := registry.ParseSemVer(tag); !isSemver {
+			if v := rc.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
+				resolved = v
+			}
+		}
+		var newestVersion string
+		queueKey := rc.HostID + "::" + rc.Name
+		if pend, ok := s.deps.Queue.Get(queueKey); ok && len(pend.NewerVersions) > 0 {
+			newestVersion = pend.NewerVersions[0]
+		}
 
-	view := containerView{
-		ID:              found.ID,
-		Name:            containerName(*found),
-		Image:           found.Image,
-		Tag:             detailTag,
-		ResolvedVersion: detailResolved,
-		Policy:          detailPolicy,
-		State:           found.State,
-		Maintenance:     maintenance,
-		IsSelf:          found.Labels["sentinel.self"] == "true",
-		Registry:        registry.RegistryHost(found.Image),
+		view = containerView{
+			Name:            rc.Name,
+			Image:           rc.Image,
+			Tag:             tag,
+			ResolvedVersion: resolved,
+			NewestVersion:   newestVersion,
+			Policy:          policy,
+			State:           rc.State,
+			HasUpdate:       newestVersion != "",
+			IsSelf:          rc.Labels["sentinel.self"] == "true",
+			HostID:          rc.HostID,
+			HostName:        rc.HostName,
+			Registry:        registry.RegistryHost(rc.Image),
+		}
+		image = rc.Image
+	} else {
+		// Local container: look up from Docker.
+		containers, err := s.deps.Docker.ListAllContainers(r.Context())
+		if err != nil {
+			s.deps.Log.Error("failed to list containers", "error", err)
+			s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load containers.")
+			return
+		}
+
+		var found *ContainerSummary
+		for _, c := range containers {
+			if containerName(c) == name {
+				found = &c
+				break
+			}
+		}
+		if found == nil {
+			s.renderError(w, http.StatusNotFound, "Container Not Found",
+				"The container \""+name+"\" was not found. It may have been removed.")
+			return
+		}
+
+		maintenance, err := s.deps.Store.GetMaintenance(name)
+		if err != nil {
+			s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
+		}
+
+		detailPolicy := containerPolicy(found.Labels)
+		if s.deps.Policy != nil {
+			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
+				detailPolicy = p
+			}
+		}
+
+		detailTag := registry.ExtractTag(found.Image)
+		if detailTag == "" {
+			if idx := strings.LastIndex(found.Image, "/"); idx >= 0 {
+				detailTag = found.Image[idx+1:]
+			} else {
+				detailTag = found.Image
+			}
+		}
+
+		var detailResolved string
+		if _, isSemver := registry.ParseSemVer(detailTag); !isSemver {
+			if v := found.Labels["org.opencontainers.image.version"]; v != "" && v != detailTag {
+				detailResolved = v
+			}
+		}
+
+		view = containerView{
+			ID:              found.ID,
+			Name:            containerName(*found),
+			Image:           found.Image,
+			Tag:             detailTag,
+			ResolvedVersion: detailResolved,
+			Policy:          detailPolicy,
+			State:           found.State,
+			Maintenance:     maintenance,
+			IsSelf:          found.Labels["sentinel.self"] == "true",
+			Registry:        registry.RegistryHost(found.Image),
+		}
+		image = found.Image
 	}
 
 	// Gather history.
@@ -1072,7 +1192,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	// Gather versions (nil-check dependency).
 	var versions []string
 	if s.deps.Registry != nil {
-		versions, err = s.deps.Registry.ListVersions(r.Context(), found.Image)
+		versions, err = s.deps.Registry.ListVersions(r.Context(), image)
 		if err != nil {
 			s.deps.Log.Warn("failed to list versions", "name", name, "error", err)
 			versions = nil
@@ -1085,7 +1205,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		Snapshots:      snapshots,
 		Versions:       versions,
 		HasSnapshot:    len(snapshots) > 0,
-		ChangelogURL:   ChangelogURL(found.Image),
+		ChangelogURL:   ChangelogURL(image),
 		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthDetail(r, &data)
@@ -1154,7 +1274,7 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 
 	pendingNames := make(map[string]bool)
 	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.ContainerName] = true
+		pendingNames[p.Key()] = true
 	}
 	view := s.buildServiceView(*found, pendingNames)
 

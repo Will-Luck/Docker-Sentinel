@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,8 +68,9 @@ type Server struct {
 	// pendingMu protects the pending map. Separate from mu to avoid holding
 	// the streams lock while waiting for responses.
 	pendingMu sync.Mutex
-	// pending maps hostID to a channel that receives the next response from
-	// that agent. Only one outstanding synchronous request per host at a time.
+	// pending maps "hostID:requestID" to a channel that receives the
+	// corresponding response from the agent. Multiple concurrent requests
+	// per host are supported.
 	pending map[string]chan *proto.AgentMessage
 }
 
@@ -374,9 +376,12 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		s.mu.Unlock()
 
 		s.pendingMu.Lock()
-		if ch, ok := s.pending[hostID]; ok {
-			delete(s.pending, hostID)
-			close(ch)
+		prefix := hostID + ":"
+		for key, ch := range s.pending {
+			if strings.HasPrefix(key, prefix) {
+				delete(s.pending, key)
+				close(ch)
+			}
 		}
 		s.pendingMu.Unlock()
 
@@ -596,7 +601,7 @@ func (s *Server) handleContainerList(hostID string, msg *proto.AgentMessage, cl 
 
 	// Route to a pending synchronous caller if one is waiting.
 	if cl.RequestId != "" {
-		s.deliverPending(hostID, msg)
+		s.deliverPending(hostID, cl.RequestId, msg)
 	}
 }
 
@@ -605,20 +610,25 @@ func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *
 		"hostID", hostID,
 		"container", ur.ContainerName,
 		"outcome", ur.Outcome,
+		"error", ur.Error,
 		"requestID", ur.RequestId,
 	)
 
+	sseMsg := fmt.Sprintf("update %s: %s", ur.ContainerName, ur.Outcome)
+	if ur.Outcome != "success" && ur.Error != "" {
+		sseMsg = fmt.Sprintf("update %s failed: %s", ur.ContainerName, ur.Error)
+	}
 	s.bus.Publish(events.SSEEvent{
 		Type:          events.EventContainerUpdate,
 		ContainerName: ur.ContainerName,
-		HostName:      hostID,
-		Message:       fmt.Sprintf("update %s: %s", ur.ContainerName, ur.Outcome),
+		HostID:        hostID,
+		Message:       sseMsg,
 		Timestamp:     time.Now(),
 	})
 
 	// Route to a pending synchronous caller if one is waiting.
 	if ur.RequestId != "" {
-		s.deliverPending(hostID, msg)
+		s.deliverPending(hostID, ur.RequestId, msg)
 	}
 }
 
@@ -631,17 +641,32 @@ func (s *Server) handleContainerActionResult(hostID string, msg *proto.AgentMess
 		"requestID", ar.RequestId,
 	)
 
+	// Update the cached container state so subsequent row fetches reflect
+	// the action immediately, without waiting for a full container list refresh.
+	if ar.Outcome == "success" {
+		var newState string
+		switch ar.Action {
+		case "stop":
+			newState = "exited"
+		case "start", "restart":
+			newState = "running"
+		}
+		if newState != "" {
+			s.registry.UpdateContainerState(hostID, ar.ContainerName, newState)
+		}
+	}
+
 	s.bus.Publish(events.SSEEvent{
 		Type:          events.EventContainerState,
 		ContainerName: ar.ContainerName,
-		HostName:      hostID,
+		HostID:        hostID,
 		Message:       fmt.Sprintf("%s %s: %s", ar.Action, ar.ContainerName, ar.Outcome),
 		Timestamp:     time.Now(),
 	})
 
 	// Route to a pending synchronous caller if one is waiting.
 	if ar.RequestId != "" {
-		s.deliverPending(hostID, msg)
+		s.deliverPending(hostID, ar.RequestId, msg)
 	}
 }
 
@@ -737,11 +762,12 @@ func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.Ce
 // Non-blocking: if nobody is waiting (or the channel is already full), the
 // message is silently dropped (the fire-and-forget handlers already processed
 // the response above).
-func (s *Server) deliverPending(hostID string, msg *proto.AgentMessage) {
+func (s *Server) deliverPending(hostID, requestID string, msg *proto.AgentMessage) {
+	key := hostID + ":" + requestID
 	s.pendingMu.Lock()
-	ch, ok := s.pending[hostID]
+	ch, ok := s.pending[key]
 	if ok {
-		delete(s.pending, hostID)
+		delete(s.pending, key)
 	}
 	s.pendingMu.Unlock()
 
@@ -755,33 +781,35 @@ func (s *Server) deliverPending(hostID string, msg *proto.AgentMessage) {
 	}
 }
 
-// registerPending creates a response channel for the given host.
+// registerPending creates a response channel for the given host+request pair.
 // Must be called before sending the command to avoid a race where
 // the agent responds before the channel is registered.
-func (s *Server) registerPending(hostID string) (chan *proto.AgentMessage, error) {
+func (s *Server) registerPending(hostID, requestID string) (chan *proto.AgentMessage, error) {
+	key := hostID + ":" + requestID
 	ch := make(chan *proto.AgentMessage, 1)
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
-	if _, exists := s.pending[hostID]; exists {
-		return nil, fmt.Errorf("agent %s already has an outstanding request", hostID)
+	if _, exists := s.pending[key]; exists {
+		return nil, fmt.Errorf("duplicate request %s for agent %s", requestID, hostID)
 	}
-	s.pending[hostID] = ch
+	s.pending[key] = ch
 	return ch, nil
 }
 
-// cancelPending removes the pending channel for a host and returns it.
+// cancelPending removes the pending channel for a host+request pair.
 // Used for cleanup when SendCommand fails after registration.
-func (s *Server) cancelPending(hostID string, ch chan *proto.AgentMessage) {
+func (s *Server) cancelPending(hostID, requestID string, ch chan *proto.AgentMessage) {
+	key := hostID + ":" + requestID
 	s.pendingMu.Lock()
-	if cur, ok := s.pending[hostID]; ok && cur == ch {
-		delete(s.pending, hostID)
+	if cur, ok := s.pending[key]; ok && cur == ch {
+		delete(s.pending, key)
 	}
 	s.pendingMu.Unlock()
 }
 
 // awaitPending blocks on an already-registered response channel until a
 // response arrives or the context is cancelled.
-func (s *Server) awaitPending(ctx context.Context, hostID string, ch chan *proto.AgentMessage) (*proto.AgentMessage, error) {
+func (s *Server) awaitPending(ctx context.Context, hostID, requestID string, ch chan *proto.AgentMessage) (*proto.AgentMessage, error) {
 	select {
 	case resp, ok := <-ch:
 		if !ok {
@@ -790,7 +818,7 @@ func (s *Server) awaitPending(ctx context.Context, hostID string, ch chan *proto
 		}
 		return resp, nil
 	case <-ctx.Done():
-		s.cancelPending(hostID, ch)
+		s.cancelPending(hostID, requestID, ch)
 		return nil, ctx.Err()
 	}
 }
@@ -803,7 +831,7 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 
 	// Register the response channel BEFORE sending, so a fast agent
 	// response doesn't race with registration.
-	ch, err := s.registerPending(hostID)
+	ch, err := s.registerPending(hostID, reqID)
 	if err != nil {
 		return nil, err
 	}
@@ -816,11 +844,11 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 	}
 
 	if err := s.SendCommand(hostID, msg); err != nil {
-		s.cancelPending(hostID, ch)
+		s.cancelPending(hostID, reqID, ch)
 		return nil, fmt.Errorf("send list containers: %w", err)
 	}
 
-	resp, err := s.awaitPending(ctx, hostID, ch)
+	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
 	if err != nil {
 		return nil, fmt.Errorf("await container list: %w", err)
 	}
@@ -840,7 +868,7 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 
 	// Register the response channel BEFORE sending, so a fast agent
 	// response doesn't race with registration.
-	ch, err := s.registerPending(hostID)
+	ch, err := s.registerPending(hostID, reqID)
 	if err != nil {
 		return nil, err
 	}
@@ -857,11 +885,11 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 	}
 
 	if err := s.SendCommand(hostID, msg); err != nil {
-		s.cancelPending(hostID, ch)
+		s.cancelPending(hostID, reqID, ch)
 		return nil, fmt.Errorf("send update container: %w", err)
 	}
 
-	resp, err := s.awaitPending(ctx, hostID, ch)
+	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
 	if err != nil {
 		return nil, fmt.Errorf("await update result: %w", err)
 	}
@@ -878,7 +906,7 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 // until the agent responds with a ContainerActionResult or the context is cancelled.
 func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName, action string) error {
 	reqID := generateRequestID()
-	ch, err := s.registerPending(hostID)
+	ch, err := s.registerPending(hostID, reqID)
 	if err != nil {
 		return err
 	}
@@ -894,11 +922,11 @@ func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName,
 	}
 
 	if err := s.SendCommand(hostID, msg); err != nil {
-		s.cancelPending(hostID, ch)
+		s.cancelPending(hostID, reqID, ch)
 		return fmt.Errorf("send container action: %w", err)
 	}
 
-	resp, err := s.awaitPending(ctx, hostID, ch)
+	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
 	if err != nil {
 		return fmt.Errorf("await container action result: %w", err)
 	}

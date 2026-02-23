@@ -1249,16 +1249,16 @@ func TestMultipleAgents(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TestRegisterPending_RejectsExisting verifies that a second registerPending
-// call for the same host returns an error while the first is still outstanding.
+// TestRegisterPending_AllowsConcurrentPerHost verifies that multiple requests
+// to the same host succeed when they use different request IDs.
 // ---------------------------------------------------------------------------
 
-func TestRegisterPending_RejectsExisting(t *testing.T) {
+func TestRegisterPending_AllowsConcurrentPerHost(t *testing.T) {
 	s := &Server{
 		pending: make(map[string]chan *proto.AgentMessage),
 	}
 
-	ch1, err := s.registerPending("h1")
+	ch1, err := s.registerPending("h1", "req1")
 	if err != nil {
 		t.Fatalf("first registerPending: unexpected error: %v", err)
 	}
@@ -1266,9 +1266,18 @@ func TestRegisterPending_RejectsExisting(t *testing.T) {
 		t.Fatal("first registerPending: expected non-nil channel")
 	}
 
-	_, err = s.registerPending("h1")
+	ch2, err := s.registerPending("h1", "req2")
+	if err != nil {
+		t.Fatalf("second registerPending: unexpected error: %v", err)
+	}
+	if ch2 == nil {
+		t.Fatal("second registerPending: expected non-nil channel")
+	}
+
+	// Same host + same request ID should fail.
+	_, err = s.registerPending("h1", "req1")
 	if err == nil {
-		t.Fatal("second registerPending: expected error, got nil")
+		t.Fatal("duplicate registerPending: expected error, got nil")
 	}
 }
 

@@ -606,11 +606,15 @@ func (s *Server) parseTemplates() {
 		"changelogURL": ChangelogURL,
 		"versionURL":   VersionURL,
 		"imageTag":     ImageTag,
-		"serviceOrContainer": func(kind, name string) string {
+		"serviceOrContainer": func(kind, name string, hostID ...string) string {
+			base := "/container/" + name
 			if kind == "service" {
-				return "/service/" + name
+				base = "/service/" + name
 			}
-			return "/container/" + name
+			if len(hostID) > 0 && hostID[0] != "" {
+				base += "?host=" + hostID[0]
+			}
+			return base
 		},
 	}
 
