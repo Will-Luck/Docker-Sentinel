@@ -153,15 +153,24 @@ func (s *Store) RecordUpdate(rec UpdateRecord) error {
 }
 
 // ListHistory returns the most recent update records, up to limit.
-func (s *Store) ListHistory(limit int) ([]UpdateRecord, error) {
+// If before is non-empty it is treated as a cursor (RFC3339Nano key) and only
+// records older than that key are returned.
+func (s *Store) ListHistory(limit int, before string) ([]UpdateRecord, error) {
 	var records []UpdateRecord
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketHistory)
 		c := b.Cursor()
 
-		// Walk backwards from the end (newest first).
-		for k, v := c.Last(); k != nil && len(records) < limit; k, v = c.Prev() {
+		var k, v []byte
+		if before != "" {
+			c.Seek([]byte(before))
+			k, v = c.Prev()
+		} else {
+			k, v = c.Last()
+		}
+
+		for ; k != nil && len(records) < limit; k, v = c.Prev() {
 			var rec UpdateRecord
 			if err := json.Unmarshal(v, &rec); err != nil {
 				continue

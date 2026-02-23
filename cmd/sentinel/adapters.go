@@ -28,8 +28,8 @@ import (
 // storeAdapter converts store.Store to web.HistoryStore.
 type storeAdapter struct{ s *store.Store }
 
-func (a *storeAdapter) ListHistory(limit int) ([]web.UpdateRecord, error) {
-	records, err := a.s.ListHistory(limit)
+func (a *storeAdapter) ListHistory(limit int, before string) ([]web.UpdateRecord, error) {
+	records, err := a.s.ListHistory(limit, before)
 	if err != nil {
 		return nil, err
 	}

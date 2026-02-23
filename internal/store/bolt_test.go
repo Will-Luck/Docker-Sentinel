@@ -111,7 +111,7 @@ func TestUpdateHistory(t *testing.T) {
 	}
 
 	// List all — should be newest-first.
-	got, err := s.ListHistory(10)
+	got, err := s.ListHistory(10, "")
 	if err != nil {
 		t.Fatalf("ListHistory: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestUpdateHistory(t *testing.T) {
 	}
 
 	// List with limit.
-	got, err = s.ListHistory(1)
+	got, err = s.ListHistory(1, "")
 	if err != nil {
 		t.Fatal(err)
 	}

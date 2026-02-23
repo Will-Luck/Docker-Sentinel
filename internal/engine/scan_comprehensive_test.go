@@ -256,7 +256,7 @@ func TestUpdateContainerCreateFailure(t *testing.T) {
 	// Create failed means rollback was attempted (doRollback calls
 	// ListAllContainers then CreateContainer for the rollback).
 	// History should show a "rollback" outcome.
-	history, hErr := u.store.ListHistory(10)
+	history, hErr := u.store.ListHistory(10, "")
 	if hErr != nil {
 		t.Fatalf("ListHistory: %v", hErr)
 	}

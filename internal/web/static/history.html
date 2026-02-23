@@ -145,12 +145,99 @@
                     </tbody>
                 </table>
             </div>
+            {{if .History}}
+            <div style="padding: var(--sp-4); text-align: center;">
+                <button id="load-more-btn" class="btn" onclick="loadMoreHistory()">Load more</button>
+            </div>
+            {{end}}
         </div>
     </main>
 
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
+    <script>
+    var lastHistoryTimestamp = '{{.NextCursor}}';
+
+    function loadMoreHistory() {
+        if (!lastHistoryTimestamp) return;
+        var btn = document.getElementById('load-more-btn');
+        btn.textContent = 'Loading...';
+        btn.disabled = true;
+
+        fetch('/api/history?limit=50&before=' + encodeURIComponent(lastHistoryTimestamp))
+            .then(function(r) { return r.json(); })
+            .then(function(records) {
+                if (!records || records.length === 0) {
+                    btn.textContent = 'No more records';
+                    btn.disabled = true;
+                    return;
+                }
+                var tbody = document.querySelector('.table-history tbody');
+                var existingCount = document.querySelectorAll('.container-row').length;
+                records.forEach(function(r, i) {
+                    var idx = existingCount + i;
+                    var tr = document.createElement('tr');
+                    tr.className = 'container-row';
+                    tr.setAttribute('onclick', "onRowClick(event, 'history-" + idx + "')");
+                    var ts = new Date(r.timestamp);
+                    var ago = timeAgoHist(ts);
+                    var outcomeHtml = badgeForHist(r.outcome);
+                    var dur = r.duration ? (r.duration / 1e9).toFixed(1) + 's' : '-';
+                    tr.innerHTML = '<td title="' + ts.toISOString() + '">' + ago + '</td>' +
+                        '<td><a href="/container/' + encodeURIComponent(r.container_name) + '" class="container-link">' + r.container_name + '</a></td>' +
+                        '<td>' + outcomeHtml + '</td>' +
+                        '<td class="mono">' + dur + '</td>';
+                    tbody.appendChild(tr);
+
+                    var detail = document.createElement('tr');
+                    detail.className = 'accordion-panel';
+                    detail.id = 'accordion-history-' + idx;
+                    detail.style.display = 'none';
+                    detail.innerHTML = '<td colspan="4"><div class="accordion-content"><div class="accordion-grid">' +
+                        '<div class="accordion-section">' +
+                        '<div class="accordion-label">Timestamp</div><div class="accordion-value mono">' + ts.toISOString() + '</div>' +
+                        '<div class="accordion-label">Old Image</div><div class="accordion-value mono">' + (r.old_image || '') + '</div>' +
+                        '<div class="accordion-label">New Image</div><div class="accordion-value mono">' + (r.new_image || '') + '</div>' +
+                        '</div><div class="accordion-section">' +
+                        '<div class="accordion-label">Old Digest</div><div class="accordion-value mono">' + (r.old_digest || '-') + '</div>' +
+                        '<div class="accordion-label">New Digest</div><div class="accordion-value mono">' + (r.new_digest || '-') + '</div>' +
+                        (r.error ? '<div class="accordion-label">Error</div><div class="accordion-value mono" style="color: var(--error);">' + r.error + '</div>' : '') +
+                        '</div></div></div></td>';
+                    tbody.appendChild(detail);
+                });
+
+                lastHistoryTimestamp = records[records.length - 1].timestamp;
+                btn.textContent = 'Load more';
+                btn.disabled = false;
+                var header = document.querySelector('.card-header h2');
+                if (header) {
+                    header.textContent = 'Recent Updates (' + document.querySelectorAll('.container-row').length + ')';
+                }
+            })
+            .catch(function() {
+                btn.textContent = 'Load more';
+                btn.disabled = false;
+            });
+    }
+
+    function badgeForHist(outcome) {
+        var map = {success:'badge-success',rollback:'badge-error',rollback_success:'badge-warning',rollback_failed:'badge-error',failed:'badge-error',finalise_warning:'badge-warning',skipped:'badge-warning'};
+        var label = {success:'Success',rollback:'Rollback',rollback_success:'Rollback OK',rollback_failed:'Rollback Failed',failed:'Failed',finalise_warning:'Warning',skipped:'Skipped'};
+        var cls = map[outcome] || 'badge-muted';
+        var txt = label[outcome] || outcome;
+        return '<span class="badge ' + cls + '">' + txt + '</span>';
+    }
+
+    function timeAgoHist(date) {
+        var now = new Date();
+        var diff = Math.floor((now - date) / 1000);
+        if (diff < 60) return diff + 's ago';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        return Math.floor(diff / 86400) + 'd ago';
+    }
+    </script>
 </body>
 </html>
 {{end}}
