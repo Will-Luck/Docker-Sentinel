@@ -143,7 +143,13 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		default:
 			state, _ := u.store.GetNotifyState(name)
 			if state != nil && state.LastDigest == check.RemoteDigest && !state.LastNotified.IsZero() {
-				shouldNotify = false
+				if !state.SnoozedUntil.IsZero() && u.clock.Now().Before(state.SnoozedUntil) {
+					shouldNotify = false
+					u.log.Debug("notification snoozed", "name", name, "until", state.SnoozedUntil)
+				} else if state.SnoozedUntil.IsZero() {
+					shouldNotify = false
+				}
+				// If snooze expired, shouldNotify stays true — re-notify.
 			}
 		}
 
@@ -172,10 +178,16 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		if notifyOK {
 			lastNotified = now
 		}
+		snoozeDur := docker.ContainerNotifySnooze(labels)
+		var snoozedUntil time.Time
+		if snoozeDur > 0 && notifyOK {
+			snoozedUntil = now.Add(snoozeDur)
+		}
 		if err := u.store.SetNotifyState(name, &store.NotifyState{
 			LastDigest:   check.RemoteDigest,
 			LastNotified: lastNotified,
 			FirstSeen:    firstSeen,
+			SnoozedUntil: snoozedUntil,
 		}); err != nil {
 			u.log.Warn("failed to persist service notify state", "name", name, "error", err)
 		}

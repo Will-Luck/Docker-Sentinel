@@ -500,8 +500,15 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		default:
 			state, _ := u.store.GetNotifyState(name)
 			if state != nil && state.LastDigest == check.RemoteDigest && !state.LastNotified.IsZero() {
-				shouldNotify = false
-				u.log.Debug("skipping duplicate notification", "name", name, "digest", check.RemoteDigest)
+				if !state.SnoozedUntil.IsZero() && u.clock.Now().Before(state.SnoozedUntil) {
+					shouldNotify = false
+					u.log.Debug("notification snoozed", "name", name, "until", state.SnoozedUntil)
+				} else if state.SnoozedUntil.IsZero() {
+					// No snooze configured: suppress forever for same digest.
+					shouldNotify = false
+					u.log.Debug("skipping duplicate notification", "name", name, "digest", check.RemoteDigest)
+				}
+				// If snooze expired, shouldNotify stays true — re-notify.
 			}
 		}
 
@@ -533,10 +540,16 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		if notifyOK {
 			lastNotified = now
 		}
+		snoozeDur := docker.ContainerNotifySnooze(c.Labels)
+		var snoozedUntil time.Time
+		if snoozeDur > 0 && notifyOK {
+			snoozedUntil = now.Add(snoozeDur)
+		}
 		if err := u.store.SetNotifyState(name, &store.NotifyState{
 			LastDigest:   check.RemoteDigest,
 			LastNotified: lastNotified,
 			FirstSeen:    firstSeen,
+			SnoozedUntil: snoozedUntil,
 		}); err != nil {
 			u.log.Warn("failed to persist notify state", "name", name, "error", err)
 		}
