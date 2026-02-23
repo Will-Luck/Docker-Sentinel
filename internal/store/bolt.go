@@ -275,6 +275,24 @@ func (s *Store) ListSnapshots(name string) ([]SnapshotEntry, error) {
 	return entries, nil
 }
 
+// ListAllHistory returns all update records, newest first.
+func (s *Store) ListAllHistory() ([]UpdateRecord, error) {
+	var records []UpdateRecord
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketHistory)
+		c := b.Cursor()
+		for k, v := c.Last(); k != nil; k, v = c.Prev() {
+			var rec UpdateRecord
+			if err := json.Unmarshal(v, &rec); err != nil {
+				continue
+			}
+			records = append(records, rec)
+		}
+		return nil
+	})
+	return records, err
+}
+
 // ListHistoryByContainer returns update records filtered by container name,
 // newest first, up to limit.
 func (s *Store) ListHistoryByContainer(name string, limit int) ([]UpdateRecord, error) {
