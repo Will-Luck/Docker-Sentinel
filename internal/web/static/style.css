@@ -3018,6 +3018,7 @@ table.managing .td-checkbox {
     .nav-link {
         padding: 0 var(--sp-3);
         font-size: 0.8rem;
+        min-height: 44px;
     }
 
     .main-content {
@@ -3043,6 +3044,63 @@ table.managing .td-checkbox {
 
     .filter-divider {
         display: none;
+    }
+
+    /* Hide low-priority table columns on tablet */
+    #container-table th:nth-child(3),
+    #container-table td:nth-child(3) {
+        display: none;
+    }
+
+    /* Queue table: hide Detected column */
+    .queue-table th:nth-child(4),
+    .queue-table td:nth-child(4) {
+        display: none;
+    }
+
+    /* Settings: single-column layout */
+    .setting-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-2);
+    }
+
+    .setting-info {
+        width: 100%;
+    }
+
+    .setting-select,
+    .setting-input,
+    .setting-textarea {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .poll-interval-control {
+        width: 100%;
+    }
+
+    .setting-control-stack {
+        width: 100%;
+        align-items: flex-start;
+    }
+
+    .toggle-switch-label {
+        min-height: 44px;
+    }
+
+    /* Card header buttons wrap and get larger touch targets */
+    .card-header-top {
+        gap: var(--sp-3);
+    }
+
+    .btn {
+        min-height: 36px;
+    }
+
+    /* Host grid single column */
+    .host-grid {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -3103,6 +3161,57 @@ table.managing .td-checkbox {
     }
 
     .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-2);
+    }
+
+    /* Also hide Policy column on small phones */
+    #container-table th:nth-child(4),
+    #container-table td:nth-child(4) {
+        display: none;
+    }
+
+    /* Accordion preview text hidden on small phones */
+    .accordion-preview {
+        display: none;
+    }
+
+    /* Tab navigation scrollable */
+    .tab-nav {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        flex-wrap: nowrap;
+    }
+
+    .tab-nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .tab-btn {
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    /* Channel cards stack fields */
+    .channel-field {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-1);
+    }
+
+    .channel-field-input {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .channel-card-header {
+        flex-wrap: wrap;
+    }
+
+    /* Footer wraps on small screens */
+    .app-footer {
         flex-direction: column;
         align-items: flex-start;
         gap: var(--sp-2);
