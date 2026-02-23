@@ -105,16 +105,17 @@ func TestLessThan(t *testing.T) {
 }
 
 func TestNewerVersions(t *testing.T) {
+	// Use a 2-part current tag so cross-minor results are in scope.
 	tags := []string{
 		"1.23.0", "1.24.0", "1.25.0", "1.25.1", "1.26.0",
 		"latest", "alpine", "1.25.0-rc1",
 		"v1.27.0", "1.20.0",
 	}
 
-	newer := NewerVersions("1.25.0", tags)
+	newer := NewerVersions("1.25", tags)
 
 	if len(newer) != 3 {
-		t.Fatalf("NewerVersions returned %d items, want 3 (1.25.1, 1.26.0, v1.27.0)", len(newer))
+		t.Fatalf("NewerVersions returned %d items, want 3 (v1.27.0, 1.26.0, 1.25.1)", len(newer))
 	}
 
 	// Should be sorted newest first.
@@ -163,6 +164,38 @@ func TestNewerVersionsCalverToCalver(t *testing.T) {
 	}
 	if newer[0].Raw != "2022.01.05" {
 		t.Errorf("expected 2022.01.05, got %s", newer[0].Raw)
+	}
+}
+
+func TestNewerVersionsThreePartScope(t *testing.T) {
+	// 3-part tag: only same major.minor (patch updates).
+	tags := []string{"1.13.4", "1.13.5", "1.14.0", "1.15.0", "2.0.0", "1.12.0"}
+	newer := NewerVersions("v1.13.3", tags)
+
+	expected := []string{"1.13.5", "1.13.4"}
+	if len(newer) != len(expected) {
+		t.Fatalf("got %d versions, want %d: %v", len(newer), len(expected), newer)
+	}
+	for i, sv := range newer {
+		if sv.Raw != expected[i] {
+			t.Errorf("newer[%d] = %q, want %q", i, sv.Raw, expected[i])
+		}
+	}
+}
+
+func TestNewerVersionsTwoPartScope(t *testing.T) {
+	// 2-part tag: same major (minor+patch updates allowed).
+	tags := []string{"3.20", "3.22", "3.23.1", "4.0.0", "3.19"}
+	newer := NewerVersions("3.21", tags)
+
+	expected := []string{"3.23.1", "3.22"}
+	if len(newer) != len(expected) {
+		t.Fatalf("got %d versions, want %d: %v", len(newer), len(expected), newer)
+	}
+	for i, sv := range newer {
+		if sv.Raw != expected[i] {
+			t.Errorf("newer[%d] = %q, want %q", i, sv.Raw, expected[i])
+		}
 	}
 }
 
