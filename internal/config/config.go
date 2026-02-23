@@ -49,6 +49,7 @@ type Config struct {
 	WebAuthnDisplayName string // RP display name shown by authenticators
 	WebAuthnOrigins     string // comma-separated allowed origins
 	MetricsEnabled      bool
+	MetricsTextfile     string // SENTINEL_METRICS_TEXTFILE — path for node_exporter textfile collector
 
 	// Cluster / multi-host
 	Mode               string        // "server" or "agent" — set via subcommand or SENTINEL_MODE env
@@ -123,6 +124,7 @@ func Load() *Config {
 		dependencyAware:     envBool("SENTINEL_DEPS", true),
 		rollbackPolicy:      envStr("SENTINEL_ROLLBACK_POLICY", ""),
 		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
+		MetricsTextfile:     envStr("SENTINEL_METRICS_TEXTFILE", ""),
 		imageBackup:         envBool("SENTINEL_IMAGE_BACKUP", false),
 		showStopped:         envBool("SENTINEL_SHOW_STOPPED", false),
 		removeVolumes:       envBool("SENTINEL_REMOVE_VOLUMES", false),

@@ -19,14 +19,15 @@ type SettingsReader interface {
 
 // Scheduler runs scan cycles at the configured poll interval.
 type Scheduler struct {
-	updater   *Updater
-	cfg       *config.Config
-	log       *logging.Logger
-	clock     clock.Clock
-	settings  SettingsReader
-	resetCh   chan struct{}
-	lastScan  time.Time
-	readyGate <-chan struct{} // if set, wait for close before initial scan
+	updater      *Updater
+	cfg          *config.Config
+	log          *logging.Logger
+	clock        clock.Clock
+	settings     SettingsReader
+	resetCh      chan struct{}
+	lastScan     time.Time
+	readyGate    <-chan struct{} // if set, wait for close before initial scan
+	scanCallback func()          // called after each scan completes (optional)
 }
 
 // NewScheduler creates a Scheduler.
@@ -43,6 +44,11 @@ func NewScheduler(u *Updater, cfg *config.Config, log *logging.Logger, clk clock
 // SetSettingsReader attaches a settings reader for runtime pause/filter checks.
 func (s *Scheduler) SetSettingsReader(sr SettingsReader) {
 	s.settings = sr
+}
+
+// SetScanCallback registers a function called after each scan completes.
+func (s *Scheduler) SetScanCallback(fn func()) {
+	s.scanCallback = fn
 }
 
 // SetReadyGate sets a channel the scheduler waits on before running the initial
@@ -105,6 +111,9 @@ func (s *Scheduler) logResult(r ScanResult) {
 		"failed", r.Failed,
 		"errors", len(r.Errors),
 	)
+	if s.scanCallback != nil {
+		s.scanCallback()
+	}
 }
 
 // SetPollInterval updates the poll interval at runtime and signals the scheduler to reset its timer.
