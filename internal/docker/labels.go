@@ -81,7 +81,22 @@ func ContainerNotifySnooze(labels map[string]string) time.Duration {
 	if !ok || v == "" {
 		return 0
 	}
-	d, err := parseDurationWithDays(v)
+	d, err := ParseDurationWithDays(v)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+// ContainerUpdateDelay reads the sentinel.delay label and returns the minimum
+// age an update must have been tracked before it is applied. Returns 0 if the
+// label is absent or invalid.
+func ContainerUpdateDelay(labels map[string]string) time.Duration {
+	v, ok := labels["sentinel.delay"]
+	if !ok || v == "" {
+		return 0
+	}
+	d, err := ParseDurationWithDays(v)
 	if err != nil {
 		return 0
 	}
@@ -118,8 +133,8 @@ func ContainerSemverScope(labels map[string]string) SemverScope {
 	}
 }
 
-// parseDurationWithDays extends time.ParseDuration with a "d" suffix for days.
-func parseDurationWithDays(s string) (time.Duration, error) {
+// ParseDurationWithDays extends time.ParseDuration with a "d" suffix for days.
+func ParseDurationWithDays(s string) (time.Duration, error) {
 	if strings.HasSuffix(s, "d") {
 		days := strings.TrimSuffix(s, "d")
 		n, err := strconv.Atoi(days)

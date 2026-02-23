@@ -280,6 +280,12 @@ function initSettingsPage() {
                 pullOnlyToggle.checked = pullOnly;
                 updateToggleText("pull-only-text", pullOnly);
             }
+
+            // Update delay.
+            var updateDelayInput = document.getElementById("update-delay");
+            if (updateDelayInput) {
+                updateDelayInput.value = settings["update_delay"] || "";
+            }
         })
         .catch(function() { /* ignore — falls back to defaults */ });
 
@@ -832,6 +838,31 @@ function setPullOnly(enabled) {
         })
         .catch(function() {
             showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setUpdateDelay() {
+    var input = document.getElementById("update-delay");
+    if (!input) return;
+    fetch("/api/settings/update-delay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration: input.value })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Update delay saved", "success");
+            } else {
+                showToast(result.data.error || "Failed to save update delay", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error — could not save update delay", "error");
         });
 }
 

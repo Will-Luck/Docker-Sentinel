@@ -490,6 +490,33 @@ func (s *Server) apiSetDryRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "dry-run mode " + label})
 }
 
+// apiSetUpdateDelay sets the global update delay. Updates are only applied
+// after the delay has elapsed since first detection.
+func (s *Server) apiSetUpdateDelay(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Duration string `json:"duration"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	if err := s.deps.SettingsStore.SaveSetting("update_delay", req.Duration); err != nil {
+		s.deps.Log.Error("failed to save update_delay", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	msg := "Update delay cleared"
+	if req.Duration != "" {
+		msg = "Update delay set to " + req.Duration
+	}
+	s.logEvent(r, "settings", "", msg)
+	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
+}
+
 // apiSetPullOnly enables or disables pull-only mode.
 // When enabled, the new image is pulled but containers are not restarted.
 func (s *Server) apiSetPullOnly(w http.ResponseWriter, r *http.Request) {

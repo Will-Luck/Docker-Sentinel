@@ -278,6 +278,23 @@ func (u *Updater) isPullOnly() bool {
 	return val == "true"
 }
 
+// globalUpdateDelay reads the update_delay setting from the settings store.
+// Returns 0 if not set or unparseable.
+func (u *Updater) globalUpdateDelay() time.Duration {
+	if u.settings == nil {
+		return 0
+	}
+	val, err := u.settings.LoadSetting("update_delay")
+	if err != nil || val == "" {
+		return 0
+	}
+	d, err := docker.ParseDurationWithDays(val)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
 // rollbackPolicy returns the configured rollback policy, checking both the
 // in-memory Config and the persisted SettingsStore. This ensures the engine
 // respects UI-configured values even after restart (Config is hydrated from
@@ -642,6 +659,27 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				result.Updated++
 				continue
 			}
+			// Delay check: skip update if the update hasn't been seen long enough.
+			delay := docker.ContainerUpdateDelay(labels)
+			if delay == 0 {
+				delay = u.globalUpdateDelay()
+			}
+			if delay > 0 {
+				state, _ := u.store.GetNotifyState(name)
+				if state != nil && !state.FirstSeen.IsZero() {
+					age := u.clock.Now().Sub(state.FirstSeen)
+					if age < delay {
+						u.log.Info("update delayed", "name", name,
+							"age", age.Round(time.Minute), "required", delay)
+						result.Skipped++
+						continue
+					}
+				} else {
+					u.log.Info("update delay: first detection, waiting", "name", name, "delay", delay)
+					result.Skipped++
+					continue
+				}
+			}
 			if err := u.UpdateContainer(ctx, c.ID, name, scanTarget); err != nil {
 				u.log.Error("auto-update failed", "name", name, "error", err)
 				result.Failed++
@@ -869,6 +907,28 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 					Outcome:       "dry_run",
 				})
 				continue
+			}
+			// Delay check using the scoped name for remote containers.
+			delay := docker.ContainerUpdateDelay(c.Labels)
+			if delay == 0 {
+				delay = u.globalUpdateDelay()
+			}
+			if delay > 0 {
+				state, _ := u.store.GetNotifyState(scopedName)
+				if state != nil && !state.FirstSeen.IsZero() {
+					age := u.clock.Now().Sub(state.FirstSeen)
+					if age < delay {
+						u.log.Info("remote update delayed", "host", host.HostName, "name", c.Name,
+							"age", age.Round(time.Minute), "required", delay)
+						result.Skipped++
+						continue
+					}
+				} else {
+					u.log.Info("remote update delay: first detection, waiting",
+						"host", host.HostName, "name", c.Name, "delay", delay)
+					result.Skipped++
+					continue
+				}
 			}
 
 			// Dispatch update to the remote agent.
