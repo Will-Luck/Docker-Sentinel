@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -248,6 +249,32 @@ func NewerVersionsScoped(current string, tags []string, scope docker.SemverScope
 	})
 
 	return newer
+}
+
+// FilterTags filters a tag list by include/exclude regex patterns.
+// Invalid regex patterns are silently ignored (treated as absent).
+func FilterTags(tags []string, includeRE, excludeRE string) []string {
+	var inc, exc *regexp.Regexp
+	if includeRE != "" {
+		inc, _ = regexp.Compile(includeRE)
+	}
+	if excludeRE != "" {
+		exc, _ = regexp.Compile(excludeRE)
+	}
+	if inc == nil && exc == nil {
+		return tags
+	}
+	var result []string
+	for _, t := range tags {
+		if inc != nil && !inc.MatchString(t) {
+			continue
+		}
+		if exc != nil && exc.MatchString(t) {
+			continue
+		}
+		result = append(result, t)
+	}
+	return result
 }
 
 // versionSchemeMismatch returns true when two versions appear to use different

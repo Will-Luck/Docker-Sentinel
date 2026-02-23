@@ -252,6 +252,19 @@ func (u *Updater) publishEvent(evtType events.EventType, name, message string) {
 	})
 }
 
+// isDryRun returns true when dry_run mode is enabled in settings.
+// In dry-run mode, updates are detected and recorded but never executed.
+func (u *Updater) isDryRun() bool {
+	if u.settings == nil {
+		return false
+	}
+	val, err := u.settings.LoadSetting("dry_run")
+	if err != nil {
+		return false
+	}
+	return val == "true"
+}
+
 // rollbackPolicy returns the configured rollback policy, checking both the
 // in-memory Config and the persisted SettingsStore. This ensures the engine
 // respects UI-configured values even after restart (Config is hydrated from
@@ -417,7 +430,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 
 		// Check the registry for an update (versioned check also finds newer semver tags).
 		semverScope := docker.ContainerSemverScope(labels)
-		check := u.checker.CheckVersioned(ctx, imageRef, semverScope)
+		includeRE, excludeRE := docker.ContainerTagFilters(labels)
+		check := u.checker.CheckVersioned(ctx, imageRef, semverScope, includeRE, excludeRE)
 
 		if check.Error != nil {
 			u.log.Warn("registry check failed", "name", name, "image", imageRef, "error", check.Error)
@@ -582,6 +596,17 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		switch policy {
 		case docker.PolicyAuto:
 			result.AutoCount++
+			if u.isDryRun() {
+				u.log.Info("dry-run: would update", "name", name, "target", scanTarget)
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: name,
+					OldImage:      imageRef,
+					NewImage:      scanTarget,
+					Outcome:       "dry_run",
+				})
+				continue
+			}
 			if err := u.UpdateContainer(ctx, c.ID, name, scanTarget); err != nil {
 				u.log.Error("auto-update failed", "name", name, "error", err)
 				result.Failed++
@@ -752,7 +777,8 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		// instead of local Docker inspect — the image may not exist on
 		// the server's Docker daemon.
 		semverScope := docker.ContainerSemverScope(c.Labels)
-		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest, semverScope)
+		includeRE, excludeRE := docker.ContainerTagFilters(c.Labels)
+		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest, semverScope, includeRE, excludeRE)
 		if check.Error != nil {
 			u.log.Warn("registry check failed for remote container",
 				"host", host.HostName, "name", c.Name, "error", check.Error)
@@ -798,6 +824,17 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		switch policy {
 		case docker.PolicyAuto:
 			result.AutoCount++
+			if u.isDryRun() {
+				u.log.Info("dry-run: would update remote container", "host", host.HostName, "name", c.Name, "target", scanTarget)
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: scopedName,
+					OldImage:      c.Image,
+					NewImage:      scanTarget,
+					Outcome:       "dry_run",
+				})
+				continue
+			}
 
 			// Dispatch update to the remote agent.
 			ur, updateErr := u.cluster.UpdateContainer(ctx, hostID, c.Name, scanTarget, check.RemoteDigest)

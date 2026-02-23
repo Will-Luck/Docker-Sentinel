@@ -242,6 +242,38 @@ func TestNewerVersionsScoped(t *testing.T) {
 	}
 }
 
+func TestFilterTags(t *testing.T) {
+	tags := []string{"1.0.0", "1.0.1", "1.1.0", "2.0.0-rc1", "2.0.0", "latest", "alpine"}
+
+	tests := []struct {
+		name    string
+		include string
+		exclude string
+		want    []string
+	}{
+		{"no filters", "", "", tags},
+		{"include only", `^\d+\.\d+\.\d+$`, "", []string{"1.0.0", "1.0.1", "1.1.0", "2.0.0"}},
+		{"exclude rc", "", `rc`, []string{"1.0.0", "1.0.1", "1.1.0", "2.0.0", "latest", "alpine"}},
+		{"include and exclude", `^\d`, `rc`, []string{"1.0.0", "1.0.1", "1.1.0", "2.0.0"}},
+		{"invalid include regex ignored", `[invalid`, "", tags},
+		{"empty result", `^nonexistent$`, "", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FilterTags(tags, tt.include, tt.exclude)
+			if len(got) != len(tt.want) {
+				t.Fatalf("FilterTags len = %d, want %d: got %v", len(got), len(tt.want), got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("FilterTags[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestNormaliseRepo(t *testing.T) {
 	tests := []struct {
 		input string
