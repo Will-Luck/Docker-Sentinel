@@ -20,6 +20,7 @@ const (
 	ProviderTelegram ProviderType = "telegram"
 	ProviderPushover ProviderType = "pushover"
 	ProviderSMTP     ProviderType = "smtp"
+	ProviderApprise  ProviderType = "apprise"
 )
 
 // Channel represents a single notification channel with typed settings.
@@ -112,6 +113,13 @@ func BuildNotifier(ch Channel) (Notifier, error) {
 		}
 		return NewSMTP(s.Host, s.Port, s.From, s.To, s.Username, s.Password, s.TLS), nil
 
+	case ProviderApprise:
+		var s AppriseSettings
+		if err := json.Unmarshal(ch.Settings, &s); err != nil {
+			return nil, fmt.Errorf("unmarshal apprise settings: %w", err)
+		}
+		return NewApprise(s.URL, s.Tag, s.Urls), nil
+
 	default:
 		return nil, fmt.Errorf("unknown provider type: %q", ch.Type)
 	}
@@ -138,6 +146,8 @@ func MaskSecrets(ch Channel) Channel {
 		masked.Settings = maskNtfySecrets(ch.Settings)
 	case ProviderSMTP:
 		masked.Settings = maskStringField(ch.Settings, "password")
+	case ProviderApprise:
+		masked.Settings = maskStringField(ch.Settings, "urls")
 	}
 	return masked
 }
