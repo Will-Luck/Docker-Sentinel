@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -81,12 +82,12 @@ func (c *Client) RemoveContainer(ctx context.Context, endpointID int, containerI
 }
 
 func (c *Client) PullImage(ctx context.Context, endpointID int, image, tag string) error {
-	path := fmt.Sprintf("/api/endpoints/%d/docker/images/create?fromImage=%s&tag=%s", endpointID, image, tag)
+	path := fmt.Sprintf("/api/endpoints/%d/docker/images/create?fromImage=%s&tag=%s", endpointID, url.QueryEscape(image), url.QueryEscape(tag))
 	return c.post(ctx, path, nil)
 }
 
 func (c *Client) CreateContainer(ctx context.Context, endpointID int, name string, body interface{}) (string, error) {
-	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/create?name=%s", endpointID, name)
+	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/create?name=%s", endpointID, url.QueryEscape(name))
 	var resp ContainerCreateResponse
 	if err := c.postJSON(ctx, path, body, &resp); err != nil {
 		return "", fmt.Errorf("create container: %w", err)
