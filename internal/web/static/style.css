@@ -4099,3 +4099,16 @@ input[type="checkbox"] {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* All Registry Tags accordion */
+.tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-5);
+}
+
+.tag-item {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}

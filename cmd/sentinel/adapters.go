@@ -336,6 +336,26 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	return versions, nil
 }
 
+// tagListerAdapter bridges registry.ListTags to web.RegistryTagLister.
+type tagListerAdapter struct {
+	log *logging.Logger
+}
+
+func (a *tagListerAdapter) ListAllTags(ctx context.Context, imageRef string) ([]string, error) {
+	repo := registry.RepoPath(imageRef)
+	host := registry.RegistryHost(imageRef)
+
+	token, err := registry.FetchToken(ctx, repo, nil, host)
+	if err != nil {
+		return nil, fmt.Errorf("fetch token: %w", err)
+	}
+	tagsResult, err := registry.ListTags(ctx, imageRef, token, host, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list tags: %w", err)
+	}
+	return tagsResult.Tags, nil
+}
+
 // registryCheckerAdapter bridges registry.Checker to web.RegistryChecker.
 type registryCheckerAdapter struct {
 	checker *registry.Checker

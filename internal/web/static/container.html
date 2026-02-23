@@ -191,6 +191,18 @@
             </details>
             {{end}}
 
+            <!-- All Tags -->
+            <details class="accordion card" id="all-tags-section">
+                <summary class="accordion-header" onclick="loadAllTags(this)">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>All Registry Tags</h2>
+                    <span class="accordion-preview" id="all-tags-preview">Click to load</span>
+                </summary>
+                <div class="accordion-body" id="all-tags-body">
+                    <div class="accordion-empty">Loading...</div>
+                </div>
+            </details>
+
             <!-- Update History -->
             <details class="accordion card">
                 <summary class="accordion-header">

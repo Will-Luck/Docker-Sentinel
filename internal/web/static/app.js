@@ -1617,6 +1617,40 @@ function switchToGHCR(name, ghcrImage) {
     });
 }
 
+function loadAllTags(summaryEl) {
+    var details = summaryEl.parentElement;
+    // Only fetch once — after first load the body is populated.
+    if (details.dataset.tagsLoaded) return;
+    details.dataset.tagsLoaded = "1";
+
+    var name = window._containerName;
+    if (!name) return;
+
+    var body = document.getElementById("all-tags-body");
+    var preview = document.getElementById("all-tags-preview");
+
+    fetch("/api/containers/" + encodeURIComponent(name) + "/tags")
+        .then(function(r) { return r.json(); })
+        .then(function(tags) {
+            if (!tags || tags.length === 0) {
+                if (body) body.innerHTML = '<div class="accordion-empty">No tags found.</div>';
+                if (preview) preview.textContent = "None";
+                return;
+            }
+            if (preview) preview.textContent = tags.length + " tags";
+            var html = '<div class="tag-list">';
+            for (var i = 0; i < tags.length; i++) {
+                html += '<span class="badge badge-muted tag-item">' + escapeHtml(tags[i]) + '</span>';
+            }
+            html += '</div>';
+            if (body) body.innerHTML = html;
+        })
+        .catch(function() {
+            if (body) body.innerHTML = '<div class="accordion-empty">Failed to load tags.</div>';
+            if (preview) preview.textContent = "Error";
+        });
+}
+
 function updateToVersion(name, hostId) {
     var sel = document.getElementById("version-select");
     if (!sel || !sel.value) return;
