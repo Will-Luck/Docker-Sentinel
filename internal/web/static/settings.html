@@ -471,6 +471,40 @@
                     </div>
                 </details>
 
+                <!-- Home Assistant MQTT Discovery -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Home Assistant Integration</h2>
+                        <span class="accordion-preview">MQTT auto-discovery for Home Assistant</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="accordion-intro">Publish MQTT auto-discovery payloads so Sentinel containers appear as entities in Home Assistant. Requires an MQTT notification channel to be configured.</p>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Enable HA discovery</div>
+                                    <div class="setting-desc">Publish update state to Home Assistant via MQTT after each scan. Uses the first enabled MQTT notification channel.</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="ha-discovery-toggle" class="channel-toggle" onchange="setHADiscovery(this.checked)">
+                                    <span id="ha-discovery-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Discovery prefix</div>
+                                    <div class="setting-desc">MQTT topic prefix for HA auto-discovery (default: homeassistant)</div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <input type="text" id="ha-discovery-prefix" class="setting-select" placeholder="homeassistant" style="max-width:200px">
+                                    <button class="btn btn-success" onclick="saveHADiscoveryPrefix()">Save</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- Per-Container Notification Overrides -->
                 <details class="accordion card">
                     <summary class="accordion-header">

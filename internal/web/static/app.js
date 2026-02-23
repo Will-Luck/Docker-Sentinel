@@ -286,6 +286,18 @@ function initSettingsPage() {
             if (updateDelayInput) {
                 updateDelayInput.value = settings["update_delay"] || "";
             }
+
+            // HA discovery toggle.
+            var haToggle = document.getElementById("ha-discovery-toggle");
+            if (haToggle) {
+                var haEnabled = settings["ha_discovery_enabled"] === "true";
+                haToggle.checked = haEnabled;
+                updateToggleText("ha-discovery-text", haEnabled);
+            }
+            var haPrefixInput = document.getElementById("ha-discovery-prefix");
+            if (haPrefixInput) {
+                haPrefixInput.value = settings["ha_discovery_prefix"] || "homeassistant";
+            }
         })
         .catch(function() { /* ignore — falls back to defaults */ });
 
@@ -838,6 +850,40 @@ function setPullOnly(enabled) {
         })
         .catch(function() {
             showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setHADiscovery(enabled) {
+    updateToggleText("ha-discovery-text", enabled);
+    var prefix = (document.getElementById("ha-discovery-prefix") || {}).value || "";
+    fetch("/api/settings/ha-discovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled, prefix: prefix })
+    })
+        .then(function(r) {
+            if (r.status === 204) { showToast("HA discovery " + (enabled ? "enabled" : "disabled"), "success"); return; }
+            return r.json().then(function(d) { if (d.error) showToast(d.error, "error"); });
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function saveHADiscoveryPrefix() {
+    var prefix = (document.getElementById("ha-discovery-prefix") || {}).value || "";
+    var enabled = (document.getElementById("ha-discovery-toggle") || {}).checked || false;
+    fetch("/api/settings/ha-discovery", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled, prefix: prefix })
+    })
+        .then(function(r) {
+            if (r.status === 204) { showToast("Discovery prefix saved", "success"); return; }
+            return r.json().then(function(d) { if (d.error) showToast(d.error, "error"); });
+        })
+        .catch(function() {
+            showToast("Network error — could not save prefix", "error");
         });
 }
 
