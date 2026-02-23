@@ -264,6 +264,14 @@ function initSettingsPage() {
                 hooksLabelsToggle.checked = hooksLabels;
                 updateToggleText("hooks-labels-text", hooksLabels);
             }
+
+            // Dry-run toggle.
+            var dryRunToggle = document.getElementById("dry-run-toggle");
+            if (dryRunToggle) {
+                var dryRun = settings["dry_run"] === "true";
+                dryRunToggle.checked = dryRun;
+                updateToggleText("dry-run-text", dryRun);
+            }
         })
         .catch(function() { /* ignore — falls back to defaults */ });
 
@@ -774,6 +782,22 @@ function setHooksEnabled(enabled) {
 function setHooksWriteLabels(enabled) {
     updateToggleText("hooks-labels-text", enabled);
     fetch("/api/settings/hooks-write-labels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setDryRun(enabled) {
+    updateToggleText("dry-run-text", enabled);
+    fetch("/api/settings/dry-run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: enabled })

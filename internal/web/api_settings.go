@@ -445,6 +445,41 @@ func (s *Server) apiSetRollbackPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
 }
 
+// apiSetDryRun enables or disables dry-run mode.
+// When enabled, updates are detected and notified but never executed.
+func (s *Server) apiSetDryRun(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("dry_run", value); err != nil {
+		s.deps.Log.Error("failed to save dry_run", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Dry-run mode "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "dry-run mode " + label})
+}
+
 // apiClusterSettings returns the current cluster configuration with defaults
 // for any keys not yet saved to BoltDB.
 func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
