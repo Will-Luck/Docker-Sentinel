@@ -391,6 +391,9 @@ function initSettingsPage() {
     // Load registry credentials and rate limits.
     loadRegistries();
 
+    // Load release note sources.
+    loadReleaseSources();
+
     // Load GHCR alternatives table on registries tab.
     renderGHCRAlternatives();
 
@@ -4953,4 +4956,129 @@ function formatAboutTimeAgo(iso) {
     } catch(e) {
         return iso;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Release note sources
+// ---------------------------------------------------------------------------
+
+var releaseSources = [];
+
+function loadReleaseSources() {
+    var container = document.getElementById("release-sources-list");
+    if (!container) return;
+    fetch("/api/release-sources")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            releaseSources = Array.isArray(data) ? data : [];
+            renderReleaseSources();
+        })
+        .catch(function() {});
+}
+
+function renderReleaseSources() {
+    var container = document.getElementById("release-sources-list");
+    if (!container) return;
+    container.textContent = "";
+
+    if (releaseSources.length === 0) {
+        var empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.style.padding = "var(--sp-6) var(--sp-4)";
+        var h3 = document.createElement("h3");
+        h3.textContent = "No custom sources configured";
+        var p = document.createElement("p");
+        p.textContent = "Add mappings to fetch release notes for images not covered by built-in rules.";
+        empty.appendChild(h3);
+        empty.appendChild(p);
+        container.appendChild(empty);
+        return;
+    }
+
+    releaseSources.forEach(function(src, index) {
+        var card = document.createElement("div");
+        card.className = "channel-card";
+
+        var header = document.createElement("div");
+        header.className = "channel-card-header";
+        var badge = document.createElement("span");
+        badge.className = "channel-type-badge";
+        badge.textContent = src.image_pattern || "source";
+        header.appendChild(badge);
+
+        var actions = document.createElement("div");
+        actions.className = "channel-actions";
+        var delBtn = document.createElement("button");
+        delBtn.className = "btn btn-sm btn-error";
+        delBtn.textContent = "Remove";
+        (function(i) {
+            delBtn.addEventListener("click", function() { deleteReleaseSource(i); });
+        })(index);
+        actions.appendChild(delBtn);
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        var fields = document.createElement("div");
+        fields.className = "channel-fields";
+        [
+            { label: "Image Pattern", field: "image_pattern", value: src.image_pattern },
+            { label: "GitHub Repo", field: "github_repo", value: src.github_repo }
+        ].forEach(function(def) {
+            var row = document.createElement("div");
+            row.className = "channel-field";
+            var lbl = document.createElement("span");
+            lbl.className = "channel-field-label";
+            lbl.textContent = def.label;
+            row.appendChild(lbl);
+            var inp = document.createElement("input");
+            inp.type = "text";
+            inp.className = "channel-field-input";
+            inp.value = def.value || "";
+            inp.setAttribute("data-index", index);
+            inp.setAttribute("data-field", def.field);
+            row.appendChild(inp);
+            fields.appendChild(row);
+        });
+        card.appendChild(fields);
+        container.appendChild(card);
+    });
+}
+
+function addReleaseSource() {
+    releaseSources.push({ image_pattern: "", github_repo: "" });
+    renderReleaseSources();
+}
+
+function deleteReleaseSource(index) {
+    releaseSources.splice(index, 1);
+    renderReleaseSources();
+}
+
+function collectReleaseSourcesFromDOM() {
+    var inputs = document.querySelectorAll("#release-sources-list input[data-field]");
+    var map = {};
+    inputs.forEach(function(inp) {
+        var i = inp.getAttribute("data-index");
+        var f = inp.getAttribute("data-field");
+        if (!map[i]) map[i] = {};
+        map[i][f] = inp.value.trim();
+    });
+    return Object.keys(map).sort(function(a,b){return a-b;}).map(function(k){ return map[k]; });
+}
+
+function saveReleaseSources(event) {
+    if (event) event.preventDefault();
+    var sources = collectReleaseSourcesFromDOM();
+    fetch("/api/release-sources", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": getCSRFToken() },
+        body: JSON.stringify(sources)
+    }).then(function(r) {
+        if (r.ok) {
+            releaseSources = sources;
+            showToast("Release sources saved", "success");
+        } else {
+            r.json().then(function(d) { showToast("Save failed: " + (d.error || r.status), "error"); });
+        }
+    }).catch(function() { showToast("Save failed", "error"); });
 }

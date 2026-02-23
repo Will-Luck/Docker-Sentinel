@@ -57,6 +57,7 @@ type Dependencies struct {
 	GHCRCache           GHCRAlternativeProvider
 	AboutStore          AboutStore
 	HookStore           HookStore
+	ReleaseSources      ReleaseSourceStore
 	Swarm               SwarmProvider      // nil when not in Swarm mode
 	Cluster             *ClusterController // thread-safe proxy; always non-nil, use .Enabled() to check
 	MetricsEnabled      bool
@@ -310,6 +311,18 @@ type ServiceDetail struct {
 	ServiceSummary
 	Tasks        []TaskInfo
 	UpdateStatus string
+}
+
+// ReleaseSourceStore reads and writes configurable release note sources.
+type ReleaseSourceStore interface {
+	GetReleaseSources() ([]ReleaseSource, error)
+	SetReleaseSources(sources []ReleaseSource) error
+}
+
+// ReleaseSource mirrors registry.ReleaseSource for the web layer.
+type ReleaseSource struct {
+	ImagePattern string `json:"image_pattern"`
+	GitHubRepo   string `json:"github_repo"`
 }
 
 // HookStore reads and writes lifecycle hook configurations.
@@ -746,6 +759,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
 	s.mux.Handle("GET /api/settings/registries", perm(auth.PermSettingsView, s.apiGetRegistryCredentials))
+	s.mux.Handle("GET /api/release-sources", perm(auth.PermSettingsView, s.apiGetReleaseSources))
 	s.mux.Handle("GET /api/ratelimits", perm(auth.PermContainersView, s.apiGetRateLimits))
 	s.mux.Handle("GET /api/about", perm(auth.PermSettingsView, s.apiAbout))
 	s.mux.Handle("GET /api/ghcr/alternatives", perm(auth.PermContainersView, s.apiGetGHCRAlternatives))
@@ -771,6 +785,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
 	s.mux.Handle("PUT /api/settings/registries", perm(auth.PermSettingsModify, s.apiSaveRegistryCredentials))
+	s.mux.Handle("PUT /api/release-sources", perm(auth.PermSettingsModify, s.apiSetReleaseSources))
 	s.mux.Handle("POST /api/settings/registries/test", perm(auth.PermSettingsModify, s.apiTestRegistryCredential))
 	s.mux.Handle("DELETE /api/settings/registries/{id}", perm(auth.PermSettingsModify, s.apiDeleteRegistryCredential))
 	s.mux.Handle("POST /api/self-update", perm(auth.PermSettingsModify, s.apiSelfUpdate))

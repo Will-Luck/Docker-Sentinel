@@ -25,6 +25,7 @@ var (
 	bucketRateLimits       = []byte("rate_limits")
 	bucketGHCRAlternatives = []byte("ghcr_alternatives")
 	bucketHooks            = []byte("hooks")
+	bucketReleaseSources   = []byte("release_sources")
 
 	// Cluster / multi-host
 	bucketClusterHosts       = []byte("cluster_hosts")
@@ -72,7 +73,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
