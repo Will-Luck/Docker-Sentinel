@@ -3340,6 +3340,14 @@ var PROVIDER_FIELDS = {
         { key: "tag", label: "Config Tag", type: "text", placeholder: "Tag for persistent config (optional)" },
         { key: "urls", label: "Apprise URLs", type: "text", placeholder: "Apprise URL(s) for stateless mode (optional)" }
     ],
+    mqtt: [
+        { key: "broker", label: "Broker URL", type: "text", placeholder: "tcp://mqtt:1883" },
+        { key: "topic", label: "Topic", type: "text", placeholder: "sentinel/events" },
+        { key: "client_id", label: "Client ID", type: "text", placeholder: "docker-sentinel (optional)" },
+        { key: "username", label: "Username", type: "text", placeholder: "Username (optional)" },
+        { key: "password", label: "Password", type: "password", placeholder: "Password (optional)" },
+        { key: "qos", label: "QoS", type: "text", placeholder: "0, 1, or 2 (default: 0)" }
+    ],
 };
 
 var notificationChannels = [];
