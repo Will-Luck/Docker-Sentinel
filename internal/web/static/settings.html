@@ -280,6 +280,16 @@
                                 <span id="compose-sync-text" class="toggle-switch-text">Off</span>
                             </label>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Image backup before update</div>
+                                <div class="setting-desc">Retag the current image as <code>:sentinel-backup-YYYYMMDD-HHmmss</code> before pulling a new one</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="image-backup-toggle" class="channel-toggle" onchange="setImageBackup(this.checked)">
+                                <span id="image-backup-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>

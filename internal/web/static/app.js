@@ -295,6 +295,14 @@ function initSettingsPage() {
                 updateToggleText("compose-sync-text", composeSync);
             }
 
+            // Image backup toggle.
+            var imageBackupToggle = document.getElementById("image-backup-toggle");
+            if (imageBackupToggle) {
+                var imageBackup = settings["image_backup"] === "true";
+                imageBackupToggle.checked = imageBackup;
+                updateToggleText("image-backup-text", imageBackup);
+            }
+
             // HA discovery toggle.
             var haToggle = document.getElementById("ha-discovery-toggle");
             if (haToggle) {
@@ -864,6 +872,22 @@ function setPullOnly(enabled) {
 function setComposeSync(enabled) {
     updateToggleText("compose-sync-text", enabled);
     fetch("/api/settings/compose-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setImageBackup(enabled) {
+    updateToggleText("image-backup-text", enabled);
+    fetch("/api/settings/image-backup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: enabled })
