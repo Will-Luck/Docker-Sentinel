@@ -85,6 +85,33 @@ type ClusterScanner interface {
 	UpdateContainer(ctx context.Context, hostID string, containerName, targetImage, targetDigest string) (RemoteUpdateResult, error)
 }
 
+// PortainerScanner provides Portainer endpoint scanning.
+type PortainerScanner interface {
+	Endpoints(ctx context.Context) ([]PortainerEndpointInfo, error)
+	EndpointContainers(ctx context.Context, endpointID int) ([]PortainerContainerResult, error)
+	ResetCache()
+	RedeployStack(ctx context.Context, stackID, endpointID int) error
+	UpdateStandaloneContainer(ctx context.Context, endpointID int, containerID, newImage string) error
+}
+
+// PortainerEndpointInfo identifies a Portainer-managed Docker environment.
+type PortainerEndpointInfo struct {
+	ID   int
+	Name string
+}
+
+// PortainerContainerResult is a container from a Portainer-managed environment.
+type PortainerContainerResult struct {
+	ID         string
+	Name       string
+	Image      string
+	State      string
+	Labels     map[string]string
+	EndpointID int
+	StackID    int
+	StackName  string
+}
+
 // HostContext identifies a remote host for scoped operations.
 type HostContext struct {
 	HostID   string
@@ -134,6 +161,7 @@ type Updater struct {
 	deps        *deps.Graph                // optional: dependency graph (rebuilt each scan)
 	cluster     ClusterScanner             // optional: nil = single-host mode
 	haDiscovery *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
+	portainer   PortainerScanner           // optional: nil = no Portainer integration
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -190,6 +218,12 @@ func (u *Updater) SetClusterScanner(cs ClusterScanner) {
 // SetHADiscovery attaches an HA MQTT auto-discovery publisher.
 func (u *Updater) SetHADiscovery(h *notify.HADiscovery) {
 	u.haDiscovery = h
+}
+
+// SetPortainerScanner attaches a Portainer scanner for remote endpoint scanning.
+// When nil (the default), Portainer scanning is skipped entirely.
+func (u *Updater) SetPortainerScanner(ps PortainerScanner) {
+	u.portainer = ps
 }
 
 // tryLock attempts to acquire the per-container update lock.
@@ -796,6 +830,10 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.scanRemoteHosts(ctx, mode, &result, filters, reserve)
 	}
 
+	if u.portainer != nil {
+		u.scanPortainerEndpoints(ctx, mode, &result, filters, reserve)
+	}
+
 	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf(
 		"total=%d updated=%d queued=%d skipped=%d rate_limited=%d failed=%d services=%d",
 		result.Total, result.Updated, result.Queued, result.Skipped, result.RateLimited, result.Failed, result.ServiceUpdates))
@@ -1083,6 +1121,194 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			})
 			u.log.Info("remote update queued for approval",
 				"host", host.HostName, "name", c.Name)
+			u.publishEvent(events.EventQueueChange, scopedName, "queued for approval")
+			result.Queued++
+		}
+	}
+}
+
+// scanPortainerEndpoints iterates Portainer endpoints and scans their containers.
+// Registry checks run server-side; updates are dispatched via PortainerScanner.
+func (u *Updater) scanPortainerEndpoints(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int) {
+	u.portainer.ResetCache()
+
+	endpoints, err := u.portainer.Endpoints(ctx)
+	if err != nil {
+		u.log.Error("failed to list Portainer endpoints", "error", err)
+		return
+	}
+	if len(endpoints) == 0 {
+		return
+	}
+
+	u.log.Info("scanning Portainer endpoints", "count", len(endpoints))
+
+	for _, ep := range endpoints {
+		if ctx.Err() != nil {
+			return
+		}
+		u.scanPortainerEndpoint(ctx, ep, mode, result, filters, reserve)
+	}
+}
+
+// scanPortainerEndpoint scans a single Portainer endpoint's containers for updates.
+func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpointInfo, mode ScanMode, result *ScanResult, filters []string, reserve int) {
+	containers, err := u.portainer.EndpointContainers(ctx, ep.ID)
+	if err != nil {
+		u.log.Error("failed to list Portainer endpoint containers", "endpoint", ep.Name, "error", err)
+		return
+	}
+
+	u.log.Info("scanning Portainer endpoint", "endpoint", ep.Name, "containers", len(containers))
+
+	hostID := fmt.Sprintf("portainer:%d", ep.ID)
+	remoteDefault := u.cfg.DefaultPolicy()
+
+	// Track redeployed stacks to avoid re-triggering the same stack multiple times.
+	redeployedStacks := make(map[int]bool)
+
+	for _, c := range containers {
+		if ctx.Err() != nil {
+			return
+		}
+
+		result.Total++
+
+		tag := registry.ExtractTag(c.Image)
+		resolved := ResolvePolicy(u.store, c.Labels, store.ScopedKey(hostID, c.Name), tag, remoteDefault, u.cfg.LatestAutoUpdate())
+		policy := docker.Policy(resolved.Policy)
+
+		if policy == docker.PolicyPinned {
+			u.log.Debug("skipping pinned Portainer container", "endpoint", ep.Name, "name", c.Name)
+			result.Skipped++
+			continue
+		}
+
+		if MatchesFilter(c.Name, filters) {
+			u.log.Debug("skipping filtered Portainer container", "endpoint", ep.Name, "name", c.Name)
+			result.Skipped++
+			continue
+		}
+
+		if u.rateTracker != nil {
+			regHost := registry.RegistryHost(c.Image)
+			canProceed, wait := u.rateTracker.CanProceed(regHost, reserve)
+			if !canProceed {
+				if mode == ScanManual {
+					u.log.Warn("rate limit exhausted during Portainer scan, stopping",
+						"registry", regHost, "resets_in", wait)
+					result.RateLimited++
+					return
+				}
+				u.log.Debug("rate limit low, skipping Portainer container",
+					"endpoint", ep.Name, "name", c.Name, "registry", regHost)
+				result.RateLimited++
+				continue
+			}
+		}
+
+		// No image digest available from the Portainer list API — pass "" so
+		// CheckVersionedWithDigest falls back to a full registry check.
+		semverScope := docker.ContainerSemverScope(c.Labels)
+		includeRE, excludeRE := docker.ContainerTagFilters(c.Labels)
+		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, "", semverScope, includeRE, excludeRE)
+		if check.Error != nil {
+			u.log.Warn("registry check failed for Portainer container",
+				"endpoint", ep.Name, "name", c.Name, "error", check.Error)
+			continue
+		}
+
+		if check.IsLocal || !check.UpdateAvailable {
+			continue
+		}
+
+		u.log.Info("Portainer update available",
+			"endpoint", ep.Name, "name", c.Name, "image", c.Image)
+
+		scanTarget := ""
+		if len(check.NewerVersions) > 0 {
+			scanTarget = replaceTag(c.Image, check.NewerVersions[0])
+		}
+
+		scopedName := store.ScopedKey(hostID, c.Name)
+
+		switch policy {
+		case docker.PolicyAuto:
+			result.AutoCount++
+			if u.isDryRun() {
+				u.log.Info("dry-run: would update Portainer container",
+					"endpoint", ep.Name, "name", c.Name, "target", scanTarget)
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: scopedName,
+					OldImage:      c.Image,
+					NewImage:      scanTarget,
+					Outcome:       "dry_run",
+				})
+				continue
+			}
+
+			var updateErr error
+			if c.StackID != 0 {
+				// Stack container — redeploy the whole stack once.
+				if redeployedStacks[c.StackID] {
+					result.Updated++
+					continue
+				}
+				updateErr = u.portainer.RedeployStack(ctx, c.StackID, ep.ID)
+				if updateErr == nil {
+					redeployedStacks[c.StackID] = true
+				}
+			} else {
+				// Standalone container.
+				updateErr = u.portainer.UpdateStandaloneContainer(ctx, ep.ID, c.ID, scanTarget)
+			}
+
+			outcome := "success"
+			if updateErr != nil {
+				u.log.Error("Portainer update failed",
+					"endpoint", ep.Name, "name", c.Name, "error", updateErr)
+				result.Errors = append(result.Errors, fmt.Errorf("%s/%s: %w", ep.Name, c.Name, updateErr))
+				result.Failed++
+				outcome = "failed"
+			} else {
+				result.Updated++
+			}
+
+			if err := u.store.RecordUpdate(store.UpdateRecord{
+				Timestamp:     u.clock.Now(),
+				ContainerName: scopedName,
+				OldImage:      c.Image,
+				NewImage:      scanTarget,
+				Outcome:       outcome,
+			}); err != nil {
+				u.log.Warn("failed to record Portainer update history", "name", scopedName, "error", err)
+			}
+
+			if u.events != nil {
+				u.events.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: c.Name,
+					HostName:      ep.Name,
+					Message:       fmt.Sprintf("updated %s on %s: %s", c.Name, ep.Name, outcome),
+					Timestamp:     u.clock.Now(),
+				})
+			}
+
+		case docker.PolicyManual:
+			u.queue.Add(PendingUpdate{
+				ContainerName:          c.Name,
+				CurrentImage:           c.Image,
+				RemoteDigest:           check.RemoteDigest,
+				DetectedAt:             u.clock.Now(),
+				NewerVersions:          check.NewerVersions,
+				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+				ResolvedTargetVersion:  check.ResolvedTargetVersion,
+				HostID:                 hostID,
+				HostName:               ep.Name,
+			})
+			u.log.Info("Portainer update queued for approval",
+				"endpoint", ep.Name, "name", c.Name)
 			u.publishEvent(events.EventQueueChange, scopedName, "queued for approval")
 			result.Queued++
 		}
