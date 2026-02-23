@@ -265,6 +265,19 @@ func (u *Updater) isDryRun() bool {
 	return val == "true"
 }
 
+// isPullOnly returns true when pull_only mode is enabled in settings.
+// In pull-only mode, the new image is pulled but the container is not restarted.
+func (u *Updater) isPullOnly() bool {
+	if u.settings == nil {
+		return false
+	}
+	val, err := u.settings.LoadSetting("pull_only")
+	if err != nil {
+		return false
+	}
+	return val == "true"
+}
+
 // rollbackPolicy returns the configured rollback policy, checking both the
 // in-memory Config and the persisted SettingsStore. This ensures the engine
 // respects UI-configured values even after restart (Config is hydrated from
@@ -605,6 +618,28 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 					NewImage:      scanTarget,
 					Outcome:       "dry_run",
 				})
+				continue
+			}
+			pullOnly := docker.ContainerPullOnly(labels) || u.isPullOnly()
+			if pullOnly {
+				target := scanTarget
+				if target == "" {
+					target = imageRef
+				}
+				if err := u.docker.PullImage(ctx, target); err != nil {
+					u.log.Error("pull-only failed", "name", name, "error", err)
+					result.Failed++
+					result.Errors = append(result.Errors, fmt.Errorf("%s: pull-only: %w", name, err))
+					continue
+				}
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: name,
+					OldImage:      imageRef,
+					NewImage:      target,
+					Outcome:       "pull_only",
+				})
+				result.Updated++
 				continue
 			}
 			if err := u.UpdateContainer(ctx, c.ID, name, scanTarget); err != nil {

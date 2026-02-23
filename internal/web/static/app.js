@@ -272,6 +272,14 @@ function initSettingsPage() {
                 dryRunToggle.checked = dryRun;
                 updateToggleText("dry-run-text", dryRun);
             }
+
+            // Pull-only toggle.
+            var pullOnlyToggle = document.getElementById("pull-only-toggle");
+            if (pullOnlyToggle) {
+                var pullOnly = settings["pull_only"] === "true";
+                pullOnlyToggle.checked = pullOnly;
+                updateToggleText("pull-only-text", pullOnly);
+            }
         })
         .catch(function() { /* ignore — falls back to defaults */ });
 
@@ -798,6 +806,22 @@ function setHooksWriteLabels(enabled) {
 function setDryRun(enabled) {
     updateToggleText("dry-run-text", enabled);
     fetch("/api/settings/dry-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setPullOnly(enabled) {
+    updateToggleText("pull-only-text", enabled);
+    fetch("/api/settings/pull-only", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: enabled })

@@ -480,6 +480,41 @@ func (s *Server) apiSetDryRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "dry-run mode " + label})
 }
 
+// apiSetPullOnly enables or disables pull-only mode.
+// When enabled, the new image is pulled but containers are not restarted.
+func (s *Server) apiSetPullOnly(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("pull_only", value); err != nil {
+		s.deps.Log.Error("failed to save pull_only", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Pull-only mode "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "pull-only mode " + label})
+}
+
 // apiClusterSettings returns the current cluster configuration with defaults
 // for any keys not yet saved to BoltDB.
 func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {

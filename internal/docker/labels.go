@@ -68,6 +68,11 @@ func IsLocalImage(imageRef string) bool {
 	return false
 }
 
+// ContainerPullOnly returns true when the container has sentinel.pull-only=true.
+func ContainerPullOnly(labels map[string]string) bool {
+	return strings.EqualFold(labels["sentinel.pull-only"], "true")
+}
+
 // ContainerNotifySnooze reads the sentinel.notify-snooze label and returns
 // the suppression duration to apply after a notification is sent.
 // Returns 0 if the label is absent or invalid.
