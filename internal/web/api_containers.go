@@ -2,9 +2,12 @@ package web
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // apiContainers returns all monitored containers with policy and maintenance status.
@@ -266,6 +269,47 @@ func (s *Server) apiSaveStackOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// apiHistoryExport streams all history records as CSV or JSON.
+func (s *Server) apiHistoryExport(w http.ResponseWriter, r *http.Request) {
+	records, err := s.deps.Store.ListAllHistory()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	format := r.URL.Query().Get("format")
+	switch format {
+	case "csv":
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=sentinel-history.csv")
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"timestamp", "container", "type", "old_image", "new_image", "outcome", "duration_s", "error", "host_id", "host_name"})
+		for _, rec := range records {
+			dur := ""
+			if rec.Duration > 0 {
+				dur = fmt.Sprintf("%.1f", rec.Duration.Seconds())
+			}
+			_ = cw.Write([]string{
+				rec.Timestamp.Format(time.RFC3339),
+				rec.ContainerName,
+				rec.Type,
+				rec.OldImage,
+				rec.NewImage,
+				rec.Outcome,
+				dur,
+				rec.Error,
+				rec.HostID,
+				rec.HostName,
+			})
+		}
+		cw.Flush()
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", "attachment; filename=sentinel-history.json")
+		_ = json.NewEncoder(w).Encode(records)
+	}
 }
 
 // apiTriggerScan triggers an immediate scan cycle.

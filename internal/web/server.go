@@ -69,6 +69,7 @@ type Dependencies struct {
 // HistoryStore reads/writes update history and maintenance state.
 type HistoryStore interface {
 	ListHistory(limit int, before string) ([]UpdateRecord, error)
+	ListAllHistory() ([]UpdateRecord, error)
 	ListHistoryByContainer(name string, limit int) ([]UpdateRecord, error)
 	GetMaintenance(name string) (bool, error)
 	RecordUpdate(rec UpdateRecord) error
@@ -802,6 +803,7 @@ func (s *Server) registerRoutes() {
 	// history.view
 	s.mux.Handle("GET /history", perm(auth.PermHistoryView, s.handleHistory))
 	s.mux.Handle("GET /api/history", perm(auth.PermHistoryView, s.apiHistory))
+	s.mux.Handle("GET /api/history/export", perm(auth.PermHistoryView, s.apiHistoryExport))
 }
 
 func (s *Server) serveCSS(w http.ResponseWriter, r *http.Request) {

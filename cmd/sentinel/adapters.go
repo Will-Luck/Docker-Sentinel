@@ -53,6 +53,31 @@ func (a *storeAdapter) ListHistory(limit int, before string) ([]web.UpdateRecord
 	return result, nil
 }
 
+func (a *storeAdapter) ListAllHistory() ([]web.UpdateRecord, error) {
+	records, err := a.s.ListAllHistory()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.UpdateRecord, len(records))
+	for i, r := range records {
+		result[i] = web.UpdateRecord{
+			Timestamp:     r.Timestamp,
+			ContainerName: r.ContainerName,
+			OldImage:      r.OldImage,
+			OldDigest:     r.OldDigest,
+			NewImage:      r.NewImage,
+			NewDigest:     r.NewDigest,
+			Outcome:       r.Outcome,
+			Duration:      r.Duration,
+			Error:         r.Error,
+			Type:          r.Type,
+			HostID:        r.HostID,
+			HostName:      r.HostName,
+		}
+	}
+	return result, nil
+}
+
 func (a *storeAdapter) ListHistoryByContainer(name string, limit int) ([]web.UpdateRecord, error) {
 	records, err := a.s.ListHistoryByContainer(name, limit)
 	if err != nil {
