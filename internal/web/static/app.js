@@ -1517,7 +1517,16 @@ function triggerUpdate(name, event, hostId) {
         null,
         "Update started for " + name,
         "Failed to trigger update",
-        btn
+        btn,
+        function() {
+            // Show spinner on status badge until SSE update arrives.
+            var key = (hostId || "") + "::" + name;
+            pendingBadgeActions[key] = true;
+            var selector = '.status-badge-wrap[data-name="' + name + '"]';
+            if (hostId) selector += '[data-host-id="' + hostId + '"]';
+            var wrap = document.querySelector(selector);
+            if (wrap) showBadgeSpinner(wrap);
+        }
     );
 }
 
