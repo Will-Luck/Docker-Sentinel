@@ -649,11 +649,12 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		items = []PendingUpdate{}
 	}
 
+	sources := s.loadReleaseSources()
 	releaseNotes := make(map[string]string)
 	for _, item := range items {
 		if len(item.NewerVersions) > 0 {
 			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-			info := registry.FetchReleaseNotes(ctx, item.CurrentImage, item.NewerVersions[0])
+			info := registry.FetchReleaseNotesWithSources(ctx, item.CurrentImage, item.NewerVersions[0], sources)
 			cancel()
 			if info != nil {
 				releaseNotes[item.Key()] = info.URL

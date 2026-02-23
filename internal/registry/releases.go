@@ -16,6 +16,12 @@ type ReleaseInfo struct {
 	Body string // first 500 chars
 }
 
+// ReleaseSource maps an image pattern to a GitHub repo for release note lookups.
+type ReleaseSource struct {
+	ImagePattern string `json:"image_pattern"` // e.g. "nginx", "ghcr.io/owner/*"
+	GitHubRepo   string `json:"github_repo"`   // e.g. "nginx/nginx", "owner/repo"
+}
+
 var releaseCache struct {
 	sync.Mutex
 	entries map[string]releaseCacheEntry
@@ -33,7 +39,13 @@ func init() {
 // FetchReleaseNotes fetches GitHub release notes for the given image + version.
 // Returns nil if not found or unsupported. Results are cached for 1 hour.
 func FetchReleaseNotes(ctx context.Context, imageRef, version string) *ReleaseInfo {
-	repo := imageToGitHubRepo(imageRef)
+	return FetchReleaseNotesWithSources(ctx, imageRef, version, nil)
+}
+
+// FetchReleaseNotesWithSources is like FetchReleaseNotes but checks custom
+// sources before falling back to built-in mappings.
+func FetchReleaseNotesWithSources(ctx context.Context, imageRef, version string, sources []ReleaseSource) *ReleaseInfo {
+	repo := imageToGitHubRepoWithSources(imageRef, sources)
 	if repo == "" {
 		return nil
 	}
@@ -53,6 +65,46 @@ func FetchReleaseNotes(ctx context.Context, imageRef, version string) *ReleaseIn
 	releaseCache.Unlock()
 
 	return info
+}
+
+// imageToGitHubRepoWithSources checks custom sources first, then built-in mappings.
+func imageToGitHubRepoWithSources(imageRef string, sources []ReleaseSource) string {
+	ref := imageRef
+	if i := strings.Index(ref, "@"); i >= 0 {
+		ref = ref[:i]
+	}
+	if i := strings.LastIndex(ref, ":"); i >= 0 {
+		candidate := ref[i+1:]
+		if !strings.Contains(candidate, "/") {
+			ref = ref[:i]
+		}
+	}
+
+	for _, src := range sources {
+		if matchImagePattern(ref, src.ImagePattern) {
+			return src.GitHubRepo
+		}
+	}
+
+	return imageToGitHubRepo(imageRef)
+}
+
+// matchImagePattern returns true if imageRef matches pattern.
+// Supports exact match, wildcard suffix (*), and bare name matching.
+func matchImagePattern(imageRef, pattern string) bool {
+	if pattern == imageRef {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(imageRef, prefix)
+	}
+	// bare name (e.g. "nginx") matches "library/nginx" or "nginx"
+	if !strings.Contains(pattern, "/") {
+		parts := strings.Split(imageRef, "/")
+		return parts[len(parts)-1] == pattern
+	}
+	return false
 }
 
 // imageToGitHubRepo maps an image ref to a "owner/repo" GitHub path.

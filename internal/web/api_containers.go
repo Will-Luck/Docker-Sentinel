@@ -357,6 +357,38 @@ func (s *Server) apiContainerAllTags(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tags)
 }
 
+// apiGetReleaseSources returns the configured release note sources.
+func (s *Server) apiGetReleaseSources(w http.ResponseWriter, r *http.Request) {
+	if s.deps.ReleaseSources == nil {
+		writeJSON(w, http.StatusOK, []ReleaseSource{})
+		return
+	}
+	sources, err := s.deps.ReleaseSources.GetReleaseSources()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sources)
+}
+
+// apiSetReleaseSources replaces the release note sources list.
+func (s *Server) apiSetReleaseSources(w http.ResponseWriter, r *http.Request) {
+	if s.deps.ReleaseSources == nil {
+		writeError(w, http.StatusNotImplemented, "release sources store not available")
+		return
+	}
+	var sources []ReleaseSource
+	if err := json.NewDecoder(r.Body).Decode(&sources); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.deps.ReleaseSources.SetReleaseSources(sources); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // apiTriggerScan triggers an immediate scan cycle.
 func (s *Server) apiTriggerScan(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Scheduler == nil {

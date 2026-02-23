@@ -510,6 +510,7 @@ func main() {
 			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
 			GHCRCache:           &ghcrCacheAdapter{c: ghcrCache},
 			HookStore:           &webHookStoreAdapter{db},
+			ReleaseSources:      &releaseSourceAdapter{db},
 			Cluster:             clusterCtrl,
 			MetricsEnabled:      cfg.MetricsEnabled,
 			Digest:              digestSched,

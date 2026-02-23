@@ -696,6 +696,35 @@ func (a *hookStoreAdapter) DeleteHook(containerName, phase string) error {
 	return a.s.DeleteHook(containerName, phase)
 }
 
+// releaseSourceAdapter bridges store.Store to web.ReleaseSourceStore.
+type releaseSourceAdapter struct{ s *store.Store }
+
+func (a *releaseSourceAdapter) GetReleaseSources() ([]web.ReleaseSource, error) {
+	srcs, err := a.s.GetReleaseSources()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.ReleaseSource, len(srcs))
+	for i, src := range srcs {
+		result[i] = web.ReleaseSource{
+			ImagePattern: src.ImagePattern,
+			GitHubRepo:   src.GitHubRepo,
+		}
+	}
+	return result, nil
+}
+
+func (a *releaseSourceAdapter) SetReleaseSources(sources []web.ReleaseSource) error {
+	regSrcs := make([]registry.ReleaseSource, len(sources))
+	for i, src := range sources {
+		regSrcs[i] = registry.ReleaseSource{
+			ImagePattern: src.ImagePattern,
+			GitHubRepo:   src.GitHubRepo,
+		}
+	}
+	return a.s.SetReleaseSources(regSrcs)
+}
+
 // webHookStoreAdapter converts store.Store to web.HookStore interface.
 type webHookStoreAdapter struct{ s *store.Store }
 

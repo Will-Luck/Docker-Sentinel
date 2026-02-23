@@ -115,6 +115,39 @@ func (s *Store) LoadRateLimits() ([]byte, error) {
 	return data, err
 }
 
+// ---------------------------------------------------------------------------
+// Release sources
+// ---------------------------------------------------------------------------
+
+var keyReleaseSources = []byte("sources")
+
+// GetReleaseSources returns all configured release sources.
+func (s *Store) GetReleaseSources() ([]registry.ReleaseSource, error) {
+	var sources []registry.ReleaseSource
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketReleaseSources).Get(keyReleaseSources)
+		if v == nil {
+			return nil
+		}
+		return json.Unmarshal(v, &sources)
+	})
+	if sources == nil {
+		sources = []registry.ReleaseSource{}
+	}
+	return sources, err
+}
+
+// SetReleaseSources persists the full list of release sources.
+func (s *Store) SetReleaseSources(sources []registry.ReleaseSource) error {
+	data, err := json.Marshal(sources)
+	if err != nil {
+		return fmt.Errorf("marshal release sources: %w", err)
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketReleaseSources).Put(keyReleaseSources, data)
+	})
+}
+
 // SaveGHCRCache persists GHCR alternative detection cache.
 func (s *Store) SaveGHCRCache(data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {

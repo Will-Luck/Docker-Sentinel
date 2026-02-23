@@ -618,6 +618,21 @@
                         <div id="ghcr-alternatives-table"></div>
                     </div>
                 </details>
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Release Note Sources</h2>
+                        <span class="accordion-preview">Map container images to GitHub repos for release notes</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="setting-desc" style="margin-bottom:var(--sp-4)">Custom mappings checked before built-in ones. Pattern examples: <code>nginx</code>, <code>ghcr.io/owner/*</code>, <code>myregistry.io/app</code>.</p>
+                        <div id="release-sources-list"></div>
+                        <div class="setting-actions" style="margin-top:var(--sp-4)">
+                            <button class="btn" onclick="addReleaseSource()">Add Source</button>
+                            <button class="btn btn-success" onclick="saveReleaseSources(event)">Save All</button>
+                        </div>
+                    </div>
+                </details>
             </div>
         </div>
 
