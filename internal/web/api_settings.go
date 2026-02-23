@@ -1,6 +1,7 @@
 package web
 
 import (
+	_ "embed"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -11,6 +12,15 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
+
+//go:embed grafana-dashboard.json
+var grafanaDashboard []byte
+
+func (s *Server) apiGrafanaDashboard(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="sentinel-grafana-dashboard.json"`)
+	_, _ = w.Write(grafanaDashboard)
+}
 
 // apiSettings returns the current configuration values, merged with runtime overrides from BoltDB.
 func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
