@@ -21,6 +21,7 @@ const (
 	ProviderPushover ProviderType = "pushover"
 	ProviderSMTP     ProviderType = "smtp"
 	ProviderApprise  ProviderType = "apprise"
+	ProviderMQTT     ProviderType = "mqtt"
 )
 
 // Channel represents a single notification channel with typed settings.
@@ -120,6 +121,13 @@ func BuildNotifier(ch Channel) (Notifier, error) {
 		}
 		return NewApprise(s.URL, s.Tag, s.Urls), nil
 
+	case ProviderMQTT:
+		var s MQTTSettings
+		if err := json.Unmarshal(ch.Settings, &s); err != nil {
+			return nil, fmt.Errorf("unmarshal mqtt settings: %w", err)
+		}
+		return NewMQTT(s.Broker, s.Topic, s.ClientID, s.Username, s.Password, s.QoS), nil
+
 	default:
 		return nil, fmt.Errorf("unknown provider type: %q", ch.Type)
 	}
@@ -148,6 +156,8 @@ func MaskSecrets(ch Channel) Channel {
 		masked.Settings = maskStringField(ch.Settings, "password")
 	case ProviderApprise:
 		masked.Settings = maskStringField(ch.Settings, "urls")
+	case ProviderMQTT:
+		masked.Settings = maskStringField(ch.Settings, "password")
 	}
 	return masked
 }
