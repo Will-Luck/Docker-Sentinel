@@ -33,7 +33,7 @@ make docker   # Build Docker image
 - `internal/registry/` — Registry digest checking, semver tag discovery
 - `internal/engine/` — Scheduler, update lifecycle, rollback, approval queue
 - `internal/auth/` — Authentication, sessions, passkeys, RBAC permissions
-- `internal/notify/` — Notification interface + providers (7 channels + log)
+- `internal/notify/` — Notification interface + providers (9 channels + log)
 - `internal/guardian/` — Docker-Guardian maintenance label integration
 - `internal/store/` — BoltDB persistence layer
 - `internal/web/` — Embedded HTTP server, REST API, dashboard
@@ -55,7 +55,7 @@ make docker   # Build Docker image
 - **Safe by default:** Unlabelled containers default to `manual` policy (not auto-update)
 - **Labels as source of truth:** Policies set via Docker labels, dashboard can read them
 - **One-directional Guardian integration:** Sentinel sets `sentinel.maintenance=true` during updates; Guardian reads it. Label is removed after successful validation via `finaliseContainer()`.
-- **Pluggable notifications:** Interface-based — 7 providers (Gotify, Slack, Discord, Ntfy, Telegram, Pushover, webhook) + structured log. Events fired at 6 lifecycle points.
+- **Pluggable notifications:** Interface-based — 9 providers (Gotify, Slack, Discord, Ntfy, Telegram, Pushover, webhook, SMTP, Apprise) + structured log. Events fired at 6 lifecycle points.
 - **Full container snapshots:** `docker inspect` JSON stored in BoltDB before every update, enabling exact rollback
 - **Web adapter pattern:** Web package uses mirror types to avoid import cycles; main.go has adapter structs bridging store/engine/docker to web interfaces
 - **innerHTML for server HTML only:** innerHTML is used exclusively for inserting server-rendered HTML fragments (row replacements, modal content). Never use innerHTML with user-supplied or client-constructed strings.
