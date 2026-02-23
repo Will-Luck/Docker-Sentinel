@@ -88,7 +88,7 @@ func BuildNotifier(ch Channel) (Notifier, error) {
 		if err := json.Unmarshal(ch.Settings, &s); err != nil {
 			return nil, fmt.Errorf("unmarshal ntfy settings: %w", err)
 		}
-		return NewNtfy(s.Server, s.Topic, s.Priority), nil
+		return NewNtfy(s.Server, s.Topic, s.Priority, s.Token, s.Username, s.Password), nil
 
 	case ProviderTelegram:
 		var s TelegramSettings
@@ -126,6 +126,8 @@ func MaskSecrets(ch Channel) Channel {
 		masked.Settings = maskStringField(ch.Settings, "bot_token")
 	case ProviderPushover:
 		masked.Settings = maskStringField(ch.Settings, "app_token")
+	case ProviderNtfy:
+		masked.Settings = maskNtfySecrets(ch.Settings)
 	}
 	return masked
 }
@@ -212,5 +214,20 @@ func maskStringField(settings json.RawMessage, field string) json.RawMessage {
 	masked, _ := json.Marshal(maskToken(val))
 	m[field] = masked
 	out, _ := json.Marshal(m)
+	return out
+}
+
+func maskNtfySecrets(settings json.RawMessage) json.RawMessage {
+	var s NtfySettings
+	if json.Unmarshal(settings, &s) != nil {
+		return settings
+	}
+	if s.Token != "" {
+		s.Token = maskToken(s.Token)
+	}
+	if s.Password != "" {
+		s.Password = maskToken(s.Password)
+	}
+	out, _ := json.Marshal(s)
 	return out
 }
