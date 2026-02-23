@@ -416,7 +416,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 
 		// Check the registry for an update (versioned check also finds newer semver tags).
-		check := u.checker.CheckVersioned(ctx, imageRef)
+		semverScope := docker.ContainerSemverScope(labels)
+		check := u.checker.CheckVersioned(ctx, imageRef, semverScope)
 
 		if check.Error != nil {
 			u.log.Warn("registry check failed", "name", name, "image", imageRef, "error", check.Error)
@@ -750,7 +751,8 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		// Registry check (server-side). Use the agent-reported digest
 		// instead of local Docker inspect — the image may not exist on
 		// the server's Docker daemon.
-		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest)
+		semverScope := docker.ContainerSemverScope(c.Labels)
+		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest, semverScope)
 		if check.Error != nil {
 			u.log.Warn("registry check failed for remote container",
 				"host", host.HostName, "name", c.Name, "error", check.Error)

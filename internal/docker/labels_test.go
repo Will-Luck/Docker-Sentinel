@@ -33,6 +33,31 @@ func TestContainerPolicy(t *testing.T) {
 	}
 }
 
+func TestContainerSemverScope(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   SemverScope
+	}{
+		{"no label", map[string]string{}, ScopeDefault},
+		{"patch", map[string]string{"sentinel.semver": "patch"}, ScopePatch},
+		{"minor", map[string]string{"sentinel.semver": "minor"}, ScopeMinor},
+		{"major", map[string]string{"sentinel.semver": "major"}, ScopeMajor},
+		{"all alias", map[string]string{"sentinel.semver": "all"}, ScopeMajor},
+		{"case insensitive", map[string]string{"sentinel.semver": "MINOR"}, ScopeMinor},
+		{"invalid falls back", map[string]string{"sentinel.semver": "yolo"}, ScopeDefault},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ContainerSemverScope(tt.labels)
+			if got != tt.want {
+				t.Errorf("ContainerSemverScope() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsLocalImage(t *testing.T) {
 	tests := []struct {
 		imageRef string
