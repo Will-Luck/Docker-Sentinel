@@ -53,6 +53,8 @@ type mockDocker struct {
 	tagImageCalls []string
 	tagImageErr   map[string]error
 
+	removeWithVolumesCalls []string
+
 	execCalls   []string
 	execResults map[string]struct {
 		exitCode int
@@ -218,6 +220,16 @@ func (m *mockDocker) TagImage(_ context.Context, src, target string) error {
 	m.tagImageCalls = append(m.tagImageCalls, src+"->"+target)
 	m.mu.Unlock()
 	if err, ok := m.tagImageErr[src]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) RemoveContainerWithVolumes(_ context.Context, id string) error {
+	m.mu.Lock()
+	m.removeWithVolumesCalls = append(m.removeWithVolumesCalls, id)
+	m.mu.Unlock()
+	if err, ok := m.removeErr[id]; ok {
 		return err
 	}
 	return nil

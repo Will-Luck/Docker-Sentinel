@@ -74,6 +74,7 @@ type Config struct {
 	rollbackPolicy   string // "", "manual", or "pinned"
 	imageBackup      bool
 	showStopped      bool
+	removeVolumes    bool
 }
 
 // NewTestConfig creates a Config with sensible defaults for testing.
@@ -123,6 +124,7 @@ func Load() *Config {
 		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
 		imageBackup:         envBool("SENTINEL_IMAGE_BACKUP", false),
 		showStopped:         envBool("SENTINEL_SHOW_STOPPED", false),
+		removeVolumes:       envBool("SENTINEL_REMOVE_VOLUMES", false),
 
 		// Cluster / multi-host
 		Mode:               envStr("SENTINEL_MODE", ""),
@@ -196,6 +198,7 @@ func (c *Config) Values() map[string]string {
 	rp := c.rollbackPolicy
 	ib := c.imageBackup
 	ss := c.showStopped
+	rv := c.removeVolumes
 	c.mu.RUnlock()
 
 	return map[string]string{
@@ -235,6 +238,7 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_GRACE_PERIOD_OFFLINE": c.GracePeriodOffline.String(),
 		"SENTINEL_IMAGE_BACKUP":         fmt.Sprintf("%t", ib),
 		"SENTINEL_SHOW_STOPPED":         fmt.Sprintf("%t", ss),
+		"SENTINEL_REMOVE_VOLUMES":       fmt.Sprintf("%t", rv),
 	}
 }
 
@@ -431,6 +435,18 @@ func (c *Config) ShowStopped() bool {
 func (c *Config) SetShowStopped(b bool) {
 	c.mu.Lock()
 	c.showStopped = b
+	c.mu.Unlock()
+}
+
+func (c *Config) RemoveVolumes() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.removeVolumes
+}
+
+func (c *Config) SetRemoveVolumes(b bool) {
+	c.mu.Lock()
+	c.removeVolumes = b
 	c.mu.Unlock()
 }
 

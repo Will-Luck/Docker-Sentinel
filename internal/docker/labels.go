@@ -79,6 +79,11 @@ func ContainerPullOnly(labels map[string]string) bool {
 	return strings.EqualFold(labels["sentinel.pull-only"], "true")
 }
 
+// ContainerRemoveVolumes returns true when the container has sentinel.remove-volumes=true.
+func ContainerRemoveVolumes(labels map[string]string) bool {
+	return strings.EqualFold(labels["sentinel.remove-volumes"], "true")
+}
+
 // ContainerNotifySnooze reads the sentinel.notify-snooze label and returns
 // the suppression duration to apply after a notification is sent.
 // Returns 0 if the label is absent or invalid.

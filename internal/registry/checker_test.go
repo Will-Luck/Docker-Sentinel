@@ -48,6 +48,9 @@ func (m *mockDockerForRegistry) RestartContainer(_ context.Context, _ string) er
 func (m *mockDockerForRegistry) PullImage(_ context.Context, _ string) error        { return nil }
 func (m *mockDockerForRegistry) RemoveImage(_ context.Context, _ string) error      { return nil }
 func (m *mockDockerForRegistry) TagImage(_ context.Context, _, _ string) error      { return nil }
+func (m *mockDockerForRegistry) RemoveContainerWithVolumes(_ context.Context, _ string) error {
+	return nil
+}
 func (m *mockDockerForRegistry) ExecContainer(_ context.Context, _ string, _ []string, _ int) (int, string, error) {
 	return 0, "", nil
 }
