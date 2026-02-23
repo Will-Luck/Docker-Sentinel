@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
@@ -48,6 +49,9 @@ type pageData struct {
 	ServerVersion         string
 	ClusterPort           string // gRPC port for enrollment snippets
 	ImageTag              string // stripped version tag for GHCR image snippets
+
+	// Pagination cursor for history load-more.
+	NextCursor string
 
 	// Auth context (populated by withAuth helper).
 	CurrentUser *auth.User
@@ -643,7 +647,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 
 // handleHistory renders the update history page.
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
-	records, err := s.deps.Store.ListHistory(100)
+	records, err := s.deps.Store.ListHistory(50, "")
 	if err != nil {
 		s.deps.Log.Error("failed to list history", "error", err)
 		http.Error(w, "failed to load history", http.StatusInternalServerError)
@@ -654,10 +658,16 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		records = []UpdateRecord{}
 	}
 
+	var nextCursor string
+	if len(records) > 0 {
+		nextCursor = records[len(records)-1].Timestamp.UTC().Format(time.RFC3339Nano)
+	}
+
 	data := pageData{
 		Page:       "history",
 		History:    records,
 		QueueCount: len(s.deps.Queue.List()),
+		NextCursor: nextCursor,
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)

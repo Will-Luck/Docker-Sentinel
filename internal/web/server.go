@@ -68,7 +68,7 @@ type Dependencies struct {
 
 // HistoryStore reads/writes update history and maintenance state.
 type HistoryStore interface {
-	ListHistory(limit int) ([]UpdateRecord, error)
+	ListHistory(limit int, before string) ([]UpdateRecord, error)
 	ListHistoryByContainer(name string, limit int) ([]UpdateRecord, error)
 	GetMaintenance(name string) (bool, error)
 	RecordUpdate(rec UpdateRecord) error

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 )
 
 // apiContainers returns all monitored containers with policy and maintenance status.
@@ -76,7 +77,15 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 
 // apiHistory returns the most recent update records.
 func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
-	records, err := s.deps.Store.ListHistory(100)
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	before := r.URL.Query().Get("before")
+
+	records, err := s.deps.Store.ListHistory(limit, before)
 	if err != nil {
 		s.deps.Log.Error("failed to list history", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list history")
