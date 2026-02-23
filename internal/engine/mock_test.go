@@ -50,6 +50,9 @@ type mockDocker struct {
 	removeImageCalls []string
 	removeImageErr   map[string]error
 
+	tagImageCalls []string
+	tagImageErr   map[string]error
+
 	execCalls   []string
 	execResults map[string]struct {
 		exitCode int
@@ -90,6 +93,7 @@ func newMockDocker() *mockDocker {
 		distDigests:    make(map[string]string),
 		distErr:        make(map[string]error),
 		removeImageErr: make(map[string]error),
+		tagImageErr:    make(map[string]error),
 		execResults: make(map[string]struct {
 			exitCode int
 			output   string
@@ -204,6 +208,16 @@ func (m *mockDocker) RemoveImage(_ context.Context, id string) error {
 	m.removeImageCalls = append(m.removeImageCalls, id)
 	m.mu.Unlock()
 	if err, ok := m.removeImageErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) TagImage(_ context.Context, src, target string) error {
+	m.mu.Lock()
+	m.tagImageCalls = append(m.tagImageCalls, src+"->"+target)
+	m.mu.Unlock()
+	if err, ok := m.tagImageErr[src]; ok {
 		return err
 	}
 	return nil

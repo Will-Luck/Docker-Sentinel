@@ -318,6 +318,17 @@ func (u *Updater) rollbackPolicy() string {
 	return ""
 }
 
+// isImageBackup returns true when image backup (retag before pull) is enabled.
+func (u *Updater) isImageBackup() bool {
+	if u.settings != nil {
+		val, err := u.settings.LoadSetting("image_backup")
+		if err == nil && val == "true" {
+			return true
+		}
+	}
+	return u.cfg.ImageBackup()
+}
+
 // isComposeSync returns true when compose file sync is enabled via settings.
 func (u *Updater) isComposeSync() bool {
 	if u.settings == nil {

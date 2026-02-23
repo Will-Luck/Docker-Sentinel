@@ -117,6 +117,12 @@ func (c *Client) RemoveImage(ctx context.Context, id string) error {
 	return err
 }
 
+// TagImage applies a new tag to an existing image.
+func (c *Client) TagImage(ctx context.Context, src, target string) error {
+	_, err := c.api.ImageTag(ctx, client.ImageTagOptions{Source: src, Target: target})
+	return err
+}
+
 // ExecContainer runs a command inside a container and returns exit code + output.
 func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error) {
 	execCfg := client.ExecCreateOptions{

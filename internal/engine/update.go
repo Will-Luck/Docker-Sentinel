@@ -86,6 +86,16 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 	}
 
+	// 2.8. Retag current image as backup before pulling.
+	if u.isImageBackup() {
+		backupTag := u.backupTag(oldImage)
+		if tagErr := u.docker.TagImage(ctx, oldImage, backupTag); tagErr != nil {
+			u.log.Warn("image backup tag failed", "name", name, "tag", backupTag, "error", tagErr)
+		} else {
+			u.log.Info("image backup tag created", "name", name, "tag", backupTag)
+		}
+	}
+
 	// 3. Pull the new image.
 	u.log.Info("pulling image", "name", name, "image", pullImage)
 	if err := u.docker.PullImage(ctx, pullImage); err != nil {
@@ -454,6 +464,22 @@ func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []by
 	}); err != nil {
 		u.log.Warn("failed to persist rollback record", "name", name, "error", err)
 	}
+}
+
+// backupTag builds the backup image reference for the current image before an update.
+// Format: base-repo:sentinel-backup-20060102-150405
+func (u *Updater) backupTag(imageRef string) string {
+	ts := u.clock.Now().Format("20060102-150405")
+	base := imageRef
+	if i := strings.Index(base, "@"); i >= 0 {
+		base = base[:i]
+	}
+	if i := strings.LastIndex(base, ":"); i >= 0 {
+		if j := strings.LastIndex(base, "/"); j < i {
+			base = base[:i]
+		}
+	}
+	return base + ":sentinel-backup-" + ts
 }
 
 // containerName extracts the container name, stripping the leading /.

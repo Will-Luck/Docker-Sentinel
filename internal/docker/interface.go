@@ -23,6 +23,7 @@ type API interface {
 	ImageDigest(ctx context.Context, imageRef string) (string, error)
 	DistributionDigest(ctx context.Context, imageRef string) (string, error)
 	RemoveImage(ctx context.Context, id string) error
+	TagImage(ctx context.Context, src, target string) error
 	ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error)
 
 	// Swarm operations — only functional when the daemon is a Swarm manager.
