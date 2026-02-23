@@ -360,6 +360,15 @@ h4 { font-size: 0.875rem; font-weight: 500; letter-spacing: 0.1px; line-height: 
     table-layout: fixed;
 }
 
+.queue-expand {
+    cursor: pointer;
+    text-align: center;
+    color: var(--fg-secondary);
+    user-select: none;
+    width: 1%;
+    white-space: nowrap;
+}
+.queue-expand:hover { color: var(--fg-primary); }
 
 .card-header-top {
     display: flex;
@@ -2280,6 +2289,23 @@ table.managing .stack-drag-handle:active {
     text-align: center;
 }
 
+.table-logs {
+    table-layout: fixed;
+}
+.table-logs th:nth-child(4),
+.table-logs td:nth-child(4) {
+    width: 12%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.table-logs th:nth-child(5),
+.table-logs td:nth-child(5) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* Tab navigation for settings page */
 
 .tab-nav {
@@ -2855,6 +2881,29 @@ table.managing .td-checkbox {
 .status-badge-wrap:hover .badge-hover {
     opacity: 1;
     pointer-events: auto;
+}
+
+/* Pending action state — CSS-driven spinner, immune to JS DOM manipulation */
+.status-badge-wrap[data-pending] {
+    pointer-events: none;
+    cursor: default;
+}
+.status-badge-wrap[data-pending] .badge-default,
+.status-badge-wrap[data-pending] .badge-hover {
+    opacity: 0 !important;
+    display: none !important;
+}
+.status-badge-wrap[data-pending]::after {
+    content: "";
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--fg-muted);
+    border-top-color: var(--accent);
+    border-radius: var(--radius-full);
+    animation: badgeSpin 800ms linear infinite;
 }
 
 

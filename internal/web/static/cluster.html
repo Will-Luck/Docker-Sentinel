@@ -234,18 +234,26 @@
         }
     }
 
+    function copyToClipboard(text, msg) {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(function() { showToast(msg); });
+        } else {
+            var t = document.createElement('textarea');
+            t.value = text;
+            document.body.appendChild(t);
+            t.select();
+            document.execCommand('copy');
+            document.body.removeChild(t);
+            showToast(msg);
+        }
+    }
+
     function copyToken() {
-        var text = document.getElementById('token-value').textContent;
-        navigator.clipboard.writeText(text).then(function() {
-            showToast('Token copied');
-        });
+        copyToClipboard(document.getElementById('token-value').textContent, 'Token copied');
     }
 
     function copySnippet(id) {
-        var text = document.getElementById(id).textContent;
-        navigator.clipboard.writeText(text).then(function() {
-            showToast('Snippet copied');
-        });
+        copyToClipboard(document.getElementById(id).textContent, 'Snippet copied');
     }
 
     function drainHost(id, name) {

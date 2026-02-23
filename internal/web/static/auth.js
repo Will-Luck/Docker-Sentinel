@@ -195,6 +195,14 @@ function copyToken() {
         navigator.clipboard.writeText(el.textContent).then(function() {
             showToast("Copied to clipboard", "info");
         });
+    } else {
+        var t = document.createElement("textarea");
+        t.value = el.textContent;
+        document.body.appendChild(t);
+        t.select();
+        document.execCommand("copy");
+        document.body.removeChild(t);
+        showToast("Copied to clipboard", "info");
     }
 }
 

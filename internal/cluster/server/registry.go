@@ -136,6 +136,26 @@ func (r *Registry) UpdateContainers(hostID string, containers []cluster.Containe
 	}
 }
 
+// UpdateContainerState patches the State field of a single container in the
+// cached list for the given host. Used to keep the cache consistent after
+// an action (stop/start/restart) completes without waiting for a full
+// container list refresh.
+func (r *Registry) UpdateContainerState(hostID, containerName, newState string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		return
+	}
+	for i := range hs.Containers {
+		if hs.Containers[i].Name == containerName {
+			hs.Containers[i].State = newState
+			return
+		}
+	}
+}
+
 // Get returns the host state for the given ID, or nil if not found.
 func (r *Registry) Get(hostID string) (*HostState, bool) {
 	r.mu.RLock()
