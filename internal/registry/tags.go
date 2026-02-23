@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 )
 
 // TagList holds the response from the Docker registry v2 tags/list endpoint.
@@ -191,6 +193,12 @@ func (v SemVer) LessThan(other SemVer) bool {
 // NewerVersions filters tags to find semver versions newer than current,
 // returning them sorted from newest to oldest. Non-semver tags are ignored.
 func NewerVersions(current string, tags []string) []SemVer {
+	return NewerVersionsScoped(current, tags, docker.ScopeDefault)
+}
+
+// NewerVersionsScoped is like NewerVersions but accepts an explicit scope
+// override. ScopeDefault preserves the existing tag-precision-based logic.
+func NewerVersionsScoped(current string, tags []string, scope docker.SemverScope) []SemVer {
 	cur, ok := ParseSemVer(current)
 	if !ok {
 		return nil
@@ -206,16 +214,27 @@ func NewerVersions(current string, tags []string) []SemVer {
 		if versionSchemeMismatch(cur, sv) {
 			continue
 		}
-		// Scope constraint: tag precision determines update range.
-		// 3-part (1.13.3) -> same major.minor only (patch updates).
-		// 2-part (1.13)   -> same major only (minor+patch updates).
-		// Calver is exempt (doesn't follow semver scope semantics).
+		// Scope constraint: calver is exempt from scope filtering.
 		if !curIsCalver {
-			if cur.Parts == 3 && (sv.Major != cur.Major || sv.Minor != cur.Minor) {
-				continue
-			}
-			if cur.Parts == 2 && sv.Major != cur.Major {
-				continue
+			switch scope {
+			case docker.ScopeDefault:
+				// Infer from tag precision (existing behaviour).
+				if cur.Parts == 3 && (sv.Major != cur.Major || sv.Minor != cur.Minor) {
+					continue
+				}
+				if cur.Parts == 2 && sv.Major != cur.Major {
+					continue
+				}
+			case docker.ScopePatch:
+				if sv.Major != cur.Major || sv.Minor != cur.Minor {
+					continue
+				}
+			case docker.ScopeMinor:
+				if sv.Major != cur.Major {
+					continue
+				}
+			case docker.ScopeMajor:
+				// no scope filter
 			}
 		}
 		if cur.LessThan(sv) {

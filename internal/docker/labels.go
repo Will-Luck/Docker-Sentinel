@@ -83,6 +83,31 @@ func ContainerNotifySnooze(labels map[string]string) time.Duration {
 	return d
 }
 
+// SemverScope controls the version range considered when finding newer versions.
+type SemverScope string
+
+const (
+	ScopeDefault SemverScope = ""      // infer from tag precision
+	ScopePatch   SemverScope = "patch" // same major.minor only
+	ScopeMinor   SemverScope = "minor" // same major only
+	ScopeMajor   SemverScope = "major" // any newer version
+)
+
+// ContainerSemverScope reads the sentinel.semver label and returns the
+// explicit version scope. Returns ScopeDefault if the label is absent or invalid.
+func ContainerSemverScope(labels map[string]string) SemverScope {
+	switch strings.ToLower(labels["sentinel.semver"]) {
+	case "patch":
+		return ScopePatch
+	case "minor":
+		return ScopeMinor
+	case "major", "all":
+		return ScopeMajor
+	default:
+		return ScopeDefault
+	}
+}
+
 // parseDurationWithDays extends time.ParseDuration with a "d" suffix for days.
 func parseDurationWithDays(s string) (time.Duration, error) {
 	if strings.HasSuffix(s, "d") {
