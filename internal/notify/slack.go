@@ -33,7 +33,7 @@ func (s *Slack) Name() string { return "slack" }
 
 // Send posts a notification message to a Slack webhook.
 func (s *Slack) Send(ctx context.Context, event Event) error {
-	text := formatTitle(event.Type) + "\n" + formatMessage(event)
+	text := formatTitle(event.Type) + "\n" + formatMessageMarkdown(event)
 	body, err := json.Marshal(slackPayload{Text: text})
 	if err != nil {
 		return fmt.Errorf("marshal slack payload: %w", err)

@@ -51,7 +51,7 @@ func (n *Ntfy) Name() string { return "ntfy" }
 // Send posts a notification message to the ntfy topic.
 func (n *Ntfy) Send(ctx context.Context, event Event) error {
 	endpoint := n.server + "/" + n.topic
-	message := formatMessage(event)
+	message := formatMessageMarkdown(event)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(message))
 	if err != nil {
@@ -64,6 +64,7 @@ func (n *Ntfy) Send(ctx context.Context, event Event) error {
 	}
 	req.Header.Set("X-Title", formatTitle(event.Type))
 	req.Header.Set("X-Priority", strconv.Itoa(n.priority))
+	req.Header.Set("X-Markdown", "true")
 
 	resp, err := n.client.Do(req)
 	if err != nil {
