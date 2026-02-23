@@ -3325,6 +3325,15 @@ var PROVIDER_FIELDS = {
     pushover: [
         { key: "app_token", label: "App Token", type: "password", placeholder: "Application token" },
         { key: "user_key", label: "User Key", type: "password", placeholder: "User/group key" }
+    ],
+    smtp: [
+        { key: "host", label: "SMTP Server", type: "text", placeholder: "smtp.example.com" },
+        { key: "port", label: "Port", type: "text", placeholder: "587" },
+        { key: "from", label: "From", type: "text", placeholder: "sentinel@example.com" },
+        { key: "to", label: "To", type: "text", placeholder: "you@example.com" },
+        { key: "username", label: "Username", type: "text", placeholder: "Username (optional)" },
+        { key: "password", label: "Password", type: "password", placeholder: "Password (optional)" },
+        { key: "tls", label: "Use TLS", type: "text", placeholder: "true or false" }
     ]
 };
 
