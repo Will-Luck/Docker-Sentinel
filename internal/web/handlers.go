@@ -40,6 +40,9 @@ type pageData struct {
 	TabStats []tabStats
 	HasSwarm bool
 
+	// Portainer state (populated by withPortainer helper).
+	PortainerEnabled bool
+
 	// Cluster state (populated by withCluster helper).
 	ClusterEnabled bool
 	ClusterHosts   []ClusterHost // populated only on /cluster page
@@ -638,6 +641,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	s.withAuth(r, &data)
 	s.withCluster(&data)
+	s.withPortainer(&data)
 
 	s.renderTemplate(w, "index.html", data)
 }
@@ -670,6 +674,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
+	s.withPortainer(&data)
 
 	s.renderTemplate(w, "queue.html", data)
 }
@@ -700,6 +705,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
+	s.withPortainer(&data)
 
 	s.renderTemplate(w, "history.html", data)
 }
@@ -713,6 +719,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
+	s.withPortainer(&data)
 	s.renderTemplate(w, "settings.html", data)
 }
 
@@ -740,6 +747,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
+	s.withPortainer(&data)
 	s.renderTemplate(w, "logs.html", data)
 }
 
@@ -1012,6 +1020,7 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
+	s.withPortainer(&data)
 	s.renderTemplate(w, "cluster.html", data)
 }
 
@@ -1024,7 +1033,8 @@ type containerDetailData struct {
 	HasSnapshot  bool
 	ChangelogURL string
 
-	ClusterEnabled bool
+	PortainerEnabled bool
+	ClusterEnabled   bool
 
 	// Auth context.
 	CurrentUser *auth.User
@@ -1045,6 +1055,19 @@ func (s *Server) withCluster(data *pageData) {
 			s.deps.Log.Debug("failed to load cluster enabled setting", "error", err)
 		}
 		data.ClusterEnabled = v == "true"
+	}
+}
+
+// withPortainer populates PortainerEnabled from the live provider or DB setting.
+func (s *Server) withPortainer(data *pageData) {
+	if s.deps.Portainer != nil {
+		data.PortainerEnabled = true
+		return
+	}
+	if s.deps.SettingsStore != nil {
+		url, _ := s.deps.SettingsStore.LoadSetting("portainer_url")
+		tok, _ := s.deps.SettingsStore.LoadSetting("portainer_token")
+		data.PortainerEnabled = url != "" && tok != ""
 	}
 }
 
@@ -1239,13 +1262,14 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := containerDetailData{
-		Container:      view,
-		History:        history,
-		Snapshots:      snapshots,
-		Versions:       versions,
-		HasSnapshot:    len(snapshots) > 0,
-		ChangelogURL:   ChangelogURL(image),
-		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
+		Container:        view,
+		History:          history,
+		Snapshots:        snapshots,
+		Versions:         versions,
+		HasSnapshot:      len(snapshots) > 0,
+		ChangelogURL:     ChangelogURL(image),
+		PortainerEnabled: s.deps.Portainer != nil,
+		ClusterEnabled:   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthDetail(r, &data)
 
@@ -1259,7 +1283,8 @@ type serviceDetailData struct {
 	Versions     []string
 	ChangelogURL string
 
-	ClusterEnabled bool
+	PortainerEnabled bool
+	ClusterEnabled   bool
 
 	// Auth context.
 	CurrentUser *auth.User
@@ -1337,11 +1362,12 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := serviceDetailData{
-		Service:        view,
-		History:        history,
-		Versions:       versions,
-		ChangelogURL:   ChangelogURL(found.Image),
-		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
+		Service:          view,
+		History:          history,
+		Versions:         versions,
+		ChangelogURL:     ChangelogURL(found.Image),
+		PortainerEnabled: s.deps.Portainer != nil,
+		ClusterEnabled:   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthServiceDetail(r, &data)
 

@@ -267,16 +267,17 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 	currentToken := auth.GetSessionToken(r)
 
 	s.renderTemplate(w, "account.html", map[string]any{
-		"CurrentUser":     ad.CurrentUser,
-		"AuthEnabled":     ad.AuthEnabled,
-		"CSRFToken":       ad.CSRFToken,
-		"Sessions":        sessions,
-		"APITokens":       tokens,
-		"Passkeys":        passkeys,
-		"WebAuthnEnabled": s.webauthn != nil,
-		"CurrentToken":    currentToken,
-		"QueueCount":      len(s.deps.Queue.List()),
-		"ClusterEnabled":  s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
+		"CurrentUser":      ad.CurrentUser,
+		"AuthEnabled":      ad.AuthEnabled,
+		"CSRFToken":        ad.CSRFToken,
+		"Sessions":         sessions,
+		"APITokens":        tokens,
+		"Passkeys":         passkeys,
+		"WebAuthnEnabled":  s.webauthn != nil,
+		"CurrentToken":     currentToken,
+		"QueueCount":       len(s.deps.Queue.List()),
+		"PortainerEnabled": s.deps.Portainer != nil,
+		"ClusterEnabled":   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	})
 }
 
