@@ -775,6 +775,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/pull-only", perm(auth.PermSettingsModify, s.apiSetPullOnly))
 	s.mux.Handle("POST /api/settings/general", perm(auth.PermSettingsModify, s.apiSaveGeneralSetting))
 	s.mux.Handle("POST /api/settings/switch-role", perm(auth.PermSettingsModify, s.apiSwitchRole))
+	s.mux.Handle("GET /api/grafana-dashboard", perm(auth.PermSettingsModify, s.apiGrafanaDashboard))
 
 	// Cluster settings — always available so the admin can enable/configure cluster
 	// even when the cluster server is not yet running.
