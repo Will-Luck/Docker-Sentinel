@@ -78,7 +78,19 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		if specDigest != "" {
 			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, specDigest)
 		} else {
-			check = u.checker.CheckVersioned(ctx, imageRef)
+			// Try local image inspect first; fall back to registry digest
+			// for multi-node swarm where images only exist on worker nodes.
+			localDigest, err := u.docker.ImageDigest(ctx, imageRef)
+			if err != nil {
+				remoteDigest, rdErr := u.docker.DistributionDigest(ctx, imageRef)
+				if rdErr != nil {
+					u.log.Debug("service image not resolvable locally or remotely",
+						"name", name, "image", imageRef, "error", rdErr)
+					continue
+				}
+				localDigest = remoteDigest
+			}
+			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, localDigest)
 		}
 		if check.Error != nil {
 			u.log.Warn("service registry check failed", "name", name, "image", imageRef, "error", check.Error)
