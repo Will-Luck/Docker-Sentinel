@@ -152,10 +152,15 @@
                                             <div class="accordion-section">
                                                 <div class="accordion-label">Changelog</div>
                                                 <div class="accordion-value">
-                                                    {{with changelogURL $q.CurrentImage}}
-                                                        <a href="{{.}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
+                                                    {{$rnURL := index $.QueueReleaseNotes $q.Key}}
+                                                    {{if $rnURL}}
+                                                        <a href="{{$rnURL}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
                                                     {{else}}
-                                                        <span class="text-muted">Not available</span>
+                                                        {{with changelogURL $q.CurrentImage}}
+                                                            <a href="{{.}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
+                                                        {{else}}
+                                                            <span class="text-muted">Not available</span>
+                                                        {{end}}
                                                     {{end}}
                                                 </div>
                                             </div>
