@@ -15,6 +15,7 @@ type NotifyState struct {
 	LastDigest   string    `json:"last_digest"`
 	LastNotified time.Time `json:"last_notified"`
 	FirstSeen    time.Time `json:"first_seen"`
+	SnoozedUntil time.Time `json:"snoozed_until,omitempty"`
 }
 
 // NotifyPref holds per-container notification mode preferences.

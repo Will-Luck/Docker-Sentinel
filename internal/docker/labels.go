@@ -1,6 +1,10 @@
 package docker
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // Policy represents a container's update policy.
 type Policy string
@@ -62,4 +66,32 @@ func IsLocalImage(imageRef string) bool {
 	// so we DON'T mark them as local — let the registry check try and fail
 	// gracefully for truly local images.
 	return false
+}
+
+// ContainerNotifySnooze reads the sentinel.notify-snooze label and returns
+// the suppression duration to apply after a notification is sent.
+// Returns 0 if the label is absent or invalid.
+func ContainerNotifySnooze(labels map[string]string) time.Duration {
+	v, ok := labels["sentinel.notify-snooze"]
+	if !ok || v == "" {
+		return 0
+	}
+	d, err := parseDurationWithDays(v)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+// parseDurationWithDays extends time.ParseDuration with a "d" suffix for days.
+func parseDurationWithDays(s string) (time.Duration, error) {
+	if strings.HasSuffix(s, "d") {
+		days := strings.TrimSuffix(s, "d")
+		n, err := strconv.Atoi(days)
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
