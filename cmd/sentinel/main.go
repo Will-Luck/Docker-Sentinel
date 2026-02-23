@@ -27,7 +27,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
-	_ "github.com/Will-Luck/Docker-Sentinel/internal/metrics"
+	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -441,6 +441,14 @@ func main() {
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	scheduler.SetReadyGate(scanGate)
+	if cfg.MetricsTextfile != "" {
+		textfilePath := cfg.MetricsTextfile
+		scheduler.SetScanCallback(func() {
+			if err := metrics.WriteTextfile(textfilePath); err != nil {
+				log.Warn("failed to write metrics textfile", "path", textfilePath, "error", err)
+			}
+		})
+	}
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
 
@@ -485,6 +493,7 @@ func main() {
 			Rollback:            &rollbackAdapter{d: client, s: db, log: log},
 			Restarter:           &restartAdapter{client},
 			Registry:            &registryAdapter{log: log},
+			TagLister:           &tagListerAdapter{log: log},
 			RegistryChecker:     &registryCheckerAdapter{checker: checker},
 			Policy:              &policyStoreAdapter{db},
 			EventLog:            &eventLogAdapter{db},
