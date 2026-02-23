@@ -20,6 +20,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/swarm"
+	"github.com/robfig/cron/v3"
 )
 
 // ErrUpdateInProgress is returned when an update is attempted on a container
@@ -131,6 +132,7 @@ type Updater struct {
 	hooks       *hooks.Runner              // optional: lifecycle hook runner
 	deps        *deps.Graph                // optional: dependency graph (rebuilt each scan)
 	cluster     ClusterScanner             // optional: nil = single-host mode
+	haDiscovery *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -182,6 +184,11 @@ func (u *Updater) SetHookRunner(r *hooks.Runner) {
 // When nil (the default), remote host scanning is skipped entirely.
 func (u *Updater) SetClusterScanner(cs ClusterScanner) {
 	u.cluster = cs
+}
+
+// SetHADiscovery attaches an HA MQTT auto-discovery publisher.
+func (u *Updater) SetHADiscovery(h *notify.HADiscovery) {
+	u.haDiscovery = h
 }
 
 // tryLock attempts to acquire the per-container update lock.
@@ -434,6 +441,21 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			continue
 		}
 
+		// Per-container schedule check.
+		if sched := docker.ContainerSchedule(labels); sched != "" {
+			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+			schedule, err := parser.Parse(sched)
+			if err != nil {
+				u.log.Warn("invalid schedule", "name", name, "schedule", sched, "error", err)
+			} else {
+				lastChecked, _ := u.store.GetLastContainerScan(name)
+				if !lastChecked.IsZero() && u.clock.Now().Before(schedule.Next(lastChecked)) {
+					result.Skipped++
+					continue
+				}
+			}
+		}
+
 		// Rate limit check: skip if registry quota is too low.
 		imageRef := c.Image
 		if u.rateTracker != nil {
@@ -481,6 +503,9 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			result.Skipped++
 			continue
 		}
+
+		// Record scan time for per-container schedule tracking.
+		_ = u.store.SetLastContainerScan(name, u.clock.Now())
 
 		if !check.UpdateAvailable {
 			// Prune stale queue entries: if this container is in the queue
@@ -748,6 +773,21 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	metrics.ContainersMonitored.Set(float64(result.Total - result.Skipped))
 	metrics.PendingUpdates.Set(float64(result.Queued))
 	metrics.ScanDuration.Observe(time.Since(scanStart).Seconds())
+
+	// Publish HA discovery states after scan.
+	if u.haDiscovery != nil {
+		if err := u.haDiscovery.PublishPendingCount(u.queue.Len()); err != nil {
+			u.log.Debug("ha discovery: failed to publish pending count", "error", err)
+		}
+		for _, item := range u.queue.List() {
+			if item.HostID != "" {
+				continue // only publish local containers
+			}
+			if err := u.haDiscovery.PublishContainerState(item.ContainerName, true); err != nil {
+				u.log.Debug("ha discovery: failed to publish state", "name", item.ContainerName, "error", err)
+			}
+		}
+	}
 
 	return result
 }

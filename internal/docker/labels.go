@@ -68,6 +68,12 @@ func IsLocalImage(imageRef string) bool {
 	return false
 }
 
+// ContainerSchedule returns the sentinel.schedule label value (a cron expression),
+// or empty string if not set.
+func ContainerSchedule(labels map[string]string) string {
+	return labels["sentinel.schedule"]
+}
+
 // ContainerPullOnly returns true when the container has sentinel.pull-only=true.
 func ContainerPullOnly(labels map[string]string) bool {
 	return strings.EqualFold(labels["sentinel.pull-only"], "true")
