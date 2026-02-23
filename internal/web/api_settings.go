@@ -750,6 +750,36 @@ func (s *Server) apiSwitchRole(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "restart_required": "true"})
 }
 
+// apiSetComposeSync enables or disables Docker Compose file sync after updates.
+func (s *Server) apiSetComposeSync(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("compose_sync", value); err != nil {
+		s.deps.Log.Error("failed to save compose_sync", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Compose file sync "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "compose file sync " + label})
+}
+
 // apiSetHADiscovery enables or disables Home Assistant MQTT auto-discovery.
 func (s *Server) apiSetHADiscovery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
