@@ -5,17 +5,34 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
-// apiQueue returns all pending manual approvals.
+// queueResponse wraps a PendingUpdate with additional display fields.
+type queueResponse struct {
+	PendingUpdate
+	ReleaseNotesURL string `json:"release_notes_url,omitempty"`
+}
+
+// apiQueue returns all pending manual approvals, enriched with release notes URLs.
 func (s *Server) apiQueue(w http.ResponseWriter, r *http.Request) {
 	items := s.deps.Queue.List()
-	if items == nil {
-		items = []PendingUpdate{}
+	out := make([]queueResponse, len(items))
+	for i, item := range items {
+		out[i] = queueResponse{PendingUpdate: item}
+		if len(item.NewerVersions) > 0 {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			info := registry.FetchReleaseNotes(ctx, item.CurrentImage, item.NewerVersions[0])
+			cancel()
+			if info != nil {
+				out[i].ReleaseNotesURL = info.URL
+			}
+		}
 	}
-	writeJSON(w, http.StatusOK, items)
+	writeJSON(w, http.StatusOK, out)
 }
 
 // queueKeyName extracts the queue key and plain container name from the

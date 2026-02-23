@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,13 +18,14 @@ import (
 
 // pageData is the common data structure passed to all page templates.
 type pageData struct {
-	Page       string
-	Containers []containerView
-	Stacks     []stackGroup
-	Queue      []PendingUpdate
-	History    []UpdateRecord
-	Settings   map[string]string
-	Logs       []LogEntry
+	Page              string
+	Containers        []containerView
+	Stacks            []stackGroup
+	Queue             []PendingUpdate
+	QueueReleaseNotes map[string]string // keyed by queue key -> GitHub release URL
+	History           []UpdateRecord
+	Settings          map[string]string
+	Logs              []LogEntry
 
 	// Swarm services — separate section below standalone containers.
 	SwarmServices []serviceView
@@ -634,10 +636,23 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		items = []PendingUpdate{}
 	}
 
+	releaseNotes := make(map[string]string)
+	for _, item := range items {
+		if len(item.NewerVersions) > 0 {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			info := registry.FetchReleaseNotes(ctx, item.CurrentImage, item.NewerVersions[0])
+			cancel()
+			if info != nil {
+				releaseNotes[item.Key()] = info.URL
+			}
+		}
+	}
+
 	data := pageData{
-		Page:       "queue",
-		Queue:      items,
-		QueueCount: len(items),
+		Page:              "queue",
+		Queue:             items,
+		QueueReleaseNotes: releaseNotes,
+		QueueCount:        len(items),
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
