@@ -318,6 +318,18 @@ func (u *Updater) rollbackPolicy() string {
 	return ""
 }
 
+// isComposeSync returns true when compose file sync is enabled via settings.
+func (u *Updater) isComposeSync() bool {
+	if u.settings == nil {
+		return false
+	}
+	val, err := u.settings.LoadSetting("compose_sync")
+	if err != nil {
+		return false
+	}
+	return val == "true"
+}
+
 // Scan lists running containers, checks for updates, and processes them
 // according to each container's policy. The mode controls rate limit headroom.
 func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {

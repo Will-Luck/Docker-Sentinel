@@ -287,6 +287,14 @@ function initSettingsPage() {
                 updateDelayInput.value = settings["update_delay"] || "";
             }
 
+            // Compose sync toggle.
+            var composeSyncToggle = document.getElementById("compose-sync-toggle");
+            if (composeSyncToggle) {
+                var composeSync = settings["compose_sync"] === "true";
+                composeSyncToggle.checked = composeSync;
+                updateToggleText("compose-sync-text", composeSync);
+            }
+
             // HA discovery toggle.
             var haToggle = document.getElementById("ha-discovery-toggle");
             if (haToggle) {
@@ -840,6 +848,22 @@ function setDryRun(enabled) {
 function setPullOnly(enabled) {
     updateToggleText("pull-only-text", enabled);
     fetch("/api/settings/pull-only", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setComposeSync(enabled) {
+    updateToggleText("compose-sync-text", enabled);
+    fetch("/api/settings/compose-sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: enabled })

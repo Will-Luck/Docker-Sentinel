@@ -270,6 +270,16 @@
                                 <button class="btn btn-success" onclick="setUpdateDelay()">Save</button>
                             </div>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Compose file sync</div>
+                                <div class="setting-desc">Update the image tag in the Docker Compose file after a successful update. Only applies to Compose-managed containers. Creates <code>.bak</code> backups before modifying.</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="compose-sync-toggle" class="channel-toggle" onchange="setComposeSync(this.checked)">
+                                <span id="compose-sync-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>

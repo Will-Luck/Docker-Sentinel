@@ -287,6 +287,28 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.log.Warn("failed to clear notify state after update", "name", name, "error", err)
 	}
 
+	// Compose file sync (opt-in).
+	if u.isComposeSync() {
+		labels := inspect.Config.Labels
+		workDir := labels["com.docker.compose.project.working_dir"]
+		configFiles := labels["com.docker.compose.project.config_files"]
+		svcName := labels["com.docker.compose.service"]
+		if workDir != "" && configFiles != "" && svcName != "" {
+			composePath := configFiles
+			if i := strings.Index(composePath, ","); i >= 0 {
+				composePath = composePath[:i]
+			}
+			if !strings.HasPrefix(composePath, "/") {
+				composePath = workDir + "/" + composePath
+			}
+			if err := UpdateComposeTag(composePath, svcName, pullImage); err != nil {
+				u.log.Warn("compose sync failed", "name", name, "file", composePath, "error", err)
+			} else {
+				u.log.Info("compose file updated", "name", name, "file", composePath)
+			}
+		}
+	}
+
 	// Clear ignored versions — container moved past them.
 	if err := u.store.ClearIgnoredVersions(name); err != nil {
 		u.log.Warn("failed to clear ignored versions after update", "name", name, "error", err)

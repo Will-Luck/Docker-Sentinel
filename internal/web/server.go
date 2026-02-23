@@ -777,6 +777,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/general", perm(auth.PermSettingsModify, s.apiSaveGeneralSetting))
 	s.mux.Handle("POST /api/settings/switch-role", perm(auth.PermSettingsModify, s.apiSwitchRole))
 	s.mux.Handle("POST /api/settings/ha-discovery", perm(auth.PermSettingsModify, s.apiSetHADiscovery))
+	s.mux.Handle("POST /api/settings/compose-sync", perm(auth.PermSettingsModify, s.apiSetComposeSync))
 	s.mux.Handle("GET /api/grafana-dashboard", perm(auth.PermSettingsModify, s.apiGrafanaDashboard))
 
 	// Cluster settings — always available so the admin can enable/configure cluster
