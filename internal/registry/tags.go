@@ -22,6 +22,7 @@ type SemVer struct {
 	Patch int
 	Pre   string // pre-release suffix (e.g. "rc1", "beta2")
 	Raw   string // original tag string
+	Parts int    // 2 for "x.y", 3 for "x.y.z"
 }
 
 // TagsResult holds the response from ListTags, including rate limit headers.
@@ -154,6 +155,7 @@ func ParseSemVer(tag string) (SemVer, bool) {
 		Patch: patch,
 		Pre:   pre,
 		Raw:   raw,
+		Parts: len(parts),
 	}, true
 }
 
