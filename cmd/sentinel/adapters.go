@@ -1021,15 +1021,18 @@ func (a *clusterAdapter) AllHosts() []web.ClusterHost {
 		// fields like Connected and in-memory Containers).
 		if hs, ok := a.srv.GetHost(h.ID); ok {
 			result = append(result, web.ClusterHost{
-				ID:           hs.Info.ID,
-				Name:         hs.Info.Name,
-				Address:      hs.Info.Address,
-				State:        string(hs.Info.State),
-				Connected:    hs.Connected,
-				EnrolledAt:   hs.Info.EnrolledAt,
-				LastSeen:     hs.Info.LastSeen,
-				AgentVersion: hs.Info.AgentVersion,
-				Containers:   len(hs.Containers),
+				ID:            hs.Info.ID,
+				Name:          hs.Info.Name,
+				Address:       hs.Info.Address,
+				State:         string(hs.Info.State),
+				Connected:     hs.Connected,
+				EnrolledAt:    hs.Info.EnrolledAt,
+				LastSeen:      hs.Info.LastSeen,
+				AgentVersion:  hs.Info.AgentVersion,
+				Containers:    len(hs.Containers),
+				DisconnectAt:  hs.DisconnectAt,
+				DisconnectErr: hs.DisconnectErr,
+				DisconnectCat: hs.DisconnectCat,
 			})
 		}
 	}
@@ -1042,15 +1045,18 @@ func (a *clusterAdapter) GetHost(id string) (web.ClusterHost, bool) {
 		return web.ClusterHost{}, false
 	}
 	return web.ClusterHost{
-		ID:           hs.Info.ID,
-		Name:         hs.Info.Name,
-		Address:      hs.Info.Address,
-		State:        string(hs.Info.State),
-		Connected:    hs.Connected,
-		EnrolledAt:   hs.Info.EnrolledAt,
-		LastSeen:     hs.Info.LastSeen,
-		AgentVersion: hs.Info.AgentVersion,
-		Containers:   len(hs.Containers),
+		ID:            hs.Info.ID,
+		Name:          hs.Info.Name,
+		Address:       hs.Info.Address,
+		State:         string(hs.Info.State),
+		Connected:     hs.Connected,
+		EnrolledAt:    hs.Info.EnrolledAt,
+		LastSeen:      hs.Info.LastSeen,
+		AgentVersion:  hs.Info.AgentVersion,
+		Containers:    len(hs.Containers),
+		DisconnectAt:  hs.DisconnectAt,
+		DisconnectErr: hs.DisconnectErr,
+		DisconnectCat: hs.DisconnectCat,
 	}, true
 }
 
@@ -1091,8 +1097,8 @@ func (a *clusterAdapter) RevokeHost(id string) error {
 	return a.srv.RevokeHost(id)
 }
 
-func (a *clusterAdapter) DrainHost(id string) error {
-	return a.srv.DrainHost(id)
+func (a *clusterAdapter) PauseHost(id string) error {
+	return a.srv.PauseHost(id)
 }
 
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {

@@ -3161,6 +3161,39 @@ function initSSE() {
         loadGHCRAlternatives();
     });
 
+    es.addEventListener("cluster_host", function(e) {
+        try {
+            var data = JSON.parse(e.data);
+            var hostID = data.host_id || data.host_name || "";
+            var msg = data.message || "";
+            var offline = msg.indexOf("disconnected") !== -1;
+            var group = document.querySelector('tbody.host-group[data-host="' + hostID + '"]');
+            if (!group) return;
+            var header = group.querySelector(".host-header");
+            var dot = group.querySelector(".host-status-dot");
+            var inner = group.querySelector(".host-header-inner");
+            var existing = group.querySelector(".host-offline-link");
+            if (header) {
+                if (offline) header.classList.add("host-offline");
+                else header.classList.remove("host-offline");
+            }
+            if (dot) {
+                dot.className = "host-status-dot " + (offline ? "disconnected" : "connected");
+            }
+            if (offline && !existing && inner) {
+                var link = document.createElement("a");
+                link.href = "/cluster";
+                link.className = "host-offline-link";
+                link.textContent = "OFFLINE \u2014 TROUBLESHOOT";
+                link.onclick = function(ev) { ev.stopPropagation(); };
+                var count = inner.querySelector(".host-count");
+                inner.insertBefore(link, count);
+            } else if (!offline && existing) {
+                existing.remove();
+            }
+        } catch (_) {}
+    });
+
     es.onopen = function () {
         setConnectionStatus(true);
     };

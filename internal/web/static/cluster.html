@@ -94,7 +94,7 @@
                         <span class="host-status-dot {{if eq .State "draining"}}draining{{else if .Connected}}connected{{else}}disconnected{{end}}"></span>
                         <strong>{{.Name}}</strong>
                     </div>
-                    <span class="host-state-badge {{if eq .State "draining"}}badge-draining{{else if .Connected}}badge-active{{end}}">{{.State}}</span>
+                    {{if and (not .Connected) (ne .State "draining")}}<span class="host-state-badge badge-offline">offline</span>{{else}}<span class="host-state-badge {{if eq .State "draining"}}badge-draining{{else if .Connected}}badge-active{{end}}">{{.State}}</span>{{end}}
                 </div>
                 <div class="host-card-meta">
                     <span>{{.Address}}</span>
@@ -105,6 +105,46 @@
                     <span>Enrolled {{fmtTimeAgo .EnrolledAt}}</span>
                     {{if not .Connected}}<span class="text-muted">Last seen {{fmtTimeAgo .LastSeen}}</span>{{end}}
                 </div>
+                {{if and (not .Connected) .DisconnectCat}}
+                <details class="host-troubleshoot" open>
+                    <summary>
+                        <span class="troubleshoot-icon">&#9888;</span>
+                        Troubleshoot disconnection
+                        {{if .DisconnectErr}}<span class="troubleshoot-hint">{{.DisconnectErr}}</span>{{end}}
+                    </summary>
+                    <div class="troubleshoot-body">
+                        {{if eq .DisconnectCat "network"}}
+                        <p><strong>Network issue detected</strong></p>
+                        <ul>
+                            <li>Verify the agent host can reach this server on port {{$.ClusterPort}}</li>
+                            <li>Check firewall rules and Docker network settings</li>
+                            <li>Confirm the agent container is running: <code>docker ps | grep sentinel</code></li>
+                            <li>Check agent logs: <code>docker logs &lt;container&gt; --tail 50</code></li>
+                            <li>The agent will auto-reconnect when connectivity is restored</li>
+                        </ul>
+                        {{else if eq .DisconnectCat "cert"}}
+                        <p><strong>Certificate or enrollment issue</strong></p>
+                        <ul>
+                            <li>The agent may have stale certificates from a previous enrollment</li>
+                            <li>Generate a new enrollment token on this page</li>
+                            <li>On the agent host, stop the container and remove its data volume</li>
+                            <li>Redeploy with <code>SENTINEL_ENROLL_TOKEN=&lt;token&gt;</code> and <code>SENTINEL_SERVER_ADDR=&lt;this-server&gt;:{{$.ClusterPort}}</code></li>
+                            <li>Or access the agent's setup wizard at its web port to re-enroll</li>
+                        </ul>
+                        {{else}}
+                        <p><strong>Server-side disconnect</strong></p>
+                        <ul>
+                            <li>This is usually normal (server restart, stream replaced by new connection)</li>
+                            <li>The agent should reconnect automatically within 30 seconds</li>
+                            <li>If it doesn't reconnect, check agent logs for errors</li>
+                        </ul>
+                        {{end}}
+                        {{if not .DisconnectAt.IsZero}}
+                        <p class="troubleshoot-time">Disconnected: {{.DisconnectAt.Format "Jan 2, 15:04:05"}}</p>
+                        {{end}}
+                    </div>
+                </details>
+                {{end}}
                 <div class="host-card-actions">
                     {{if eq .State "active"}}
                     <button class="btn btn-sm btn-warning" onclick="drainHost('{{.ID}}', '{{.Name}}')">Drain</button>

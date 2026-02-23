@@ -127,7 +127,7 @@ func (m *mockClusterProviderWithContainers) GenerateEnrollToken() (string, strin
 
 func (m *mockClusterProviderWithContainers) RemoveHost(_ string) error { return nil }
 func (m *mockClusterProviderWithContainers) RevokeHost(_ string) error { return nil }
-func (m *mockClusterProviderWithContainers) DrainHost(_ string) error  { return nil }
+func (m *mockClusterProviderWithContainers) PauseHost(_ string) error  { return nil }
 
 func (m *mockClusterProviderWithContainers) UpdateRemoteContainer(_ context.Context, _, _, _, _ string) error {
 	return nil

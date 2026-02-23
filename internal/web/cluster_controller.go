@@ -101,15 +101,15 @@ func (c *ClusterController) RevokeHost(id string) error {
 	return c.provider.RevokeHost(id)
 }
 
-// DrainHost sets a host to draining state (no new updates).
+// PauseHost sets a host to paused state (no new updates).
 // Returns an error when clustering is disabled.
-func (c *ClusterController) DrainHost(id string) error {
+func (c *ClusterController) PauseHost(id string) error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.provider == nil {
 		return fmt.Errorf("cluster not enabled")
 	}
-	return c.provider.DrainHost(id)
+	return c.provider.PauseHost(id)
 }
 
 // AllHostContainers returns containers from all connected hosts.
