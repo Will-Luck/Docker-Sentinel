@@ -93,6 +93,11 @@ const (
 	ScopeMajor   SemverScope = "major" // any newer version
 )
 
+// ContainerTagFilters reads sentinel.include-tags and sentinel.exclude-tags labels.
+func ContainerTagFilters(labels map[string]string) (include, exclude string) {
+	return labels["sentinel.include-tags"], labels["sentinel.exclude-tags"]
+}
+
 // ContainerSemverScope reads the sentinel.semver label and returns the
 // explicit version scope. Returns ScopeDefault if the label is absent or invalid.
 func ContainerSemverScope(labels map[string]string) SemverScope {

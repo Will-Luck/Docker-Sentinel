@@ -75,9 +75,10 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		}
 
 		semverScope := docker.ContainerSemverScope(labels)
+		includeRE, excludeRE := docker.ContainerTagFilters(labels)
 		var check registry.CheckResult
 		if specDigest != "" {
-			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, specDigest, semverScope)
+			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, specDigest, semverScope, includeRE, excludeRE)
 		} else {
 			// Try local image inspect first; fall back to registry digest
 			// for multi-node swarm where images only exist on worker nodes.
@@ -91,7 +92,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				}
 				localDigest = remoteDigest
 			}
-			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, localDigest, semverScope)
+			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, localDigest, semverScope, includeRE, excludeRE)
 		}
 		if check.Error != nil {
 			u.log.Warn("service registry check failed", "name", name, "image", imageRef, "error", check.Error)
@@ -201,6 +202,18 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		switch policy {
 		case docker.PolicyAuto:
 			result.AutoCount++
+			if u.isDryRun() {
+				u.log.Info("dry-run: would update service", "name", name, "target", scanTarget)
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: name,
+					OldImage:      imageRef,
+					NewImage:      scanTarget,
+					Outcome:       "dry_run",
+					Type:          "service",
+				})
+				continue
+			}
 			if err := u.UpdateService(ctx, svc.ID, name, scanTarget); err != nil {
 				u.log.Error("auto service update failed", "name", name, "error", err)
 				result.Failed++

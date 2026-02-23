@@ -317,7 +317,7 @@ type registryCheckerAdapter struct {
 }
 
 func (a *registryCheckerAdapter) CheckForUpdate(ctx context.Context, imageRef string) (bool, []string, string, string, error) {
-	result := a.checker.CheckVersioned(ctx, imageRef, docker.ScopeDefault)
+	result := a.checker.CheckVersioned(ctx, imageRef, docker.ScopeDefault, "", "")
 	if result.Error != nil {
 		return false, nil, "", "", result.Error
 	}
