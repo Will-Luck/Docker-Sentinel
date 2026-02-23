@@ -214,6 +214,29 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				})
 				continue
 			}
+			pullOnly := docker.ContainerPullOnly(labels) || u.isPullOnly()
+			if pullOnly {
+				target := scanTarget
+				if target == "" {
+					target = imageRef
+				}
+				if err := u.docker.PullImage(ctx, target); err != nil {
+					u.log.Error("pull-only failed (service)", "name", name, "error", err)
+					result.Failed++
+					result.Errors = append(result.Errors, fmt.Errorf("service %s: pull-only: %w", name, err))
+					continue
+				}
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: name,
+					OldImage:      imageRef,
+					NewImage:      target,
+					Outcome:       "pull_only",
+					Type:          "service",
+				})
+				result.Updated++
+				continue
+			}
 			if err := u.UpdateService(ctx, svc.ID, name, scanTarget); err != nil {
 				u.log.Error("auto service update failed", "name", name, "error", err)
 				result.Failed++

@@ -250,6 +250,16 @@
                                 <span id="dry-run-text" class="toggle-switch-text">Off</span>
                             </label>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Pull-only mode</div>
+                                <div class="setting-desc">Pull the new image without restarting containers (pre-stage updates). Override per container with <code>sentinel.pull-only=true</code></div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="pull-only-toggle" class="channel-toggle" onchange="setPullOnly(this.checked)">
+                                <span id="pull-only-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
