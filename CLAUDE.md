@@ -30,10 +30,10 @@ make docker   # Build Docker image
 - `cmd/sentinel/` — Entry point
 - `internal/config/` — Configuration and env vars
 - `internal/docker/` — Docker API client, snapshots, label management
-- `internal/registry/` — Registry digest checking, semver tag discovery
+- `internal/registry/` — Registry digest checking, semver tag discovery, release notes, tag filtering
 - `internal/engine/` — Scheduler, update lifecycle, rollback, approval queue
 - `internal/auth/` — Authentication, sessions, passkeys, RBAC permissions
-- `internal/notify/` — Notification interface + providers (9 channels + log)
+- `internal/notify/` — Notification interface + providers (10 channels + log), HA MQTT discovery
 - `internal/guardian/` — Docker-Guardian maintenance label integration
 - `internal/store/` — BoltDB persistence layer
 - `internal/web/` — Embedded HTTP server, REST API, dashboard
@@ -55,7 +55,7 @@ make docker   # Build Docker image
 - **Safe by default:** Unlabelled containers default to `manual` policy (not auto-update)
 - **Labels as source of truth:** Policies set via Docker labels, dashboard can read them
 - **One-directional Guardian integration:** Sentinel sets `sentinel.maintenance=true` during updates; Guardian reads it. Label is removed after successful validation via `finaliseContainer()`.
-- **Pluggable notifications:** Interface-based — 9 providers (Gotify, Slack, Discord, Ntfy, Telegram, Pushover, webhook, SMTP, Apprise) + structured log. Events fired at 6 lifecycle points.
+- **Pluggable notifications:** Interface-based — 10 providers (Gotify, Slack, Discord, Ntfy, Telegram, Pushover, webhook, SMTP, Apprise, MQTT) + structured log. Events fired at 6 lifecycle points. Rich markdown formatting for Discord, Slack, Telegram, ntfy.
 - **Full container snapshots:** `docker inspect` JSON stored in BoltDB before every update, enabling exact rollback
 - **Web adapter pattern:** Web package uses mirror types to avoid import cycles; main.go has adapter structs bridging store/engine/docker to web interfaces
 - **innerHTML for server HTML only:** innerHTML is used exclusively for inserting server-rendered HTML fragments (row replacements, modal content). Never use innerHTML with user-supplied or client-constructed strings.
@@ -111,8 +111,30 @@ make docker   # Build Docker image
 | `SENTINEL_DEPS` | `true` | Dependency-aware restart ordering |
 | `SENTINEL_ROLLBACK_POLICY` | (empty) | Policy after rollback: `manual` or `pinned` |
 | `SENTINEL_METRICS` | `false` | Enable Prometheus metrics endpoint |
+| `SENTINEL_METRICS_TEXTFILE` | (empty) | Path for Prometheus textfile collector output |
+| `SENTINEL_IMAGE_BACKUP` | `false` | Retag current image before update |
+| `SENTINEL_SHOW_STOPPED` | `false` | Include stopped containers in dashboard |
+| `SENTINEL_REMOVE_VOLUMES` | `false` | Remove anonymous volumes during update |
+| `SENTINEL_SCAN_CONCURRENCY` | `1` | Parallel registry check workers |
 | `SENTINEL_CLUSTER_DIR` | `/data/cluster` | CA/cert storage directory |
 | `SENTINEL_GRACE_PERIOD_OFFLINE` | `30m` | Agent autonomous mode threshold |
+
+## Docker Labels
+
+| Label | Values | Description |
+|-------|--------|-------------|
+| `sentinel.policy` | `auto`, `manual`, `pinned` | Update policy for the container |
+| `sentinel.semver` | `patch`, `minor`, `major` | Semver scope constraint for version filtering |
+| `sentinel.include-tags` | regex | Only consider tags matching this pattern |
+| `sentinel.exclude-tags` | regex | Ignore tags matching this pattern |
+| `sentinel.delay` | duration (`72h`, `7d`) | Only update to images older than this |
+| `sentinel.pull-only` | `true` | Pull new image without restarting container |
+| `sentinel.notify-snooze` | duration (`12h`, `3d`) | Suppress repeat notifications per version |
+| `sentinel.schedule` | cron expression | Per-container scan schedule |
+| `sentinel.remove-volumes` | `true` | Remove anonymous volumes during update |
+| `sentinel.maintenance` | `true` | Set during updates for Guardian integration |
+
+Labels are parsed in `internal/docker/labels.go`. Duration values support `d` suffix for days.
 
 ## Architecture Reference
 

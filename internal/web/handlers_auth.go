@@ -276,7 +276,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		"WebAuthnEnabled":  s.webauthn != nil,
 		"CurrentToken":     currentToken,
 		"QueueCount":       len(s.deps.Queue.List()),
-		"PortainerEnabled": s.deps.Portainer != nil,
+		"PortainerEnabled": s.isPortainerEnabled(),
 		"ClusterEnabled":   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	})
 }

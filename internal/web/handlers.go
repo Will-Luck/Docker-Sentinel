@@ -1058,17 +1058,21 @@ func (s *Server) withCluster(data *pageData) {
 	}
 }
 
-// withPortainer populates PortainerEnabled from the live provider or DB setting.
-func (s *Server) withPortainer(data *pageData) {
+// isPortainerEnabled checks whether Portainer integration is active.
+func (s *Server) isPortainerEnabled() bool {
 	if s.deps.Portainer != nil {
-		data.PortainerEnabled = true
-		return
+		return true
 	}
 	if s.deps.SettingsStore != nil {
-		url, _ := s.deps.SettingsStore.LoadSetting("portainer_url")
-		tok, _ := s.deps.SettingsStore.LoadSetting("portainer_token")
-		data.PortainerEnabled = url != "" && tok != ""
+		v, _ := s.deps.SettingsStore.LoadSetting(store.SettingPortainerEnabled)
+		return v == "true"
 	}
+	return false
+}
+
+// withPortainer populates PortainerEnabled from the live provider or DB setting.
+func (s *Server) withPortainer(data *pageData) {
+	data.PortainerEnabled = s.isPortainerEnabled()
 }
 
 // withAuth populates auth context fields on pageData from the request.
@@ -1268,7 +1272,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		Versions:         versions,
 		HasSnapshot:      len(snapshots) > 0,
 		ChangelogURL:     ChangelogURL(image),
-		PortainerEnabled: s.deps.Portainer != nil,
+		PortainerEnabled: s.isPortainerEnabled(),
 		ClusterEnabled:   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthDetail(r, &data)
@@ -1366,7 +1370,7 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 		History:          history,
 		Versions:         versions,
 		ChangelogURL:     ChangelogURL(found.Image),
-		PortainerEnabled: s.deps.Portainer != nil,
+		PortainerEnabled: s.isPortainerEnabled(),
 		ClusterEnabled:   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthServiceDetail(r, &data)
