@@ -60,6 +60,7 @@ type Dependencies struct {
 	ReleaseSources      ReleaseSourceStore
 	Swarm               SwarmProvider      // nil when not in Swarm mode
 	Cluster             *ClusterController // thread-safe proxy; always non-nil, use .Enabled() to check
+	Portainer           PortainerProvider  // nil when Portainer not configured
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
@@ -352,6 +353,35 @@ type SettingsStore interface {
 type ClusterLifecycle interface {
 	Start() error
 	Stop()
+}
+
+// PortainerProvider provides Portainer endpoint and container access for the web layer.
+type PortainerProvider interface {
+	TestConnection(ctx context.Context) error
+	Endpoints(ctx context.Context) ([]PortainerEndpoint, error)
+	AllEndpoints(ctx context.Context) ([]PortainerEndpoint, error)
+	EndpointContainers(ctx context.Context, endpointID int) ([]PortainerContainerInfo, error)
+}
+
+// PortainerEndpoint represents a Portainer-managed Docker environment.
+type PortainerEndpoint struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	URL    string `json:"url"`
+	Status string `json:"status"`
+}
+
+// PortainerContainerInfo is a container from a Portainer-managed environment.
+type PortainerContainerInfo struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Image        string            `json:"image"`
+	State        string            `json:"state"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	EndpointID   int               `json:"endpoint_id"`
+	EndpointName string            `json:"endpoint_name"`
+	StackID      int               `json:"stack_id,omitempty"`
+	StackName    string            `json:"stack_name,omitempty"`
 }
 
 // LogEntry mirrors store.LogEntry.
@@ -812,6 +842,14 @@ func (s *Server) registerRoutes() {
 	// even when the cluster server is not yet running.
 	s.mux.Handle("GET /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettings))
 	s.mux.Handle("POST /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettingsSave))
+
+	// Portainer
+	s.mux.Handle("GET /portainer", perm(auth.PermSettingsModify, s.handlePortainer))
+	s.mux.Handle("GET /api/portainer/endpoints", perm(auth.PermContainersView, s.apiPortainerEndpoints))
+	s.mux.Handle("GET /api/portainer/endpoints/{id}/containers", perm(auth.PermContainersView, s.apiPortainerContainers))
+	s.mux.Handle("POST /api/settings/portainer-url", perm(auth.PermSettingsModify, s.apiSetPortainerURL))
+	s.mux.Handle("POST /api/settings/portainer-token", perm(auth.PermSettingsModify, s.apiSetPortainerToken))
+	s.mux.Handle("POST /api/settings/portainer-test", perm(auth.PermSettingsModify, s.apiTestPortainerConnection))
 
 	s.mux.Handle("POST /api/hooks/{container}", perm(auth.PermSettingsModify, s.apiSaveHook))
 	s.mux.Handle("DELETE /api/hooks/{container}/{phase}", perm(auth.PermSettingsModify, s.apiDeleteHook))
