@@ -30,6 +30,7 @@
             <a href="/logs" class="nav-link">Logs</a>
             <a href="/settings" class="nav-link active" aria-current="page">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
+            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -71,6 +72,7 @@
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-general" data-tab="general">General</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-cluster" data-tab="cluster">Cluster</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-portainer" data-tab="portainer">Portainer</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-about" data-tab="about">About</button>
             {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-security" data-tab="security">Security</button>
@@ -841,6 +843,41 @@
             </div>
         </div>
 
+        <!-- Portainer tab -->
+        <div class="tab-panel" id="tab-portainer" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Portainer Integration</h2>
+                </div>
+                <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
+                    <p class="accordion-intro">Connect to a Portainer instance to view endpoints and containers from the Portainer dashboard.</p>
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Portainer URL</div>
+                                <div class="setting-desc">Base URL of your Portainer instance, e.g. https://portainer.example.com</div>
+                            </div>
+                            <input type="text" id="portainer-url" class="setting-input" placeholder="https://portainer.example.com" onchange="savePortainerURL()">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">API Token</div>
+                                <div class="setting-desc">Portainer API access token (Settings         <!-- About tab -->#8250; Users         <!-- About tab -->#8250; Access tokens).</div>
+                            </div>
+                            <input type="password" id="portainer-token" class="setting-input" placeholder="ptr_..." onchange="savePortainerToken()">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Connection</div>
+                                <div class="setting-desc">Test connectivity with the current URL and token.</div>
+                            </div>
+                            <button class="btn btn-info" id="portainer-test-btn" onclick="testPortainerConnection()">Test Connection</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- About tab -->
         <div class="tab-panel" id="tab-about" role="tabpanel">
             <div class="card">
@@ -894,6 +931,52 @@ function switchRole() {
     .catch(function() { showToast('Failed to save', 'error'); });
 }
 
+function savePortainerURL() {
+    var url = (document.getElementById('portainer-url') || {}).value || '';
+    fetch('/api/settings/portainer-url', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({url: url})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer URL saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function savePortainerToken() {
+    var token = (document.getElementById('portainer-token') || {}).value || '';
+    fetch('/api/settings/portainer-token', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({token: token})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer token saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function testPortainerConnection() {
+    var btn = document.getElementById('portainer-test-btn');
+    if (btn) btn.disabled = true;
+    fetch('/api/settings/portainer-test', {
+        method: 'POST',
+        headers: {'X-CSRF-Token': csrfToken}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast('Connection failed: ' + d.error, 'error'); }
+        else { showToast('Connection successful'); }
+    })
+    .catch(function() { showToast('Connection failed', 'error'); })
+    .finally(function() { if (btn) btn.disabled = false; });
+}
+
 // Load current values
 (function() {
     fetch('/api/settings')
@@ -925,6 +1008,8 @@ function switchRole() {
             if (roleBtn) {
                 roleBtn.textContent = currentRole === 'agent' ? 'Switch to Server' : 'Switch to Agent';
             }
+            var pUrl = document.getElementById('portainer-url');
+            if (pUrl && d['SENTINEL_PORTAINER_URL']) pUrl.value = d['SENTINEL_PORTAINER_URL'];
         });
 })();
     </script>
