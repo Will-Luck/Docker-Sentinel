@@ -312,6 +312,51 @@ func (s *Server) apiHistoryExport(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// apiContainerAllTags returns all available tags for a container's image from the registry.
+func (s *Server) apiContainerAllTags(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.deps.TagLister == nil {
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var imageRef string
+	for _, c := range containers {
+		if containerName(c) == name {
+			imageRef = c.Image
+			break
+		}
+	}
+	if imageRef == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	tags, err := s.deps.TagLister.ListAllTags(r.Context(), imageRef)
+	if err != nil {
+		s.deps.Log.Warn("failed to list tags", "name", name, "image", imageRef, "error", err)
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+	if tags == nil {
+		tags = []string{}
+	}
+
+	writeJSON(w, http.StatusOK, tags)
+}
+
 // apiTriggerScan triggers an immediate scan cycle.
 func (s *Server) apiTriggerScan(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Scheduler == nil {

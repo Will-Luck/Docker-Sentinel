@@ -41,6 +41,7 @@ type Dependencies struct {
 	Starter             ContainerStarter
 	Registry            RegistryVersionChecker
 	RegistryChecker     RegistryChecker
+	TagLister           RegistryTagLister
 	Policy              PolicyStore
 	EventLog            EventLogger
 	Scheduler           SchedulerController
@@ -88,6 +89,11 @@ type ContainerRollback interface {
 // RegistryVersionChecker lists available image versions from a registry.
 type RegistryVersionChecker interface {
 	ListVersions(ctx context.Context, imageRef string) ([]string, error)
+}
+
+// RegistryTagLister lists all tags for an image from a registry.
+type RegistryTagLister interface {
+	ListAllTags(ctx context.Context, imageRef string) ([]string, error)
 }
 
 // RegistryChecker performs a full registry check for a single container.
@@ -684,6 +690,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/containers", perm(auth.PermContainersView, s.apiContainers))
 	s.mux.Handle("GET /api/containers/{name}", perm(auth.PermContainersView, s.apiContainerDetail))
 	s.mux.Handle("GET /api/containers/{name}/versions", perm(auth.PermContainersView, s.apiContainerVersions))
+	s.mux.Handle("GET /api/containers/{name}/tags", perm(auth.PermContainersView, s.apiContainerAllTags))
 	s.mux.Handle("GET /api/containers/{name}/row", perm(auth.PermContainersView, s.handleContainerRow))
 	s.mux.Handle("GET /api/stats", perm(auth.PermContainersView, s.handleDashboardStats))
 	s.mux.Handle("GET /api/events", perm(auth.PermContainersView, s.apiSSE))
