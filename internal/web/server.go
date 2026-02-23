@@ -478,6 +478,7 @@ type ConfigWriter interface {
 	SetDependencyAware(b bool)
 	SetRollbackPolicy(s string)
 	SetRemoveVolumes(b bool)
+	SetScanConcurrency(n int)
 }
 
 // Server is the web dashboard HTTP server.
@@ -782,6 +783,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/image-backup", perm(auth.PermSettingsModify, s.apiSetImageBackup))
 	s.mux.Handle("POST /api/settings/show-stopped", perm(auth.PermSettingsModify, s.apiSetShowStopped))
 	s.mux.Handle("POST /api/settings/remove-volumes", perm(auth.PermSettingsModify, s.apiSetRemoveVolumes))
+	s.mux.Handle("POST /api/settings/scan-concurrency", perm(auth.PermSettingsModify, s.apiSetScanConcurrency))
 	s.mux.Handle("GET /api/grafana-dashboard", perm(auth.PermSettingsModify, s.apiGrafanaDashboard))
 
 	// Cluster settings — always available so the admin can enable/configure cluster

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -329,6 +330,22 @@ func (u *Updater) isImageBackup() bool {
 	return u.cfg.ImageBackup()
 }
 
+// scanConcurrency returns the number of parallel registry checks to use.
+// Returns 1 (sequential) unless overridden via settings or env.
+func (u *Updater) scanConcurrency() int {
+	if u.settings != nil {
+		if val, err := u.settings.LoadSetting("scan_concurrency"); err == nil && val != "" {
+			if n, err := strconv.Atoi(val); err == nil && n >= 1 {
+				return n
+			}
+		}
+	}
+	if n := u.cfg.ScanConcurrency(); n > 1 {
+		return n
+	}
+	return 1
+}
+
 // isRemoveVolumes returns true when anonymous volume removal is enabled globally.
 func (u *Updater) isRemoveVolumes() bool {
 	if u.settings != nil {
@@ -357,6 +374,10 @@ func (u *Updater) isComposeSync() bool {
 func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	scanStart := time.Now()
 	result := ScanResult{}
+
+	if c := u.scanConcurrency(); c > 1 {
+		u.log.Info("scan concurrency enabled (experimental)", "concurrency", c)
+	}
 
 	containers, err := u.docker.ListContainers(ctx)
 	if err != nil {

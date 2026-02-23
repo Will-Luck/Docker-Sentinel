@@ -873,6 +873,36 @@ func (s *Server) apiSetRemoveVolumes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "remove volumes on update " + label})
 }
 
+// apiSetScanConcurrency sets the number of parallel registry checks during a scan.
+func (s *Server) apiSetScanConcurrency(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Concurrency int `json:"concurrency"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Concurrency < 1 || body.Concurrency > 20 {
+		writeError(w, http.StatusBadRequest, "concurrency must be between 1 and 20")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	val := strconv.Itoa(body.Concurrency)
+	if err := s.deps.SettingsStore.SaveSetting("scan_concurrency", val); err != nil {
+		s.deps.Log.Error("failed to save scan_concurrency", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetScanConcurrency(body.Concurrency)
+	}
+	s.logEvent(r, "settings", "", "Scan concurrency set to "+val)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "scan concurrency set to " + val})
+}
+
 // apiSetHADiscovery enables or disables Home Assistant MQTT auto-discovery.
 func (s *Server) apiSetHADiscovery(w http.ResponseWriter, r *http.Request) {
 	var req struct {

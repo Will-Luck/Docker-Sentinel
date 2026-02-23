@@ -75,6 +75,7 @@ type Config struct {
 	imageBackup      bool
 	showStopped      bool
 	removeVolumes    bool
+	scanConcurrency  int
 }
 
 // NewTestConfig creates a Config with sensible defaults for testing.
@@ -125,6 +126,7 @@ func Load() *Config {
 		imageBackup:         envBool("SENTINEL_IMAGE_BACKUP", false),
 		showStopped:         envBool("SENTINEL_SHOW_STOPPED", false),
 		removeVolumes:       envBool("SENTINEL_REMOVE_VOLUMES", false),
+		scanConcurrency:     envInt("SENTINEL_SCAN_CONCURRENCY", 1),
 
 		// Cluster / multi-host
 		Mode:               envStr("SENTINEL_MODE", ""),
@@ -199,6 +201,7 @@ func (c *Config) Values() map[string]string {
 	ib := c.imageBackup
 	ss := c.showStopped
 	rv := c.removeVolumes
+	sc := c.scanConcurrency
 	c.mu.RUnlock()
 
 	return map[string]string{
@@ -239,6 +242,7 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_IMAGE_BACKUP":         fmt.Sprintf("%t", ib),
 		"SENTINEL_SHOW_STOPPED":         fmt.Sprintf("%t", ss),
 		"SENTINEL_REMOVE_VOLUMES":       fmt.Sprintf("%t", rv),
+		"SENTINEL_SCAN_CONCURRENCY":     fmt.Sprintf("%d", sc),
 	}
 }
 
@@ -272,6 +276,18 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func envDuration(key string, def time.Duration) time.Duration {
@@ -447,6 +463,18 @@ func (c *Config) RemoveVolumes() bool {
 func (c *Config) SetRemoveVolumes(b bool) {
 	c.mu.Lock()
 	c.removeVolumes = b
+	c.mu.Unlock()
+}
+
+func (c *Config) ScanConcurrency() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.scanConcurrency
+}
+
+func (c *Config) SetScanConcurrency(n int) {
+	c.mu.Lock()
+	c.scanConcurrency = n
 	c.mu.Unlock()
 }
 

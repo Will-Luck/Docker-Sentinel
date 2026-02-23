@@ -319,6 +319,13 @@ function initSettingsPage() {
                 updateToggleText("remove-volumes-text", removeVolumes);
             }
 
+            // Scan concurrency input.
+            var scanConcInput = document.getElementById("scan-concurrency-input");
+            if (scanConcInput && settings["scan_concurrency"]) {
+                var sc = parseInt(settings["scan_concurrency"], 10);
+                if (!isNaN(sc) && sc >= 1) { scanConcInput.value = sc; }
+            }
+
             // HA discovery toggle.
             var haToggle = document.getElementById("ha-discovery-toggle");
             if (haToggle) {
@@ -939,6 +946,27 @@ function setRemoveVolumes(enabled) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setScanConcurrency() {
+    var input = document.getElementById("scan-concurrency-input");
+    var n = parseInt(input ? input.value : "1", 10);
+    if (isNaN(n) || n < 1 || n > 20) {
+        showToast("Concurrency must be between 1 and 20", "error");
+        return;
+    }
+    fetch("/api/settings/scan-concurrency", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ concurrency: n })
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
