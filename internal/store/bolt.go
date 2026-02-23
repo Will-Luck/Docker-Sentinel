@@ -503,6 +503,33 @@ func (s *Store) CountSnapshots() (int, error) {
 	return count, err
 }
 
+// GetLastContainerScan returns the time a container was last scanned.
+// Returns zero time and nil error if never scanned.
+func (s *Store) GetLastContainerScan(name string) (time.Time, error) {
+	var t time.Time
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		v := b.Get([]byte("last_scan_" + name))
+		if v == nil {
+			return nil
+		}
+		return t.UnmarshalText(v)
+	})
+	return t, err
+}
+
+// SetLastContainerScan records the time a container was last scanned.
+func (s *Store) SetLastContainerScan(name string, t time.Time) error {
+	data, err := t.MarshalText()
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		return b.Put([]byte("last_scan_"+name), data)
+	})
+}
+
 // ScopedKey returns a host-scoped key for multi-host store operations.
 // If hostID is empty (local containers), returns the bare name unchanged
 // for backwards compatibility. Remote containers use "hostID::name".

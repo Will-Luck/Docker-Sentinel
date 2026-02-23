@@ -12,6 +12,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/swarm"
+	"github.com/robfig/cron/v3"
 )
 
 // scanServices checks pre-fetched Swarm services for image updates,
@@ -59,6 +60,21 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 			continue
 		}
 
+		// Per-container schedule check.
+		if sched := docker.ContainerSchedule(labels); sched != "" {
+			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+			schedule, err := parser.Parse(sched)
+			if err != nil {
+				u.log.Warn("invalid schedule", "name", name, "schedule", sched, "error", err)
+			} else {
+				lastChecked, _ := u.store.GetLastContainerScan(name)
+				if !lastChecked.IsZero() && u.clock.Now().Before(schedule.Next(lastChecked)) {
+					result.Skipped++
+					continue
+				}
+			}
+		}
+
 		// Rate limit check.
 		if u.rateTracker != nil {
 			host := registry.RegistryHost(imageRef)
@@ -99,6 +115,9 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 			result.Errors = append(result.Errors, fmt.Errorf("service %s: %w", name, check.Error))
 			continue
 		}
+
+		// Record scan time for per-container schedule tracking.
+		_ = u.store.SetLastContainerScan(name, u.clock.Now())
 
 		if check.IsLocal || !check.UpdateAvailable {
 			if !check.UpdateAvailable {
