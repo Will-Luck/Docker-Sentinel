@@ -218,16 +218,38 @@ func parseImageTag(ref string) (image, tag string) {
 
 // buildCreateBody assembles a minimal create-container request from an inspect response.
 func buildCreateBody(insp *InspectResponse, newImage string) interface{} {
-	type createBody struct {
-		Image      string            `json:"Image"`
-		Env        []string          `json:"Env"`
-		Labels     map[string]string `json:"Labels"`
-		HostConfig json.RawMessage   `json:"HostConfig,omitempty"`
+	type endpointSettings struct {
+		Aliases    []string `json:"Aliases,omitempty"`
+		NetworkID  string   `json:"NetworkID,omitempty"`
+		MacAddress string   `json:"MacAddress,omitempty"`
 	}
+	type networkingConfig struct {
+		EndpointsConfig map[string]*endpointSettings `json:"EndpointsConfig,omitempty"`
+	}
+	type createBody struct {
+		Image            string            `json:"Image"`
+		Env              []string          `json:"Env"`
+		Labels           map[string]string `json:"Labels"`
+		HostConfig       json.RawMessage   `json:"HostConfig,omitempty"`
+		NetworkingConfig *networkingConfig `json:"NetworkingConfig,omitempty"`
+	}
+
+	// Extract network endpoints from NetworkSettings.Networks for the create call.
+	var netCfg *networkingConfig
+	if len(insp.NetworkSettings) > 0 {
+		var ns struct {
+			Networks map[string]*endpointSettings `json:"Networks"`
+		}
+		if err := json.Unmarshal(insp.NetworkSettings, &ns); err == nil && len(ns.Networks) > 0 {
+			netCfg = &networkingConfig{EndpointsConfig: ns.Networks}
+		}
+	}
+
 	return createBody{
-		Image:      newImage,
-		Env:        insp.Config.Env,
-		Labels:     insp.Config.Labels,
-		HostConfig: insp.HostConfig,
+		Image:            newImage,
+		Env:              insp.Config.Env,
+		Labels:           insp.Config.Labels,
+		HostConfig:       insp.HostConfig,
+		NetworkingConfig: netCfg,
 	}
 }

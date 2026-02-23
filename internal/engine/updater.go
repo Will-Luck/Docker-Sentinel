@@ -1184,6 +1184,9 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 			continue
 		}
 
+		// Sentinel on Portainer-managed hosts is checked for updates but never auto-updated.
+		remoteSelf := isSentinel(c.Labels)
+
 		if MatchesFilter(c.Name, filters) {
 			u.log.Debug("skipping filtered Portainer container", "endpoint", ep.Name, "name", c.Name)
 			result.Skipped++
@@ -1222,6 +1225,28 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 			continue
 		}
 
+		// Filter out ignored versions so they don't trigger queuing.
+		if len(check.NewerVersions) > 0 {
+			ignored, _ := u.store.GetIgnoredVersions(store.ScopedKey(hostID, c.Name))
+			if len(ignored) > 0 {
+				ignoredSet := make(map[string]bool, len(ignored))
+				for _, v := range ignored {
+					ignoredSet[v] = true
+				}
+				var filtered []string
+				for _, v := range check.NewerVersions {
+					if !ignoredSet[v] {
+						filtered = append(filtered, v)
+					}
+				}
+				if len(filtered) == 0 {
+					u.log.Debug("all newer versions ignored", "endpoint", ep.Name, "name", c.Name, "ignored", ignored)
+					continue
+				}
+				check.NewerVersions = filtered
+			}
+		}
+
 		u.log.Info("Portainer update available",
 			"endpoint", ep.Name, "name", c.Name, "image", c.Image)
 
@@ -1230,7 +1255,31 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 			scanTarget = replaceTag(c.Image, check.NewerVersions[0])
 		}
 
+		// Fix 1: fallback to c.Image when semver resolution yields no target.
+		if scanTarget == "" {
+			scanTarget = c.Image
+		}
+
 		scopedName := store.ScopedKey(hostID, c.Name)
+
+		// Portainer-managed Sentinel is always queued (never auto-updated via scan).
+		if remoteSelf {
+			u.queue.Add(PendingUpdate{
+				ContainerName:          c.Name,
+				CurrentImage:           c.Image,
+				RemoteDigest:           check.RemoteDigest,
+				DetectedAt:             u.clock.Now(),
+				NewerVersions:          check.NewerVersions,
+				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+				ResolvedTargetVersion:  check.ResolvedTargetVersion,
+				HostID:                 hostID,
+				HostName:               ep.Name,
+			})
+			u.log.Info("Portainer sentinel update detected, queued for manual action",
+				"endpoint", ep.Name, "name", c.Name)
+			result.Queued++
+			continue
+		}
 
 		switch policy {
 		case docker.PolicyAuto:
@@ -1246,6 +1295,30 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 					Outcome:       "dry_run",
 				})
 				continue
+			}
+
+			// Delay check: skip if the update hasn't been available long enough.
+			delay := docker.ContainerUpdateDelay(c.Labels)
+			if delay == 0 {
+				delay = u.globalUpdateDelay()
+			}
+			if delay > 0 {
+				state, _ := u.store.GetNotifyState(scopedName)
+				if state != nil && !state.FirstSeen.IsZero() {
+					age := u.clock.Now().Sub(state.FirstSeen)
+					if age < delay {
+						u.log.Info("Portainer update delayed",
+							"endpoint", ep.Name, "name", c.Name,
+							"age", age.Round(time.Minute), "required", delay)
+						result.Skipped++
+						continue
+					}
+				} else {
+					u.log.Info("Portainer update delay: first detection, waiting",
+						"endpoint", ep.Name, "name", c.Name, "delay", delay)
+					result.Skipped++
+					continue
+				}
 			}
 
 			var updateErr error
