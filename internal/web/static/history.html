@@ -182,28 +182,63 @@
                     tr.setAttribute('onclick', "onRowClick(event, 'history-" + idx + "')");
                     var ts = new Date(r.timestamp);
                     var ago = timeAgoHist(ts);
-                    var outcomeHtml = badgeForHist(r.outcome);
                     var dur = r.duration ? (r.duration / 1e9).toFixed(1) + 's' : '-';
-                    tr.innerHTML = '<td title="' + ts.toISOString() + '">' + ago + '</td>' +
-                        '<td><a href="/container/' + encodeURIComponent(r.container_name) + '" class="container-link">' + r.container_name + '</a></td>' +
-                        '<td>' + outcomeHtml + '</td>' +
-                        '<td class="mono">' + dur + '</td>';
+
+                    var tdTime = document.createElement('td');
+                    tdTime.title = ts.toISOString();
+                    tdTime.textContent = ago;
+
+                    var tdName = document.createElement('td');
+                    var link = document.createElement('a');
+                    link.href = '/container/' + encodeURIComponent(r.container_name);
+                    link.className = 'container-link';
+                    link.textContent = r.container_name;
+                    tdName.appendChild(link);
+
+                    var tdOutcome = document.createElement('td');
+                    tdOutcome.appendChild(badgeForHist(r.outcome));
+
+                    var tdDur = document.createElement('td');
+                    tdDur.className = 'mono';
+                    tdDur.textContent = dur;
+
+                    tr.appendChild(tdTime);
+                    tr.appendChild(tdName);
+                    tr.appendChild(tdOutcome);
+                    tr.appendChild(tdDur);
                     tbody.appendChild(tr);
 
                     var detail = document.createElement('tr');
                     detail.className = 'accordion-panel';
                     detail.id = 'accordion-history-' + idx;
                     detail.style.display = 'none';
-                    detail.innerHTML = '<td colspan="4"><div class="accordion-content"><div class="accordion-grid">' +
-                        '<div class="accordion-section">' +
-                        '<div class="accordion-label">Timestamp</div><div class="accordion-value mono">' + ts.toISOString() + '</div>' +
-                        '<div class="accordion-label">Old Image</div><div class="accordion-value mono">' + (r.old_image || '') + '</div>' +
-                        '<div class="accordion-label">New Image</div><div class="accordion-value mono">' + (r.new_image || '') + '</div>' +
-                        '</div><div class="accordion-section">' +
-                        '<div class="accordion-label">Old Digest</div><div class="accordion-value mono">' + (r.old_digest || '-') + '</div>' +
-                        '<div class="accordion-label">New Digest</div><div class="accordion-value mono">' + (r.new_digest || '-') + '</div>' +
-                        (r.error ? '<div class="accordion-label">Error</div><div class="accordion-value mono" style="color: var(--error);">' + r.error + '</div>' : '') +
-                        '</div></div></div></td>';
+                    var detailTd = document.createElement('td');
+                    detailTd.colSpan = 4;
+                    var content = document.createElement('div');
+                    content.className = 'accordion-content';
+                    var grid = document.createElement('div');
+                    grid.className = 'accordion-grid';
+
+                    var sec1 = document.createElement('div');
+                    sec1.className = 'accordion-section';
+                    appendLabelValue(sec1, 'Timestamp', ts.toISOString());
+                    appendLabelValue(sec1, 'Old Image', r.old_image || '');
+                    appendLabelValue(sec1, 'New Image', r.new_image || '');
+
+                    var sec2 = document.createElement('div');
+                    sec2.className = 'accordion-section';
+                    appendLabelValue(sec2, 'Old Digest', r.old_digest || '-');
+                    appendLabelValue(sec2, 'New Digest', r.new_digest || '-');
+                    if (r.error) {
+                        var errVal = appendLabelValue(sec2, 'Error', r.error);
+                        errVal.style.color = 'var(--error)';
+                    }
+
+                    grid.appendChild(sec1);
+                    grid.appendChild(sec2);
+                    content.appendChild(grid);
+                    detailTd.appendChild(content);
+                    detail.appendChild(detailTd);
                     tbody.appendChild(detail);
                 });
 
@@ -226,7 +261,22 @@
         var label = {success:'Success',rollback:'Rollback',rollback_success:'Rollback OK',rollback_failed:'Rollback Failed',failed:'Failed',finalise_warning:'Warning',skipped:'Skipped'};
         var cls = map[outcome] || 'badge-muted';
         var txt = label[outcome] || outcome;
-        return '<span class="badge ' + cls + '">' + txt + '</span>';
+        var span = document.createElement('span');
+        span.className = 'badge ' + cls;
+        span.textContent = txt;
+        return span;
+    }
+
+    function appendLabelValue(parent, labelText, valueText) {
+        var lbl = document.createElement('div');
+        lbl.className = 'accordion-label';
+        lbl.textContent = labelText;
+        var val = document.createElement('div');
+        val.className = 'accordion-value mono';
+        val.textContent = valueText;
+        parent.appendChild(lbl);
+        parent.appendChild(val);
+        return val;
     }
 
     function timeAgoHist(date) {
