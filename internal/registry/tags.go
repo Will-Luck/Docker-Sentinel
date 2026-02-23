@@ -197,16 +197,26 @@ func NewerVersions(current string, tags []string) []SemVer {
 	}
 
 	var newer []SemVer
+	curIsCalver := cur.Major >= 1900
 	for _, tag := range tags {
 		sv, ok := ParseSemVer(tag)
 		if !ok {
 			continue
 		}
-		// Skip candidates from a different versioning scheme. Calendar
-		// versioning tags like "2021.12.14" parse as semver with major >= 1900,
-		// which would falsely compare as "newer" than real semver like "3.21".
 		if versionSchemeMismatch(cur, sv) {
 			continue
+		}
+		// Scope constraint: tag precision determines update range.
+		// 3-part (1.13.3) -> same major.minor only (patch updates).
+		// 2-part (1.13)   -> same major only (minor+patch updates).
+		// Calver is exempt (doesn't follow semver scope semantics).
+		if !curIsCalver {
+			if cur.Parts == 3 && (sv.Major != cur.Major || sv.Minor != cur.Minor) {
+				continue
+			}
+			if cur.Parts == 2 && sv.Major != cur.Major {
+				continue
+			}
 		}
 		if cur.LessThan(sv) {
 			newer = append(newer, sv)
