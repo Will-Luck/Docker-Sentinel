@@ -3313,7 +3313,10 @@ var PROVIDER_FIELDS = {
     ntfy: [
         { key: "server", label: "Server", type: "text", placeholder: "https://ntfy.sh" },
         { key: "topic", label: "Topic", type: "text", placeholder: "sentinel" },
-        { key: "priority", label: "Priority", type: "text", placeholder: "3" }
+        { key: "priority", label: "Priority", type: "text", placeholder: "3" },
+        { key: "token", label: "Token", type: "password", placeholder: "Bearer token (optional)" },
+        { key: "username", label: "Username", type: "text", placeholder: "Username (optional)" },
+        { key: "password", label: "Password", type: "password", placeholder: "Password (optional)" }
     ],
     telegram: [
         { key: "bot_token", label: "Bot Token", type: "password", placeholder: "123456:ABC-DEF..." },
