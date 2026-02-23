@@ -854,6 +854,19 @@
                     <div class="settings-rows">
                         <div class="setting-row">
                             <div class="setting-info">
+                                <div class="setting-label">Enable Portainer</div>
+                                <div class="setting-desc">Show the Portainer dashboard and scan Portainer-managed containers. Requires a restart after changing URL or token.</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="portainer-enabled" class="channel-toggle" onchange="onPortainerToggle(this.checked)">
+                                <span id="portainer-enabled-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="portainer-fields" class="cluster-fields disabled">
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
                                 <div class="setting-label">Portainer URL</div>
                                 <div class="setting-desc">Base URL of your Portainer instance, e.g. https://portainer.example.com</div>
                             </div>
@@ -862,7 +875,7 @@
                         <div class="setting-row">
                             <div class="setting-info">
                                 <div class="setting-label">API Token</div>
-                                <div class="setting-desc">Portainer API access token (Settings         <!-- About tab -->#8250; Users         <!-- About tab -->#8250; Access tokens).</div>
+                                <div class="setting-desc">Portainer API access token (Settings &#8250; Users &#8250; Access tokens).</div>
                             </div>
                             <input type="password" id="portainer-token" class="setting-input" placeholder="ptr_..." onchange="savePortainerToken()">
                         </div>
@@ -873,6 +886,7 @@
                             </div>
                             <button class="btn btn-info" id="portainer-test-btn" onclick="testPortainerConnection()">Test Connection</button>
                         </div>
+                    </div>
                     </div>
                 </div>
             </div>
@@ -929,6 +943,32 @@ function switchRole() {
         document.getElementById('general-restart-banner').style.display = 'block';
     })
     .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function onPortainerToggle(enabled) {
+    updateToggleText('portainer-enabled-text', enabled);
+    togglePortainerFields(enabled);
+    fetch('/api/settings/portainer-enabled', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({enabled: enabled})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer ' + (enabled ? 'enabled' : 'disabled') + ' — restart to apply');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function togglePortainerFields(enabled) {
+    var fields = document.getElementById('portainer-fields');
+    if (!fields) return;
+    if (enabled) {
+        fields.classList.remove('disabled');
+    } else {
+        fields.classList.add('disabled');
+    }
 }
 
 function savePortainerURL() {
@@ -1010,6 +1050,15 @@ function testPortainerConnection() {
             }
             var pUrl = document.getElementById('portainer-url');
             if (pUrl && d['SENTINEL_PORTAINER_URL']) pUrl.value = d['SENTINEL_PORTAINER_URL'];
+            if (pUrl && d['portainer_url']) pUrl.value = d['portainer_url'];
+
+            var pEnabled = d['portainer_enabled'] === 'true';
+            var pToggle = document.getElementById('portainer-enabled');
+            if (pToggle) {
+                pToggle.checked = pEnabled;
+                updateToggleText('portainer-enabled-text', pEnabled);
+                togglePortainerFields(pEnabled);
+            }
         });
 })();
     </script>

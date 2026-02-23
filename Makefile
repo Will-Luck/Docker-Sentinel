@@ -31,8 +31,8 @@ docker:
 clean:
 	rm -rf bin/
 
-dev-deploy: docker
-	docker tag docker-sentinel:$(VERSION) $(DEV_IMAGE)
+dev-deploy:
+	docker build --build-arg VERSION=$(DEV_TAG) --build-arg COMMIT=$(COMMIT) -t $(DEV_IMAGE) .
 	op read "op://Server-Keys/ssh-test-server-1/s7ela6vsq6eltvuj7g3orn4jd4" | sed 's/^concealed]=//' > $(DEV_SSH_KEY) && chmod 600 $(DEV_SSH_KEY)
 	docker save $(DEV_IMAGE) | $(DEV_SSH) "docker load"
 	$(DEV_SSH) "docker stop $(DEV_CONTAINER) 2>/dev/null; docker rm $(DEV_CONTAINER) 2>/dev/null; \

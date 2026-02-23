@@ -847,6 +847,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /portainer", perm(auth.PermSettingsModify, s.handlePortainer))
 	s.mux.Handle("GET /api/portainer/endpoints", perm(auth.PermContainersView, s.apiPortainerEndpoints))
 	s.mux.Handle("GET /api/portainer/endpoints/{id}/containers", perm(auth.PermContainersView, s.apiPortainerContainers))
+	s.mux.Handle("POST /api/settings/portainer-enabled", perm(auth.PermSettingsModify, s.apiSetPortainerEnabled))
 	s.mux.Handle("POST /api/settings/portainer-url", perm(auth.PermSettingsModify, s.apiSetPortainerURL))
 	s.mux.Handle("POST /api/settings/portainer-token", perm(auth.PermSettingsModify, s.apiSetPortainerToken))
 	s.mux.Handle("POST /api/settings/portainer-test", perm(auth.PermSettingsModify, s.apiTestPortainerConnection))

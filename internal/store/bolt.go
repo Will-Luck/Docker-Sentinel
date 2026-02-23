@@ -43,6 +43,13 @@ const (
 	SettingClusterRemotePolicy = "cluster_remote_policy" // "auto" / "manual" / "pinned"
 )
 
+// Portainer settings keys (stored in bucketSettings).
+const (
+	SettingPortainerEnabled = "portainer_enabled" // "true" / "false"
+	SettingPortainerURL     = "portainer_url"
+	SettingPortainerToken   = "portainer_token"
+)
+
 // UpdateRecord represents a completed (or failed) container update.
 type UpdateRecord struct {
 	Timestamp     time.Time     `json:"timestamp"`

@@ -484,17 +484,18 @@ func main() {
 	portainerURL := cfg.PortainerURL
 	portainerToken := cfg.PortainerToken
 	if portainerURL == "" {
-		if v, err := db.LoadSetting("portainer_url"); err == nil && v != "" {
+		if v, err := db.LoadSetting(store.SettingPortainerURL); err == nil && v != "" {
 			portainerURL = v
 		}
 	}
 	if portainerToken == "" {
-		if v, err := db.LoadSetting("portainer_token"); err == nil && v != "" {
+		if v, err := db.LoadSetting(store.SettingPortainerToken); err == nil && v != "" {
 			portainerToken = v
 		}
 	}
+	portainerEnabled, _ := db.LoadSetting(store.SettingPortainerEnabled)
 	var portainerProvider *portainerAdapter
-	if portainerURL != "" && portainerToken != "" {
+	if portainerURL != "" && portainerToken != "" && portainerEnabled == "true" {
 		pc := portainerpkg.NewClient(portainerURL, portainerToken)
 		ps := portainerpkg.NewScanner(pc)
 		portainerProvider = &portainerAdapter{scanner: ps}
@@ -535,7 +536,6 @@ func main() {
 			HookStore:           &webHookStoreAdapter{db},
 			ReleaseSources:      &releaseSourceAdapter{db},
 			Cluster:             clusterCtrl,
-			Portainer:           portainerProvider,
 			MetricsEnabled:      cfg.MetricsEnabled,
 			Digest:              digestSched,
 			Auth:                authSvc,
@@ -546,6 +546,9 @@ func main() {
 		}
 		if isSwarm {
 			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
+		}
+		if portainerProvider != nil {
+			webDeps.Portainer = portainerProvider
 		}
 		srv := web.NewServer(webDeps)
 		srv.SetClusterLifecycle(cm)
