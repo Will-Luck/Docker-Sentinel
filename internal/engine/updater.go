@@ -271,6 +271,7 @@ func (u *Updater) rollbackPolicy() string {
 // Scan lists running containers, checks for updates, and processes them
 // according to each container's policy. The mode controls rate limit headroom.
 func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
+	scanStart := time.Now()
 	result := ScanResult{}
 
 	containers, err := u.docker.ListContainers(ctx)
@@ -634,6 +635,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	metrics.ContainersTotal.Set(float64(result.Total))
 	metrics.ContainersMonitored.Set(float64(result.Total - result.Skipped))
 	metrics.PendingUpdates.Set(float64(result.Queued))
+	metrics.ScanDuration.Observe(time.Since(scanStart).Seconds())
 
 	return result
 }
@@ -679,6 +681,13 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 
 	u.log.Info("scanning remote host", "host", host.HostName, "containers", len(containers))
 
+	remoteDefault := u.cfg.DefaultPolicy()
+	if u.settings != nil {
+		if v, err := u.settings.LoadSetting(store.SettingClusterRemotePolicy); err == nil && v != "" {
+			remoteDefault = v
+		}
+	}
+
 	for _, c := range containers {
 		if ctx.Err() != nil {
 			return
@@ -688,7 +697,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 
 		// Skip based on policy (same resolution as local containers).
 		tag := registry.ExtractTag(c.Image)
-		resolved := ResolvePolicy(u.store, c.Labels, store.ScopedKey(hostID, c.Name), tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())
+		resolved := ResolvePolicy(u.store, c.Labels, store.ScopedKey(hostID, c.Name), tag, remoteDefault, u.cfg.LatestAutoUpdate())
 		policy := docker.Policy(resolved.Policy)
 
 		if policy == docker.PolicyPinned {
