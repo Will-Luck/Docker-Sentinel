@@ -300,6 +300,16 @@
                                 <span id="show-stopped-text" class="toggle-switch-text">Off</span>
                             </label>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Remove volumes on update</div>
+                                <div class="setting-desc">Remove anonymous volumes when replacing a container. Can also be set per-container with <code>sentinel.remove-volumes=true</code>.</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="remove-volumes-toggle" class="channel-toggle" onchange="setRemoveVolumes(this.checked)">
+                                <span id="remove-volumes-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>

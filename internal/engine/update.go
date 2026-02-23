@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/guardian"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
@@ -116,11 +117,18 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	if err := u.docker.StopContainer(ctx, id, 30); err != nil {
 		u.log.Warn("stop failed, proceeding with force remove", "name", name, "error", err)
 	}
-	if err := u.docker.RemoveContainer(ctx, id); err != nil {
+	removeVolumes := docker.ContainerRemoveVolumes(inspect.Config.Labels) || u.isRemoveVolumes()
+	var removeErr error
+	if removeVolumes {
+		removeErr = u.docker.RemoveContainerWithVolumes(ctx, id)
+	} else {
+		removeErr = u.docker.RemoveContainer(ctx, id)
+	}
+	if removeErr != nil {
 		if mErr := u.store.SetMaintenance(name, false); mErr != nil {
 			u.log.Warn("failed to clear maintenance flag after remove failure", "name", name, "error", mErr)
 		}
-		return fmt.Errorf("remove old container %s: %w", name, err)
+		return fmt.Errorf("remove old container %s: %w", name, removeErr)
 	}
 
 	// 5. Create and start the new container.

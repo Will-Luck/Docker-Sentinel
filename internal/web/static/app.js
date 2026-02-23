@@ -311,6 +311,14 @@ function initSettingsPage() {
                 updateToggleText("show-stopped-text", showStopped);
             }
 
+            // Remove volumes toggle.
+            var removeVolumesToggle = document.getElementById("remove-volumes-toggle");
+            if (removeVolumesToggle) {
+                var removeVolumes = settings["remove_volumes"] === "true";
+                removeVolumesToggle.checked = removeVolumes;
+                updateToggleText("remove-volumes-text", removeVolumes);
+            }
+
             // HA discovery toggle.
             var haToggle = document.getElementById("ha-discovery-toggle");
             if (haToggle) {
@@ -912,6 +920,22 @@ function setImageBackup(enabled) {
 function setShowStopped(enabled) {
     updateToggleText("show-stopped-text", enabled);
     fetch("/api/settings/show-stopped", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled })
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            showToast(data.message || "Setting updated", "success");
+        })
+        .catch(function() {
+            showToast("Network error — could not update setting", "error");
+        });
+}
+
+function setRemoveVolumes(enabled) {
+    updateToggleText("remove-volumes-text", enabled);
+    fetch("/api/settings/remove-volumes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: enabled })

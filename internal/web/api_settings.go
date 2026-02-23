@@ -840,6 +840,39 @@ func (s *Server) apiSetImageBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "image backup " + label})
 }
 
+// apiSetRemoveVolumes enables or disables anonymous volume removal during updates.
+func (s *Server) apiSetRemoveVolumes(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("remove_volumes", value); err != nil {
+		s.deps.Log.Error("failed to save remove_volumes", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetRemoveVolumes(body.Enabled)
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Remove volumes on update "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "remove volumes on update " + label})
+}
+
 // apiSetHADiscovery enables or disables Home Assistant MQTT auto-discovery.
 func (s *Server) apiSetHADiscovery(w http.ResponseWriter, r *http.Request) {
 	var req struct {

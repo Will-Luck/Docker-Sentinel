@@ -123,6 +123,12 @@ func (c *Client) TagImage(ctx context.Context, src, target string) error {
 	return err
 }
 
+// RemoveContainerWithVolumes removes a container (force) and its anonymous volumes.
+func (c *Client) RemoveContainerWithVolumes(ctx context.Context, id string) error {
+	_, err := c.api.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+	return err
+}
+
 // ExecContainer runs a command inside a container and returns exit code + output.
 func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error) {
 	execCfg := client.ExecCreateOptions{

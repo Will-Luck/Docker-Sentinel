@@ -329,6 +329,17 @@ func (u *Updater) isImageBackup() bool {
 	return u.cfg.ImageBackup()
 }
 
+// isRemoveVolumes returns true when anonymous volume removal is enabled globally.
+func (u *Updater) isRemoveVolumes() bool {
+	if u.settings != nil {
+		val, err := u.settings.LoadSetting("remove_volumes")
+		if err == nil && val == "true" {
+			return true
+		}
+	}
+	return u.cfg.RemoveVolumes()
+}
+
 // isComposeSync returns true when compose file sync is enabled via settings.
 func (u *Updater) isComposeSync() bool {
 	if u.settings == nil {
