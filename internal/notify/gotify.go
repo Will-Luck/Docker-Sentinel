@@ -100,6 +100,22 @@ func formatMessage(e Event) string {
 	return b.String()
 }
 
+// formatMessageMarkdown builds the notification body with markdown formatting.
+func formatMessageMarkdown(e Event) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Container:** `%s`\n", e.ContainerName)
+	if e.OldImage != "" {
+		fmt.Fprintf(&b, "**Old image:** `%s`\n", e.OldImage)
+	}
+	if e.NewImage != "" {
+		fmt.Fprintf(&b, "**New image:** `%s`\n", e.NewImage)
+	}
+	if e.Error != "" {
+		fmt.Fprintf(&b, "**Error:** %s\n", e.Error)
+	}
+	return b.String()
+}
+
 // priority returns Gotify priority: 8 for failures, 5 for everything else.
 func priority(t EventType) int {
 	switch t {
