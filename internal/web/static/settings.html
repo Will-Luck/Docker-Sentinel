@@ -260,6 +260,16 @@
                                 <span id="pull-only-text" class="toggle-switch-text">Off</span>
                             </label>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Update delay</div>
+                                <div class="setting-desc">Wait this long after first detecting an update before applying it. Per-container: <code>sentinel.delay</code> label (e.g. <code>72h</code>, <code>3d</code>)</div>
+                            </div>
+                            <div class="poll-interval-control">
+                                <input type="text" id="update-delay" class="setting-select" placeholder="e.g. 72h, 3d" style="max-width:120px">
+                                <button class="btn btn-success" onclick="setUpdateDelay()">Save</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

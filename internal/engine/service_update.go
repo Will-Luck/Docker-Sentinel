@@ -214,6 +214,27 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				})
 				continue
 			}
+			// Delay check.
+			delay := docker.ContainerUpdateDelay(labels)
+			if delay == 0 {
+				delay = u.globalUpdateDelay()
+			}
+			if delay > 0 {
+				state, _ := u.store.GetNotifyState(name)
+				if state != nil && !state.FirstSeen.IsZero() {
+					age := u.clock.Now().Sub(state.FirstSeen)
+					if age < delay {
+						u.log.Info("service update delayed", "name", name,
+							"age", age.Round(time.Minute), "required", delay)
+						result.Skipped++
+						continue
+					}
+				} else {
+					u.log.Info("service update delay: first detection, waiting", "name", name, "delay", delay)
+					result.Skipped++
+					continue
+				}
+			}
 			pullOnly := docker.ContainerPullOnly(labels) || u.isPullOnly()
 			if pullOnly {
 				target := scanTarget

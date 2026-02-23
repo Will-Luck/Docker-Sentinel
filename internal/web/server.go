@@ -773,6 +773,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/rollback-policy", perm(auth.PermSettingsModify, s.apiSetRollbackPolicy))
 	s.mux.Handle("POST /api/settings/dry-run", perm(auth.PermSettingsModify, s.apiSetDryRun))
 	s.mux.Handle("POST /api/settings/pull-only", perm(auth.PermSettingsModify, s.apiSetPullOnly))
+	s.mux.Handle("POST /api/settings/update-delay", perm(auth.PermSettingsModify, s.apiSetUpdateDelay))
 	s.mux.Handle("POST /api/settings/general", perm(auth.PermSettingsModify, s.apiSaveGeneralSetting))
 	s.mux.Handle("POST /api/settings/switch-role", perm(auth.PermSettingsModify, s.apiSwitchRole))
 	s.mux.Handle("GET /api/grafana-dashboard", perm(auth.PermSettingsModify, s.apiGrafanaDashboard))
