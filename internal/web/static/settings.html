@@ -420,6 +420,69 @@
                     </div>
                 </details>
 
+                <!-- Inbound Webhooks -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Inbound Webhooks</h2>
+                        <span class="accordion-preview">Trigger scans from Docker Hub, GHCR, or CI/CD</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="settings-section-desc">Receive push notifications from Docker Hub, GHCR, or CI/CD pipelines to trigger immediate scans when images are updated.</p>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Enable Webhooks</div>
+                                    <div class="setting-desc">Accept inbound webhook requests to trigger scans</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="webhook-enabled-toggle" onchange="setWebhookEnabled(this.checked)">
+                                    <span id="webhook-enabled-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div id="webhook-config" style="display:none; margin-top:var(--sp-4)">
+                            <div class="settings-rows">
+                                <div class="setting-row setting-row-top">
+                                    <div class="setting-info">
+                                        <div class="setting-label">Webhook URL</div>
+                                        <div class="setting-desc">POST requests to this URL will trigger a scan</div>
+                                    </div>
+                                    <div class="setting-control-stack">
+                                        <div style="display:flex; gap:var(--sp-2); align-items:center; width:100%">
+                                            <input type="text" id="webhook-url" class="setting-input" readonly style="max-width:none; flex:1">
+                                            <button class="btn btn-sm" onclick="copyWebhookURL()">Copy</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="setting-row setting-row-top">
+                                    <div class="setting-info">
+                                        <div class="setting-label">Webhook Secret</div>
+                                        <div class="setting-desc">
+                                            Append <code>?secret=YOUR_SECRET</code> to the URL, or send it in the <code>X-Webhook-Secret</code> header
+                                        </div>
+                                    </div>
+                                    <div class="setting-control-stack">
+                                        <div style="display:flex; gap:var(--sp-2); align-items:center; width:100%">
+                                            <input type="text" id="webhook-secret" class="setting-input mono" readonly style="max-width:none; flex:1">
+                                            <button class="btn btn-sm" onclick="copyWebhookSecret()">Copy</button>
+                                            <button class="btn btn-sm btn-warning" onclick="regenerateWebhookSecret()">Regenerate</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <details style="margin-top:var(--sp-4)">
+                                <summary style="cursor:pointer; font-size:0.85rem; color:var(--fg-secondary); font-weight:500">Supported Payload Formats</summary>
+                                <div style="margin-top:var(--sp-2); font-size:0.8rem; color:var(--fg-secondary); line-height:1.6">
+                                    <p><strong>Generic:</strong> <code>{"image": "nginx", "tag": "latest"}</code> or <code>{"image": "nginx:latest"}</code></p>
+                                    <p><strong>Docker Hub:</strong> Automatic &mdash; point Docker Hub's webhook URL here.</p>
+                                    <p><strong>GHCR:</strong> Set up a GitHub webhook with the <code>package</code> event type.</p>
+                                </div>
+                            </details>
+                        </div>
+                    </div>
+                </details>
+
                                 <!-- Environment Variables -->
                 <details class="accordion card">
                     <summary class="accordion-header">

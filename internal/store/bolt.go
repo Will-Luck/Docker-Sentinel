@@ -58,6 +58,12 @@ const (
 	SettingDockerTLSKey  = "docker_tls_key"
 )
 
+// Webhook settings keys (stored in bucketSettings).
+const (
+	SettingWebhookEnabled = "webhook_enabled" // "true" / "false"
+	SettingWebhookSecret  = "webhook_secret"  // hex-encoded random secret
+)
+
 // UpdateRecord represents a completed (or failed) container update.
 type UpdateRecord struct {
 	Timestamp     time.Time     `json:"timestamp"`

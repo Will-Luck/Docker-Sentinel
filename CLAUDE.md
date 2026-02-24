@@ -38,6 +38,7 @@ make docker     # Build Docker image
 - `internal/guardian/` — Docker-Guardian maintenance label integration
 - `internal/store/` — BoltDB persistence layer
 - `internal/web/` — Embedded HTTP server, REST API, dashboard
+- `internal/webhook/` — Inbound webhook payload parsing (Docker Hub, GHCR, generic)
 - `internal/events/` — Event bus for SSE fan-out
 - `internal/clock/` — Time abstraction for testability
 - `internal/logging/` — Structured slog logger
@@ -390,7 +391,7 @@ all settings, all auth
 
 | Area | Files |
 |------|-------|
-| Web handlers | `internal/web/handlers.go`, `handlers_dashboard.go`, `api_control.go`, `api_queue.go`, `api_policy.go` |
+| Web handlers | `internal/web/handlers.go`, `handlers_dashboard.go`, `api_control.go`, `api_queue.go`, `api_policy.go`, `api_webhook.go` |
 | Web interfaces | `internal/web/interfaces.go` (30+ interfaces and mirror types) |
 | Web server | `internal/web/server.go` (server struct, routes, static serving) |
 | SSE | `internal/web/sse.go`, `internal/events/bus.go` |
@@ -403,6 +404,7 @@ all settings, all auth
 | Self-update | `internal/engine/selfupdate.go` |
 | Store | `internal/store/bolt.go` (BoltDB buckets and all persistence methods) |
 | Config | `internal/config/config.go` |
+| Webhook parsing | `internal/webhook/webhook.go` (Docker Hub, GHCR, generic payload parsing) |
 | Frontend JS | `internal/web/static/src/js/` (12 ES modules, bundled to `static/app.js`) |
 | Frontend CSS | `internal/web/static/src/css/` (11 modules, bundled to `static/style.css`) |
 | Frontend HTML | `internal/web/static/index.html`, `container.html`, `queue.html`, `history.html`, `logs.html`, `settings.html` |
