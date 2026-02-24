@@ -120,7 +120,11 @@ import {
     updateToggleText,
     toggleCollapsible,
     saveDockerTLS,
-    testDockerTLS
+    testDockerTLS,
+    setWebhookEnabled,
+    regenerateWebhookSecret,
+    copyWebhookURL,
+    copyWebhookSecret
 } from "./settings-core.js";
 
 import {
@@ -264,6 +268,10 @@ window.updateToggleText = updateToggleText;
 window.toggleCollapsible = toggleCollapsible;
 window.saveDockerTLS = saveDockerTLS;
 window.testDockerTLS = testDockerTLS;
+window.setWebhookEnabled = setWebhookEnabled;
+window.regenerateWebhookSecret = regenerateWebhookSecret;
+window.copyWebhookURL = copyWebhookURL;
+window.copyWebhookSecret = copyWebhookSecret;
 
 // Settings cluster
 window.onClusterToggle = onClusterToggle;

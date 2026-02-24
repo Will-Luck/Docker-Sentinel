@@ -2362,6 +2362,7 @@
     if (window.renderGHCRAlternatives) window.renderGHCRAlternatives();
     if (window.loadAboutInfo) window.loadAboutInfo();
     if (window.loadClusterSettings) window.loadClusterSettings();
+    loadWebhookSettings();
   }
   function clearAccordionState() {
     var keys = [];
@@ -2840,6 +2841,96 @@
       showToast("Network error -- could not test Docker TLS connection", "error");
     }).finally(function() {
       if (btn) btn.disabled = false;
+    });
+  }
+  function loadWebhookSettings() {
+    var toggle = document.getElementById("webhook-enabled-toggle");
+    if (!toggle) return;
+    fetch("/api/settings/webhook-info").then(function(r) {
+      return r.json();
+    }).then(function(data) {
+      var enabled = data.enabled === "true";
+      toggle.checked = enabled;
+      updateToggleText("webhook-enabled-text", enabled);
+      showWebhookConfig(enabled, data.secret || "");
+    }).catch(function() {
+    });
+  }
+  function showWebhookConfig(enabled, secret) {
+    var configDiv = document.getElementById("webhook-config");
+    if (!configDiv) return;
+    configDiv.style.display = enabled ? "" : "none";
+    var urlInput = document.getElementById("webhook-url");
+    if (urlInput) {
+      urlInput.value = window.location.origin + "/api/webhook";
+    }
+    var secretInput = document.getElementById("webhook-secret");
+    if (secretInput) {
+      secretInput.value = secret;
+    }
+  }
+  function setWebhookEnabled(enabled) {
+    updateToggleText("webhook-enabled-text", enabled);
+    fetch("/api/settings/webhook-enabled", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled })
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      if (result.ok) {
+        showToast(result.data.message || "Setting updated", "success");
+        loadWebhookSettings();
+      } else {
+        showToast(result.data.error || "Failed to update setting", "error");
+      }
+    }).catch(function() {
+      showToast("Network error -- could not update setting", "error");
+    });
+  }
+  function regenerateWebhookSecret() {
+    if (!confirm("This will invalidate all existing webhook integrations. Continue?")) return;
+    fetch("/api/settings/webhook-secret", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      if (result.ok) {
+        var secretInput = document.getElementById("webhook-secret");
+        if (secretInput) secretInput.value = result.data.secret || "";
+        showToast("Webhook secret regenerated", "success");
+      } else {
+        showToast(result.data.error || "Failed to regenerate secret", "error");
+      }
+    }).catch(function() {
+      showToast("Network error -- could not regenerate secret", "error");
+    });
+  }
+  function copyWebhookURL() {
+    var input = document.getElementById("webhook-url");
+    if (!input || !input.value) return;
+    navigator.clipboard.writeText(input.value).then(function() {
+      showToast("Webhook URL copied", "success");
+    }).catch(function() {
+      input.select();
+      document.execCommand("copy");
+      showToast("Webhook URL copied", "success");
+    });
+  }
+  function copyWebhookSecret() {
+    var input = document.getElementById("webhook-secret");
+    if (!input || !input.value) return;
+    navigator.clipboard.writeText(input.value).then(function() {
+      showToast("Webhook secret copied", "success");
+    }).catch(function() {
+      input.select();
+      document.execCommand("copy");
+      showToast("Webhook secret copied", "success");
     });
   }
 
@@ -4334,6 +4425,10 @@
   window.toggleCollapsible = toggleCollapsible;
   window.saveDockerTLS = saveDockerTLS;
   window.testDockerTLS = testDockerTLS;
+  window.setWebhookEnabled = setWebhookEnabled;
+  window.regenerateWebhookSecret = regenerateWebhookSecret;
+  window.copyWebhookURL = copyWebhookURL;
+  window.copyWebhookSecret = copyWebhookSecret;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;
   window.loadClusterSettings = loadClusterSettings;

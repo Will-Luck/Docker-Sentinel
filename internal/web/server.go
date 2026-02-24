@@ -423,6 +423,15 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("DELETE /api/auth/users/{id}", perm(auth.PermUsersManage, s.apiDeleteUser))
 	s.mux.Handle("POST /api/auth/settings", perm(auth.PermUsersManage, s.apiAuthSettings))
 
+	// Webhook endpoint — uses its own secret-based auth, no session/CSRF required.
+	// Always registered; returns 403 when disabled so the route is discoverable.
+	s.mux.HandleFunc("POST /api/webhook", s.apiWebhook)
+
+	// Webhook settings (admin-managed via the settings page).
+	s.mux.Handle("POST /api/settings/webhook-enabled", perm(auth.PermSettingsModify, s.apiSetWebhookEnabled))
+	s.mux.Handle("POST /api/settings/webhook-secret", perm(auth.PermSettingsModify, s.apiGenerateWebhookSecret))
+	s.mux.Handle("GET /api/settings/webhook-info", perm(auth.PermSettingsView, s.apiGetWebhookInfo))
+
 	// logs.view
 	s.mux.Handle("GET /logs", perm(auth.PermLogsView, s.handleLogs))
 	s.mux.Handle("GET /api/logs", perm(auth.PermLogsView, s.apiLogs))
