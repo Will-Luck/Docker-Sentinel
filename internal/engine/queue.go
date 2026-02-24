@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -146,16 +147,23 @@ func (q *Queue) Prune(liveNames map[string]bool) int {
 }
 
 // publishEvent emits a queue change SSE event if the event bus is configured.
+// For remote containers the name is a scoped key ("hostID::name"); this is
+// split so the SSE event carries proper HostID and ContainerName fields.
 func (q *Queue) publishEvent(name, message string) {
 	if q.events == nil {
 		return
 	}
-	q.events.Publish(events.SSEEvent{
+	evt := events.SSEEvent{
 		Type:          events.EventQueueChange,
 		ContainerName: name,
 		Message:       message,
 		Timestamp:     time.Now(),
-	})
+	}
+	if idx := strings.Index(name, "::"); idx >= 0 {
+		evt.HostID = name[:idx]
+		evt.ContainerName = name[idx+2:]
+	}
+	q.events.Publish(evt)
 }
 
 func (q *Queue) persist() {
