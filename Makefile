@@ -22,10 +22,10 @@ CSS_OUT     := $(STATIC_DIR)/style.css
 .PHONY: build test test-ci lint docker clean proto dev-deploy frontend js css
 
 js: $(ESBUILD)
-	$(ESBUILD) $(JS_ENTRY) --bundle --format=iife --outfile=$(JS_OUT)
+	$(ESBUILD) $(JS_ENTRY) --bundle --format=iife --sourcemap --outfile=$(JS_OUT)
 
 css: $(ESBUILD)
-	$(ESBUILD) $(CSS_ENTRY) --bundle --outfile=$(CSS_OUT)
+	$(ESBUILD) $(CSS_ENTRY) --bundle --sourcemap --outfile=$(CSS_OUT)
 
 frontend: js css
 
