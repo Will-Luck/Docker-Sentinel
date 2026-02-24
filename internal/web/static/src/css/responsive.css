@@ -1,0 +1,221 @@
+/* --------------------------------------------------------------------------
+   27. Responsive
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+    .nav {
+        padding: 0 var(--sp-3);
+        gap: var(--sp-3);
+    }
+
+    .nav-brand-text {
+        display: none;
+    }
+
+    .nav-link {
+        padding: 0 var(--sp-3);
+        font-size: 0.8rem;
+        min-height: 44px;
+    }
+
+    .main-content {
+        padding: var(--sp-4) var(--sp-4);
+    }
+
+    .page-header h1 {
+        font-size: 1.2rem;
+    }
+
+    .stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    thead th,
+    tbody td {
+        padding: var(--sp-2) var(--sp-3);
+    }
+
+    .filter-bar {
+        gap: var(--sp-2);
+    }
+
+    .filter-divider {
+        display: none;
+    }
+
+    /* Hide low-priority table columns on tablet */
+    #container-table th:nth-child(3),
+    #container-table td:nth-child(3) {
+        display: none;
+    }
+
+    /* Queue table: hide Detected column */
+    .queue-table th:nth-child(4),
+    .queue-table td:nth-child(4) {
+        display: none;
+    }
+
+    /* Settings: single-column layout */
+    .setting-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-2);
+    }
+
+    .setting-info {
+        width: 100%;
+    }
+
+    .setting-select,
+    .setting-input,
+    .setting-textarea {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .poll-interval-control {
+        width: 100%;
+    }
+
+    .setting-control-stack {
+        width: 100%;
+        align-items: flex-start;
+    }
+
+    .toggle-switch-label {
+        min-height: 44px;
+    }
+
+    /* Card header buttons wrap and get larger touch targets */
+    .card-header-top {
+        gap: var(--sp-3);
+    }
+
+    .btn {
+        min-height: 36px;
+    }
+
+    /* Host grid single column */
+    .host-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 480px) {
+    .nav-links {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .nav-links::-webkit-scrollbar {
+        display: none;
+    }
+
+    .nav-link {
+        padding: 0 var(--sp-2);
+        font-size: 0.75rem;
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    .nav-status-text {
+        display: none;
+    }
+
+    .main-content {
+        padding: var(--sp-3) var(--sp-3);
+    }
+
+    .stats {
+        grid-template-columns: 1fr;
+    }
+
+    .btn-group {
+        flex-direction: column;
+    }
+
+    .accordion-grid {
+        flex-direction: column;
+    }
+
+    .bulk-bar {
+        flex-wrap: wrap;
+        padding: var(--sp-3) var(--sp-4);
+    }
+
+    .policy-tooltip {
+        left: 0;
+        transform: none;
+        white-space: normal;
+        min-width: 200px;
+    }
+
+    thead th,
+    tbody td {
+        padding: var(--sp-1) var(--sp-2);
+        font-size: 0.8rem;
+    }
+
+    .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-2);
+    }
+
+    /* Also hide Policy column on small phones */
+    #container-table th:nth-child(4),
+    #container-table td:nth-child(4) {
+        display: none;
+    }
+
+    /* Accordion preview text hidden on small phones */
+    .accordion-preview {
+        display: none;
+    }
+
+    /* Tab navigation scrollable */
+    .tab-nav {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        flex-wrap: nowrap;
+    }
+
+    .tab-nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .tab-btn {
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
+    /* Channel cards stack fields */
+    .channel-field {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-1);
+    }
+
+    .channel-field-input {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .channel-card-header {
+        flex-wrap: wrap;
+    }
+
+    /* Footer wraps on small screens */
+    .app-footer {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--sp-2);
+    }
+
+    /* Nav user dropdown: hide username on small screens */
+    .nav-user-btn span:not(.nav-user-chevron):not(.nav-user-role) {
+        display: none;
+    }
+}

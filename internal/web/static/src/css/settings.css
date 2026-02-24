@@ -1,0 +1,849 @@
+/* Per-container notification preferences — checkbox list */
+
+.notify-prefs-summary {
+    font-size: 0.85rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-3);
+}
+
+.notify-prefs-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-3);
+    flex-wrap: wrap;
+}
+
+.notify-prefs-toolbar .btn {
+    font-size: 0.75rem;
+    padding: 4px 10px;
+}
+
+#notify-prefs-list {
+    padding: 2px;
+}
+
+.notify-prefs-group {
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: light-dark(
+        rgba(103, 80, 164, 0.03),
+        rgba(208, 188, 255, 0.03)
+    );
+    padding: var(--sp-3);
+    margin-bottom: var(--sp-2);
+}
+
+.notify-prefs-group-heading {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-secondary);
+    margin: 0 0 var(--sp-2) 2px;
+}
+
+.notify-prefs-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px;
+}
+
+.notify-pref-item {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    user-select: none;
+}
+
+.notify-pref-item:hover {
+    border-color: var(--fg-secondary);
+}
+
+.notify-pref-item.checked {
+    border-color: var(--accent);
+    background: light-dark(
+        rgba(103, 80, 164, 0.06),
+        rgba(208, 188, 255, 0.08)
+    );
+}
+
+.notify-pref-item input[type="checkbox"] {
+    accent-color: var(--accent);
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.notify-pref-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notify-pref-badge {
+    font-size: 0.65rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: light-dark(var(--surface-container), var(--surface-container));
+    color: var(--fg-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.notify-prefs-action-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-top: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--accent);
+    background: light-dark(
+        rgba(103, 80, 164, 0.05),
+        rgba(208, 188, 255, 0.06)
+    );
+    flex-wrap: wrap;
+}
+
+.notify-prefs-action-bar .action-count {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    white-space: nowrap;
+}
+
+.notify-prefs-action-bar .setting-select {
+    min-width: 160px;
+}
+
+
+/* --------------------------------------------------------------------------
+   20. Settings Page
+   -------------------------------------------------------------------------- */
+
+.settings-grid {
+    display: grid;
+    gap: var(--sp-6);
+    max-width: 800px;
+}
+
+.settings-rows {
+    display: flex;
+    flex-direction: column;
+}
+
+.setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--sp-4) 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.setting-row:last-child {
+    border-bottom: none;
+}
+
+.settings-section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    margin-bottom: var(--sp-1);
+}
+
+.settings-section-desc {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-4);
+}
+
+.setting-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 2px;
+}
+
+.setting-desc {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+}
+
+.setting-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 32px 6px 12px;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+    cursor: pointer;
+    outline: none;
+    transition: border-color 150ms;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%23938F99' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+}
+
+.setting-select:hover {
+    border-color: var(--border-strong);
+}
+
+.setting-select:focus {
+    border-color: var(--accent);
+}
+
+.table-readonly tbody tr:hover {
+    background: transparent;
+}
+
+.table-readonly thead th:first-child::before {
+    content: "";
+}
+
+.table-readonly {
+    opacity: 0.85;
+}
+
+/* History table — fixed layout with proper column widths */
+.table-history {
+    table-layout: fixed;
+}
+.table-history th:nth-child(1),
+.table-history td:nth-child(1) {
+    width: 18%;
+    white-space: nowrap;
+}
+.table-history th:nth-child(2),
+.table-history td:nth-child(2) {
+    width: 42%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.table-history th:nth-child(3),
+.table-history td:nth-child(3) {
+    width: 20%;
+    text-align: center;
+}
+.table-history th:nth-child(4),
+.table-history td:nth-child(4) {
+    width: 20%;
+    text-align: center;
+}
+
+/* Logs table — fixed layout with proper column widths */
+.table-logs {
+    table-layout: fixed;
+}
+.table-logs th:nth-child(1),
+.table-logs td:nth-child(1) {
+    width: 12%;
+    white-space: nowrap;
+}
+.table-logs th:nth-child(2),
+.table-logs td:nth-child(2) {
+    width: 7%;
+    white-space: nowrap;
+}
+.table-logs th:nth-child(3),
+.table-logs td:nth-child(3) {
+    width: 9%;
+    text-align: center;
+    white-space: nowrap;
+}
+.table-logs th:nth-child(4),
+.table-logs td:nth-child(4) {
+    width: 25%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.table-logs th:nth-child(5),
+.table-logs td:nth-child(5) {
+    width: 47%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Tab navigation for settings page */
+
+.tab-nav {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--sp-6);
+    overflow-x: auto;
+}
+
+.tab-btn {
+    padding: var(--sp-3) var(--sp-5);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--fg-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 150ms, border-color 150ms;
+}
+
+.tab-btn:hover {
+    color: var(--fg-primary);
+}
+
+.tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+/* Notification config form inputs */
+
+.setting-input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+    outline: none;
+    transition: border-color 150ms;
+    width: 100%;
+    max-width: 400px;
+}
+
+.setting-input:hover {
+    border-color: var(--border-strong);
+}
+
+.setting-input:focus {
+    border-color: var(--accent);
+}
+
+.setting-textarea {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    color: var(--fg-primary);
+    outline: none;
+    transition: border-color 150ms;
+    width: 100%;
+    max-width: 400px;
+    min-height: 80px;
+    resize: vertical;
+}
+
+.setting-textarea:hover {
+    border-color: var(--border-strong);
+}
+
+.setting-textarea:focus {
+    border-color: var(--accent);
+}
+
+.setting-actions {
+    display: flex;
+    gap: var(--sp-2);
+    padding: var(--sp-4) 0 0;
+}
+
+/* Notification channel cards */
+
+.channel-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--sp-4) var(--sp-5);
+    margin-bottom: var(--sp-4);
+    box-shadow: var(--shadow-sm);
+}
+
+.channel-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-4);
+}
+
+.channel-type-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: var(--info-bg);
+    color: var(--info-fg);
+    flex-shrink: 0;
+}
+
+.channel-name-input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px 8px;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+    outline: none;
+    flex: 1;
+    min-width: 120px;
+    max-width: 200px;
+}
+
+.channel-name-input:focus {
+    border-color: var(--accent);
+}
+
+.channel-actions {
+    display: flex;
+    gap: var(--sp-2);
+    margin-left: auto;
+    align-items: center;
+}
+
+.channel-fields {
+    display: grid;
+    gap: var(--sp-3);
+}
+
+.channel-field {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--sp-4);
+}
+
+.channel-field-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--fg-secondary);
+    min-width: 100px;
+    flex-shrink: 0;
+}
+
+.channel-field-input {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+    outline: none;
+    flex: 1;
+    max-width: 400px;
+}
+
+.channel-field-input:focus {
+    border-color: var(--accent);
+}
+
+.channel-toggle {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 36px;
+    height: 20px;
+    border-radius: var(--radius-full);
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    position: relative;
+    transition: background 200ms;
+    flex-shrink: 0;
+}
+
+.channel-toggle::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--radius-full);
+    background: var(--fg-secondary);
+    transition: transform 200ms, background 200ms;
+}
+
+.channel-toggle:checked {
+    background: var(--md-primary);
+    border-color: var(--md-primary);
+}
+
+.channel-toggle:checked::after {
+    transform: translateX(16px);
+    background: #ffffff;
+}
+
+.channel-add-wrap {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: center;
+}
+
+
+/* --------------------------------------------------------------------------
+   20a. Pause Banner — dashboard warning when scanning is paused
+   -------------------------------------------------------------------------- */
+
+.pause-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-4);
+    padding: var(--sp-3) var(--sp-5);
+    margin-bottom: var(--sp-6);
+    background: var(--warning-bg);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-lg);
+    color: var(--warning-fg);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+
+/* --------------------------------------------------------------------------
+   20b. Event Filter Pills — toggle chips for notification event types
+   -------------------------------------------------------------------------- */
+
+.event-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: var(--sp-3);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--border);
+}
+
+.event-pills-label {
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-secondary);
+    width: 100%;
+    margin-bottom: 2px;
+}
+
+.event-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: var(--radius-full);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 150ms, color 150ms, border-color 150ms;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-muted);
+    user-select: none;
+}
+
+.event-pill:hover {
+    border-color: var(--border-strong);
+    color: var(--fg-secondary);
+}
+
+.event-pill.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--md-on-primary);
+}
+
+
+/* --------------------------------------------------------------------------
+   20c. Collapsible Section — expandable env vars on settings page
+   -------------------------------------------------------------------------- */
+
+.collapsible-section {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.collapsible-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    width: 100%;
+    padding: var(--sp-3) var(--sp-5);
+    background: var(--bg-surface);
+    border: none;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    text-align: left;
+    transition: background 150ms;
+}
+
+.collapsible-header:hover {
+    background: var(--bg-hover);
+}
+
+.collapsible-chevron {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+    transition: transform 200ms;
+    display: inline-block;
+}
+
+.collapsible-header[aria-expanded="true"] .collapsible-chevron {
+    transform: rotate(90deg);
+}
+
+.collapsible-body {
+    background: var(--bg-surface);
+}
+
+
+/* --------------------------------------------------------------------------
+   20d. Toggle Switch Label — settings page pause toggle
+   -------------------------------------------------------------------------- */
+
+.toggle-switch-label {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    cursor: pointer;
+}
+
+.toggle-switch-text {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+    font-weight: 500;
+    min-width: 24px;
+}
+
+
+/* --------------------------------------------------------------------------
+   20e. Custom Duration Picker — unit dropdown + number input combo
+   -------------------------------------------------------------------------- */
+
+.poll-interval-control {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+}
+
+.custom-duration-wrap {
+    display: flex;
+    gap: var(--sp-2);
+    align-items: center;
+}
+
+.custom-duration-unit {
+    min-width: 110px;
+}
+
+.custom-duration-value {
+    width: 80px;
+    text-align: center;
+    background-image: none !important;
+    padding-right: 12px !important;
+    -moz-appearance: textfield;
+}
+
+.custom-duration-value::-webkit-inner-spin-button,
+.custom-duration-value::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.custom-duration-value:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+
+/* --------------------------------------------------------------------------
+   20f. Setting Row Variants
+   -------------------------------------------------------------------------- */
+
+.setting-row-top {
+    align-items: flex-start;
+}
+
+.setting-control-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    align-items: flex-end;
+}
+
+/* Cluster settings — disabled state when toggle is off */
+.cluster-fields.disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.cluster-fields {
+    transition: opacity 150ms var(--md-motion-standard);
+}
+
+
+/* About tab */
+.about-section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-secondary);
+    padding-bottom: var(--sp-2);
+    border-bottom: 1px solid var(--border);
+    margin-top: var(--sp-5);
+    margin-bottom: 0;
+}
+.about-section-title:first-child {
+    margin-top: 0;
+}
+.about-value {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
+.about-channels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+.about-channel-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    font-size: 0.8rem;
+}
+.about-channel-type {
+    color: var(--fg-secondary);
+    font-size: 0.75rem;
+}
+.about-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    background: var(--warning-bg);
+    border: 1px solid color-mix(in srgb, var(--warning-fg) 30%, transparent);
+    margin-bottom: var(--sp-5);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--fg-primary);
+}
+.about-banner-icon {
+    flex-shrink: 0;
+    font-size: 1.1rem;
+    margin-top: 1px;
+}
+.about-banner a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.about-banner a:hover {
+    color: var(--accent-hover);
+}
+.about-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+.about-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--fg-primary);
+    font-size: 0.85rem;
+    text-decoration: none;
+    transition: border-color 150ms, background 150ms;
+}
+.about-link:hover {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+}
+.about-link-icon {
+    font-size: 1rem;
+    line-height: 1;
+}
+
+/* Dashboard footer */
+.app-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-3) var(--sp-5);
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+    border-top: 1px solid var(--border);
+    margin-top: var(--sp-5);
+}
+.footer-version {
+    font-family: var(--font-mono);
+    font-weight: 500;
+}
+.footer-beta a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.footer-beta a:hover {
+    color: var(--accent-hover);
+}
+
+
+/* --------------------------------------------------------------------------
+   General Settings — restart badge and inline banner
+   -------------------------------------------------------------------------- */
+
+.restart-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(255,152,0,0.15);
+    color: #ff9800;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
+.restart-banner-inline {
+    background: rgba(255,152,0,0.12);
+    border: 1px solid rgba(255,152,0,0.3);
+    color: #ff9800;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-bottom: var(--sp-4);
+}

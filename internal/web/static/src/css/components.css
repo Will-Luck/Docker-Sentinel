@@ -1,0 +1,740 @@
+/* --------------------------------------------------------------------------
+   5. Cards
+   -------------------------------------------------------------------------- */
+
+.card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+}
+
+.card-header {
+    padding: var(--sp-4) var(--sp-5);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+
+    & h2 {
+        font-size: 1rem;
+        font-weight: 600;
+    }
+}
+
+.queue-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.queue-table {
+    table-layout: fixed;
+}
+
+.queue-expand {
+    cursor: pointer;
+    text-align: center;
+    color: var(--fg-secondary);
+    user-select: none;
+    width: 1%;
+    white-space: nowrap;
+}
+.queue-expand:hover { color: var(--fg-primary); }
+
+.card-header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    width: 100%;
+}
+
+.last-scan {
+    font-size: 0.72rem;
+    color: var(--fg-secondary);
+    margin-left: auto;
+}
+
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-4);
+    align-items: center;
+    width: 100%;
+    margin-top: var(--sp-3);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--border);
+}
+
+.filter-pill {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--fg-secondary);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 150ms;
+}
+
+.filter-pill:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-hover);
+}
+
+.filter-pill:active { transform: scale(0.96); }
+
+/* Contextual active colours */
+.filter-pill.active[data-value="running"] {
+    background: var(--success-bg);
+    border-color: var(--success);
+    color: var(--success);
+    font-weight: 600;
+}
+
+.filter-pill.active[data-value="stopped"] {
+    background: var(--error-bg);
+    border-color: var(--error);
+    color: var(--error);
+    font-weight: 600;
+}
+
+.filter-pill.active[data-value="pending"] {
+    background: var(--warning-bg);
+    border-color: var(--warning);
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.filter-pill.active[data-value="alpha"],
+.filter-pill.active[data-value="status"] {
+    background: var(--md-secondary-container);
+    border-color: var(--md-outline);
+    color: var(--md-on-secondary-container);
+    font-weight: 600;
+}
+
+.filter-divider {
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+    flex-shrink: 0;
+}
+
+.card-body {
+    padding: var(--sp-5);
+}
+
+/* Stat cards — left border accent */
+
+.stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: var(--sp-4);
+    margin-bottom: var(--sp-6);
+}
+
+.stat-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: var(--sp-4) var(--sp-5);
+    border-left: 3px solid var(--accent);
+    transition: transform 150ms ease, box-shadow 150ms ease;
+
+    & .stat-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--fg-secondary);
+        margin-bottom: var(--sp-1);
+    }
+
+    & .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        font-family: var(--font-mono);
+    }
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.stat-card:nth-child(1) { border-left-color: var(--info); }
+.stat-card:nth-child(2) { border-left-color: var(--success); }
+.stat-card:nth-child(3) { border-left-color: var(--warning); }
+a.stat-card-link { text-decoration: none; color: inherit; cursor: pointer; }
+a.stat-card-link:hover { border-color: var(--warning); }
+
+.stat-value.success { color: var(--success); }
+.stat-value.warning { color: var(--warning); }
+.stat-value.error   { color: var(--error); }
+.stat-value.info    { color: var(--info); }
+.stat-value.stat-changed {
+    animation: statPulse 400ms var(--md-motion-emphasized-decelerate);
+}
+@keyframes statPulse {
+    0%   { transform: scale(1); }
+    40%  { transform: scale(1.15); }
+    100% { transform: scale(1); }
+}
+
+
+/* --------------------------------------------------------------------------
+   6. Tables
+   -------------------------------------------------------------------------- */
+
+.table-wrap {
+    overflow-x: auto;
+    position: relative;
+}
+
+.table-wrap::after {
+    content: "";
+    position: sticky;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 24px;
+    pointer-events: none;
+    background: linear-gradient(to left, var(--bg-surface), transparent);
+    flex-shrink: 0;
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .table-wrap {
+        display: flex;
+    }
+
+    .table-wrap > table {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .table-wrap::after {
+        display: block;
+    }
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+/* Dashboard table — fixed layout prevents column shifts on expand/collapse */
+#container-table {
+    table-layout: fixed;
+}
+
+#container-table td:nth-child(2) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+thead th {
+    position: sticky;
+    top: 0;
+    background: var(--bg-surface);
+    padding: 10px var(--sp-4);
+    text-align: left;
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-secondary);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    z-index: 1;
+}
+
+tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 150ms;
+}
+
+tbody tr:hover {
+    background: var(--bg-hover);
+}
+
+tbody tr:last-child {
+    border-bottom: none;
+}
+/* Svc-header always keeps its divider, even when it's :last-child (collapsed). */
+.svc-header {
+    border-bottom: 1px solid var(--border) !important;
+}
+
+tbody td {
+    padding: 10px var(--sp-4);
+    vertical-align: middle;
+}
+
+.mono {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+}
+
+/* Digest/image cells */
+
+.cell-image {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.version-current { color: var(--fg-secondary); }
+.version-arrow { color: var(--warning); margin: 0 4px; }
+.version-new { color: var(--warning); font-weight: 600; }
+.resolved-ver { color: var(--fg-muted); font-size: 0.85em; }
+a.version-link { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+a.version-link:hover { border-bottom-style: solid; }
+
+.cell-digest {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+}
+
+.accordion-content .mono,
+.accordion-content .cell-digest {
+    word-break: break-all;
+    white-space: normal;
+}
+
+
+/* --------------------------------------------------------------------------
+   7. Badges — with ::before dot indicator
+   -------------------------------------------------------------------------- */
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+
+    &::before {
+        content: "";
+        display: block;
+        width: 6px;
+        height: 6px;
+        border-radius: var(--radius-full);
+        background: currentColor;
+        flex-shrink: 0;
+    }
+}
+
+.badge-success {
+    background: var(--success-bg);
+    color: var(--success-fg);
+}
+
+.badge-warning {
+    background: var(--warning-bg);
+    color: var(--warning-fg);
+}
+
+.badge-error {
+    background: var(--error-bg);
+    color: var(--error-fg);
+}
+
+.badge-info {
+    background: var(--info-bg);
+    color: var(--info-fg);
+}
+
+.badge-muted {
+    background: var(--bg-raised);
+    color: var(--fg-secondary);
+}
+
+@keyframes badgePulse {
+    0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+    50% { box-shadow: 0 0 6px 2px currentColor; }
+}
+
+.badge-warning::before {
+    animation: badgePulse 2s ease-in-out infinite;
+}
+
+
+/* --------------------------------------------------------------------------
+   8. Buttons
+   -------------------------------------------------------------------------- */
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 16px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: var(--bg-surface);
+    color: var(--fg-primary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    letter-spacing: 0.1px;
+    cursor: pointer;
+    transition: background 150ms var(--md-motion-standard), border-color 150ms var(--md-motion-standard), transform 100ms var(--md-motion-standard);
+    text-decoration: none;
+    white-space: nowrap;
+
+    &:hover {
+        background: var(--md-hover-state);
+        border-color: var(--border-strong);
+    }
+
+    &:active {
+        transform: scale(0.97);
+    }
+
+    &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+    }
+}
+
+.btn.loading {
+    opacity: 0.7;
+    pointer-events: none;
+    position: relative;
+}
+
+.btn.loading::after {
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: var(--radius-full);
+    animation: btnSpin 600ms linear infinite;
+    margin-left: 4px;
+}
+
+@keyframes btnSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* Badge spinner — replaces status badge during actions */
+
+.badge-loading {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    background: var(--bg-raised);
+    min-width: 60px;
+    height: 22px;
+}
+
+.badge-loading::before {
+    content: "";
+    display: block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--fg-muted);
+    border-top-color: var(--accent);
+    border-radius: var(--radius-full);
+    background: transparent;
+    animation: badgeSpin 800ms linear infinite;
+}
+
+@keyframes badgeSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* Row fade-in after live update */
+
+.row-updated {
+    animation: rowFadeIn 200ms var(--md-motion-emphasized-decelerate);
+}
+
+@keyframes rowFadeIn {
+    from { opacity: 0.4; }
+    to { opacity: 1; }
+}
+
+.btn-success {
+    background: var(--success-bg);
+    border-color: var(--success);
+    color: var(--success-fg);
+
+    &:hover {
+        filter: brightness(1.1);
+    }
+}
+
+.btn-warning {
+    background: var(--warning-bg);
+    border-color: var(--warning);
+    color: var(--warning-fg);
+
+    &:hover {
+        filter: brightness(1.1);
+    }
+}
+
+.btn-error {
+    background: var(--error-bg);
+    border-color: var(--error);
+    color: var(--error-fg);
+
+    &:hover {
+        filter: brightness(1.1);
+    }
+}
+
+.btn-info {
+    background: var(--info-bg);
+    border-color: var(--info);
+    color: var(--info-fg);
+
+    &:hover {
+        filter: brightness(1.1);
+    }
+}
+
+.btn-group {
+    display: flex;
+    gap: var(--sp-2);
+    justify-content: center;
+}
+
+.btn-sm {
+    padding: 4px 10px;
+    font-size: 0.75rem;
+}
+
+
+/* --------------------------------------------------------------------------
+   12. Bulk Action Bar — fixed bottom
+   -------------------------------------------------------------------------- */
+
+.bulk-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 200;
+    background: var(--md-surface-container-high);
+    border-top: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    padding: var(--sp-3) var(--sp-6);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    animation: slideUp 200ms var(--md-motion-emphasized-decelerate);
+}
+
+.bulk-count {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--fg-primary);
+    min-width: 100px;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   13. Toast — bottom-right, slide-in animation, left border colour by type
+   -------------------------------------------------------------------------- */
+
+.toast-container {
+    position: fixed;
+    bottom: var(--sp-5);
+    right: var(--sp-5);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+}
+
+.toast {
+    background: var(--md-surface-container-high);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--sp-3) var(--sp-4);
+    box-shadow: var(--shadow-lg);
+    font-size: 0.85rem;
+    font-weight: 500;
+    max-width: 400px;
+    animation: toastSlideIn 200ms var(--md-motion-emphasized-decelerate);
+    color: var(--fg-primary);
+}
+
+.toast-success {
+    border-left: 3px solid var(--success);
+}
+
+.toast-error {
+    border-left: 3px solid var(--error);
+}
+
+.toast-info {
+    border-left: 3px solid var(--info);
+}
+
+@keyframes toastSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+
+/* --------------------------------------------------------------------------
+   14. Status Dot — SSE connection indicator with pulse animation
+   -------------------------------------------------------------------------- */
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    min-width: 8px;
+    border-radius: var(--radius-full);
+    transition: background 300ms;
+}
+
+.status-dot.connected {
+    background: var(--success);
+    box-shadow: 0 0 6px light-dark(rgba(46,125,50,0.5), rgba(129,199,132,0.5));
+}
+
+.status-dot.disconnected {
+    background: var(--error);
+    box-shadow: 0 0 6px light-dark(rgba(176,0,32,0.4), rgba(207,102,121,0.4));
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+
+/* --------------------------------------------------------------------------
+   19. Empty State
+   -------------------------------------------------------------------------- */
+
+.empty-state {
+    text-align: center;
+    padding: var(--sp-10) var(--sp-8);
+    color: var(--fg-secondary);
+
+    & h3 {
+        font-size: 1.1rem;
+        margin-bottom: var(--sp-2);
+        color: var(--fg-muted);
+    }
+
+    & p {
+        font-size: 0.85rem;
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   21. Utility Helpers
+   -------------------------------------------------------------------------- */
+
+.text-muted {
+    color: var(--fg-muted);
+}
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.skip-link {
+    position: absolute;
+    top: -100%;
+    left: var(--sp-4);
+    z-index: 999;
+    padding: var(--sp-2) var(--sp-4);
+    background: var(--accent);
+    color: var(--md-on-primary);
+    border-radius: var(--radius);
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-decoration: none;
+}
+
+.skip-link:focus {
+    top: var(--sp-2);
+}
+
+
+/* --------------------------------------------------------------------------
+   29. Transitions — global defaults for interactive states
+   -------------------------------------------------------------------------- */
+
+/* Catch-all for elements that should have smooth transitions but are not
+   covered by component-level rules */
+button,
+a,
+select,
+input[type="checkbox"] {
+    transition: background 150ms var(--md-motion-standard), color 150ms var(--md-motion-standard), border-color 150ms var(--md-motion-standard);
+}
+
+
+/* --------------------------------------------------------------------------
+   29. Focus — keyboard-only visible outlines
+   -------------------------------------------------------------------------- */
+
+:focus-visible {
+    outline: 2px solid var(--md-primary);
+    outline-offset: 2px;
+}

@@ -1,0 +1,160 @@
+/* --------------------------------------------------------------------------
+   31. Registry & Rate Limit Styles
+   -------------------------------------------------------------------------- */
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+    padding: var(--sp-2) var(--sp-3);
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+    font-weight: 600;
+    color: var(--fg-secondary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.data-table tbody tr:hover {
+    background: var(--bg-hover);
+}
+
+.text-error { color: var(--error); }
+.text-warning { color: var(--warning); }
+
+.alert {
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    font-size: 0.875rem;
+    margin-bottom: var(--sp-2);
+}
+
+.alert-warning {
+    background: light-dark(#FFF3E0, rgba(255, 213, 79, 0.1));
+    border: 1px solid var(--warning);
+    color: var(--warning);
+}
+
+.alert-info {
+    background: light-dark(#E3F2FD, rgba(100, 181, 246, 0.08));
+    border: 1px solid light-dark(#90CAF9, rgba(100, 181, 246, 0.25));
+    color: var(--text-secondary);
+    display: flex;
+    gap: var(--sp-2);
+    align-items: flex-start;
+    line-height: 1.5;
+}
+
+.alert-info-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+    margin-top: 1px;
+}
+
+.stat-card:nth-child(4) { border-left-color: var(--accent); }
+
+
+/* --------------------------------------------------------------------------
+   32. GHCR Badge & Callout
+   -------------------------------------------------------------------------- */
+
+.ghcr-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.55rem;
+    font-weight: 500;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--info-bg);
+    color: var(--info-fg);
+    vertical-align: middle;
+    margin-left: 6px;
+    letter-spacing: 0.02em;
+}
+
+.ghcr-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    border-radius: var(--radius);
+    background: var(--info-bg);
+    color: var(--info-fg);
+    margin-top: var(--sp-3);
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+.ghcr-callout-icon {
+    flex-shrink: 0;
+    font-size: 1.1rem;
+    margin-top: 1px;
+}
+.ghcr-callout-body {
+    flex: 1;
+}
+.ghcr-callout-body strong {
+    display: block;
+    margin-bottom: 2px;
+}
+.ghcr-callout .btn {
+    margin-top: var(--sp-2);
+}
+
+
+/* --------------------------------------------------------------------------
+   33. Registry Source Badges
+   -------------------------------------------------------------------------- */
+
+.registry-badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.55rem;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 4px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.registry-badge-hub {
+    background: var(--bg-raised);
+    color: var(--md-on-surface-variant);
+}
+.registry-badge-ghcr {
+    background: var(--info-bg);
+    color: var(--info-fg);
+}
+.registry-badge-lscr {
+    background: var(--success-bg);
+    color: var(--success-fg);
+}
+.registry-badge-gitea {
+    background: var(--warning-bg);
+    color: var(--warning-fg);
+}
+.registry-badge-local {
+    background: var(--error-bg);
+    color: var(--error-fg);
+}
+
+/* All Registry Tags accordion */
+.tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-5);
+}
+
+.tag-item {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
