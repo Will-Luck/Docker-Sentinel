@@ -2241,6 +2241,13 @@ td:nth-child(6) {
 .setting-input:focus {
   border-color: var(--accent);
 }
+.setting-input-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--fg-secondary);
+  margin-top: var(--sp-2);
+  margin-bottom: 2px;
+}
 .setting-textarea {
   background: var(--bg-input);
   border: 1px solid var(--border);

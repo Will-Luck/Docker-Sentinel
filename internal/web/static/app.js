@@ -2790,6 +2790,58 @@
       body.style.display = expanded ? "none" : "";
     }
   }
+  function saveDockerTLS() {
+    var ca = (document.getElementById("docker-tls-ca") || {}).value || "";
+    var cert = (document.getElementById("docker-tls-cert") || {}).value || "";
+    var key = (document.getElementById("docker-tls-key") || {}).value || "";
+    fetch("/api/settings/docker-tls", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ca, cert, key })
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      if (result.ok) {
+        showToast(result.data.message || "Docker TLS settings saved", "success");
+        var banner = document.getElementById("general-restart-banner");
+        if (banner) banner.style.display = "block";
+      } else {
+        showToast(result.data.error || "Failed to save Docker TLS settings", "error");
+      }
+    }).catch(function() {
+      showToast("Network error -- could not save Docker TLS settings", "error");
+    });
+  }
+  function testDockerTLS() {
+    var ca = (document.getElementById("docker-tls-ca") || {}).value || "";
+    var cert = (document.getElementById("docker-tls-cert") || {}).value || "";
+    var key = (document.getElementById("docker-tls-key") || {}).value || "";
+    if (!ca || !cert || !key) {
+      showToast("All three certificate paths are required for testing", "error");
+      return;
+    }
+    var btn = document.getElementById("docker-tls-test-btn");
+    if (btn) btn.disabled = true;
+    fetch("/api/settings/docker-tls-test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ca, cert, key })
+    }).then(function(resp) {
+      return resp.json();
+    }).then(function(data) {
+      if (data.success) {
+        showToast("Docker TLS connection successful", "success");
+      } else {
+        showToast("Connection failed: " + (data.error || "unknown error"), "error");
+      }
+    }).catch(function() {
+      showToast("Network error -- could not test Docker TLS connection", "error");
+    }).finally(function() {
+      if (btn) btn.disabled = false;
+    });
+  }
 
   // internal/web/static/src/js/settings-cluster.js
   function _updateToggleText(textId, enabled) {
@@ -4280,6 +4332,8 @@
   window.saveHADiscoveryPrefix = saveHADiscoveryPrefix;
   window.updateToggleText = updateToggleText;
   window.toggleCollapsible = toggleCollapsible;
+  window.saveDockerTLS = saveDockerTLS;
+  window.testDockerTLS = testDockerTLS;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;
   window.loadClusterSettings = loadClusterSettings;

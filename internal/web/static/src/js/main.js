@@ -118,7 +118,9 @@ import {
     setHADiscovery,
     saveHADiscoveryPrefix,
     updateToggleText,
-    toggleCollapsible
+    toggleCollapsible,
+    saveDockerTLS,
+    testDockerTLS
 } from "./settings-core.js";
 
 import {
@@ -260,6 +262,8 @@ window.setHADiscovery = setHADiscovery;
 window.saveHADiscoveryPrefix = saveHADiscoveryPrefix;
 window.updateToggleText = updateToggleText;
 window.toggleCollapsible = toggleCollapsible;
+window.saveDockerTLS = saveDockerTLS;
+window.testDockerTLS = testDockerTLS;
 
 // Settings cluster
 window.onClusterToggle = onClusterToggle;

@@ -389,6 +389,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/show-stopped", perm(auth.PermSettingsModify, s.apiSetShowStopped))
 	s.mux.Handle("POST /api/settings/remove-volumes", perm(auth.PermSettingsModify, s.apiSetRemoveVolumes))
 	s.mux.Handle("POST /api/settings/scan-concurrency", perm(auth.PermSettingsModify, s.apiSetScanConcurrency))
+	s.mux.Handle("POST /api/settings/docker-tls", perm(auth.PermSettingsModify, s.apiSetDockerTLS))
+	s.mux.Handle("POST /api/settings/docker-tls-test", perm(auth.PermSettingsModify, s.apiTestDockerTLS))
 	s.mux.Handle("GET /api/grafana-dashboard", perm(auth.PermSettingsModify, s.apiGrafanaDashboard))
 
 	// Cluster settings — always available so the admin can enable/configure cluster
