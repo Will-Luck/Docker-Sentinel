@@ -36,6 +36,12 @@ func (s *Server) apiQueue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// apiQueueCount returns just the number of pending items (no release notes enrichment).
+func (s *Server) apiQueueCount(w http.ResponseWriter, r *http.Request) {
+	count := len(s.deps.Queue.List())
+	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}
+
 // loadReleaseSources returns custom sources from the store, converted to registry types.
 func (s *Server) loadReleaseSources() []registry.ReleaseSource {
 	if s.deps.ReleaseSources == nil {
@@ -100,7 +106,9 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		var err error
 		if update.HostID != "" && s.deps.Cluster.Enabled() {
 			// Remote container — dispatch to the agent via cluster.
+			s.markRemoteUpdating(update.HostID, update.ContainerName)
 			err = s.deps.Cluster.UpdateRemoteContainer(context.Background(), update.HostID, update.ContainerName, approveTarget, update.RemoteDigest)
+			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(update.HostID, update.ContainerName) })
 		} else if update.Type == "service" && s.deps.Swarm != nil {
 			err = s.deps.Swarm.UpdateService(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
 		} else {

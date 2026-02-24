@@ -457,6 +457,8 @@
                                             {{else}}
                                             <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="btn" onclick="event.stopPropagation()">Details</a>
                                             {{end}}
+                                        {{else if .Maintenance}}
+                                        <button class="btn btn-warning loading" disabled>Updating</button>
                                         {{else if and .HasUpdate (ne .Policy "pinned")}}
                                         <button class="btn btn-warning"
                                                 onclick="triggerUpdate('{{.Name}}', event, '{{.HostID}}')">

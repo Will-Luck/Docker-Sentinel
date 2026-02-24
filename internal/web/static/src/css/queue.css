@@ -1,0 +1,329 @@
+/* --------------------------------------------------------------------------
+   9. Policy Select — pill-shaped dropdown with coloured variants
+   -------------------------------------------------------------------------- */
+
+.policy-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-surface);
+    color: var(--fg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    padding: 2px 22px 2px 22px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-align: center;
+    text-align-last: center;
+    cursor: pointer;
+    transition: border-color 150ms;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%23938F99' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+
+    & option {
+        background: var(--bg-surface);
+        color: var(--fg-primary);
+    }
+
+    &:hover {
+        border-color: var(--border-strong);
+    }
+
+    &:focus {
+        border-color: var(--accent);
+    }
+
+    &.policy-auto {
+        background-color: var(--success-bg);
+        color: var(--success-fg);
+        border-color: var(--success);
+    }
+
+    &.policy-manual {
+        background-color: var(--info-bg);
+        color: var(--info-fg);
+        border-color: var(--info);
+    }
+
+    &.policy-pinned {
+        background-color: var(--md-hover-state);
+        color: var(--fg-secondary);
+        border-color: var(--border);
+    }
+}
+
+/* Policy header with tooltip */
+
+.policy-header {
+    position: relative;
+}
+
+.policy-help {
+    position: relative;
+    display: inline-block;
+    margin-left: var(--sp-1);
+    cursor: help;
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+    vertical-align: middle;
+}
+
+.policy-tooltip {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: var(--sp-2);
+    background: var(--md-surface-container-high);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--sp-3) var(--sp-4);
+    font-size: 0.8rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--fg-primary);
+    white-space: nowrap;
+    box-shadow: var(--shadow-lg);
+    z-index: 50;
+    line-height: 1.6;
+}
+
+.policy-help:hover .policy-tooltip,
+.policy-help:focus .policy-tooltip {
+    display: block;
+}
+
+/* Centre-align Policy, Status, Actions columns */
+th:nth-child(4),
+th:nth-child(5),
+th:nth-child(6),
+td:nth-child(4),
+td:nth-child(5),
+td:nth-child(6) {
+    text-align: center;
+}
+
+
+/* --------------------------------------------------------------------------
+   11. Accordion — panel, content, grid, sections, version badges
+   -------------------------------------------------------------------------- */
+
+.accordion-panel td {
+    padding: 0 !important;
+    background: var(--bg-body);
+}
+
+.accordion-content {
+    border-top: 1px dashed var(--border);
+    padding: var(--sp-4) var(--sp-5);
+}
+
+.accordion-loading {
+    color: var(--fg-secondary);
+    font-size: 0.85rem;
+    padding: var(--sp-2) 0;
+}
+
+.accordion-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-6);
+}
+
+.accordion-section {
+    min-width: 180px;
+    flex: 1;
+}
+
+.accordion-label {
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-secondary);
+    margin-bottom: 2px;
+    margin-top: var(--sp-2);
+
+    &:first-child {
+        margin-top: 0;
+    }
+}
+
+.accordion-value {
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+}
+
+.accordion-versions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: var(--sp-1);
+}
+
+.version-badge {
+    display: inline-block;
+    padding: 2px var(--sp-2);
+    background: var(--info-bg);
+    border: 1px solid var(--info);
+    border-radius: var(--radius-full);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--info-fg);
+}
+
+.accordion-actions {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--sp-2);
+    flex-direction: row;
+}
+
+/* Accordion toggle button */
+
+.accordion-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin-left: var(--sp-2);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--fg-secondary);
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 150ms, color 150ms;
+    vertical-align: middle;
+    line-height: 1;
+
+    &:hover {
+        background: var(--bg-hover);
+        color: var(--fg-primary);
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   13a. Confirmation Modal — styled replacement for native confirm()
+   -------------------------------------------------------------------------- */
+
+.confirm-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    background: rgba(0,0,0,0.32);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: confirmFadeIn 150ms var(--md-motion-emphasized-decelerate);
+}
+
+.confirm-modal {
+    background: var(--md-surface-container-high);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
+    width: 90%;
+    max-width: 480px;
+    padding: var(--sp-5) var(--sp-6);
+    animation: confirmFadeIn 150ms var(--md-motion-emphasized-decelerate);
+}
+
+.confirm-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: var(--sp-3);
+    color: var(--fg-primary);
+}
+
+.confirm-body {
+    font-size: 0.85rem;
+    color: var(--fg-secondary);
+    max-height: 50vh;
+    overflow-y: auto;
+    margin-bottom: var(--sp-5);
+    line-height: 1.6;
+}
+
+.confirm-body p {
+    margin-bottom: var(--sp-2);
+}
+
+.confirm-body .confirm-change-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: var(--sp-1) 0;
+}
+
+.confirm-body .confirm-change-name {
+    font-weight: 600;
+    color: var(--fg-primary);
+}
+
+.confirm-body .confirm-section-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-muted);
+    margin-top: var(--sp-3);
+    margin-bottom: var(--sp-1);
+}
+
+.confirm-body .confirm-muted-row {
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+    padding: var(--sp-1) 0;
+}
+
+.confirm-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--sp-2);
+}
+
+.confirm-btn-cancel {
+    padding: 6px 16px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: transparent;
+    color: var(--fg-primary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 150ms;
+}
+
+.confirm-btn-cancel:hover {
+    background: var(--bg-hover);
+}
+
+.confirm-btn-apply {
+    padding: 6px 16px;
+    border: 1px solid var(--accent);
+    border-radius: 20px;
+    background: var(--accent);
+    color: var(--md-on-primary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 150ms, border-color 150ms;
+}
+
+.confirm-btn-apply:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+}
+
+@keyframes confirmFadeIn {
+    from { opacity: 0; transform: scale(0.96); }
+    to { opacity: 1; transform: scale(1); }
+}
