@@ -2933,6 +2933,54 @@
       showToast("Webhook secret copied", "success");
     });
   }
+  function exportConfig() {
+    var includeSecrets = document.getElementById("export-secrets-toggle");
+    var qs = includeSecrets && includeSecrets.checked ? "?secrets=true" : "";
+    fetch("/api/config/export" + qs).then(function(r) {
+      if (!r.ok) throw new Error("Export failed");
+      return r.blob();
+    }).then(function(blob) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "sentinel-config-" + (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) + ".json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showToast("Configuration exported", "success");
+    }).catch(function() {
+      showToast("Export failed", "error");
+    });
+  }
+  function importConfig() {
+    var fileInput = document.getElementById("config-import-file");
+    if (!fileInput || !fileInput.files.length) {
+      showToast("Select a file first", "error");
+      return;
+    }
+    if (!confirm("Import will overwrite matching settings. Continue?")) return;
+    var file = fileInput.files[0];
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      fetch("/api/config/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: e.target.result
+      }).then(function(r) {
+        return r.json();
+      }).then(function(data) {
+        if (data.error) {
+          showToast(data.error, "error");
+        } else {
+          showToast(data.message || "Configuration imported", "success");
+          setTimeout(function() {
+            location.reload();
+          }, 1e3);
+        }
+      }).catch(function() {
+        showToast("Import failed", "error");
+      });
+    };
+    reader.readAsText(file);
+  }
 
   // internal/web/static/src/js/settings-cluster.js
   function _updateToggleText(textId, enabled) {
@@ -4429,6 +4477,8 @@
   window.regenerateWebhookSecret = regenerateWebhookSecret;
   window.copyWebhookURL = copyWebhookURL;
   window.copyWebhookSecret = copyWebhookSecret;
+  window.exportConfig = exportConfig;
+  window.importConfig = importConfig;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;
   window.loadClusterSettings = loadClusterSettings;

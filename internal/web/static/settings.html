@@ -507,6 +507,47 @@
                     </div>
                 </details>
 
+                <!-- Backup & Restore -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Backup &amp; Restore</h2>
+                        <span class="accordion-preview">Export and import full configuration</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="settings-section-desc">Export all settings, notification channels, and registry credentials as a JSON backup file. Import to restore or migrate to another instance.</p>
+                        <div class="settings-rows">
+                            <div class="setting-row setting-row-top">
+                                <div class="setting-info">
+                                    <div class="setting-label">Export Configuration</div>
+                                    <div class="setting-desc">Download a JSON file containing all current settings</div>
+                                </div>
+                                <div class="setting-control-stack">
+                                    <div style="display:flex; gap:var(--sp-2); align-items:center">
+                                        <button class="btn btn-success" onclick="exportConfig()">Export</button>
+                                        <label class="toggle-switch-label" style="margin-left:var(--sp-2)">
+                                            <input type="checkbox" id="export-secrets-toggle">
+                                            <span>Include secrets</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="setting-row setting-row-top">
+                                <div class="setting-info">
+                                    <div class="setting-label">Import Configuration</div>
+                                    <div class="setting-desc">Merge import &mdash; existing settings not in the backup are preserved. Redacted values are skipped.</div>
+                                </div>
+                                <div class="setting-control-stack">
+                                    <input type="file" id="config-import-file" accept=".json" class="setting-input" style="max-width:none">
+                                    <div style="margin-top:var(--sp-2)">
+                                        <button class="btn btn-warning" onclick="importConfig()">Import</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
             </div>
         </div>
 
