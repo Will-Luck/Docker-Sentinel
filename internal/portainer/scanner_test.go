@@ -25,7 +25,7 @@ func TestScanner_Endpoints(t *testing.T) {
 			{ID: 2, Name: "docker-down", Type: EndpointDocker, Status: StatusDown},
 			{ID: 3, Name: "k8s-up", Type: EndpointKubernetes, Status: StatusUp},
 		}
-		json.NewEncoder(w).Encode(endpoints)
+		_ = json.NewEncoder(w).Encode(endpoints)
 	})
 
 	_, scanner := newScannerTestServer(t, mux)
@@ -53,7 +53,7 @@ func TestScanner_AllEndpoints(t *testing.T) {
 			{ID: 2, Name: "docker-down", Type: EndpointDocker, Status: StatusDown},
 			{ID: 3, Name: "k8s-up", Type: EndpointKubernetes, Status: StatusUp},
 		}
-		json.NewEncoder(w).Encode(endpoints)
+		_ = json.NewEncoder(w).Encode(endpoints)
 	})
 
 	_, scanner := newScannerTestServer(t, mux)
@@ -82,7 +82,7 @@ func TestScanner_EndpointContainers(t *testing.T) {
 				Env:        []EnvVar{{Name: "FOO", Value: "bar"}},
 			},
 		}
-		json.NewEncoder(w).Encode(stacks)
+		_ = json.NewEncoder(w).Encode(stacks)
 	})
 
 	mux.HandleFunc("/api/endpoints/1/docker/containers/json", func(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +104,7 @@ func TestScanner_EndpointContainers(t *testing.T) {
 				Labels:  map[string]string{},
 			},
 		}
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	})
 
 	_, scanner := newScannerTestServer(t, mux)
@@ -159,27 +159,27 @@ func TestScanner_EndpointContainers_CachesStacks(t *testing.T) {
 
 	mux.HandleFunc("/api/stacks", func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		json.NewEncoder(w).Encode([]Stack{})
+		_ = json.NewEncoder(w).Encode([]Stack{})
 	})
 
 	mux.HandleFunc("/api/endpoints/1/docker/containers/json", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]Container{})
+		_ = json.NewEncoder(w).Encode([]Container{})
 	})
 	mux.HandleFunc("/api/endpoints/2/docker/containers/json", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]Container{})
+		_ = json.NewEncoder(w).Encode([]Container{})
 	})
 
 	_, scanner := newScannerTestServer(t, mux)
 
-	scanner.EndpointContainers(context.Background(), Endpoint{ID: 1, Name: "ep1"})
-	scanner.EndpointContainers(context.Background(), Endpoint{ID: 2, Name: "ep2"})
+	_, _ = scanner.EndpointContainers(context.Background(), Endpoint{ID: 1, Name: "ep1"})
+	_, _ = scanner.EndpointContainers(context.Background(), Endpoint{ID: 2, Name: "ep2"})
 
 	if callCount != 1 {
 		t.Errorf("expected stacks to be fetched once, got %d calls", callCount)
 	}
 
 	scanner.ResetCache()
-	scanner.EndpointContainers(context.Background(), Endpoint{ID: 1, Name: "ep1"})
+	_, _ = scanner.EndpointContainers(context.Background(), Endpoint{ID: 1, Name: "ep1"})
 
 	if callCount != 2 {
 		t.Errorf("expected stacks to be fetched again after reset, got %d total calls", callCount)
@@ -195,7 +195,7 @@ func TestScanner_RedeployStack(t *testing.T) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		json.NewDecoder(r.Body).Decode(&capturedBody)
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -208,7 +208,7 @@ func TestScanner_RedeployStack(t *testing.T) {
 				Env:        []EnvVar{{Name: "DATABASE_URL", Value: "postgres://localhost/db"}},
 			},
 		}
-		json.NewEncoder(w).Encode(stacks)
+		_ = json.NewEncoder(w).Encode(stacks)
 	})
 
 	_, scanner := newScannerTestServer(t, mux)
