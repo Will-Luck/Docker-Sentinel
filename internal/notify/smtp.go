@@ -73,7 +73,7 @@ func (s *SMTP) Send(_ context.Context, event Event) error {
 	var err error
 
 	if s.useTLS {
-		conn, dialErr := tls.Dial("tcp", addr, &tls.Config{ServerName: s.host})
+		conn, dialErr := tls.Dial("tcp", addr, &tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12})
 		if dialErr != nil {
 			return fmt.Errorf("smtp tls dial: %w", dialErr)
 		}
@@ -88,7 +88,7 @@ func (s *SMTP) Send(_ context.Context, event Event) error {
 			return fmt.Errorf("smtp dial: %w", err)
 		}
 		if ok, _ := c.Extension("STARTTLS"); ok {
-			if err := c.StartTLS(&tls.Config{ServerName: s.host}); err != nil {
+			if err := c.StartTLS(&tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12}); err != nil {
 				c.Close()
 				return fmt.Errorf("smtp starttls: %w", err)
 			}

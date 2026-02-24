@@ -27,7 +27,7 @@ func TestClient_ListEndpoints(t *testing.T) {
 		if r.Header.Get("X-API-Key") != "test-token" {
 			t.Errorf("missing or wrong X-API-Key header")
 		}
-		json.NewEncoder(w).Encode(endpoints)
+		_ = json.NewEncoder(w).Encode(endpoints)
 	})
 	_ = srv
 
@@ -57,7 +57,7 @@ func TestClient_ListContainers(t *testing.T) {
 		if r.URL.Query().Get("all") != "1" {
 			t.Errorf("expected all=1 query param")
 		}
-		json.NewEncoder(w).Encode(containers)
+		_ = json.NewEncoder(w).Encode(containers)
 	})
 	_ = srv
 
@@ -81,7 +81,7 @@ func TestClient_ListStacks(t *testing.T) {
 		if r.URL.Path != "/api/stacks" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(stacks)
+		_ = json.NewEncoder(w).Encode(stacks)
 	})
 	_ = srv
 
@@ -99,7 +99,7 @@ func TestClient_ListStacks(t *testing.T) {
 
 func TestClient_TestConnection(t *testing.T) {
 	srv, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]Endpoint{})
+		_ = json.NewEncoder(w).Encode([]Endpoint{})
 	})
 	_ = srv
 
@@ -111,7 +111,7 @@ func TestClient_TestConnection(t *testing.T) {
 func TestClient_AuthFailure(t *testing.T) {
 	srv, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("Forbidden"))
+		_, _ = w.Write([]byte("Forbidden"))
 	})
 	_ = srv
 
@@ -133,7 +133,7 @@ func TestClient_RedeployStack(t *testing.T) {
 		if r.URL.Query().Get("endpointId") != "5" {
 			t.Errorf("expected endpointId=5, got %q", r.URL.Query().Get("endpointId"))
 		}
-		json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusOK)
 	})
 	_ = srv
@@ -175,7 +175,7 @@ func TestClient_CreateContainer(t *testing.T) {
 		if r.URL.Query().Get("name") != "my-container" {
 			t.Errorf("expected name=my-container, got %q", r.URL.Query().Get("name"))
 		}
-		json.NewEncoder(w).Encode(ContainerCreateResponse{ID: "newid123"})
+		_ = json.NewEncoder(w).Encode(ContainerCreateResponse{ID: "newid123"})
 	})
 	_ = srv
 
