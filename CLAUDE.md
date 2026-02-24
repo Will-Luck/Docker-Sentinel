@@ -12,17 +12,18 @@ Design document is in `docs/DESIGN.md` (local-only, gitignored).
 
 - **Language:** Go 1.24
 - **Docker SDK:** moby/docker
-- **Web frontend:** Vanilla JS + CSS (embedded via `go:embed`), SSE for real-time updates
+- **Web frontend:** Vanilla JS + CSS, modular ES modules bundled by esbuild, embedded via `go:embed`, SSE for real-time updates
 - **Persistent state:** BoltDB
 - **Container runtime:** Alpine-based Docker image
 
 ## Build
 
 ```bash
-make build    # Build binary to bin/sentinel
-make test     # Run tests with race detector
-make lint     # golangci-lint
-make docker   # Build Docker image
+make build      # Build binary (runs make frontend first)
+make frontend   # Bundle JS + CSS modules via esbuild
+make test       # Run tests with race detector
+make lint       # golangci-lint
+make docker     # Build Docker image
 ```
 
 ## Project Structure
@@ -49,6 +50,64 @@ make docker   # Build Docker image
 - CI runs on Gitea Actions (push to Gitea first, GitHub only for public release)
 - No `docker compose` -- single container deployed via `docker run`
 - **CLAUDE.md is living documentation:** Any change to API routes, data types, keying conventions, SSE events, or request flows must update the Architecture Reference section below before committing
+
+## Frontend Development (MANDATORY)
+
+The frontend is modular — source files in `src/`, bundled by esbuild to single output files.
+
+**NEVER edit these files directly — they are build artefacts:**
+- `internal/web/static/app.js` — bundled from `src/js/`
+- `internal/web/static/style.css` — bundled from `src/css/`
+- `internal/web/static/app.js.map` — source map
+- `internal/web/static/style.css.map` — source map
+
+**Always edit the source modules instead:**
+
+| JS Module | Purpose |
+|-----------|---------|
+| `src/js/csrf.js` | CSRF fetch patch, 401 redirect |
+| `src/js/utils.js` | Toast, confirm, escapeHTML, apiPost |
+| `src/js/dashboard.js` | Theme, tabs, filters, sort, manage mode, drag reorder |
+| `src/js/queue.js` | Approve/reject/ignore, bulk actions, container triggers |
+| `src/js/swarm.js` | Service toggle, update, rollback, scale |
+| `src/js/sse.js` | SSE connection, live row patching, GHCR badges, digest banner |
+| `src/js/settings-core.js` | Settings page toggles and handlers |
+| `src/js/settings-cluster.js` | Cluster settings tab |
+| `src/js/notifications.js` | Channels, digest, per-container prefs |
+| `src/js/registries.js` | Registry credentials, rate limits |
+| `src/js/about.js` | About info, release sources |
+| `src/js/main.js` | Entry point — imports, window exports, DOMContentLoaded |
+
+| CSS Module | Purpose |
+|------------|---------|
+| `src/css/variables.css` | CSS custom properties, tokens |
+| `src/css/base.css` | Reset, typography, nav, layout |
+| `src/css/components.css` | Cards, tables, badges, buttons, toasts, modals |
+| `src/css/dashboard.css` | Stacks, swarm, container rows, animations |
+| `src/css/queue.css` | Policy pills, accordion, confirm modal |
+| `src/css/settings.css` | Settings page, toggles, duration picker |
+| `src/css/notifications.css` | Digest banner, notification prefs |
+| `src/css/registries.css` | Registry display, rate limits |
+| `src/css/cluster.css` | Cluster page, host cards, service detail |
+| `src/css/auth.css` | Login page, user dropdown |
+| `src/css/responsive.css` | Media queries |
+| `src/css/index.css` | Import order (entry point) |
+
+**After editing any source module, run `make frontend` to rebuild.**
+
+**Adding new JS functions called from HTML `on*` handlers:**
+1. Export the function from its module
+2. Import it in `main.js`
+3. Add `window.functionName = functionName;` in main.js (HTML onclick can only see window globals)
+
+**Adding a new JS module:**
+1. Create `src/js/mymodule.js` with `import`/`export` syntax
+2. Import it in `main.js`
+3. Add any HTML-referenced functions to the window exports block in `main.js`
+
+**Adding a new CSS module:**
+1. Create `src/css/mymodule.css`
+2. Add `@import "./mymodule.css";` to `src/css/index.css` (order matters for specificity)
 
 ## Key Design Decisions
 
@@ -276,7 +335,7 @@ all settings, all auth
 | `LogEntry` | `store/bolt.go` | Yes (BoltDB `logs`) | RFC3339Nano |
 | `HostInfo` | `cluster/types.go` | Yes (BoltDB `cluster_hosts`) | host UUID |
 | `HostState` | `cluster/server/registry.go` | Partial (Info persisted, Containers/Connected ephemeral) | host UUID |
-| `containerView` | `web/handlers.go` | No (template data) | - |
+| `containerView` | `web/handlers_dashboard.go` | No (template data) | - |
 | `SSEEvent` | `events/bus.go` | No (pub/sub) | - |
 
 ### Keying Conventions
@@ -331,19 +390,22 @@ all settings, all auth
 
 | Area | Files |
 |------|-------|
-| Web handlers | `internal/web/handlers.go`, `api_control.go`, `api_queue.go`, `api_policy.go` |
-| Web server | `internal/web/server.go` (interfaces, mirror types, route registration) |
+| Web handlers | `internal/web/handlers.go`, `handlers_dashboard.go`, `api_control.go`, `api_queue.go`, `api_policy.go` |
+| Web interfaces | `internal/web/interfaces.go` (30+ interfaces and mirror types) |
+| Web server | `internal/web/server.go` (server struct, routes, static serving) |
 | SSE | `internal/web/sse.go`, `internal/events/bus.go` |
 | Adapters | `cmd/sentinel/adapters.go` (all bridge code between packages) |
 | Cluster server | `internal/cluster/server/server.go` (gRPC, pending, streams) |
 | Cluster registry | `internal/cluster/server/registry.go` (host/container cache) |
 | Cluster agent | `internal/cluster/agent/agent.go` (enrollment, session, handlers) |
 | Cluster types | `internal/cluster/types.go` (HostInfo, ContainerInfo, HostState) |
-| Update engine | `internal/engine/updater.go` (scan), `update.go` (execute), `queue.go` |
+| Update engine | `internal/engine/updater.go` (scan), `updater_remote.go` (remote/Portainer scan), `update.go` (execute), `queue.go` |
 | Self-update | `internal/engine/selfupdate.go` |
 | Store | `internal/store/bolt.go` (BoltDB buckets and all persistence methods) |
 | Config | `internal/config/config.go` |
-| Frontend | `internal/web/static/app.js`, `index.html`, `container.html`, `queue.html`, `history.html`, `logs.html` |
+| Frontend JS | `internal/web/static/src/js/` (12 ES modules, bundled to `static/app.js`) |
+| Frontend CSS | `internal/web/static/src/css/` (11 modules, bundled to `static/style.css`) |
+| Frontend HTML | `internal/web/static/index.html`, `container.html`, `queue.html`, `history.html`, `logs.html`, `settings.html` |
 
 ### Common Recipes
 
@@ -351,13 +413,14 @@ all settings, all auth
 1. Add handler method on `*Server` in the appropriate `api_*.go` file
 2. Register route in `server.go` `registerRoutes()`
 3. If cluster-aware: add `?host=` routing pattern (see above)
-4. If cluster-aware: add JS function with `hostId` parameter in `app.js`
-5. Update Architecture Reference sections above
+4. If cluster-aware: add JS function in the appropriate `src/js/*.js` module, export it, import in `main.js`, add `window.` binding if called from HTML
+5. Run `make frontend` to rebuild the bundle
+6. Update Architecture Reference sections above
 
 **Adding a new SSE event:**
 1. Add event constant in `events/bus.go`
 2. Publish via `s.deps.EventBus.Publish()` from the relevant handler
-3. Add JS handler in `app.js` `setupSSE()` switch block
+3. Add JS handler in `src/js/sse.js` inside the SSE event switch block
 4. Update SSE Events table above
 
 **Adding a new setting:**
