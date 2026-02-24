@@ -124,7 +124,9 @@ import {
     setWebhookEnabled,
     regenerateWebhookSecret,
     copyWebhookURL,
-    copyWebhookSecret
+    copyWebhookSecret,
+    exportConfig,
+    importConfig
 } from "./settings-core.js";
 
 import {
@@ -272,6 +274,8 @@ window.setWebhookEnabled = setWebhookEnabled;
 window.regenerateWebhookSecret = regenerateWebhookSecret;
 window.copyWebhookURL = copyWebhookURL;
 window.copyWebhookSecret = copyWebhookSecret;
+window.exportConfig = exportConfig;
+window.importConfig = importConfig;
 
 // Settings cluster
 window.onClusterToggle = onClusterToggle;
