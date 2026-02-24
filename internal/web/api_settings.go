@@ -4,12 +4,14 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	cron "github.com/robfig/cron/v3"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
@@ -937,4 +939,119 @@ func (s *Server) apiSetHADiscovery(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logEvent(r, "settings", "", "Home Assistant discovery "+label)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// apiSetDockerTLS saves Docker TLS certificate paths for mTLS connections.
+// All three paths must be provided together, or all empty to disable.
+func (s *Server) apiSetDockerTLS(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CA   string `json:"ca"`
+		Cert string `json:"cert"`
+		Key  string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusInternalServerError, "settings store not available")
+		return
+	}
+
+	// Trim whitespace from paths.
+	req.CA = strings.TrimSpace(req.CA)
+	req.Cert = strings.TrimSpace(req.Cert)
+	req.Key = strings.TrimSpace(req.Key)
+
+	// All-or-nothing: either all three are provided, or all are empty.
+	has := req.CA != "" || req.Cert != "" || req.Key != ""
+	complete := req.CA != "" && req.Cert != "" && req.Key != ""
+	if has && !complete {
+		writeError(w, http.StatusBadRequest, "all three certificate paths must be provided, or leave all empty to disable")
+		return
+	}
+
+	// Validate that files exist when paths are provided.
+	if complete {
+		for label, path := range map[string]string{"CA certificate": req.CA, "client certificate": req.Cert, "client key": req.Key} {
+			if _, err := os.Stat(path); err != nil {
+				writeError(w, http.StatusBadRequest, label+" not found: "+path)
+				return
+			}
+		}
+	}
+
+	// Save all three settings.
+	if err := s.deps.SettingsStore.SaveSetting(store.SettingDockerTLSCA, req.CA); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save Docker TLS CA")
+		return
+	}
+	if err := s.deps.SettingsStore.SaveSetting(store.SettingDockerTLSCert, req.Cert); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save Docker TLS cert")
+		return
+	}
+	if err := s.deps.SettingsStore.SaveSetting(store.SettingDockerTLSKey, req.Key); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save Docker TLS key")
+		return
+	}
+
+	msg := "Docker TLS certificates cleared"
+	if complete {
+		msg = "Docker TLS certificates saved"
+	}
+	s.logEvent(r, "settings", "", msg)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message":          msg,
+		"restart_required": "true",
+	})
+}
+
+// apiTestDockerTLS attempts to connect to the Docker daemon using the provided TLS certificates.
+func (s *Server) apiTestDockerTLS(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CA   string `json:"ca"`
+		Cert string `json:"cert"`
+		Key  string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	req.CA = strings.TrimSpace(req.CA)
+	req.Cert = strings.TrimSpace(req.Cert)
+	req.Key = strings.TrimSpace(req.Key)
+
+	if req.CA == "" || req.Cert == "" || req.Key == "" {
+		writeError(w, http.StatusBadRequest, "all three certificate paths are required for testing")
+		return
+	}
+
+	// Read the Docker host from config values.
+	dockerHost := "/var/run/docker.sock"
+	if vals := s.deps.Config.Values(); vals["SENTINEL_DOCKER_SOCK"] != "" {
+		dockerHost = vals["SENTINEL_DOCKER_SOCK"]
+	}
+
+	tlsCfg := &docker.TLSConfig{CACert: req.CA, ClientCert: req.Cert, ClientKey: req.Key}
+	testClient, err := docker.NewClient(dockerHost, tlsCfg)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "failed to create client: " + err.Error(),
+		})
+		return
+	}
+	defer testClient.Close()
+
+	if err := testClient.Ping(r.Context()); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "Docker ping failed: " + err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }

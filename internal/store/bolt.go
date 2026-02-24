@@ -50,6 +50,14 @@ const (
 	SettingPortainerToken   = "portainer_token"
 )
 
+// Docker TLS settings keys (stored in bucketSettings).
+// These store file paths to certificates for mTLS connections to Docker socket proxies.
+const (
+	SettingDockerTLSCA   = "docker_tls_ca"
+	SettingDockerTLSCert = "docker_tls_cert"
+	SettingDockerTLSKey  = "docker_tls_key"
+)
+
 // UpdateRecord represents a completed (or failed) container update.
 type UpdateRecord struct {
 	Timestamp     time.Time     `json:"timestamp"`

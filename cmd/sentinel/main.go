@@ -114,19 +114,30 @@ func main() {
 	fmt.Printf("SENTINEL_TLS_AUTO=%t\n", cfg.TLSAuto)
 	fmt.Printf("SENTINEL_WEBAUTHN_RPID=%s\n", cfg.WebAuthnRPID)
 
-	client, err := docker.NewClient(cfg.DockerSock)
-	if err != nil {
-		log.Error("failed to create Docker client", "error", err)
-		os.Exit(1)
-	}
-	defer client.Close()
-
+	// Open DB first so we can load TLS settings before creating the Docker client.
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {
 		log.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Load Docker TLS certificate paths from BoltDB.
+	var tlsCfg *docker.TLSConfig
+	tlsCA, _ := db.LoadSetting(store.SettingDockerTLSCA)
+	tlsCert, _ := db.LoadSetting(store.SettingDockerTLSCert)
+	tlsKey, _ := db.LoadSetting(store.SettingDockerTLSKey)
+	if tlsCA != "" && tlsCert != "" && tlsKey != "" {
+		tlsCfg = &docker.TLSConfig{CACert: tlsCA, ClientCert: tlsCert, ClientKey: tlsKey}
+		log.Info("Docker TLS configured", "ca", tlsCA, "cert", tlsCert)
+	}
+
+	client, err := docker.NewClient(cfg.DockerSock, tlsCfg)
+	if err != nil {
+		log.Error("failed to create Docker client", "error", err)
+		os.Exit(1)
+	}
+	defer client.Close()
 
 	// Initialise auth buckets and seed built-in roles.
 	if err := db.EnsureAuthBuckets(); err != nil {
@@ -662,19 +673,29 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	fmt.Printf("SENTINEL_HOST_NAME=%s\n", cfg.HostName)
 	fmt.Printf("SENTINEL_CLUSTER_DIR=%s\n", cfg.ClusterDataDir)
 
-	client, err := docker.NewClient(cfg.DockerSock)
-	if err != nil {
-		log.Error("failed to create Docker client", "error", err)
-		os.Exit(1)
-	}
-	defer client.Close()
-
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {
 		log.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Load Docker TLS settings for agent mode too.
+	var agentTLSCfg *docker.TLSConfig
+	agentCA, _ := db.LoadSetting(store.SettingDockerTLSCA)
+	agentCert, _ := db.LoadSetting(store.SettingDockerTLSCert)
+	agentKey, _ := db.LoadSetting(store.SettingDockerTLSKey)
+	if agentCA != "" && agentCert != "" && agentKey != "" {
+		agentTLSCfg = &docker.TLSConfig{CACert: agentCA, ClientCert: agentCert, ClientKey: agentKey}
+		log.Info("Docker TLS configured (agent)", "ca", agentCA, "cert", agentCert)
+	}
+
+	client, err := docker.NewClient(cfg.DockerSock, agentTLSCfg)
+	if err != nil {
+		log.Error("failed to create Docker client", "error", err)
+		os.Exit(1)
+	}
+	defer client.Close()
 
 	if err := db.EnsureAuthBuckets(); err != nil {
 		log.Error("failed to create auth buckets", "error", err)

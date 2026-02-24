@@ -389,6 +389,37 @@
                     </div>
                 </details>
 
+                <!-- Docker Connection -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Docker Connection</h2>
+                        <span class="accordion-preview">TLS certificates for socket proxy</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row setting-row-top">
+                                <div class="setting-info">
+                                    <div class="setting-label">TLS Certificates</div>
+                                    <div class="setting-desc">Configure mTLS certificates for connecting to a Docker socket proxy. Leave all fields empty for direct socket or unencrypted TCP. <span class="restart-badge">Restart required</span></div>
+                                </div>
+                                <div class="setting-control-stack">
+                                    <label class="setting-input-label" for="docker-tls-ca">CA Certificate Path</label>
+                                    <input type="text" id="docker-tls-ca" class="setting-input" placeholder="/path/to/ca.pem">
+                                    <label class="setting-input-label" for="docker-tls-cert">Client Certificate Path</label>
+                                    <input type="text" id="docker-tls-cert" class="setting-input" placeholder="/path/to/cert.pem">
+                                    <label class="setting-input-label" for="docker-tls-key">Client Key Path</label>
+                                    <input type="text" id="docker-tls-key" class="setting-input" placeholder="/path/to/key.pem">
+                                    <div style="display:flex; gap:var(--sp-2); margin-top:var(--sp-2)">
+                                        <button class="btn btn-success" onclick="saveDockerTLS()">Save</button>
+                                        <button class="btn btn-sm" id="docker-tls-test-btn" onclick="testDockerTLS()">Test Connection</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
                                 <!-- Environment Variables -->
                 <details class="accordion card">
                     <summary class="accordion-header">
@@ -1048,6 +1079,14 @@ function testPortainerConnection() {
             if (roleBtn) {
                 roleBtn.textContent = currentRole === 'agent' ? 'Switch to Server' : 'Switch to Agent';
             }
+            // Docker TLS cert paths.
+            var tlsCaEl = document.getElementById('docker-tls-ca');
+            var tlsCertEl = document.getElementById('docker-tls-cert');
+            var tlsKeyEl = document.getElementById('docker-tls-key');
+            if (tlsCaEl) tlsCaEl.value = d['docker_tls_ca'] || '';
+            if (tlsCertEl) tlsCertEl.value = d['docker_tls_cert'] || '';
+            if (tlsKeyEl) tlsKeyEl.value = d['docker_tls_key'] || '';
+
             var pUrl = document.getElementById('portainer-url');
             if (pUrl && d['SENTINEL_PORTAINER_URL']) pUrl.value = d['SENTINEL_PORTAINER_URL'];
             if (pUrl && d['portainer_url']) pUrl.value = d['portainer_url'];
