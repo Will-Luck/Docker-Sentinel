@@ -310,6 +310,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 			targetImage = webReplaceTag(rc.Image, pending.NewerVersions[0])
 		}
 
+		s.markRemoteUpdating(hostID, name)
 		go func() {
 			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, ""); err != nil {
 				s.deps.Log.Error("remote update failed", "name", name, "host", hostID, "error", err)
@@ -320,7 +321,14 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 					Message:       "update failed on " + hostID + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
+			} else {
+				s.deps.Queue.Remove(queueKey)
 			}
+			// Delay clearing so the SSE-triggered row fetch still sees Maintenance=true.
+			// The SSE event is published by handleUpdateResult before deliverPending
+			// unblocks this goroutine, but the browser needs time to receive it and
+			// fetch the updated row HTML.
+			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(hostID, name) })
 		}()
 
 		s.logEvent(r, "update", name, "Remote update triggered on "+hostID)
@@ -704,6 +712,8 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 
 		targetImage := webReplaceTag(rc.Image, body.Tag)
 
+		queueKey := hostID + "::" + name
+		s.markRemoteUpdating(hostID, name)
 		go func() {
 			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, ""); err != nil {
 				s.deps.Log.Error("remote version update failed", "name", name, "host", hostID, "tag", body.Tag, "error", err)
@@ -714,7 +724,10 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 					Message:       "update to " + body.Tag + " failed on " + hostID + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
+			} else {
+				s.deps.Queue.Remove(queueKey)
 			}
+			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(hostID, name) })
 		}()
 
 		s.logEvent(r, "update_to_version", name, "Remote update to "+body.Tag+" on "+hostID)

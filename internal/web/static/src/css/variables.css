@@ -1,0 +1,142 @@
+/* ==========================================================================
+   Docker-Sentinel Dashboard v3 — Style Sheet
+   Material Design 3 — Purple baseline, tinted surfaces, light-dark() theming
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. CSS Custom Properties — Primitives, Semantic, Component tokens
+   -------------------------------------------------------------------------- */
+
+:root {
+    color-scheme: dark light;
+
+    /* ── M3 Colour Roles — Primary (Purple baseline) ── */
+    --md-primary:              light-dark(#6750A4, #D0BCFF);
+    --md-on-primary:           light-dark(#FFFFFF, #381E72);
+    --md-primary-container:    light-dark(#EADDFF, #4F378B);
+    --md-on-primary-container: light-dark(#21005D, #EADDFF);
+
+    /* ── Secondary (Desaturated purple) ── */
+    --md-secondary:              light-dark(#625B71, #CCC2DC);
+    --md-on-secondary:           light-dark(#FFFFFF, #332D41);
+    --md-secondary-container:    light-dark(#E8DEF8, #4A4458);
+    --md-on-secondary-container: light-dark(#1D192B, #E8DEF8);
+
+    /* ── Tertiary (Rose) ── */
+    --md-tertiary:              light-dark(#7D5260, #EFB8C8);
+    --md-on-tertiary:           light-dark(#FFFFFF, #492532);
+    --md-tertiary-container:    light-dark(#FFD8E4, #633B48);
+    --md-on-tertiary-container: light-dark(#31111D, #FFD8E4);
+
+    /* ── Error ── */
+    --md-error:              light-dark(#B3261E, #F2B8B5);
+    --md-on-error:           light-dark(#FFFFFF, #601410);
+    --md-error-container:    light-dark(#F9DEDC, #8C1D18);
+    --md-on-error-container: light-dark(#410E0B, #F9DEDC);
+
+    /* ── Surfaces ── */
+    --md-surface:            light-dark(#FEF7FF, #141218);
+    --md-on-surface:         light-dark(#1D1B20, #E6E0E9);
+    --md-surface-variant:    light-dark(#E7E0EC, #49454F);
+    --md-on-surface-variant: light-dark(#49454F, #CAC4D0);
+
+    --md-surface-container-lowest:  light-dark(#FFFFFF, #0F0D13);
+    --md-surface-container-low:     light-dark(#F7F2FA, #1D1B20);
+    --md-surface-container:         light-dark(#F3EDF7, #211F26);
+    --md-surface-container-high:    light-dark(#ECE6F0, #2B2930);
+    --md-surface-container-highest: light-dark(#E6E0E9, #36343B);
+
+    --md-surface-dim:    light-dark(#DED8E1, #141218);
+    --md-surface-bright: light-dark(#FEF7FF, #3B383E);
+
+    --md-inverse-surface:    light-dark(#322F35, #E6E0E9);
+    --md-inverse-on-surface: light-dark(#F5EFF7, #322F35);
+    --md-inverse-primary:    light-dark(#D0BCFF, #6750A4);
+
+    /* ── Outlines ── */
+    --md-outline:         light-dark(#79747E, #938F99);
+    --md-outline-variant: light-dark(#CAC4D0, #49454F);
+
+    /* ── Scrim ── */
+    --md-scrim: #000000;
+
+    /* ── M3 State Layers ── */
+    --md-hover-state: light-dark(rgba(0,0,0,0.08), rgba(255,255,255,0.08));
+    --md-focus-state: light-dark(rgba(0,0,0,0.12), rgba(255,255,255,0.12));
+    --md-press-state: light-dark(rgba(0,0,0,0.12), rgba(255,255,255,0.12));
+
+    /* ── M3 Motion ── */
+    --md-motion-standard:              cubic-bezier(0.2, 0.0, 0, 1);
+    --md-motion-standard-decelerate:   cubic-bezier(0, 0, 0, 1);
+    --md-motion-standard-accelerate:   cubic-bezier(0.3, 0, 1, 1);
+    --md-motion-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+    --md-motion-emphasized-accelerate: cubic-bezier(0.3, 0.0, 0.8, 0.15);
+
+    /* ── M3 Shape Scale ── */
+    --md-shape-xs:   4px;
+    --md-shape-sm:   8px;
+    --md-shape-md:   12px;
+    --md-shape-lg:   16px;
+    --md-shape-xl:   28px;
+    --md-shape-full: 9999px;
+
+    /* ── Semantic Tokens (mapped to M3 roles) ── */
+    --bg-body:    var(--md-surface);
+    --bg-surface: var(--md-surface-container-low);
+    --bg-raised:  var(--md-surface-container);
+    --bg-hover:   var(--md-surface-container-high);
+    --bg-input:   var(--md-surface-container-lowest);
+
+    --fg-primary:   var(--md-on-surface);
+    --fg-secondary: var(--md-on-surface-variant);
+    --fg-muted:     light-dark(#706B76, #938F99);
+
+    --border:        var(--md-outline-variant);
+    --border-strong: var(--md-outline);
+
+    --accent:       var(--md-primary);
+    --accent-hover: light-dark(#7F67BE, #B69DF8);
+
+    /* ── Extended Colours (Success, Warning, Info) ── */
+    --success:    light-dark(#2E7D32, #81C784);
+    --success-bg: light-dark(rgba(46,125,50,0.12), rgba(129,199,132,0.16));
+    --success-fg: light-dark(#2E7D32, #81C784);
+
+    --warning:    light-dark(#E65100, #FFD54F);
+    --warning-bg: light-dark(rgba(230,81,0,0.12), rgba(255,213,79,0.16));
+    --warning-fg: light-dark(#E65100, #FFD54F);
+
+    --error:    var(--md-error);
+    --error-bg: light-dark(rgba(179,38,30,0.12), rgba(242,184,181,0.16));
+    --error-fg: var(--md-error);
+
+    --info:    light-dark(#1565C0, #82B1FF);
+    --info-bg: light-dark(rgba(21,101,192,0.12), rgba(130,177,255,0.16));
+    --info-fg: light-dark(#1565C0, #82B1FF);
+
+    /* ── Shadows ── */
+    --shadow-sm: light-dark(0 1px 2px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.30));
+    --shadow-md: light-dark(0 2px 6px rgba(0,0,0,0.15), 0 4px 12px rgba(0,0,0,0.40));
+    --shadow-lg: light-dark(0 8px 16px rgba(0,0,0,0.15), 0 10px 20px rgba(0,0,0,0.50));
+
+    /* ── Shape (legacy aliases → M3 scale) ── */
+    --radius-sm:   var(--md-shape-xs);
+    --radius:      var(--md-shape-sm);
+    --radius-lg:   var(--md-shape-md);
+    --radius-xl:   var(--md-shape-xl);
+    --radius-full: var(--md-shape-full);
+
+    /* ── Font Stacks ── */
+    --font-sans: 'Roboto', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'Roboto Mono', ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+
+    /* ── Spacing (4px base) ── */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 20px;
+    --sp-6: 24px;
+    --sp-8: 32px;
+    --sp-10: 40px;
+}

@@ -24,6 +24,14 @@ jobs:
       - name: Download modules
         run: go mod download
 
+      - name: Install esbuild
+        run: go install github.com/evanw/esbuild/cmd/esbuild@latest
+
+      - name: Bundle frontend
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          make frontend
+
       - name: Build
         run: make build
 
