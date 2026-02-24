@@ -1,0 +1,180 @@
+/* --------------------------------------------------------------------------
+   2. Reset + Base Typography
+   -------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    letter-spacing: 0.25px;
+    background: var(--bg-body);
+    color: var(--fg-primary);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color 150ms var(--md-motion-standard);
+
+    &:hover {
+        color: var(--accent-hover);
+    }
+}
+
+img, svg {
+    display: block;
+    max-width: 100%;
+}
+
+input, button, select, textarea {
+    font: inherit;
+    color: inherit;
+}
+
+h1 { font-size: 1.5rem; font-weight: 400; letter-spacing: 0; line-height: 1.3; }
+h2 { font-size: 1.25rem; font-weight: 500; letter-spacing: 0.25px; line-height: 1.3; }
+h3 { font-size: 1rem; font-weight: 400; letter-spacing: 0.15px; line-height: 1.3; }
+h4 { font-size: 0.875rem; font-weight: 500; letter-spacing: 0.1px; line-height: 1.3; }
+
+
+/* --------------------------------------------------------------------------
+   3. Nav Bar
+   -------------------------------------------------------------------------- */
+
+.nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-6);
+    height: 56px;
+    padding: 0 var(--sp-6);
+    background: var(--md-surface-container);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+}
+
+.nav-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    text-decoration: none;
+    color: inherit;
+    flex-shrink: 0;
+}
+
+.nav-logo {
+    width: 28px;
+    height: 28px;
+    border-radius: 0;
+    background: none;
+}
+
+.nav-brand-text {
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--fg-primary);
+}
+
+.nav-links {
+    display: flex;
+    gap: 0;
+    height: 100%;
+}
+
+.nav-link {
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    height: 100%;
+    color: var(--fg-secondary);
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    transition: color 150ms, background 150ms, border-color 150ms;
+}
+
+.nav-link:hover {
+    color: var(--fg-primary);
+    background: var(--bg-hover);
+}
+
+.nav-link.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.nav-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: var(--radius-full);
+    background: var(--accent);
+    color: var(--md-on-primary);
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1;
+    margin-left: 6px;
+}
+
+.nav-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+
+.nav-status-text {
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+}
+
+.nav-status-text.connected {
+    color: var(--success);
+}
+
+
+/* --------------------------------------------------------------------------
+   4. Main Content + Page Header
+   -------------------------------------------------------------------------- */
+
+.main-content {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: var(--sp-6) var(--sp-8);
+}
+
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--sp-6);
+
+    & h1 {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--fg-primary);
+    }
+
+    & .subtitle {
+        font-size: 0.85rem;
+        color: var(--fg-secondary);
+        margin-top: var(--sp-1);
+    }
+}
