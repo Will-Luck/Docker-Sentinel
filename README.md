@@ -29,6 +29,28 @@ Open `http://localhost:8080` and complete the setup wizard. Sentinel defers the 
 
 Also available from GHCR: `ghcr.io/will-luck/docker-sentinel:latest`
 
+## Dev Testing Build
+
+> **Want to help test upcoming features?** A pre-release image is available with changes that haven't reached the stable release yet. Pull it with:
+>
+> ```bash
+> docker pull ghcr.io/will-luck/docker-sentinel:dev
+> ```
+>
+> This image is rebuilt automatically on every push to the [`dev-testing`](https://github.com/Will-Luck/Docker-Sentinel/tree/dev-testing) branch.
+
+**Currently in testing:**
+
+- **Auth disabled state no longer locks out the GUI** ([#7](https://github.com/Will-Luck/Docker-Sentinel/issues/7)) — When authentication was disabled, the Security tab disappeared entirely, leaving no way to re-enable it without restarting the container with `SENTINEL_AUTH_ENABLED=true`. The Security tab now stays visible with the auth toggle always accessible. User management, OIDC, and account sections are greyed out until auth is re-enabled. The "Auth: Off" badge in the nav is now a clickable link to the Security tab.
+- **Display stopped containers** — Option to show stopped/exited containers on the dashboard alongside running ones.
+- **Docker Compose file sync on update** — Automatically update the image tag in your Compose file when Sentinel applies an update, keeping your Compose definitions in sync with what's actually running.
+
+**Known open issues being worked on:**
+
+- **Swarm update timeouts** ([#42](https://github.com/Will-Luck/Docker-Sentinel/issues/42)) — Multiple swarm service updates can time out when applied in bulk.
+
+If you find any issues with the dev build, please [open an issue](https://github.com/Will-Luck/Docker-Sentinel/issues/new) or start a [discussion](https://github.com/Will-Luck/Docker-Sentinel/discussions).
+
 ## Why Sentinel?
 
 | | Sentinel | Watchtower | Diun |
