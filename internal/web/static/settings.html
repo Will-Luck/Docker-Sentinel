@@ -28,6 +28,7 @@
             </a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link active" aria-current="page">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
             {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
@@ -274,6 +275,17 @@
                         </div>
                         <div class="setting-row">
                             <div class="setting-info">
+                                <div class="setting-label">Maintenance window</div>
+                                <div class="setting-desc">Time window when auto-updates are applied. Scans still run on schedule, but updates are deferred until inside the window. Manual approvals always bypass.</div>
+                            </div>
+                            <div class="poll-interval-control">
+                                <input type="text" id="maintenance-window" class="setting-select" placeholder="e.g. 02:00-06:00" style="max-width:220px">
+                                <button class="btn btn-success" onclick="saveMaintenanceWindow()">Save</button>
+                            </div>
+                            <div class="setting-hint" style="margin-top:0.25rem;font-size:0.8rem;color:var(--text-muted)">Formats: <code>HH:MM-HH:MM</code> (daily), <code>Sat 02:00-Sat 06:00</code> (weekly), multiple with <code>;</code></div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
                                 <div class="setting-label">Compose file sync</div>
                                 <div class="setting-desc">Update the image tag in the Docker Compose file after a successful update. Only applies to Compose-managed containers. Creates <code>.bak</code> backups before modifying.</div>
                             </div>
@@ -468,6 +480,7 @@
                                             <button class="btn btn-sm" onclick="copyWebhookSecret()">Copy</button>
                                             <button class="btn btn-sm btn-warning" onclick="regenerateWebhookSecret()">Regenerate</button>
                                         </div>
+                                        <small id="webhook-secret-hint" class="text-muted" style="display:none">Secret is masked for security. Click Regenerate to create a new one (shown only once).</small>
                                     </div>
                                 </div>
                             </div>
@@ -654,6 +667,53 @@
                                     <button class="btn" onclick="triggerDigest()">Send Test Summary</button>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Message Templates -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Message Templates</h2>
+                        <span class="accordion-preview">Customise notification message format per event type</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="accordion-intro">Override the default notification message format for each event type using <a href="https://pkg.go.dev/text/template" target="_blank" rel="noopener">Go text/template</a> syntax. Leave blank to use the built-in format.</p>
+
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Event type</div>
+                                    <div class="setting-desc">Select which event to customise</div>
+                                </div>
+                                <select id="template-event-type" class="setting-select" onchange="loadTemplateForEvent()">
+                                    <option value="update_available">Update Available</option>
+                                    <option value="update_started">Update Started</option>
+                                    <option value="update_succeeded">Update Succeeded</option>
+                                    <option value="update_failed">Update Failed</option>
+                                    <option value="rollback_succeeded">Rollback Succeeded</option>
+                                    <option value="rollback_failed">Rollback Failed</option>
+                                </select>
+                            </div>
+                            <div class="setting-row" style="flex-direction:column; align-items:stretch">
+                                <div class="setting-info" style="margin-bottom:var(--sp-2)">
+                                    <div class="setting-label">Template</div>
+                                    <div class="setting-desc">Available variables: <code>{{`{{.ContainerName}}`}}</code>, <code>{{`{{.OldImage}}`}}</code>, <code>{{`{{.NewImage}}`}}</code>, <code>{{`{{.OldDigest}}`}}</code>, <code>{{`{{.NewDigest}}`}}</code>, <code>{{`{{.Error}}`}}</code>, <code>{{`{{.Type}}`}}</code>, <code>{{`{{.Timestamp}}`}}</code>, <code>{{`{{.Title}}`}}</code>, <code>{{`{{.Emoji}}`}}</code>, <code>{{`{{.Severity}}`}}</code></div>
+                                </div>
+                                <textarea id="template-body" class="setting-input" rows="6" placeholder="Leave blank to use the default format" style="font-family:var(--font-mono); font-size:0.85rem; width:100%; resize:vertical"></textarea>
+                            </div>
+                        </div>
+
+                        <div id="template-preview-output" style="display:none; margin-top:var(--sp-3)">
+                            <div class="setting-label" style="margin-bottom:var(--sp-1)">Preview</div>
+                            <pre id="template-preview-text" style="background:var(--bg-tertiary); padding:var(--sp-3); border-radius:var(--radius); white-space:pre-wrap; font-family:var(--font-mono); font-size:0.85rem; border:1px solid var(--border)"></pre>
+                        </div>
+
+                        <div class="setting-actions" style="margin-top:var(--sp-3)">
+                            <button class="btn" onclick="previewNotifyTemplate()">Preview</button>
+                            <button class="btn btn-success" onclick="saveNotifyTemplate()">Save</button>
+                            <button class="btn btn-error" onclick="deleteNotifyTemplate()">Reset to Default</button>
                         </div>
                     </div>
                 </details>
@@ -909,6 +969,85 @@
                             </div>
                             <div class="setting-row" style="justify-content:flex-end">
                                 <button class="btn btn-success" onclick="createUser()">Create User</button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- OIDC / SSO -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Single Sign-On (OIDC)</h2>
+                        <span class="accordion-preview">OpenID Connect identity provider integration</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p style="font-size:0.875rem;color:var(--fg-secondary);margin:0 0 var(--sp-4) 0">
+                            Connect an external Identity Provider (Authelia, Authentik, Keycloak, etc.) for single sign-on.
+                            Password login always remains available as fallback.
+                        </p>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Enable OIDC</div>
+                                    <div class="setting-desc">Show the "Sign in with SSO" button on the login page</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="oidc-enabled" class="channel-toggle" onchange="updateToggleText('oidc-enabled-text', this.checked)">
+                                    <span id="oidc-enabled-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Issuer URL</div>
+                                    <div class="setting-desc">OpenID Connect discovery endpoint, e.g. https://auth.example.com</div>
+                                </div>
+                                <input type="text" id="oidc-issuer-url" class="setting-input" placeholder="https://auth.example.com">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Client ID</div>
+                                    <div class="setting-desc">OAuth2 client ID registered with your Identity Provider</div>
+                                </div>
+                                <input type="text" id="oidc-client-id" class="setting-input" placeholder="sentinel">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Client Secret</div>
+                                    <div class="setting-desc">OAuth2 client secret (stored encrypted in the database)</div>
+                                </div>
+                                <input type="password" id="oidc-client-secret" class="setting-input" placeholder="secret">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Redirect URL</div>
+                                    <div class="setting-desc">Callback URL registered with your IdP. Auto-detected if left empty.</div>
+                                </div>
+                                <input type="text" id="oidc-redirect-url" class="setting-input" placeholder="https://sentinel.example.com/api/auth/oidc/callback">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Auto-create users</div>
+                                    <div class="setting-desc">Automatically create local accounts for users who sign in via OIDC for the first time</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="oidc-auto-create" class="channel-toggle" onchange="updateToggleText('oidc-auto-create-text', this.checked)">
+                                    <span id="oidc-auto-create-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Default role for new users</div>
+                                    <div class="setting-desc">Role assigned to auto-created OIDC users</div>
+                                </div>
+                                <select id="oidc-default-role" class="setting-select">
+                                    <option value="viewer">viewer</option>
+                                    <option value="operator">operator</option>
+                                    <option value="admin">admin</option>
+                                </select>
+                            </div>
+                            <div class="setting-row" style="justify-content:flex-end;gap:var(--sp-2)">
+                                <button class="btn btn-success" onclick="saveOIDCSettings()">Save</button>
                             </div>
                         </div>
                     </div>

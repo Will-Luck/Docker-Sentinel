@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
@@ -161,6 +162,9 @@ type Updater struct {
 	cluster     ClusterScanner             // optional: nil = single-host mode
 	haDiscovery *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
 	portainer   PortainerScanner           // optional: nil = no Portainer integration
+	ghcrWg      sync.WaitGroup             // tracks background GHCR alternative checks
+	ghcrRunning atomic.Bool                // prevents concurrent GHCR checks
+	ghcrCancel  context.CancelFunc         // cancels the running GHCR check on shutdown
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -225,6 +229,14 @@ func (u *Updater) SetPortainerScanner(ps PortainerScanner) {
 	u.portainer = ps
 }
 
+// Close cancels any running background work and waits for goroutines to finish.
+func (u *Updater) Close() {
+	if u.ghcrCancel != nil {
+		u.ghcrCancel()
+	}
+	u.ghcrWg.Wait()
+}
+
 // tryLock attempts to acquire the per-container update lock.
 // Returns false if the container already has an update in progress.
 func (u *Updater) tryLock(name string) bool {
@@ -234,13 +246,12 @@ func (u *Updater) tryLock(name string) bool {
 }
 
 // unlock releases the per-container update lock and removes the entry
-// from the map to prevent stale mutex accumulation. This is safe because
-// tryLock uses LoadOrStore (atomic) and the per-container lock ensures
-// only one goroutine holds the lock at a time.
+// from the map atomically to prevent stale mutex accumulation.
+// LoadAndDelete is atomic — no window for another goroutine to LoadOrStore
+// between our Unlock and Delete (which was the previous race condition).
 func (u *Updater) unlock(name string) {
-	if val, ok := u.updating.Load(name); ok {
+	if val, ok := u.updating.LoadAndDelete(name); ok {
 		val.(*sync.Mutex).Unlock()
-		u.updating.Delete(name)
 	}
 }
 
@@ -400,6 +411,18 @@ func (u *Updater) isComposeSync() bool {
 		return false
 	}
 	return val == "true"
+}
+
+// maintenanceWindow returns the active maintenance window expression,
+// checking the persisted settings store first, then falling back to config.
+func (u *Updater) maintenanceWindow() string {
+	if u.settings != nil {
+		val, err := u.settings.LoadSetting("maintenance_window")
+		if err == nil && val != "" {
+			return val
+		}
+	}
+	return u.cfg.MaintenanceWindow()
 }
 
 // Scan lists running containers, checks for updates, and processes them
@@ -793,6 +816,17 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 					continue
 				}
 			}
+			// Maintenance window check: skip auto-update if outside window.
+			if windowExpr := u.maintenanceWindow(); windowExpr != "" {
+				win, err := ParseWindow(windowExpr)
+				if err != nil {
+					u.log.Warn("invalid maintenance window, proceeding with update (fail-open)", "name", name, "window", windowExpr, "error", err)
+				} else if win != nil && !win.IsOpen(u.clock.Now()) {
+					u.log.Info("outside maintenance window, deferring auto-update", "name", name, "window", windowExpr)
+					result.Skipped++
+					continue
+				}
+			}
 			if err := u.UpdateContainer(ctx, c.ID, name, scanTarget); err != nil {
 				u.log.Error("auto-update failed", "name", name, "error", err)
 				result.Failed++
@@ -850,11 +884,15 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 
 	// Launch background GHCR alternative check for Docker Hub containers.
-	// Use a detached context so the goroutine isn't cancelled when the
-	// scan context expires (the caller may cancel it after Scan returns).
-	if u.ghcrCache != nil {
+	// Uses a detached context so the goroutine isn't cancelled when the
+	// scan context expires. Tracked by WaitGroup for clean shutdown.
+	if u.ghcrCache != nil && u.ghcrRunning.CompareAndSwap(false, true) {
 		ghcrCtx, ghcrCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		u.ghcrCancel = ghcrCancel
+		u.ghcrWg.Add(1)
 		go func() {
+			defer u.ghcrWg.Done()
+			defer u.ghcrRunning.Store(false)
 			defer ghcrCancel()
 			u.checkGHCRAlternatives(ghcrCtx, containers)
 		}()

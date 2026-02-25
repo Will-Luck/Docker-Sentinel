@@ -268,6 +268,73 @@ func TestParse_GenericOnlyTag(t *testing.T) {
 	}
 }
 
+func TestParse_GHCR_InvalidNamespace(t *testing.T) {
+	// Namespace with path traversal should be rejected.
+	body := []byte(`{
+		"action": "published",
+		"package": {
+			"name": "my-app",
+			"namespace": "foo/../../bar",
+			"package_type": "container",
+			"package_version": {
+				"container_metadata": {
+					"tag": {"name": "v1.0.0"}
+				}
+			}
+		}
+	}`)
+
+	p, err := Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Invalid namespace causes GHCR parse to fail → falls through to unknown.
+	if p.Source != "unknown" {
+		t.Errorf("source = %q, want %q (invalid namespace should be rejected)", p.Source, "unknown")
+	}
+}
+
+func TestParse_GHCR_InvalidName(t *testing.T) {
+	// Name with slashes should be rejected.
+	body := []byte(`{
+		"action": "published",
+		"package": {
+			"name": "foo/../evil",
+			"namespace": "gooduser",
+			"package_type": "container",
+			"package_version": {
+				"container_metadata": {
+					"tag": {"name": "latest"}
+				}
+			}
+		}
+	}`)
+
+	p, err := Parse(body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.Source != "unknown" {
+		t.Errorf("source = %q, want %q (invalid name should be rejected)", p.Source, "unknown")
+	}
+}
+
+func TestIsValidImageSegment(t *testing.T) {
+	valid := []string{"nginx", "my-app", "v1.0", "App_Name", "user123"}
+	for _, s := range valid {
+		if !isValidImageSegment(s) {
+			t.Errorf("isValidImageSegment(%q) = false, want true", s)
+		}
+	}
+
+	invalid := []string{"", "foo/bar", "foo/../bar", "name:tag", "a b", "user@host"}
+	for _, s := range invalid {
+		if isValidImageSegment(s) {
+			t.Errorf("isValidImageSegment(%q) = true, want false", s)
+		}
+	}
+}
+
 func TestParse_GHCR_NoTag(t *testing.T) {
 	// GHCR event without tag metadata (e.g. digest-only push).
 	body := []byte(`{

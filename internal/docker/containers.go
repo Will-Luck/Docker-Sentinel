@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -158,4 +159,36 @@ func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, tim
 	}
 
 	return inspectResp.ExitCode, buf.String(), nil
+}
+
+// ContainerLogs returns the last N lines of a container's logs.
+func (c *Client) ContainerLogs(ctx context.Context, id string, lines int) (string, error) {
+	opts := client.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       fmt.Sprintf("%d", lines),
+	}
+	reader, err := c.api.ContainerLogs(ctx, id, opts)
+	if err != nil {
+		return "", fmt.Errorf("container logs: %w", err)
+	}
+	defer reader.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
+		// Some containers use raw TTY mode — fall back to direct read.
+		reader2, err2 := c.api.ContainerLogs(ctx, id, opts)
+		if err2 != nil {
+			return "", fmt.Errorf("container logs fallback: %w", err2)
+		}
+		defer reader2.Close()
+		raw, _ := io.ReadAll(reader2)
+		return string(raw), nil
+	}
+
+	// Merge stdout and stderr.
+	if stderr.Len() > 0 {
+		stdout.WriteString(stderr.String())
+	}
+	return stdout.String(), nil
 }

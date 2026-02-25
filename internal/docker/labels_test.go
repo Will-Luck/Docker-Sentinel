@@ -1,6 +1,9 @@
 package docker
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestContainerPolicy(t *testing.T) {
 	tests := []struct {
@@ -53,6 +56,32 @@ func TestContainerSemverScope(t *testing.T) {
 			got := ContainerSemverScope(tt.labels)
 			if got != tt.want {
 				t.Errorf("ContainerSemverScope() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContainerGracePeriod(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels map[string]string
+		want   time.Duration
+	}{
+		{"missing label", map[string]string{}, 0},
+		{"empty value", map[string]string{"sentinel.grace-period": ""}, 0},
+		{"valid seconds", map[string]string{"sentinel.grace-period": "30s"}, 30 * time.Second},
+		{"valid minutes", map[string]string{"sentinel.grace-period": "5m"}, 5 * time.Minute},
+		{"valid days (capped)", map[string]string{"sentinel.grace-period": "1d"}, time.Hour},
+		{"invalid value", map[string]string{"sentinel.grace-period": "abc"}, 0},
+		{"exceeds cap", map[string]string{"sentinel.grace-period": "2h"}, time.Hour},
+		{"negative", map[string]string{"sentinel.grace-period": "-5s"}, 0},
+		{"exactly 1h", map[string]string{"sentinel.grace-period": "1h"}, time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ContainerGracePeriod(tt.labels)
+			if got != tt.want {
+				t.Errorf("ContainerGracePeriod() = %v, want %v", got, tt.want)
 			}
 		})
 	}

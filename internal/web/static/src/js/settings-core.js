@@ -164,6 +164,12 @@ function initSettingsPage() {
                 updateDelayInput.value = settings["update_delay"] || "";
             }
 
+            // Maintenance window.
+            var maintenanceWindowInput = document.getElementById("maintenance-window");
+            if (maintenanceWindowInput) {
+                maintenanceWindowInput.value = settings["maintenance_window"] || "";
+            }
+
             // Compose sync toggle.
             var composeSyncToggle = document.getElementById("compose-sync-toggle");
             if (composeSyncToggle) {
@@ -261,9 +267,10 @@ function initSettingsPage() {
     // Load notification channels.
     if (window.loadNotificationChannels) window.loadNotificationChannels();
 
-    // Load digest settings and per-container notification preferences.
+    // Load digest settings, per-container notification preferences, and templates.
     if (window.loadDigestSettings) window.loadDigestSettings();
     if (window.loadContainerNotifyPrefs) window.loadContainerNotifyPrefs();
+    if (window.loadNotifyTemplates) window.loadNotifyTemplates();
 
     // Load registry credentials and rate limits.
     if (window.loadRegistries) window.loadRegistries();
@@ -817,6 +824,11 @@ function showWebhookConfig(enabled, secret) {
     var secretInput = document.getElementById("webhook-secret");
     if (secretInput) {
         secretInput.value = secret;
+        // If the secret is masked (contains ****), show a hint.
+        var hint = document.getElementById("webhook-secret-hint");
+        if (hint) {
+            hint.style.display = (secret && secret.indexOf("****") !== -1) ? "" : "none";
+        }
     }
 }
 
@@ -862,7 +874,10 @@ function regenerateWebhookSecret() {
             if (result.ok) {
                 var secretInput = document.getElementById("webhook-secret");
                 if (secretInput) secretInput.value = result.data.secret || "";
-                showToast("Webhook secret regenerated", "success");
+                // Hide the masked hint — the full secret is now visible.
+                var hint = document.getElementById("webhook-secret-hint");
+                if (hint) hint.style.display = "none";
+                showToast("Webhook secret regenerated — copy it now, it won't be shown again", "success");
             } else {
                 showToast(result.data.error || "Failed to regenerate secret", "error");
             }
@@ -894,6 +909,35 @@ function copyWebhookSecret() {
         document.execCommand("copy");
         showToast("Webhook secret copied", "success");
     });
+}
+
+/* ------------------------------------------------------------
+   Maintenance Window
+   ------------------------------------------------------------ */
+
+function saveMaintenanceWindow() {
+    var input = document.getElementById("maintenance-window");
+    if (!input) return;
+    fetch("/api/settings/maintenance-window", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: input.value.trim() })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Maintenance window saved", "success");
+            } else {
+                showToast(result.data.error || "Failed to save maintenance window", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error -- could not save maintenance window", "error");
+        });
 }
 
 /* ------------------------------------------------------------
@@ -989,6 +1033,7 @@ export {
     regenerateWebhookSecret,
     copyWebhookURL,
     copyWebhookSecret,
+    saveMaintenanceWindow,
     exportConfig,
     importConfig
 };

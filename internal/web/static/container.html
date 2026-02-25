@@ -25,6 +25,7 @@
             <a href="/queue" class="nav-link">Pending Updates</a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
             {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
@@ -281,6 +282,30 @@
                     {{else}}
                     <div class="accordion-empty">No snapshots available. A snapshot is saved before each update.</div>
                     {{end}}
+                </div>
+            </details>
+
+            <!-- Container Logs -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Container Logs</h2>
+                    <span class="accordion-preview">On demand</span>
+                </summary>
+                <div class="accordion-body">
+                    <div style="margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+                        <label for="log-lines">Lines:</label>
+                        <select id="log-lines" style="padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                            <option value="500">500</option>
+                        </select>
+                        <button class="btn btn-sm" onclick="fetchContainerLogs('{{.Container.Name}}', '{{.Container.HostID}}')">
+                            Load Logs
+                        </button>
+                    </div>
+                    <pre id="container-logs" style="background: var(--bg-secondary); padding: 1rem; border-radius: 6px; overflow-x: auto; max-height: 400px; overflow-y: auto; font-size: 0.8rem; line-height: 1.4; white-space: pre-wrap; word-break: break-all;">Click "Load Logs" to fetch container output.</pre>
                 </div>
             </details>
 

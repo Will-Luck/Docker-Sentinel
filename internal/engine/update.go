@@ -159,6 +159,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	// 6. Wait grace period and validate.
 	gracePeriod := u.cfg.GracePeriod()
+	if override := docker.ContainerGracePeriod(inspect.Config.Labels); override > 0 {
+		gracePeriod = override
+	}
 	u.log.Info("waiting grace period", "name", name, "duration", gracePeriod)
 	select {
 	case <-u.clock.After(gracePeriod):

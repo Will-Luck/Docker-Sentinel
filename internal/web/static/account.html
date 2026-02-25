@@ -28,6 +28,7 @@
             </a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
             {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
@@ -81,6 +82,55 @@
                     </div>
                     <button class="btn btn-success" type="submit">Update Password</button>
                 </form>
+            </div>
+        </div>
+
+        <!-- Two-Factor Authentication -->
+        <div class="card" style="margin-bottom:var(--sp-4)" id="totp-section">
+            <div class="card-header"><h2>Two-Factor Authentication</h2></div>
+            <div class="card-body">
+                <!-- Shown when 2FA is enabled -->
+                <div id="totp-enabled-content" style="display:none">
+                    <p style="font-size:0.875rem;color:var(--fg-secondary);margin:0 0 var(--sp-3) 0">
+                        <span class="badge badge-success" style="margin-right:var(--sp-2)">Enabled</span>
+                        Two-factor authentication is active on your account.
+                    </p>
+                    <p style="font-size:0.85rem;color:var(--fg-secondary);margin:0 0 var(--sp-3) 0">
+                        Recovery codes: <strong id="totp-codes-left">--</strong>
+                    </p>
+                    <div style="display:flex;gap:var(--sp-2);align-items:center;flex-wrap:wrap">
+                        <input type="password" id="totp-disable-password" placeholder="Current password" class="setting-input" style="max-width:200px" autocomplete="current-password">
+                        <button class="btn btn-error" onclick="disableTOTP()">Disable 2FA</button>
+                    </div>
+                </div>
+
+                <!-- Shown when 2FA is disabled -->
+                <div id="totp-disabled-content">
+                    <p style="font-size:0.875rem;color:var(--fg-secondary);margin:0 0 var(--sp-3) 0">Add an extra layer of security by requiring a code from an authenticator app when signing in.</p>
+                    <button class="btn btn-success" id="totp-setup-btn" onclick="startTOTPSetup()">Enable 2FA</button>
+                </div>
+
+                <!-- Setup flow (hidden until Enable is clicked) -->
+                <div id="totp-setup-flow" style="display:none;margin-top:var(--sp-3);padding:var(--sp-3);background:var(--md-surface-container);border:1px solid var(--border);border-radius:var(--radius)">
+                    <p style="font-size:0.875rem;font-weight:500;margin:0 0 var(--sp-2) 0">1. Scan this QR code with your authenticator app</p>
+                    <div id="totp-qr" style="margin:var(--sp-2) 0;display:flex;justify-content:center"></div>
+                    <p style="font-size:0.8rem;color:var(--fg-secondary);margin:var(--sp-2) 0">Or enter this secret manually:</p>
+                    <code id="totp-secret-display" style="display:block;padding:var(--sp-2) var(--sp-3);background:var(--md-surface);border:1px solid var(--border);border-radius:var(--radius);font-size:0.85rem;word-break:break-all;user-select:all;margin-bottom:var(--sp-3)"></code>
+
+                    <p style="font-size:0.875rem;font-weight:500;margin:0 0 var(--sp-2) 0">2. Enter the 6-digit code to verify</p>
+                    <div style="display:flex;gap:var(--sp-2);align-items:center">
+                        <input type="text" id="totp-confirm-code" class="setting-input" placeholder="000000" autocomplete="one-time-code" maxlength="6" inputmode="numeric" style="max-width:120px">
+                        <button class="btn btn-success" onclick="confirmTOTPSetup()">Verify &amp; Enable</button>
+                    </div>
+                </div>
+
+                <!-- Recovery codes display (shown once after confirming) -->
+                <div id="totp-recovery-display" style="display:none;margin-top:var(--sp-3);padding:var(--sp-3);background:var(--warning-bg);border:1px solid var(--warning);border-radius:var(--radius)">
+                    <p style="font-weight:500;margin:0 0 var(--sp-2) 0">Save your recovery codes</p>
+                    <p style="font-size:0.85rem;color:var(--fg-secondary);margin:0 0 var(--sp-2) 0">Each code can only be used once. Store them in a safe place — you will not see them again.</p>
+                    <pre id="totp-recovery-codes" style="padding:var(--sp-2) var(--sp-3);background:var(--md-surface);border:1px solid var(--border);border-radius:var(--radius);font-size:0.9rem;font-family:var(--font-mono);white-space:pre-wrap;user-select:all;margin:0 0 var(--sp-2) 0"></pre>
+                    <button class="btn" onclick="copyRecoveryCodes()">Copy Codes</button>
+                </div>
             </div>
         </div>
 
@@ -196,6 +246,7 @@
     </main>
 
     <div id="toast-container" class="toast-container"></div>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
     <script src="/static/webauthn.js"></script>

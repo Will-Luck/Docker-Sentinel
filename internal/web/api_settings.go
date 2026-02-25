@@ -11,7 +11,9 @@ import (
 
 	cron "github.com/robfig/cron/v3"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
@@ -982,18 +984,22 @@ func (s *Server) apiSetDockerTLS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Save all three settings.
-	if err := s.deps.SettingsStore.SaveSetting(store.SettingDockerTLSCA, req.CA); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save Docker TLS CA")
-		return
+	// Save all three settings atomically — roll back on partial failure to
+	// prevent inconsistent TLS config (e.g. CA saved but cert/key missing).
+	tlsPairs := []struct{ key, val string }{
+		{store.SettingDockerTLSCA, req.CA},
+		{store.SettingDockerTLSCert, req.Cert},
+		{store.SettingDockerTLSKey, req.Key},
 	}
-	if err := s.deps.SettingsStore.SaveSetting(store.SettingDockerTLSCert, req.Cert); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save Docker TLS cert")
-		return
-	}
-	if err := s.deps.SettingsStore.SaveSetting(store.SettingDockerTLSKey, req.Key); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save Docker TLS key")
-		return
+	for _, p := range tlsPairs {
+		if err := s.deps.SettingsStore.SaveSetting(p.key, p.val); err != nil {
+			// Roll back: clear all three to avoid partial config.
+			for _, rb := range tlsPairs {
+				_ = s.deps.SettingsStore.SaveSetting(rb.key, "")
+			}
+			writeError(w, http.StatusInternalServerError, "failed to save TLS config — rolled back")
+			return
+		}
 	}
 
 	msg := "Docker TLS certificates cleared"
@@ -1005,6 +1011,47 @@ func (s *Server) apiSetDockerTLS(w http.ResponseWriter, r *http.Request) {
 		"message":          msg,
 		"restart_required": "true",
 	})
+}
+
+// apiSetMaintenanceWindow sets the maintenance window expression for auto-updates.
+func (s *Server) apiSetMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Validate the expression if non-empty.
+	if req.Value != "" {
+		if _, err := engine.ParseWindow(req.Value); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid maintenance window: "+err.Error())
+			return
+		}
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("maintenance_window", req.Value); err != nil {
+		s.deps.Log.Error("failed to save maintenance_window", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetMaintenanceWindow(req.Value)
+	}
+
+	msg := "Maintenance window cleared"
+	if req.Value != "" {
+		msg = "Maintenance window set to " + req.Value
+	}
+	s.logEvent(r, "settings", "", msg)
+	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
 }
 
 // apiTestDockerTLS attempts to connect to the Docker daemon using the provided TLS certificates.
@@ -1034,6 +1081,15 @@ func (s *Server) apiTestDockerTLS(w http.ResponseWriter, r *http.Request) {
 		dockerHost = vals["SENTINEL_DOCKER_SOCK"]
 	}
 
+	// TLS only applies to TCP connections — testing against a Unix socket is meaningless.
+	if !strings.HasPrefix(dockerHost, "tcp://") && !strings.HasPrefix(dockerHost, "tcps://") {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "TLS certificates require a TCP Docker host (tcp:// or tcps://). Current host is a Unix socket.",
+		})
+		return
+	}
+
 	tlsCfg := &docker.TLSConfig{CACert: req.CA, ClientCert: req.Cert, ClientKey: req.Key}
 	testClient, err := docker.NewClient(dockerHost, tlsCfg)
 	if err != nil {
@@ -1054,4 +1110,131 @@ func (s *Server) apiTestDockerTLS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// apiGetOIDCSettings returns the current OIDC configuration (client_secret masked).
+func (s *Server) apiGetOIDCSettings(w http.ResponseWriter, _ *http.Request) {
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	load := func(key string) string {
+		v, _ := s.deps.SettingsStore.LoadSetting(key)
+		return v
+	}
+
+	secret := load("oidc_client_secret")
+	maskedSecret := ""
+	if secret != "" {
+		if len(secret) > 8 {
+			maskedSecret = secret[:4] + "****" + secret[len(secret)-4:]
+		} else {
+			maskedSecret = "****"
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":       load("oidc_enabled") == "true",
+		"issuer_url":    load("oidc_issuer_url"),
+		"client_id":     load("oidc_client_id"),
+		"client_secret": maskedSecret,
+		"redirect_url":  load("oidc_redirect_url"),
+		"auto_create":   load("oidc_auto_create") == "true",
+		"default_role":  load("oidc_default_role"),
+	})
+}
+
+// apiSaveOIDCSettings saves OIDC configuration and reinitialises the provider.
+func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	var req struct {
+		Enabled      bool   `json:"enabled"`
+		IssuerURL    string `json:"issuer_url"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		RedirectURL  string `json:"redirect_url"`
+		AutoCreate   bool   `json:"auto_create"`
+		DefaultRole  string `json:"default_role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate role.
+	if req.DefaultRole != "" {
+		switch req.DefaultRole {
+		case "admin", "operator", "viewer":
+			// valid
+		default:
+			writeError(w, http.StatusBadRequest, "invalid default role")
+			return
+		}
+	}
+
+	enabledVal := "false"
+	if req.Enabled {
+		enabledVal = "true"
+	}
+	autoCreateVal := "false"
+	if req.AutoCreate {
+		autoCreateVal = "true"
+	}
+
+	// If client_secret contains the masked pattern, preserve the existing secret.
+	if strings.Contains(req.ClientSecret, "****") {
+		existing, _ := s.deps.SettingsStore.LoadSetting("oidc_client_secret")
+		req.ClientSecret = existing
+	}
+
+	pairs := []struct{ key, val string }{
+		{"oidc_enabled", enabledVal},
+		{"oidc_issuer_url", req.IssuerURL},
+		{"oidc_client_id", req.ClientID},
+		{"oidc_client_secret", req.ClientSecret},
+		{"oidc_redirect_url", req.RedirectURL},
+		{"oidc_auto_create", autoCreateVal},
+		{"oidc_default_role", req.DefaultRole},
+	}
+
+	for _, p := range pairs {
+		if err := s.deps.SettingsStore.SaveSetting(p.key, p.val); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save OIDC settings")
+			return
+		}
+	}
+
+	// Reinitialise the OIDC provider with the new settings.
+	if req.Enabled && req.IssuerURL != "" && req.ClientID != "" {
+		oidcCfg := auth.OIDCConfig{
+			Enabled:      true,
+			IssuerURL:    req.IssuerURL,
+			ClientID:     req.ClientID,
+			ClientSecret: req.ClientSecret,
+			RedirectURL:  req.RedirectURL,
+			AutoCreate:   req.AutoCreate,
+			DefaultRole:  req.DefaultRole,
+		}
+		provider, err := auth.NewOIDCProvider(r.Context(), oidcCfg)
+		if err != nil {
+			s.deps.Log.Warn("OIDC provider reinitialisation failed", "error", err)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":  "saved_with_warning",
+				"warning": "Settings saved but OIDC provider failed to initialise: " + err.Error(),
+			})
+			return
+		}
+		s.SetOIDCProvider(provider)
+	} else {
+		// Disabled or incomplete — clear the provider.
+		s.SetOIDCProvider(nil)
+	}
+
+	s.logEvent(r, "settings", "", "OIDC settings updated")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

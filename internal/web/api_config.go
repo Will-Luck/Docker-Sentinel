@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -22,30 +21,30 @@ type ConfigExport struct {
 
 // ConfigImportResult summarises what was imported.
 type ConfigImportResult struct {
-	Message       string `json:"message"`
-	Settings      int    `json:"settings_imported"`
-	Notifications int    `json:"notifications_imported"`
-	Registries    int    `json:"registries_imported"`
-	Skipped       int    `json:"redacted_skipped"`
+	Message       string   `json:"message"`
+	Settings      int      `json:"settings_imported"`
+	Notifications int      `json:"notifications_imported"`
+	Registries    int      `json:"registries_imported"`
+	Skipped       int      `json:"redacted_skipped"`
+	Warnings      []string `json:"warnings,omitempty"`
 }
 
 // redactedPlaceholder is the value used to mask secrets in exports.
 const redactedPlaceholder = "***REDACTED***"
 
-// sensitiveKeyFragments identifies setting keys that contain secrets.
-var sensitiveKeyFragments = []string{
-	"token", "password", "secret", "key", "credential",
+// sensitiveKeys is an explicit whitelist of setting keys that hold secrets.
+// Using a whitelist instead of substring matching avoids false positives
+// (e.g. docker_tls_key is a file path, not a secret).
+var sensitiveKeys = map[string]bool{
+	"portainer_token":       true,
+	"webhook_secret":        true,
+	"notification_config":   true, // contains provider credentials
+	"notification_channels": true, // channel settings may contain tokens
 }
 
-// isSensitiveSetting returns true if the key looks like it holds a secret.
+// isSensitiveSetting returns true if the key holds a secret value.
 func isSensitiveSetting(key string) bool {
-	lower := strings.ToLower(key)
-	for _, frag := range sensitiveKeyFragments {
-		if strings.Contains(lower, frag) {
-			return true
-		}
-	}
-	return false
+	return sensitiveKeys[key]
 }
 
 // apiConfigExport builds a full configuration backup and sends it as a
@@ -156,9 +155,13 @@ func (s *Server) apiConfigImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate structure.
+	// Validate structure and version.
 	if imported.Version == "" {
 		writeError(w, http.StatusBadRequest, "missing 'version' field — not a valid Sentinel config export")
+		return
+	}
+	if imported.Version != "1" {
+		writeError(w, http.StatusBadRequest, "unsupported config version: "+imported.Version+" (this instance supports version 1)")
 		return
 	}
 
@@ -186,6 +189,7 @@ func (s *Server) apiConfigImport(w http.ResponseWriter, r *http.Request) {
 	if s.deps.NotifyConfig != nil && len(imported.Notifications) > 0 {
 		if err := s.deps.NotifyConfig.SetNotificationChannels(imported.Notifications); err != nil {
 			s.deps.Log.Error("config import: failed to save notification channels", "error", err)
+			result.Warnings = append(result.Warnings, "failed to import notification channels: "+err.Error())
 		} else {
 			result.Notifications = len(imported.Notifications)
 

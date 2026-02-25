@@ -71,6 +71,13 @@ type NotifierReconfigurer interface {
 	Reconfigure(notifiers ...notify.Notifier)
 }
 
+// NotifyTemplateStore reads and writes custom notification templates.
+type NotifyTemplateStore interface {
+	GetAllNotifyTemplates() (map[string]string, error)
+	SaveNotifyTemplate(eventType, tmpl string) error
+	DeleteNotifyTemplate(eventType string) error
+}
+
 // NotifyStateStore reads and writes per-container notification state and preferences.
 type NotifyStateStore interface {
 	GetNotifyPref(name string) (*NotifyPref, error)
@@ -403,6 +410,11 @@ func (u PendingUpdate) Key() string {
 	return u.HostID + "::" + u.ContainerName
 }
 
+// ContainerLogViewer provides access to container log output.
+type ContainerLogViewer interface {
+	ContainerLogs(ctx context.Context, containerID string, lines int) (string, error)
+}
+
 // ContainerLister lists containers.
 type ContainerLister interface {
 	ListContainers(ctx context.Context) ([]ContainerSummary, error)
@@ -452,6 +464,28 @@ type ContainerStarter interface {
 	StartContainer(ctx context.Context, id string) error
 }
 
+// ImageManager provides Docker image management operations.
+type ImageManager interface {
+	ListImages(ctx context.Context) ([]ImageInfo, error)
+	PruneImages(ctx context.Context) (ImagePruneReport, error)
+	RemoveImageByID(ctx context.Context, id string) error
+}
+
+// ImageInfo represents a Docker image for the web layer.
+type ImageInfo struct {
+	ID       string   `json:"id"`
+	RepoTags []string `json:"repo_tags"`
+	Size     int64    `json:"size"`
+	Created  int64    `json:"created"`
+	InUse    bool     `json:"in_use"`
+}
+
+// ImagePruneReport summarises a prune operation.
+type ImagePruneReport struct {
+	ImagesDeleted  int   `json:"images_deleted"`
+	SpaceReclaimed int64 `json:"space_reclaimed"`
+}
+
 // ConfigReader provides settings for display.
 type ConfigReader interface {
 	Values() map[string]string
@@ -469,4 +503,5 @@ type ConfigWriter interface {
 	SetRollbackPolicy(s string)
 	SetRemoveVolumes(b bool)
 	SetScanConcurrency(n int)
+	SetMaintenanceWindow(s string)
 }

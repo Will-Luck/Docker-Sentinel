@@ -114,6 +114,28 @@ func ContainerUpdateDelay(labels map[string]string) time.Duration {
 	return d
 }
 
+// ContainerGracePeriod reads the sentinel.grace-period label and returns
+// the per-container grace period override. Returns 0 if the label is
+// absent or invalid. Caps at 1 hour to prevent accidental huge values.
+func ContainerGracePeriod(labels map[string]string) time.Duration {
+	v, ok := labels["sentinel.grace-period"]
+	if !ok || v == "" {
+		return 0
+	}
+	d, err := ParseDurationWithDays(v)
+	if err != nil {
+		return 0
+	}
+	const maxGrace = time.Hour
+	if d > maxGrace {
+		return maxGrace
+	}
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
 // SemverScope controls the version range considered when finding newer versions.
 type SemverScope string
 

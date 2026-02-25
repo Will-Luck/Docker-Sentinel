@@ -972,6 +972,33 @@ function toggleManageMode() {
     }
 })();
 
+/* ------------------------------------------------------------
+   11. Container Log Viewer
+   ------------------------------------------------------------ */
+
+async function fetchContainerLogs(name, hostId) {
+    var linesEl = document.getElementById('log-lines');
+    var lines = linesEl ? linesEl.value : '50';
+    var logsEl = document.getElementById('container-logs');
+    if (!logsEl) return;
+
+    logsEl.textContent = 'Loading logs...';
+
+    var url = '/api/containers/' + encodeURIComponent(name) + '/logs?lines=' + lines;
+    if (hostId) url += '&host=' + encodeURIComponent(hostId);
+
+    try {
+        var resp = await fetch(url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var data = await resp.json();
+        logsEl.textContent = data.logs || 'No log output.';
+        // Auto-scroll to bottom.
+        logsEl.scrollTop = logsEl.scrollHeight;
+    } catch (err) {
+        logsEl.textContent = 'Error loading logs: ' + err.message;
+    }
+}
+
 export {
     initTheme,
     applyTheme,
@@ -997,5 +1024,6 @@ export {
     initDashboardTabs,
     recalcTabStats,
     setUpdateStatsFn,
-    toggleManageMode
+    toggleManageMode,
+    fetchContainerLogs
 };

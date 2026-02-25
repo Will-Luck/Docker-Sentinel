@@ -38,6 +38,7 @@ type Dependencies struct {
 	Restarter           ContainerRestarter
 	Stopper             ContainerStopper
 	Starter             ContainerStarter
+	LogViewer           ContainerLogViewer
 	Registry            RegistryVersionChecker
 	RegistryChecker     RegistryChecker
 	TagLister           RegistryTagLister
@@ -49,6 +50,7 @@ type Dependencies struct {
 	NotifyConfig        NotificationConfigStore
 	NotifyReconfigurer  NotifierReconfigurer
 	NotifyState         NotifyStateStore
+	NotifyTemplateStore NotifyTemplateStore
 	Digest              DigestController
 	IgnoredVersions     IgnoredVersionStore
 	RegistryCredentials RegistryCredentialStore
@@ -57,6 +59,7 @@ type Dependencies struct {
 	AboutStore          AboutStore
 	HookStore           HookStore
 	ReleaseSources      ReleaseSourceStore
+	ImageManager        ImageManager       // nil when not available
 	Swarm               SwarmProvider      // nil when not in Swarm mode
 	Cluster             *ClusterController // thread-safe proxy; always non-nil, use .Enabled() to check
 	Portainer           PortainerProvider  // nil when Portainer not configured
@@ -77,6 +80,8 @@ type Server struct {
 	startTime            time.Time          // when the server was created
 	setupDeadline        time.Time          // setup page closes after this; zero = no window
 	webauthn             *webauthn.WebAuthn // nil when WebAuthn is not configured
+	oidcProvider         *auth.OIDCProvider // nil when OIDC is not configured
+	oidcMu               sync.RWMutex       // protects oidcProvider replacement
 	tlsCert              string             // path to TLS certificate PEM (empty = plain HTTP)
 	tlsKey               string             // path to TLS private key PEM
 	clusterLifecycle     ClusterLifecycle   // nil until wired by main; enables dynamic start/stop
@@ -139,6 +144,20 @@ func (s *Server) SetClusterLifecycle(cl ClusterLifecycle) {
 // SetWebAuthn configures WebAuthn support. When wa is nil, passkey routes return 404.
 func (s *Server) SetWebAuthn(wa *webauthn.WebAuthn) {
 	s.webauthn = wa
+}
+
+// SetOIDCProvider configures OIDC SSO support. When p is nil, OIDC routes return 404.
+func (s *Server) SetOIDCProvider(p *auth.OIDCProvider) {
+	s.oidcMu.Lock()
+	defer s.oidcMu.Unlock()
+	s.oidcProvider = p
+}
+
+// getOIDCProvider returns the current OIDC provider (thread-safe).
+func (s *Server) getOIDCProvider() *auth.OIDCProvider {
+	s.oidcMu.RLock()
+	defer s.oidcMu.RUnlock()
+	return s.oidcProvider
 }
 
 // NewServer creates a Server with all routes registered.
@@ -261,6 +280,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/auth/passkeys/login/begin", s.apiPasskeyLoginBegin)
 	s.mux.HandleFunc("POST /api/auth/passkeys/login/finish", s.apiPasskeyLoginFinish)
 	s.mux.HandleFunc("GET /api/auth/passkeys/available", s.apiPasskeysAvailable)
+	s.mux.HandleFunc("POST /api/auth/totp/verify", s.apiLoginTOTP)
+	s.mux.HandleFunc("GET /api/auth/oidc/login", s.apiOIDCLogin)
+	s.mux.HandleFunc("GET /api/auth/oidc/callback", s.apiOIDCCallback)
+	s.mux.HandleFunc("GET /api/auth/oidc/available", s.apiOIDCAvailable)
 
 	// --- Auth-only routes (authenticated, no specific permission) ---
 	s.mux.Handle("GET /account", authed(s.handleAccount))
@@ -275,6 +298,10 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/auth/passkeys/register/finish", authed(s.apiPasskeyRegisterFinish))
 	s.mux.Handle("GET /api/auth/passkeys", authed(s.apiListPasskeys))
 	s.mux.Handle("DELETE /api/auth/passkeys/{id}", authed(s.apiDeletePasskey))
+	s.mux.Handle("POST /api/auth/totp/setup", authed(s.apiTOTPSetup))
+	s.mux.Handle("POST /api/auth/totp/confirm", authed(s.apiTOTPConfirm))
+	s.mux.Handle("POST /api/auth/totp/disable", authed(s.apiTOTPDisable))
+	s.mux.Handle("GET /api/auth/totp/status", authed(s.apiTOTPStatus))
 
 	// --- Permission-gated routes ---
 
@@ -287,6 +314,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/containers/{name}/versions", perm(auth.PermContainersView, s.apiContainerVersions))
 	s.mux.Handle("GET /api/containers/{name}/tags", perm(auth.PermContainersView, s.apiContainerAllTags))
 	s.mux.Handle("GET /api/containers/{name}/row", perm(auth.PermContainersView, s.handleContainerRow))
+	s.mux.Handle("GET /api/containers/{name}/logs", perm(auth.PermContainersView, s.apiContainerLogs))
 	s.mux.Handle("GET /api/stats", perm(auth.PermContainersView, s.handleDashboardStats))
 	s.mux.Handle("GET /api/events", perm(auth.PermContainersView, s.apiSSE))
 	s.mux.Handle("GET /api/queue", perm(auth.PermContainersView, s.apiQueue))
@@ -341,6 +369,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings", perm(auth.PermSettingsView, s.apiSettings))
 	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
+	s.mux.Handle("GET /api/settings/notifications/templates", perm(auth.PermSettingsView, s.apiGetNotifyTemplates))
 	s.mux.Handle("GET /api/settings/registries", perm(auth.PermSettingsView, s.apiGetRegistryCredentials))
 	s.mux.Handle("GET /api/release-sources", perm(auth.PermSettingsView, s.apiGetReleaseSources))
 	s.mux.Handle("GET /api/ratelimits", perm(auth.PermContainersView, s.apiGetRateLimits))
@@ -389,6 +418,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/show-stopped", perm(auth.PermSettingsModify, s.apiSetShowStopped))
 	s.mux.Handle("POST /api/settings/remove-volumes", perm(auth.PermSettingsModify, s.apiSetRemoveVolumes))
 	s.mux.Handle("POST /api/settings/scan-concurrency", perm(auth.PermSettingsModify, s.apiSetScanConcurrency))
+	s.mux.Handle("POST /api/settings/maintenance-window", perm(auth.PermSettingsModify, s.apiSetMaintenanceWindow))
 	s.mux.Handle("POST /api/settings/docker-tls", perm(auth.PermSettingsModify, s.apiSetDockerTLS))
 	s.mux.Handle("POST /api/settings/docker-tls-test", perm(auth.PermSettingsModify, s.apiTestDockerTLS))
 	s.mux.Handle("GET /api/config/export", perm(auth.PermSettingsModify, s.apiConfigExport))
@@ -419,6 +449,15 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/digest/trigger", perm(auth.PermSettingsModify, s.apiTriggerDigest))
 	s.mux.Handle("POST /api/digest/banner/dismiss", perm(auth.PermContainersView, s.apiDismissDigestBanner))
 
+	// Notification templates (write)
+	s.mux.Handle("PUT /api/settings/notifications/templates", perm(auth.PermSettingsModify, s.apiSaveNotifyTemplate))
+	s.mux.Handle("DELETE /api/settings/notifications/templates/{type}", perm(auth.PermSettingsModify, s.apiDeleteNotifyTemplate))
+	s.mux.Handle("POST /api/settings/notifications/templates/preview", perm(auth.PermSettingsModify, s.apiPreviewNotifyTemplate))
+
+	// OIDC settings (admin-only, requires settings.modify)
+	s.mux.Handle("GET /api/settings/oidc", perm(auth.PermSettingsModify, s.apiGetOIDCSettings))
+	s.mux.Handle("POST /api/settings/oidc", perm(auth.PermSettingsModify, s.apiSaveOIDCSettings))
+
 	// users.manage
 	s.mux.Handle("GET /api/auth/users", perm(auth.PermUsersManage, s.apiListUsers))
 	s.mux.Handle("POST /api/auth/users", perm(auth.PermUsersManage, s.apiCreateUser))
@@ -442,6 +481,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /history", perm(auth.PermHistoryView, s.handleHistory))
 	s.mux.Handle("GET /api/history", perm(auth.PermHistoryView, s.apiHistory))
 	s.mux.Handle("GET /api/history/export", perm(auth.PermHistoryView, s.apiHistoryExport))
+
+	// Images management
+	s.mux.Handle("GET /images", perm(auth.PermContainersView, s.handleImages))
+	s.mux.Handle("GET /api/images", perm(auth.PermContainersView, s.apiListImages))
+	s.mux.Handle("POST /api/images/prune", perm(auth.PermContainersManage, s.apiPruneImages))
+	s.mux.Handle("DELETE /api/images/{id}", perm(auth.PermContainersManage, s.apiRemoveImage))
 }
 
 func (s *Server) serveCSS(w http.ResponseWriter, r *http.Request) {
@@ -496,7 +541,12 @@ func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
-	path := "static" + strings.TrimPrefix(r.URL.Path, "/static")
+	path := filepath.Clean("static" + strings.TrimPrefix(r.URL.Path, "/static"))
+	// Defence in depth: ensure cleaned path stays within the static directory.
+	if !strings.HasPrefix(path, "static") {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	data, err := staticFS.ReadFile(path)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
