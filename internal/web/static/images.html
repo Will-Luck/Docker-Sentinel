@@ -1,10 +1,10 @@
-{{define "logs.html"}}
+{{define "images.html"}}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Activity Log — Docker-Sentinel</title>
+    <title>Images — Docker-Sentinel</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -27,10 +27,10 @@
                 {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
             </a>
             <a href="/history" class="nav-link">History</a>
-            <a href="/logs" class="nav-link active" aria-current="page">Logs</a>
-            <a href="/images" class="nav-link">Images</a>
+            <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link active" aria-current="page">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
-            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
             {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
@@ -61,50 +61,43 @@
     <main class="main-content" id="main-content">
         <div class="page-header">
             <div>
-                <h1>Activity Log</h1>
-                <p class="subtitle">All actions performed via the dashboard</p>
+                <h1>Images</h1>
+                <p class="subtitle" id="images-summary">Loading...</p>
+            </div>
+            <div class="page-header-actions">
+                <button class="btn btn-warning" onclick="pruneImages()">Prune Dangling</button>
             </div>
         </div>
 
         <div class="card">
-            {{if .Logs}}
             <div class="table-wrap">
                 <table class="table-logs">
                     <thead>
                         <tr>
-                            <th>Time</th>
-                            <th>User</th>
-                            <th>Type</th>
-                            <th>Container</th>
-                            <th>Message</th>
+                            <th>Repository Tags</th>
+                            <th>Image ID</th>
+                            <th>Size</th>
+                            <th>Created</th>
+                            <th>Status</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {{range .Logs}}
-                        <tr>
-                            <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
-                            <td>{{if .User}}{{.User}}{{else}}<span class="text-muted">system</span>{{end}}</td>
-                            <td><span class="badge {{if eq .Type "policy_set"}}badge-info{{else if eq .Type "policy_delete"}}badge-muted{{else if eq .Type "approve"}}badge-success{{else if eq .Type "reject"}}badge-error{{else if eq .Type "update"}}badge-success{{else if eq .Type "rollback"}}badge-warning{{else}}badge-muted{{end}}">{{.Type}}</span></td>
-                            <td class="mono">{{if .Container}}<a href="{{serviceOrContainer .Kind .Container}}">{{.Container}}</a>{{else}}-{{end}}</td>
-                            <td title="{{.Message}}">{{.Message}}</td>
-                        </tr>
-                        {{end}}
+                    <tbody id="images-tbody">
+                        <tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-secondary)">Loading images...</td></tr>
                     </tbody>
                 </table>
             </div>
-            {{else}}
-            <div class="card-body">
-                <div class="empty-state">
-                    <p>No activity logged yet. Actions like policy changes, approvals, and updates will appear here.</p>
-                </div>
-            </div>
-            {{end}}
         </div>
     </main>
 
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof loadImages === 'function') loadImages();
+        });
+    </script>
 </body>
 </html>
 {{end}}

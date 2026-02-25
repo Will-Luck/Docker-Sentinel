@@ -43,6 +43,9 @@ type User struct {
 	LockedUntil    time.Time `json:"locked_until"`               // unlock time
 	FailedLogins   int       `json:"failed_logins"`              // consecutive failures
 	WebAuthnUserID []byte    `json:"webauthn_user_id,omitempty"` // stable opaque 64-byte random ID
+	TOTPSecret     string    `json:"totp_secret,omitempty"`      // base32-encoded TOTP secret
+	TOTPEnabled    bool      `json:"totp_enabled,omitempty"`     // whether 2FA is active
+	RecoveryCodes  []string  `json:"recovery_codes,omitempty"`   // one-time recovery codes
 }
 
 // EnsureWebAuthnUserID generates a random WebAuthn user ID if one isn't set.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -26,6 +27,7 @@ var (
 	bucketGHCRAlternatives = []byte("ghcr_alternatives")
 	bucketHooks            = []byte("hooks")
 	bucketReleaseSources   = []byte("release_sources")
+	bucketNotifyTemplates  = []byte("notification_templates")
 
 	// Cluster / multi-host
 	bucketClusterHosts       = []byte("cluster_hosts")
@@ -94,7 +96,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -195,6 +197,7 @@ func (s *Store) ListHistory(limit int, before string) ([]UpdateRecord, error) {
 		for ; k != nil && len(records) < limit; k, v = c.Prev() {
 			var rec UpdateRecord
 			if err := json.Unmarshal(v, &rec); err != nil {
+				slog.Warn("corrupt entry in history bucket, skipping", "key", string(k), "error", err)
 				continue
 			}
 			records = append(records, rec)
@@ -306,6 +309,7 @@ func (s *Store) ListAllHistory() ([]UpdateRecord, error) {
 		for k, v := c.Last(); k != nil; k, v = c.Prev() {
 			var rec UpdateRecord
 			if err := json.Unmarshal(v, &rec); err != nil {
+				slog.Warn("corrupt entry in history bucket, skipping", "key", string(k), "error", err)
 				continue
 			}
 			records = append(records, rec)
@@ -328,6 +332,7 @@ func (s *Store) ListHistoryByContainer(name string, limit int) ([]UpdateRecord, 
 		for k, v := c.Last(); k != nil && len(records) < limit; k, v = c.Prev() {
 			var rec UpdateRecord
 			if err := json.Unmarshal(v, &rec); err != nil {
+				slog.Warn("corrupt entry in history bucket, skipping", "key", string(k), "error", err)
 				continue
 			}
 			if rec.ContainerName == name {
@@ -418,6 +423,7 @@ func (s *Store) ListLogs(limit int) ([]LogEntry, error) {
 		for k, v := c.Last(); k != nil && len(entries) < limit; k, v = c.Prev() {
 			var entry LogEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
+				slog.Warn("corrupt entry in logs bucket, skipping", "key", string(k), "error", err)
 				continue
 			}
 			entries = append(entries, entry)
@@ -732,4 +738,50 @@ func (s *Store) GetClusterConfigCache(key string) ([]byte, error) {
 		return nil
 	})
 	return data, err
+}
+
+// ---------------------------------------------------------------------------
+// Notification templates
+// ---------------------------------------------------------------------------
+
+// GetNotifyTemplate returns the custom template for an event type.
+// Returns empty string and nil error if no template is set.
+func (s *Store) GetNotifyTemplate(eventType string) (string, error) {
+	var tmpl string
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketNotifyTemplates).Get([]byte(eventType))
+		if v != nil {
+			tmpl = string(v)
+		}
+		return nil
+	})
+	return tmpl, err
+}
+
+// SaveNotifyTemplate stores a custom template for an event type.
+func (s *Store) SaveNotifyTemplate(eventType, tmpl string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketNotifyTemplates).Put([]byte(eventType), []byte(tmpl))
+	})
+}
+
+// DeleteNotifyTemplate removes the custom template for an event type,
+// reverting to the default format.
+func (s *Store) DeleteNotifyTemplate(eventType string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketNotifyTemplates).Delete([]byte(eventType))
+	})
+}
+
+// GetAllNotifyTemplates returns all stored custom notification templates
+// as a map of event_type -> template string.
+func (s *Store) GetAllNotifyTemplates() (map[string]string, error) {
+	result := make(map[string]string)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketNotifyTemplates).ForEach(func(k, v []byte) error {
+			result[string(k)] = string(v)
+			return nil
+		})
+	})
+	return result, err
 }

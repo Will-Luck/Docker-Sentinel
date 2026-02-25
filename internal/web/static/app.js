@@ -951,6 +951,24 @@
       });
     }
   })();
+  async function fetchContainerLogs(name, hostId) {
+    var linesEl = document.getElementById("log-lines");
+    var lines = linesEl ? linesEl.value : "50";
+    var logsEl = document.getElementById("container-logs");
+    if (!logsEl) return;
+    logsEl.textContent = "Loading logs...";
+    var url = "/api/containers/" + encodeURIComponent(name) + "/logs?lines=" + lines;
+    if (hostId) url += "&host=" + encodeURIComponent(hostId);
+    try {
+      var resp = await fetch(url);
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      var data = await resp.json();
+      logsEl.textContent = data.logs || "No log output.";
+      logsEl.scrollTop = logsEl.scrollHeight;
+    } catch (err) {
+      logsEl.textContent = "Error loading logs: " + err.message;
+    }
+  }
 
   // internal/web/static/src/js/queue.js
   function escapeHtml(str) {
@@ -2274,6 +2292,10 @@
       if (updateDelayInput) {
         updateDelayInput.value = settings["update_delay"] || "";
       }
+      var maintenanceWindowInput = document.getElementById("maintenance-window");
+      if (maintenanceWindowInput) {
+        maintenanceWindowInput.value = settings["maintenance_window"] || "";
+      }
       var composeSyncToggle = document.getElementById("compose-sync-toggle");
       if (composeSyncToggle) {
         var composeSync = settings["compose_sync"] === "true";
@@ -2357,6 +2379,7 @@
     if (window.loadNotificationChannels) window.loadNotificationChannels();
     if (window.loadDigestSettings) window.loadDigestSettings();
     if (window.loadContainerNotifyPrefs) window.loadContainerNotifyPrefs();
+    if (window.loadNotifyTemplates) window.loadNotifyTemplates();
     if (window.loadRegistries) window.loadRegistries();
     if (window.loadReleaseSources) window.loadReleaseSources();
     if (window.renderGHCRAlternatives) window.renderGHCRAlternatives();
@@ -2867,6 +2890,10 @@
     var secretInput = document.getElementById("webhook-secret");
     if (secretInput) {
       secretInput.value = secret;
+      var hint = document.getElementById("webhook-secret-hint");
+      if (hint) {
+        hint.style.display = secret && secret.indexOf("****") !== -1 ? "" : "none";
+      }
     }
   }
   function setWebhookEnabled(enabled) {
@@ -2903,7 +2930,9 @@
       if (result.ok) {
         var secretInput = document.getElementById("webhook-secret");
         if (secretInput) secretInput.value = result.data.secret || "";
-        showToast("Webhook secret regenerated", "success");
+        var hint = document.getElementById("webhook-secret-hint");
+        if (hint) hint.style.display = "none";
+        showToast("Webhook secret regenerated \u2014 copy it now, it won't be shown again", "success");
       } else {
         showToast(result.data.error || "Failed to regenerate secret", "error");
       }
@@ -2931,6 +2960,27 @@
       input.select();
       document.execCommand("copy");
       showToast("Webhook secret copied", "success");
+    });
+  }
+  function saveMaintenanceWindow() {
+    var input = document.getElementById("maintenance-window");
+    if (!input) return;
+    fetch("/api/settings/maintenance-window", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: input.value.trim() })
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      if (result.ok) {
+        showToast(result.data.message || "Maintenance window saved", "success");
+      } else {
+        showToast(result.data.error || "Failed to save maintenance window", "error");
+      }
+    }).catch(function() {
+      showToast("Network error -- could not save maintenance window", "error");
     });
   }
   function exportConfig() {
@@ -3735,6 +3785,112 @@
       showToast("Failed to update notification mode", "error");
     });
   }
+  var _notifyTemplates = {};
+  function loadNotifyTemplates() {
+    fetch("/api/settings/notifications/templates", { credentials: "same-origin" }).then(function(r) {
+      return r.json();
+    }).then(function(data) {
+      _notifyTemplates = data && data.templates ? data.templates : {};
+      loadTemplateForEvent();
+    }).catch(function() {
+      _notifyTemplates = {};
+    });
+  }
+  function loadTemplateForEvent() {
+    var sel = document.getElementById("template-event-type");
+    var textarea = document.getElementById("template-body");
+    if (!sel || !textarea) return;
+    var eventType = sel.value;
+    textarea.value = _notifyTemplates[eventType] || "";
+    var previewOut = document.getElementById("template-preview-output");
+    if (previewOut) previewOut.style.display = "none";
+  }
+  function saveNotifyTemplate() {
+    var sel = document.getElementById("template-event-type");
+    var textarea = document.getElementById("template-body");
+    if (!sel || !textarea) return;
+    var eventType = sel.value;
+    var tmpl = textarea.value;
+    fetch("/api/settings/notifications/templates", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type: eventType, template: tmpl })
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      if (result.ok) {
+        _notifyTemplates[eventType] = tmpl;
+        showToast("Template saved for " + eventType, "success");
+      } else {
+        showToast(result.data.error || "Failed to save template", "error");
+      }
+    }).catch(function() {
+      showToast("Network error \u2014 could not save template", "error");
+    });
+  }
+  function deleteNotifyTemplate() {
+    var sel = document.getElementById("template-event-type");
+    var textarea = document.getElementById("template-body");
+    if (!sel) return;
+    var eventType = sel.value;
+    fetch("/api/settings/notifications/templates/" + encodeURIComponent(eventType), {
+      method: "DELETE",
+      credentials: "same-origin"
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      if (result.ok) {
+        delete _notifyTemplates[eventType];
+        if (textarea) textarea.value = "";
+        var previewOut = document.getElementById("template-preview-output");
+        if (previewOut) previewOut.style.display = "none";
+        showToast("Template reset to default for " + eventType, "success");
+      } else {
+        showToast(result.data.error || "Failed to reset template", "error");
+      }
+    }).catch(function() {
+      showToast("Network error \u2014 could not reset template", "error");
+    });
+  }
+  function previewNotifyTemplate() {
+    var sel = document.getElementById("template-event-type");
+    var textarea = document.getElementById("template-body");
+    if (!sel || !textarea) return;
+    var eventType = sel.value;
+    var tmpl = textarea.value;
+    if (!tmpl) {
+      showToast("Enter a template to preview", "info");
+      return;
+    }
+    fetch("/api/settings/notifications/templates/preview", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type: eventType, template: tmpl })
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      var previewOut = document.getElementById("template-preview-output");
+      var previewText = document.getElementById("template-preview-text");
+      if (!previewOut || !previewText) return;
+      if (result.ok) {
+        previewText.textContent = result.data.preview || "";
+        previewOut.style.display = "";
+      } else {
+        previewText.textContent = "Error: " + (result.data.error || "invalid template");
+        previewOut.style.display = "";
+      }
+    }).catch(function() {
+      showToast("Network error \u2014 could not preview template", "error");
+    });
+  }
 
   // internal/web/static/src/js/registries.js
   var registryData = {};
@@ -4387,6 +4543,136 @@
     });
   }
 
+  // internal/web/static/src/js/images.js
+  async function loadImages() {
+    try {
+      var resp = await fetch("/api/images");
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      var data = await resp.json();
+      renderImagesTable(data.images || []);
+    } catch (err) {
+      console.error("Failed to load images:", err);
+    }
+  }
+  function renderImagesTable(images) {
+    var tbody = document.getElementById("images-tbody");
+    if (!tbody) return;
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    if (images.length === 0) {
+      var emptyRow = document.createElement("tr");
+      var emptyCell = document.createElement("td");
+      emptyCell.colSpan = 6;
+      emptyCell.style.textAlign = "center";
+      emptyCell.style.padding = "2rem";
+      emptyCell.style.color = "var(--text-secondary)";
+      emptyCell.textContent = "No images found";
+      emptyRow.appendChild(emptyCell);
+      tbody.appendChild(emptyRow);
+      return;
+    }
+    images.sort(function(a, b) {
+      return b.created - a.created;
+    });
+    var totalSize = images.reduce(function(sum, img2) {
+      return sum + img2.size;
+    }, 0);
+    var summaryEl = document.getElementById("images-summary");
+    if (summaryEl) {
+      summaryEl.textContent = images.length + " images, " + formatBytes(totalSize) + " total";
+    }
+    for (var i = 0; i < images.length; i++) {
+      var img = images[i];
+      var row = document.createElement("tr");
+      var tagsCell = document.createElement("td");
+      if (img.repo_tags && img.repo_tags.length > 0) {
+        tagsCell.textContent = img.repo_tags.join(", ");
+      } else {
+        var noneSpan = document.createElement("span");
+        noneSpan.className = "text-muted";
+        noneSpan.textContent = "<none>";
+        tagsCell.appendChild(noneSpan);
+      }
+      row.appendChild(tagsCell);
+      var idCell = document.createElement("td");
+      var code = document.createElement("code");
+      code.title = img.id;
+      code.textContent = img.id.replace("sha256:", "").substring(0, 12);
+      idCell.appendChild(code);
+      row.appendChild(idCell);
+      var sizeCell = document.createElement("td");
+      sizeCell.textContent = formatBytes(img.size);
+      row.appendChild(sizeCell);
+      var createdCell = document.createElement("td");
+      createdCell.title = new Date(img.created * 1e3).toISOString();
+      createdCell.textContent = formatRelativeTime(img.created);
+      row.appendChild(createdCell);
+      var useCell = document.createElement("td");
+      var badge = document.createElement("span");
+      badge.className = img.in_use ? "badge badge-success" : "badge badge-muted";
+      badge.textContent = img.in_use ? "In Use" : "Unused";
+      useCell.appendChild(badge);
+      row.appendChild(useCell);
+      var actionsCell = document.createElement("td");
+      var btn = document.createElement("button");
+      btn.className = "btn btn-sm btn-danger";
+      btn.textContent = "Remove";
+      if (img.in_use) {
+        btn.disabled = true;
+        btn.title = "Cannot remove: image is in use by a container";
+      } else {
+        btn.setAttribute("data-image-id", img.id);
+        btn.addEventListener("click", /* @__PURE__ */ (function(imageId) {
+          return function() {
+            removeImage(imageId);
+          };
+        })(img.id));
+      }
+      actionsCell.appendChild(btn);
+      row.appendChild(actionsCell);
+      tbody.appendChild(row);
+    }
+  }
+  function formatBytes(bytes) {
+    if (bytes === 0) return "0 B";
+    var k = 1024;
+    var sizes = ["B", "KB", "MB", "GB", "TB"];
+    var i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  }
+  function formatRelativeTime(unixSeconds) {
+    var now = Date.now() / 1e3;
+    var diff = now - unixSeconds;
+    if (diff < 60) return "just now";
+    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    return Math.floor(diff / 86400) + "d ago";
+  }
+  async function pruneImages() {
+    if (!confirm("Remove all dangling (unused, untagged) images?")) return;
+    try {
+      var resp = await fetch("/api/images/prune", { method: "POST" });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      var data = await resp.json();
+      if (window.showToast) {
+        window.showToast("Pruned " + data.images_deleted + " images, reclaimed " + formatBytes(data.space_reclaimed));
+      }
+      loadImages();
+    } catch (err) {
+      if (window.showToast) window.showToast("Prune failed: " + err.message, "error");
+    }
+  }
+  async function removeImage(id) {
+    if (!confirm("Remove this image? This cannot be undone.")) return;
+    try {
+      var resp = await fetch("/api/images/" + encodeURIComponent(id), { method: "DELETE" });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      if (window.showToast) window.showToast("Image removed");
+      loadImages();
+    } catch (err) {
+      if (window.showToast) window.showToast("Remove failed: " + err.message, "error");
+    }
+  }
+
   // internal/web/static/src/js/main.js
   setUpdateStatsFn(updateStats2);
   window._dashboardSelectedContainers = selectedContainers;
@@ -4418,6 +4704,7 @@
   window.recomputeSelectionState = recomputeSelectionState;
   window.checkPauseState = checkPauseState;
   window.refreshLastScan = refreshLastScan;
+  window.fetchContainerLogs = fetchContainerLogs;
   window.toggleQueueAccordion = toggleQueueAccordion;
   window.approveUpdate = approveUpdate;
   window.ignoreUpdate = ignoreUpdate;
@@ -4477,6 +4764,7 @@
   window.regenerateWebhookSecret = regenerateWebhookSecret;
   window.copyWebhookURL = copyWebhookURL;
   window.copyWebhookSecret = copyWebhookSecret;
+  window.saveMaintenanceWindow = saveMaintenanceWindow;
   window.exportConfig = exportConfig;
   window.importConfig = importConfig;
   window.onClusterToggle = onClusterToggle;
@@ -4492,6 +4780,11 @@
   window.loadNotificationChannels = loadNotificationChannels;
   window.loadDigestSettings = loadDigestSettings;
   window.loadContainerNotifyPrefs = loadContainerNotifyPrefs;
+  window.loadNotifyTemplates = loadNotifyTemplates;
+  window.loadTemplateForEvent = loadTemplateForEvent;
+  window.saveNotifyTemplate = saveNotifyTemplate;
+  window.deleteNotifyTemplate = deleteNotifyTemplate;
+  window.previewNotifyTemplate = previewNotifyTemplate;
   window.addRegistryCredential = addRegistryCredential;
   window.saveRegistryCredentials = saveRegistryCredentials;
   window.loadRegistries = loadRegistries;
@@ -4499,6 +4792,9 @@
   window.saveReleaseSources = saveReleaseSources;
   window.loadAboutInfo = loadAboutInfo;
   window.loadReleaseSources = loadReleaseSources;
+  window.loadImages = loadImages;
+  window.pruneImages = pruneImages;
+  window.removeImage = removeImage;
   document.addEventListener("DOMContentLoaded", function() {
     initTheme();
     var path = window.location.pathname;

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -48,7 +49,7 @@ func (t *TLSConfig) loadTLS() (*tls.Config, error) {
 		RootCAs:      certPool,
 		Certificates: []tls.Certificate{clientCert},
 		MinVersion:   tls.VersionTLS12,
-	}, nil
+	}, nil // ServerName is set by the caller with the parsed host
 }
 
 // NewClient creates a Docker client connected to the given socket or TCP endpoint.
@@ -66,9 +67,16 @@ func NewClient(dockerSock string, tlsCfg *TLSConfig) (*Client, error) {
 			if err != nil {
 				return nil, fmt.Errorf("configure Docker TLS: %w", err)
 			}
+			// Set ServerName for proper hostname verification.
+			if u, parseErr := url.Parse(dockerSock); parseErr == nil {
+				tlsConfig.ServerName = u.Hostname()
+			}
 			opts = append(opts, client.WithHTTPClient(&http.Client{
 				Transport: &http.Transport{
-					TLSClientConfig: tlsConfig,
+					TLSClientConfig:       tlsConfig,
+					IdleConnTimeout:       90 * time.Second,
+					TLSHandshakeTimeout:   10 * time.Second,
+					ResponseHeaderTimeout: 30 * time.Second,
 				},
 			}))
 		}

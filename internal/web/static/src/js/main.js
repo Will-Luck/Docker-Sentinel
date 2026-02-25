@@ -38,7 +38,8 @@ import {
     initDashboardTabs,
     recalcTabStats,
     setUpdateStatsFn,
-    toggleManageMode
+    toggleManageMode,
+    fetchContainerLogs
 } from "./dashboard.js";
 
 import {
@@ -125,6 +126,7 @@ import {
     regenerateWebhookSecret,
     copyWebhookURL,
     copyWebhookSecret,
+    saveMaintenanceWindow,
     exportConfig,
     importConfig
 } from "./settings-core.js";
@@ -145,7 +147,12 @@ import {
     saveDigestSettings,
     triggerDigest,
     loadContainerNotifyPrefs,
-    setContainerNotifyPref
+    setContainerNotifyPref,
+    loadNotifyTemplates,
+    loadTemplateForEvent,
+    saveNotifyTemplate,
+    deleteNotifyTemplate,
+    previewNotifyTemplate
 } from "./notifications.js";
 
 import {
@@ -162,6 +169,12 @@ import {
     addReleaseSource,
     saveReleaseSources
 } from "./about.js";
+
+import {
+    loadImages,
+    pruneImages,
+    removeImage
+} from "./images.js";
 
 // Wire updateStats into dashboard module (avoids circular import).
 setUpdateStatsFn(updateStats);
@@ -207,6 +220,7 @@ window.recalcTabStats = recalcTabStats;
 window.recomputeSelectionState = recomputeSelectionState;
 window.checkPauseState = checkPauseState;
 window.refreshLastScan = refreshLastScan;
+window.fetchContainerLogs = fetchContainerLogs;
 
 // Queue
 window.toggleQueueAccordion = toggleQueueAccordion;
@@ -274,6 +288,7 @@ window.setWebhookEnabled = setWebhookEnabled;
 window.regenerateWebhookSecret = regenerateWebhookSecret;
 window.copyWebhookURL = copyWebhookURL;
 window.copyWebhookSecret = copyWebhookSecret;
+window.saveMaintenanceWindow = saveMaintenanceWindow;
 window.exportConfig = exportConfig;
 window.importConfig = importConfig;
 
@@ -293,6 +308,11 @@ window.saveNotifyPref = setContainerNotifyPref;
 window.loadNotificationChannels = loadNotificationChannels;
 window.loadDigestSettings = loadDigestSettings;
 window.loadContainerNotifyPrefs = loadContainerNotifyPrefs;
+window.loadNotifyTemplates = loadNotifyTemplates;
+window.loadTemplateForEvent = loadTemplateForEvent;
+window.saveNotifyTemplate = saveNotifyTemplate;
+window.deleteNotifyTemplate = deleteNotifyTemplate;
+window.previewNotifyTemplate = previewNotifyTemplate;
 
 // Registries
 window.addRegistryCredential = addRegistryCredential;
@@ -304,6 +324,11 @@ window.addReleaseSource = addReleaseSource;
 window.saveReleaseSources = saveReleaseSources;
 window.loadAboutInfo = loadAboutInfo;
 window.loadReleaseSources = loadReleaseSources;
+
+// Images
+window.loadImages = loadImages;
+window.pruneImages = pruneImages;
+window.removeImage = removeImage;
 
 /* ------------------------------------------------------------
    12. Initialisation

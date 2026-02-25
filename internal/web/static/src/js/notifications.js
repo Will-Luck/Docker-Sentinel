@@ -800,6 +800,136 @@ function isSafeURL(url) {
 }
 
 
+/* ------------------------------------------------------------
+   15. Notification Message Templates
+   ------------------------------------------------------------ */
+
+var _notifyTemplates = {};
+
+function loadNotifyTemplates() {
+    fetch("/api/settings/notifications/templates", {credentials: "same-origin"})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            _notifyTemplates = (data && data.templates) ? data.templates : {};
+            // Load template for currently selected event type.
+            loadTemplateForEvent();
+        })
+        .catch(function() {
+            _notifyTemplates = {};
+        });
+}
+
+function loadTemplateForEvent() {
+    var sel = document.getElementById("template-event-type");
+    var textarea = document.getElementById("template-body");
+    if (!sel || !textarea) return;
+    var eventType = sel.value;
+    textarea.value = _notifyTemplates[eventType] || "";
+    // Hide preview when switching events.
+    var previewOut = document.getElementById("template-preview-output");
+    if (previewOut) previewOut.style.display = "none";
+}
+
+function saveNotifyTemplate() {
+    var sel = document.getElementById("template-event-type");
+    var textarea = document.getElementById("template-body");
+    if (!sel || !textarea) return;
+
+    var eventType = sel.value;
+    var tmpl = textarea.value;
+
+    fetch("/api/settings/notifications/templates", {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({event_type: eventType, template: tmpl})
+    })
+    .then(function(resp) {
+        return resp.json().then(function(data) { return {ok: resp.ok, data: data}; });
+    })
+    .then(function(result) {
+        if (result.ok) {
+            _notifyTemplates[eventType] = tmpl;
+            showToast("Template saved for " + eventType, "success");
+        } else {
+            showToast(result.data.error || "Failed to save template", "error");
+        }
+    })
+    .catch(function() {
+        showToast("Network error — could not save template", "error");
+    });
+}
+
+function deleteNotifyTemplate() {
+    var sel = document.getElementById("template-event-type");
+    var textarea = document.getElementById("template-body");
+    if (!sel) return;
+
+    var eventType = sel.value;
+
+    fetch("/api/settings/notifications/templates/" + encodeURIComponent(eventType), {
+        method: "DELETE",
+        credentials: "same-origin"
+    })
+    .then(function(resp) {
+        return resp.json().then(function(data) { return {ok: resp.ok, data: data}; });
+    })
+    .then(function(result) {
+        if (result.ok) {
+            delete _notifyTemplates[eventType];
+            if (textarea) textarea.value = "";
+            var previewOut = document.getElementById("template-preview-output");
+            if (previewOut) previewOut.style.display = "none";
+            showToast("Template reset to default for " + eventType, "success");
+        } else {
+            showToast(result.data.error || "Failed to reset template", "error");
+        }
+    })
+    .catch(function() {
+        showToast("Network error — could not reset template", "error");
+    });
+}
+
+function previewNotifyTemplate() {
+    var sel = document.getElementById("template-event-type");
+    var textarea = document.getElementById("template-body");
+    if (!sel || !textarea) return;
+
+    var eventType = sel.value;
+    var tmpl = textarea.value;
+
+    if (!tmpl) {
+        showToast("Enter a template to preview", "info");
+        return;
+    }
+
+    fetch("/api/settings/notifications/templates/preview", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({event_type: eventType, template: tmpl})
+    })
+    .then(function(resp) {
+        return resp.json().then(function(data) { return {ok: resp.ok, data: data}; });
+    })
+    .then(function(result) {
+        var previewOut = document.getElementById("template-preview-output");
+        var previewText = document.getElementById("template-preview-text");
+        if (!previewOut || !previewText) return;
+
+        if (result.ok) {
+            previewText.textContent = result.data.preview || "";
+            previewOut.style.display = "";
+        } else {
+            previewText.textContent = "Error: " + (result.data.error || "invalid template");
+            previewOut.style.display = "";
+        }
+    })
+    .catch(function() {
+        showToast("Network error — could not preview template", "error");
+    });
+}
+
 export {
     loadNotificationChannels,
     addChannel,
@@ -812,5 +942,10 @@ export {
     loadContainerNotifyPrefs,
     setContainerNotifyPref,
     escapeHtml,
-    isSafeURL
+    isSafeURL,
+    loadNotifyTemplates,
+    loadTemplateForEvent,
+    saveNotifyTemplate,
+    deleteNotifyTemplate,
+    previewNotifyTemplate
 };

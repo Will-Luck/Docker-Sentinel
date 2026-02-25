@@ -130,6 +130,15 @@ func parseGHCR(body []byte) (*Payload, error) {
 		return nil, errors.New("ghcr: missing package name")
 	}
 
+	// Validate namespace and name to prevent malformed image references
+	// (e.g. path traversal via "foo/../../bar").
+	if !isValidImageSegment(gh.Package.Name) {
+		return nil, errors.New("ghcr: invalid package name")
+	}
+	if gh.Package.Namespace != "" && !isValidImageSegment(gh.Package.Namespace) {
+		return nil, errors.New("ghcr: invalid namespace")
+	}
+
 	// Build the full GHCR image reference.
 	image := "ghcr.io/" + gh.Package.Namespace + "/" + gh.Package.Name
 	if gh.Package.Namespace == "" {
@@ -142,6 +151,20 @@ func parseGHCR(body []byte) (*Payload, error) {
 		Source:   "ghcr",
 		RawEvent: gh.Action,
 	}, nil
+}
+
+// isValidImageSegment checks that a string contains only characters safe for
+// use in a container image reference segment (namespace or name).
+func isValidImageSegment(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 // parseGeneric handles simple CI/CD webhook payloads.

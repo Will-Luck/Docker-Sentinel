@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/swarm"
@@ -248,6 +249,10 @@ func (m *mockDocker) ExecContainer(_ context.Context, id string, cmd []string, _
 	return 0, "", nil
 }
 
+func (m *mockDocker) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
+	return "", nil
+}
+
 func (m *mockDocker) IsSwarmManager(_ context.Context) bool {
 	return m.swarmManager
 }
@@ -295,6 +300,18 @@ func (m *mockDocker) ListServiceTasks(_ context.Context, serviceID string) ([]sw
 
 func (m *mockDocker) ListNodes(_ context.Context) ([]swarm.Node, error) {
 	return m.nodes, m.nodesErr
+}
+
+func (m *mockDocker) ListImages(_ context.Context) ([]docker.ImageSummary, error) {
+	return nil, nil
+}
+
+func (m *mockDocker) PruneImages(_ context.Context) (docker.ImagePruneResult, error) {
+	return docker.ImagePruneResult{}, nil
+}
+
+func (m *mockDocker) RemoveImageByID(_ context.Context, _ string) error {
+	return nil
 }
 
 func (m *mockDocker) Close() error { return nil }

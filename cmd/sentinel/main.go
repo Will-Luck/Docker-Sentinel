@@ -161,6 +161,7 @@ func main() {
 		Tokens:         db,
 		Settings:       db,
 		WebAuthnCreds:  webAuthnCreds,
+		PendingTOTP:    db,
 		Log:            log.Logger,
 		CookieSecure:   cfg.CookieSecure,
 		SessionExpiry:  cfg.SessionExpiry,
@@ -536,16 +537,19 @@ func main() {
 			SettingsStore:       &settingsStoreAdapter{db},
 			Stopper:             &stopAdapter{client},
 			Starter:             &startAdapter{client},
+			LogViewer:           &dockerAdapter{client},
 			SelfUpdater:         &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
 			NotifyConfig:        &notifyConfigAdapter{db},
 			NotifyReconfigurer:  notifier,
 			NotifyState:         &notifyStateAdapter{db},
+			NotifyTemplateStore: &notifyTemplateAdapter{db},
 			IgnoredVersions:     &ignoredVersionAdapter{db},
 			RegistryCredentials: &registryCredentialAdapter{db},
 			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
 			GHCRCache:           &ghcrCacheAdapter{c: ghcrCache},
 			HookStore:           &webHookStoreAdapter{db},
 			ReleaseSources:      &releaseSourceAdapter{db},
+			ImageManager:        &imageAdapter{client: client},
 			Cluster:             clusterCtrl,
 			MetricsEnabled:      cfg.MetricsEnabled,
 			Digest:              digestSched,
@@ -580,6 +584,24 @@ func main() {
 			}
 			srv.SetWebAuthn(wa)
 			log.Info("webauthn passkeys enabled", "rpid", cfg.WebAuthnRPID, "origins", cfg.WebAuthnOrigins)
+		}
+
+		// Configure OIDC provider if settings are present.
+		oidcCfg := auth.OIDCConfig{
+			Enabled:      loadSettingBool(db, "oidc_enabled"),
+			IssuerURL:    loadSettingStr(db, "oidc_issuer_url"),
+			ClientID:     loadSettingStr(db, "oidc_client_id"),
+			ClientSecret: loadSettingStr(db, "oidc_client_secret"),
+			RedirectURL:  loadSettingStr(db, "oidc_redirect_url"),
+			AutoCreate:   loadSettingBool(db, "oidc_auto_create"),
+			DefaultRole:  loadSettingStr(db, "oidc_default_role"),
+		}
+		oidcProvider, oidcErr := auth.NewOIDCProvider(context.Background(), oidcCfg)
+		if oidcErr != nil {
+			log.Warn("OIDC provider init failed (will retry on settings save)", "error", oidcErr)
+		} else if oidcProvider != nil {
+			srv.SetOIDCProvider(oidcProvider)
+			log.Info("OIDC SSO enabled", "issuer", oidcCfg.IssuerURL)
 		}
 
 		// Configure TLS if enabled.
@@ -708,6 +730,7 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		Roles:          db,
 		Tokens:         db,
 		Settings:       db,
+		PendingTOTP:    db,
 		Log:            log.Logger,
 		CookieSecure:   cfg.CookieSecure,
 		SessionExpiry:  cfg.SessionExpiry,
@@ -799,6 +822,20 @@ func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutCancel()
 	_ = ws.Shutdown(shutCtx)
+}
+
+// loadSettingStr loads a setting from the DB, returning "" on error.
+func loadSettingStr(db *store.Store, key string) string {
+	v, err := db.LoadSetting(key)
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
+// loadSettingBool loads a boolean setting from the DB.
+func loadSettingBool(db *store.Store, key string) bool {
+	return loadSettingStr(db, key) == "true"
 }
 
 // parseHeaders parses comma-separated "Key:Value" pairs into a map.

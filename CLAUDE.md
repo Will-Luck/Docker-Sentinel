@@ -188,6 +188,7 @@ The frontend is modular — source files in `src/`, bundled by esbuild to single
 | `sentinel.include-tags` | regex | Only consider tags matching this pattern |
 | `sentinel.exclude-tags` | regex | Ignore tags matching this pattern |
 | `sentinel.delay` | duration (`72h`, `7d`) | Only update to images older than this |
+| `sentinel.grace-period` | duration (`30s`, `5m`) | Per-container grace period override (max 1h) |
 | `sentinel.pull-only` | `true` | Pull new image without restarting container |
 | `sentinel.notify-snooze` | duration (`12h`, `3d`) | Suppress repeat notifications per version |
 | `sentinel.schedule` | cron expression | Per-container scan schedule |

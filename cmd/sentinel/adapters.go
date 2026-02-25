@@ -289,6 +289,10 @@ func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.Co
 	return ci, nil
 }
 
+func (a *dockerAdapter) ContainerLogs(ctx context.Context, containerID string, lines int) (string, error) {
+	return a.c.ContainerLogs(ctx, containerID, lines)
+}
+
 // restartAdapter bridges docker.Client to web.ContainerRestarter.
 type restartAdapter struct{ c *docker.Client }
 
@@ -463,6 +467,44 @@ func (a *startAdapter) StartContainer(ctx context.Context, id string) error {
 	return a.c.StartContainer(ctx, id)
 }
 
+// imageAdapter bridges docker.Client to web.ImageManager.
+type imageAdapter struct {
+	client *docker.Client
+}
+
+func (a *imageAdapter) ListImages(ctx context.Context) ([]web.ImageInfo, error) {
+	images, err := a.client.ListImages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.ImageInfo, len(images))
+	for i, img := range images {
+		result[i] = web.ImageInfo{
+			ID:       img.ID,
+			RepoTags: img.RepoTags,
+			Size:     img.Size,
+			Created:  img.Created,
+			InUse:    img.InUse,
+		}
+	}
+	return result, nil
+}
+
+func (a *imageAdapter) PruneImages(ctx context.Context) (web.ImagePruneReport, error) {
+	result, err := a.client.PruneImages(ctx)
+	if err != nil {
+		return web.ImagePruneReport{}, err
+	}
+	return web.ImagePruneReport{
+		ImagesDeleted:  result.ImagesDeleted,
+		SpaceReclaimed: result.SpaceReclaimed,
+	}, nil
+}
+
+func (a *imageAdapter) RemoveImageByID(ctx context.Context, id string) error {
+	return a.client.RemoveImageByID(ctx, id)
+}
+
 // notifyConfigAdapter bridges store.Store to web.NotificationConfigStore.
 type notifyConfigAdapter struct{ s *store.Store }
 
@@ -472,6 +514,21 @@ func (a *notifyConfigAdapter) GetNotificationChannels() ([]notify.Channel, error
 
 func (a *notifyConfigAdapter) SetNotificationChannels(channels []notify.Channel) error {
 	return a.s.SetNotificationChannels(channels)
+}
+
+// notifyTemplateAdapter bridges store.Store to web.NotifyTemplateStore.
+type notifyTemplateAdapter struct{ s *store.Store }
+
+func (a *notifyTemplateAdapter) GetAllNotifyTemplates() (map[string]string, error) {
+	return a.s.GetAllNotifyTemplates()
+}
+
+func (a *notifyTemplateAdapter) SaveNotifyTemplate(eventType, tmpl string) error {
+	return a.s.SaveNotifyTemplate(eventType, tmpl)
+}
+
+func (a *notifyTemplateAdapter) DeleteNotifyTemplate(eventType string) error {
+	return a.s.DeleteNotifyTemplate(eventType)
 }
 
 // notifyStateAdapter bridges store.Store to web.NotifyStateStore.

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/pquerna/otp"
 )
 
 // UserStore is the interface for user persistence.
@@ -48,6 +50,13 @@ type APITokenStore interface {
 	ListAPITokensForUser(userID string) ([]APIToken, error)
 }
 
+// PendingTOTPStore persists temporary TOTP tokens for the 2-step login flow.
+type PendingTOTPStore interface {
+	SavePendingTOTP(token, userID string, expiresAt time.Time) error
+	GetPendingTOTP(token string) (userID string, err error) // checks expiry
+	DeletePendingTOTP(token string) error
+}
+
 // SettingsReader reads auth-related settings from the settings bucket.
 type SettingsReader interface {
 	LoadSetting(key string) (string, error)
@@ -62,6 +71,7 @@ type Service struct {
 	Tokens        APITokenStore
 	Settings      SettingsReader
 	WebAuthnCreds WebAuthnCredentialStore
+	PendingTOTP   PendingTOTPStore
 	Ceremonies    *CeremonyStore
 	Log           *slog.Logger
 
@@ -81,6 +91,7 @@ func NewService(cfg ServiceConfig) *Service {
 		Tokens:         cfg.Tokens,
 		Settings:       cfg.Settings,
 		WebAuthnCreds:  cfg.WebAuthnCreds,
+		PendingTOTP:    cfg.PendingTOTP,
 		Log:            cfg.Log,
 		CookieSecure:   cfg.CookieSecure,
 		SessionExpiry:  cfg.SessionExpiry,
@@ -101,6 +112,7 @@ type ServiceConfig struct {
 	Tokens         APITokenStore
 	Settings       SettingsReader
 	WebAuthnCreds  WebAuthnCredentialStore
+	PendingTOTP    PendingTOTPStore
 	Log            *slog.Logger
 	CookieSecure   bool
 	SessionExpiry  time.Duration
@@ -188,6 +200,15 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	user.LockedUntil = time.Time{}
 	_ = s.Users.UpdateUser(*user)
 	s.rateLimiter.Reset(ip)
+
+	// If TOTP is enabled, don't create a session yet — return a pending token.
+	if user.TOTPEnabled && s.PendingTOTP != nil {
+		pendingToken, err := s.createPendingTOTP(user.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create pending TOTP: %w", err)
+		}
+		return nil, user, &ErrTOTPRequired{PendingToken: pendingToken}
+	}
 
 	// Create new session (session rotation — prevent fixation).
 	token, err := GenerateSessionToken()
@@ -337,10 +358,205 @@ func (s *Service) CleanupExpiredSessions() (int, error) {
 	return s.Sessions.DeleteExpiredSessions()
 }
 
+// createPendingTOTP generates a random token and stores it for the 2FA step.
+func (s *Service) createPendingTOTP(userID string) (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate pending TOTP token: %w", err)
+	}
+	token := hex.EncodeToString(b)
+	expiresAt := time.Now().UTC().Add(5 * time.Minute)
+	if err := s.PendingTOTP.SavePendingTOTP(token, userID, expiresAt); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+// VerifyTOTP completes the 2FA login by validating the TOTP code or recovery code.
+// Returns a session on success.
+func (s *Service) VerifyTOTP(ctx context.Context, pendingToken, code, ip, userAgent string) (*Session, error) {
+	if s.PendingTOTP == nil {
+		return nil, ErrTOTPInvalidToken
+	}
+
+	// Rate limit check.
+	if !s.rateLimiter.Allow(ip) {
+		return nil, ErrRateLimited
+	}
+
+	// Look up pending token.
+	userID, err := s.PendingTOTP.GetPendingTOTP(pendingToken)
+	if err != nil || userID == "" {
+		s.rateLimiter.RecordFailure(ip)
+		return nil, ErrTOTPInvalidToken
+	}
+
+	// Get user.
+	user, err := s.Users.GetUser(userID)
+	if err != nil || user == nil {
+		return nil, ErrTOTPInvalidToken
+	}
+
+	if !user.TOTPEnabled || user.TOTPSecret == "" {
+		return nil, ErrTOTPNotEnabled
+	}
+
+	// Try TOTP code first.
+	valid := ValidateTOTPCode(user.TOTPSecret, code)
+
+	// If TOTP didn't match, try recovery codes.
+	if !valid {
+		idx := ValidateRecoveryCode(code, user.RecoveryCodes)
+		if idx >= 0 {
+			valid = true
+			// Remove the used recovery code.
+			user.RecoveryCodes = append(user.RecoveryCodes[:idx], user.RecoveryCodes[idx+1:]...)
+			user.UpdatedAt = time.Now().UTC()
+			_ = s.Users.UpdateUser(*user)
+		}
+	}
+
+	if !valid {
+		s.rateLimiter.RecordFailure(ip)
+		return nil, ErrTOTPInvalidCode
+	}
+
+	// Delete pending token.
+	_ = s.PendingTOTP.DeletePendingTOTP(pendingToken)
+	s.rateLimiter.Reset(ip)
+
+	// Create session.
+	sessionToken, err := GenerateSessionToken()
+	if err != nil {
+		return nil, fmt.Errorf("generate session token: %w", err)
+	}
+
+	session := Session{
+		Token:     sessionToken,
+		UserID:    user.ID,
+		IP:        ip,
+		UserAgent: userAgent,
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Now().UTC().Add(s.SessionExpiry),
+	}
+
+	if err := s.Sessions.CreateSession(session); err != nil {
+		return nil, fmt.Errorf("create session: %w", err)
+	}
+
+	return &session, nil
+}
+
+// EnableTOTP generates a TOTP secret for a user. Returns the key for QR display.
+// The secret is NOT activated until ConfirmTOTP is called with a valid code.
+func (s *Service) EnableTOTP(ctx context.Context, userID string) (*otp.Key, []string, error) {
+	user, err := s.Users.GetUser(userID)
+	if err != nil || user == nil {
+		return nil, nil, fmt.Errorf("user not found")
+	}
+
+	if user.TOTPEnabled {
+		return nil, nil, ErrTOTPAlreadyEnabled
+	}
+
+	// Generate TOTP secret.
+	key, err := GenerateTOTPSecret(user.Username)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate TOTP secret: %w", err)
+	}
+
+	// Generate recovery codes.
+	plain, stored, err := GenerateRecoveryCodes()
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate recovery codes: %w", err)
+	}
+
+	// Store secret and recovery codes — TOTPEnabled stays false until ConfirmTOTP.
+	user.TOTPSecret = key.Secret()
+	user.RecoveryCodes = stored
+	user.UpdatedAt = time.Now().UTC()
+	if err := s.Users.UpdateUser(*user); err != nil {
+		return nil, nil, fmt.Errorf("save user: %w", err)
+	}
+
+	return key, plain, nil
+}
+
+// ConfirmTOTP activates 2FA after the user proves they can generate valid codes.
+// Returns the recovery codes (plain text, shown once).
+func (s *Service) ConfirmTOTP(ctx context.Context, userID, code string) ([]string, error) {
+	user, err := s.Users.GetUser(userID)
+	if err != nil || user == nil {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	if user.TOTPEnabled {
+		return nil, ErrTOTPAlreadyEnabled
+	}
+
+	if user.TOTPSecret == "" {
+		return nil, fmt.Errorf("no TOTP secret set — call EnableTOTP first")
+	}
+
+	// Validate the code against the secret.
+	if !ValidateTOTPCode(user.TOTPSecret, code) {
+		return nil, ErrTOTPInvalidCode
+	}
+
+	// Activate 2FA.
+	user.TOTPEnabled = true
+	user.UpdatedAt = time.Now().UTC()
+	if err := s.Users.UpdateUser(*user); err != nil {
+		return nil, fmt.Errorf("save user: %w", err)
+	}
+
+	// Return the recovery codes (already stored during EnableTOTP).
+	return user.RecoveryCodes, nil
+}
+
+// DisableTOTP removes 2FA from a user's account after verifying the password.
+func (s *Service) DisableTOTP(ctx context.Context, userID, password string) error {
+	user, err := s.Users.GetUser(userID)
+	if err != nil || user == nil {
+		return fmt.Errorf("user not found")
+	}
+
+	if !user.TOTPEnabled {
+		return ErrTOTPNotEnabled
+	}
+
+	// Verify password.
+	if !CheckPassword(user.PasswordHash, password) {
+		return ErrInvalidCredentials
+	}
+
+	// Clear TOTP fields.
+	user.TOTPSecret = ""
+	user.TOTPEnabled = false
+	user.RecoveryCodes = nil
+	user.UpdatedAt = time.Now().UTC()
+	if err := s.Users.UpdateUser(*user); err != nil {
+		return fmt.Errorf("save user: %w", err)
+	}
+
+	return nil
+}
+
+// ErrTOTPRequired is returned when login succeeds but TOTP verification is needed.
+type ErrTOTPRequired struct {
+	PendingToken string
+}
+
+func (e *ErrTOTPRequired) Error() string { return "TOTP verification required" }
+
 // Sentinel errors.
 var (
 	ErrInvalidCredentials = fmt.Errorf("invalid credentials")
 	ErrRateLimited        = fmt.Errorf("too many login attempts")
 	ErrAccountLocked      = fmt.Errorf("account is locked")
 	ErrUsersExist         = fmt.Errorf("users already exist")
+	ErrTOTPNotEnabled     = fmt.Errorf("TOTP is not enabled for this user")
+	ErrTOTPAlreadyEnabled = fmt.Errorf("TOTP is already enabled")
+	ErrTOTPInvalidCode    = fmt.Errorf("invalid TOTP code")
+	ErrTOTPInvalidToken   = fmt.Errorf("invalid or expired TOTP pending token")
 )

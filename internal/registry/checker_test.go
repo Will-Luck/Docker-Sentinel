@@ -54,6 +54,9 @@ func (m *mockDockerForRegistry) RemoveContainerWithVolumes(_ context.Context, _ 
 func (m *mockDockerForRegistry) ExecContainer(_ context.Context, _ string, _ []string, _ int) (int, string, error) {
 	return 0, "", nil
 }
+func (m *mockDockerForRegistry) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
+	return "", nil
+}
 func (m *mockDockerForRegistry) IsSwarmManager(_ context.Context) bool { return false }
 func (m *mockDockerForRegistry) ListServices(_ context.Context) ([]swarm.Service, error) {
 	return nil, nil
@@ -73,7 +76,14 @@ func (m *mockDockerForRegistry) ListServiceTasks(_ context.Context, _ string) ([
 func (m *mockDockerForRegistry) ListNodes(_ context.Context) ([]swarm.Node, error) {
 	return nil, nil
 }
-func (m *mockDockerForRegistry) Close() error { return nil }
+func (m *mockDockerForRegistry) ListImages(_ context.Context) ([]docker.ImageSummary, error) {
+	return nil, nil
+}
+func (m *mockDockerForRegistry) PruneImages(_ context.Context) (docker.ImagePruneResult, error) {
+	return docker.ImagePruneResult{}, nil
+}
+func (m *mockDockerForRegistry) RemoveImageByID(_ context.Context, _ string) error { return nil }
+func (m *mockDockerForRegistry) Close() error                                      { return nil }
 
 func (m *mockDockerForRegistry) ImageDigest(_ context.Context, ref string) (string, error) {
 	if err, ok := m.imageDigestErr[ref]; ok {
