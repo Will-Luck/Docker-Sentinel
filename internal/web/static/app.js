@@ -2337,6 +2337,7 @@
       if (haPrefixInput) {
         haPrefixInput.value = settings["ha_discovery_prefix"] || "homeassistant";
       }
+      updateScanPreviews();
     }).catch(function() {
     });
     var tabBtns = document.querySelectorAll(".tab-btn");
@@ -2375,6 +2376,10 @@
           }
         });
       }
+    }
+    var securityBtn = document.querySelector('[data-tab="security"]');
+    if (securityBtn && !document.querySelector(".nav-user-btn")) {
+      securityBtn.click();
     }
     if (window.loadNotificationChannels) window.loadNotificationChannels();
     if (window.loadDigestSettings) window.loadDigestSettings();
@@ -2446,20 +2451,65 @@
       text.textContent = paused ? "Paused" : "Off";
     }
   }
+  function updateScanPreviews() {
+    var el = document.getElementById("scan-schedule-preview");
+    if (el) {
+      var pauseToggle = document.getElementById("pause-toggle");
+      var cronInput = document.getElementById("cron-schedule");
+      var pollSelect = document.getElementById("poll-interval");
+      if (pauseToggle && pauseToggle.checked) {
+        el.textContent = "Paused";
+      } else if (cronInput && cronInput.value) {
+        el.textContent = "Cron: " + cronInput.value;
+      } else if (pollSelect) {
+        if (pollSelect.value === "custom") {
+          var cv = (document.getElementById("poll-custom-value") || {}).value || "";
+          var cu = (document.getElementById("poll-custom-unit") || {}).value || "";
+          el.textContent = cv && cu ? "Every " + cv + cu : "Custom";
+        } else {
+          el.textContent = "Every " + pollSelect.options[pollSelect.selectedIndex].text;
+        }
+      }
+    }
+    var el2 = document.getElementById("update-policy-preview");
+    if (el2) {
+      var policySelect = document.getElementById("default-policy");
+      var txt = "Default: " + (policySelect ? policySelect.value : "manual");
+      var mwInput = document.getElementById("maintenance-window");
+      if (mwInput && mwInput.value) {
+        txt += ", window " + mwInput.value;
+      } else {
+        var graceSelect = document.getElementById("grace-period");
+        if (graceSelect) {
+          if (graceSelect.value === "custom") {
+            var gv = (document.getElementById("grace-custom-value") || {}).value || "";
+            var gu = (document.getElementById("grace-custom-unit") || {}).value || "";
+            txt += gv && gu ? ", grace " + gv + gu : "";
+          } else {
+            txt += ", grace " + graceSelect.options[graceSelect.selectedIndex].text;
+          }
+        }
+      }
+      el2.textContent = txt;
+    }
+  }
   function onPollIntervalChange(value) {
     var wrap = document.getElementById("poll-custom-wrap");
     if (value === "custom") {
       if (wrap) wrap.style.display = "";
+      updateScanPreviews();
       return;
     }
     if (wrap) wrap.style.display = "none";
     setPollInterval(value);
+    updateScanPreviews();
   }
   function applyCustomPollInterval() {
     var unit = document.getElementById("poll-custom-unit");
     var val = document.getElementById("poll-custom-value");
     if (!unit || !val || !unit.value || !val.value) return;
     setPollInterval(val.value + unit.value);
+    updateScanPreviews();
   }
   function setPollInterval(interval) {
     fetch("/api/settings/poll-interval", {
@@ -2481,6 +2531,7 @@
     });
   }
   function setDefaultPolicy(value) {
+    updateScanPreviews();
     fetch("/api/settings/default-policy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2522,16 +2573,19 @@
     var wrap = document.getElementById("grace-custom-wrap");
     if (value === "custom") {
       if (wrap) wrap.style.display = "";
+      updateScanPreviews();
       return;
     }
     if (wrap) wrap.style.display = "none";
     setGracePeriod(value);
+    updateScanPreviews();
   }
   function applyCustomGracePeriod() {
     var unit = document.getElementById("grace-custom-unit");
     var val = document.getElementById("grace-custom-value");
     if (!unit || !val || !unit.value || !val.value) return;
     setGracePeriod(val.value + unit.value);
+    updateScanPreviews();
   }
   function setGracePeriod(duration) {
     fetch("/api/settings/grace-period", {
@@ -2554,6 +2608,7 @@
   }
   function setPauseState(paused) {
     updatePauseToggleText(paused);
+    updateScanPreviews();
     fetch("/api/settings/pause", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2640,6 +2695,7 @@
   function saveCronSchedule() {
     var input = document.getElementById("cron-schedule");
     if (!input) return;
+    updateScanPreviews();
     fetch("/api/settings/schedule", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ schedule: input.value }) }).then(function(resp) {
       return resp.json().then(function(data) {
         return { ok: resp.ok, data };
@@ -2792,6 +2848,7 @@
   function setUpdateDelay() {
     var input = document.getElementById("update-delay");
     if (!input) return;
+    updateScanPreviews();
     fetch("/api/settings/update-delay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ duration: input.value }) }).then(function(resp) {
       return resp.json().then(function(data) {
         return { ok: resp.ok, data };
@@ -2965,6 +3022,7 @@
   function saveMaintenanceWindow() {
     var input = document.getElementById("maintenance-window");
     if (!input) return;
+    updateScanPreviews();
     fetch("/api/settings/maintenance-window", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

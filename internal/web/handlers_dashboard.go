@@ -55,9 +55,10 @@ type pageData struct {
 	NextCursor string
 
 	// Auth context (populated by withAuth helper).
-	CurrentUser *auth.User
-	AuthEnabled bool
-	CSRFToken   string
+	CurrentUser     *auth.User
+	AuthEnabled     bool
+	CSRFToken       string
+	ShowSecurityTab bool // true when auth off OR (auth on + admin)
 }
 
 // tabStats holds per-tab container counts for the dashboard tab navigation.
