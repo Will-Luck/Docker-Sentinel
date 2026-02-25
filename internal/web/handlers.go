@@ -453,6 +453,8 @@ func (s *Server) withAuth(r *http.Request, data *pageData) {
 	if cookie, err := r.Cookie(auth.CSRFCookieName); err == nil {
 		data.CSRFToken = cookie.Value
 	}
+	data.ShowSecurityTab = !data.AuthEnabled ||
+		(data.CurrentUser != nil && data.CurrentUser.RoleID == "admin")
 }
 
 // withAuthDetail populates auth context fields on containerDetailData from the request.

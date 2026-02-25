@@ -352,7 +352,9 @@ function confirmAuthToggle(checkbox) {
         var confirmed = window.confirm(
             "Disable authentication?\n\n" +
             "All endpoints will be accessible without login. " +
-            "This is intended for trusted LAN usage only."
+            "User management, OIDC, and account settings will be disabled " +
+            "until authentication is re-enabled.\n\n" +
+            "You can re-enable from the Security tab at any time."
         );
         if (!confirmed) {
             checkbox.checked = true;

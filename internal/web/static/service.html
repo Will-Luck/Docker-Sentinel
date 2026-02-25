@@ -51,7 +51,7 @@
             </div>
         </div>
         {{end}}{{else}}
-        <div class="nav-auth-off">Auth: Off</div>
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
         {{end}}
     </nav>
 

@@ -99,6 +99,27 @@
     color: var(--fg-muted);
     border: 1px solid var(--border);
     border-radius: var(--radius);
+    text-decoration: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+
+.nav-auth-off:hover {
+    border-color: var(--accent);
+    color: var(--fg-secondary);
+}
+
+.accordion-disabled {
+    opacity: 0.4;
+    pointer-events: none;
+    user-select: none;
+}
+
+.auth-disabled-hint {
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+    margin: var(--sp-2) 0;
+    padding: 0 var(--sp-2);
 }
 
 
