@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -155,5 +156,5 @@ func ensureCSRFCookie(w http.ResponseWriter, r *http.Request, secure bool) {
 func writeJSONError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_, _ = w.Write([]byte(`{"error":"` + msg + `"}`))
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

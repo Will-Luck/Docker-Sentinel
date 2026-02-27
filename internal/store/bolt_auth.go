@@ -580,6 +580,27 @@ func (s *Store) DeleteAPIToken(id string) error {
 	})
 }
 
+// TouchAPIToken updates only the LastUsedAt timestamp for an API token.
+func (s *Store) TouchAPIToken(id string, t time.Time) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketAPITokens)
+		v := b.Get([]byte(id))
+		if v == nil {
+			return nil
+		}
+		var token auth.APIToken
+		if err := json.Unmarshal(v, &token); err != nil {
+			return err
+		}
+		token.LastUsedAt = t
+		data, err := json.Marshal(token)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), data)
+	})
+}
+
 // ListAPITokensForUser returns all API tokens belonging to the given user.
 func (s *Store) ListAPITokensForUser(userID string) ([]auth.APIToken, error) {
 	var tokens []auth.APIToken

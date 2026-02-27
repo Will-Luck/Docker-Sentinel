@@ -69,6 +69,22 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	// 3. Build the docker run arguments from the inspect config.
 	dockerArgs := buildDockerRunArgs(inspect)
 
+	// Collect extra networks that need docker network connect after creation.
+	var extraNetCmds string
+	if inspect.NetworkSettings != nil {
+		first := true
+		for netName := range inspect.NetworkSettings.Networks {
+			if netName == "bridge" {
+				continue
+			}
+			if first {
+				first = false // first non-bridge is in --network flag
+				continue
+			}
+			extraNetCmds += fmt.Sprintf("\necho \"Connecting to network %s...\"\ndocker network connect \"%s\" \"%s\"\n", netName, netName, selfName)
+		}
+	}
+
 	// 4. Create the helper script with all arguments embedded.
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
@@ -85,9 +101,9 @@ docker rm "%s" 2>/dev/null || true
 
 echo "Creating new container..."
 docker run -d --name "%s" %s "%s"
-
+%s
 echo "Self-update complete!"
-`, selfName, imageRef, imageRef, selfName, selfName, selfName, dockerArgs, imageRef)
+`, selfName, imageRef, imageRef, selfName, selfName, selfName, dockerArgs, imageRef, extraNetCmds)
 
 	// 5. Pull the helper image (docker:cli) — it may not be present locally.
 	const helperImage = "docker:cli"
@@ -197,12 +213,19 @@ func buildDockerRunArgs(inspect container.InspectResponse) string {
 		}
 	}
 
-	// Networks (skip default bridge).
+	// Networks (skip default bridge). docker run only accepts one --network;
+	// additional networks must be connected after container creation.
 	if inspect.NetworkSettings != nil {
+		first := true
 		for netName := range inspect.NetworkSettings.Networks {
-			if netName != "bridge" {
-				parts = append(parts, "--network "+netName)
+			if netName == "bridge" {
+				continue
 			}
+			if first {
+				parts = append(parts, "--network "+netName)
+				first = false
+			}
+			// Additional networks are handled by extraNetworks().
 		}
 	}
 

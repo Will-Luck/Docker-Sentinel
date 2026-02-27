@@ -17,7 +17,8 @@ type windowSpec struct {
 	startHour, startMin int
 	endHour, endMin     int
 	// Weekly: if >= 0, specific weekday (0=Sunday, 6=Saturday). -1 means daily.
-	weekday int
+	weekday    int
+	endWeekday int // -1 if same as weekday or unset; >= 0 for cross-day windows
 }
 
 // ParseWindow parses a maintenance window expression.
@@ -68,22 +69,39 @@ func (w *MaintenanceWindow) IsOpen(t time.Time) bool {
 }
 
 func (s windowSpec) matches(t time.Time) bool {
-	// Weekly: check weekday first.
-	if s.weekday >= 0 {
-		if int(t.Weekday()) != s.weekday {
-			return false
-		}
-	}
-
 	nowMins := t.Hour()*60 + t.Minute()
 	startMins := s.startHour*60 + s.startMin
 	endMins := s.endHour*60 + s.endMin
+	wd := int(t.Weekday())
 
+	// Daily window (no weekday constraint).
+	if s.weekday < 0 {
+		if startMins <= endMins {
+			return nowMins >= startMins && nowMins < endMins
+		}
+		return nowMins >= startMins || nowMins < endMins
+	}
+
+	// Weekly window that spans into a different weekday (e.g. "Sat 22:00-Sun 06:00").
+	if s.endWeekday >= 0 && s.endWeekday != s.weekday {
+		if wd == s.weekday {
+			// On the start day: must be at or after start time.
+			return nowMins >= startMins
+		}
+		if wd == s.endWeekday {
+			// On the end day: must be before end time.
+			return nowMins < endMins
+		}
+		return false
+	}
+
+	// Weekly window within a single weekday (e.g. "Sat 02:00-Sat 06:00").
+	if wd != s.weekday {
+		return false
+	}
 	if startMins <= endMins {
-		// Normal range: e.g. 02:00-06:00
 		return nowMins >= startMins && nowMins < endMins
 	}
-	// Midnight crossing: e.g. 23:00-05:00
 	return nowMins >= startMins || nowMins < endMins
 }
 
@@ -119,13 +137,15 @@ func parseOneWindow(expr string) (windowSpec, error) {
 		startPart = startFields[1]
 	}
 
-	// Check for weekday prefix on end (ignored for matching — we use start day)
+	// Check for weekday prefix on end.
+	endDay := -1
 	endFields := strings.Fields(endPart)
 	if len(endFields) == 2 {
-		// Validate but don't use end day (we match only start day)
-		if _, ok := weekdayNames[strings.ToLower(endFields[0])]; !ok {
+		d, ok := weekdayNames[strings.ToLower(endFields[0])]
+		if !ok {
 			return windowSpec{}, fmt.Errorf("unknown weekday %q", endFields[0])
 		}
+		endDay = d
 		endPart = endFields[1]
 	}
 
@@ -141,7 +161,8 @@ func parseOneWindow(expr string) (windowSpec, error) {
 	return windowSpec{
 		startHour: sh, startMin: sm,
 		endHour: eh, endMin: em,
-		weekday: startDay,
+		weekday:    startDay,
+		endWeekday: endDay,
 	}, nil
 }
 

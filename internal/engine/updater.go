@@ -725,6 +725,9 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		var snoozedUntil time.Time
 		if snoozeDur > 0 && notifyOK {
 			snoozedUntil = now.Add(snoozeDur)
+		} else if existing != nil && !existing.SnoozedUntil.IsZero() {
+			// Preserve existing snooze when not sending a new notification.
+			snoozedUntil = existing.SnoozedUntil
 		}
 		if err := u.store.SetNotifyState(name, &store.NotifyState{
 			LastDigest:   check.RemoteDigest,

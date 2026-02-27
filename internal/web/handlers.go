@@ -191,20 +191,27 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 			if pend, ok := s.deps.Queue.Get(n); ok && len(pend.NewerVersions) > 0 {
 				newestVersion = pend.NewerVersions[0]
 			}
+			var resolved string
+			if _, isSemver := registry.ParseSemVer(tag); !isSemver {
+				if v := c.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
+					resolved = v
+				}
+			}
 			v := containerView{
-				ID:            c.ID,
-				Name:          n,
-				Image:         c.Image,
-				Tag:           tag,
-				NewestVersion: newestVersion,
-				Policy:        policy,
-				State:         c.State,
-				Maintenance:   maintenance,
-				HasUpdate:     pendingNames[n],
-				DigestOnly:    pendingNames[n] && newestVersion == "",
-				IsSelf:        c.Labels["sentinel.self"] == "true",
-				Stack:         c.Labels["com.docker.compose.project"],
-				Registry:      registry.RegistryHost(c.Image),
+				ID:              c.ID,
+				Name:            n,
+				Image:           c.Image,
+				Tag:             tag,
+				ResolvedVersion: resolved,
+				NewestVersion:   newestVersion,
+				Policy:          policy,
+				State:           c.State,
+				Maintenance:     maintenance,
+				HasUpdate:       pendingNames[n],
+				DigestOnly:      pendingNames[n] && newestVersion == "",
+				IsSelf:          c.Labels["sentinel.self"] == "true",
+				Stack:           c.Labels["com.docker.compose.project"],
+				Registry:        registry.RegistryHost(c.Image),
 			}
 			targetView = &v
 		}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
@@ -132,6 +133,11 @@ func (c *Client) RemoveContainerWithVolumes(ctx context.Context, id string) erro
 
 // ExecContainer runs a command inside a container and returns exit code + output.
 func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		defer cancel()
+	}
 	execCfg := client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
@@ -148,10 +154,14 @@ func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, tim
 	}
 	defer attachResp.Close()
 
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, attachResp.Reader); err != nil {
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, attachResp.Reader); err != nil {
 		return -1, "", fmt.Errorf("exec read: %w", err)
 	}
+	if stderr.Len() > 0 {
+		stdout.WriteString(stderr.String())
+	}
+	buf := stdout
 
 	inspectResp, err := c.api.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {

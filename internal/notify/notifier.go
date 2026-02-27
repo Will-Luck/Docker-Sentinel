@@ -26,6 +26,7 @@ const (
 func AllEventTypes() []EventType {
 	return []EventType{
 		EventUpdateAvailable,
+		EventVersionAvailable,
 		EventUpdateStarted,
 		EventUpdateSucceeded,
 		EventUpdateFailed,
