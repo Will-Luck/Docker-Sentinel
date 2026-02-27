@@ -775,13 +775,20 @@ func configFromInspect(inspect *container.InspectResponse, targetImage string) (
 	hostCfg := inspect.HostConfig
 
 	// Rebuild NetworkingConfig from the inspect's network settings.
-	// Docker inspect returns per-network endpoint configs that we can
-	// feed directly back into container create.
+	// Only copy user-specified fields (IPAM, aliases, driver opts).
+	// Copying runtime fields (Gateway, IPAddress, etc.) causes conflicts
+	// when Docker tries to assign them on the new container.
 	netCfg := &network.NetworkingConfig{}
 	if inspect.NetworkSettings != nil && len(inspect.NetworkSettings.Networks) > 0 {
 		netCfg.EndpointsConfig = make(map[string]*network.EndpointSettings, len(inspect.NetworkSettings.Networks))
 		for name, ep := range inspect.NetworkSettings.Networks {
-			netCfg.EndpointsConfig[name] = ep
+			netCfg.EndpointsConfig[name] = &network.EndpointSettings{
+				IPAMConfig: ep.IPAMConfig,
+				Aliases:    ep.Aliases,
+				DriverOpts: ep.DriverOpts,
+				NetworkID:  ep.NetworkID,
+				MacAddress: ep.MacAddress,
+			}
 		}
 	}
 

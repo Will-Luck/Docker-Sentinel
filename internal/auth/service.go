@@ -48,6 +48,7 @@ type APITokenStore interface {
 	GetAPITokenByHash(hash string) (*APIToken, error)
 	DeleteAPIToken(id string) error
 	ListAPITokensForUser(userID string) ([]APIToken, error)
+	TouchAPIToken(id string, t time.Time) error
 }
 
 // PendingTOTPStore persists temporary TOTP tokens for the 2-step login flow.
@@ -338,8 +339,9 @@ func (s *Service) ValidateBearerToken(ctx context.Context, rawToken string) *Req
 	perms := ResolvePermissions(role, apiToken.Permissions)
 
 	// Update last used timestamp (best effort).
-	apiToken.LastUsedAt = time.Now().UTC()
-	// Don't error-check — this is best-effort tracking.
+	now := time.Now().UTC()
+	apiToken.LastUsedAt = now
+	_ = s.Tokens.TouchAPIToken(apiToken.ID, now)
 
 	return &RequestContext{
 		User:        user,

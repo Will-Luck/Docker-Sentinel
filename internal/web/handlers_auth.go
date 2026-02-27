@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -78,7 +79,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		if isJSON {
 			writeError(w, code, msg)
 		} else {
-			http.Redirect(w, r, "/login?error="+msg, http.StatusSeeOther)
+			http.Redirect(w, r, "/login?error="+url.QueryEscape(msg), http.StatusSeeOther)
 		}
 	}
 
@@ -893,7 +894,7 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		desc := r.URL.Query().Get("error_description")
 		s.deps.Log.Warn("OIDC login error from IdP", "error", errParam, "description", desc)
-		http.Redirect(w, r, "/login?error=SSO+login+failed:+"+errParam, http.StatusSeeOther)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("SSO login failed: "+errParam), http.StatusSeeOther)
 		return
 	}
 
@@ -920,7 +921,7 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		s.deps.Log.Warn("OIDC login failed", "error", err, "username", userInfo.Username)
-		http.Redirect(w, r, "/login?error=SSO+login+failed:+"+err.Error(), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("SSO login failed: "+err.Error()), http.StatusSeeOther)
 		return
 	}
 
