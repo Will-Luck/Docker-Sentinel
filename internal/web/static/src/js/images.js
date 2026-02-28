@@ -127,10 +127,16 @@ export function toggleSelectAll() {
     updateBulkBar();
 }
 
+var _deleting = false;
+
 export async function removeSelectedImages() {
     var count = _selectedIds.size;
-    if (count === 0) return;
+    if (count === 0 || _deleting) return;
     if (!confirm('Remove ' + count + ' selected image' + (count > 1 ? 's' : '') + '? This cannot be undone.')) return;
+
+    _deleting = true;
+    var removeBtn = document.querySelector('#images-bulk-bar .btn-danger');
+    if (removeBtn) removeBtn.disabled = true;
 
     var ids = Array.from(_selectedIds);
     var removed = 0;
@@ -141,6 +147,9 @@ export async function removeSelectedImages() {
             if (resp.ok) { removed++; } else { failed++; }
         } catch (_) { failed++; }
     }
+
+    _deleting = false;
+    if (removeBtn) removeBtn.disabled = false;
 
     if (window.showToast) {
         if (failed > 0) {

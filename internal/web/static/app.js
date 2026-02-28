@@ -4708,10 +4708,14 @@
     renderImagesTable();
     updateBulkBar();
   }
+  var _deleting = false;
   async function removeSelectedImages() {
     var count = _selectedIds.size;
-    if (count === 0) return;
+    if (count === 0 || _deleting) return;
     if (!confirm("Remove " + count + " selected image" + (count > 1 ? "s" : "") + "? This cannot be undone.")) return;
+    _deleting = true;
+    var removeBtn = document.querySelector("#images-bulk-bar .btn-danger");
+    if (removeBtn) removeBtn.disabled = true;
     var ids = Array.from(_selectedIds);
     var removed = 0;
     var failed = 0;
@@ -4727,6 +4731,8 @@
         failed++;
       }
     }
+    _deleting = false;
+    if (removeBtn) removeBtn.disabled = false;
     if (window.showToast) {
       if (failed > 0) {
         window.showToast("Removed " + removed + ", failed " + failed, "warning");
