@@ -585,6 +585,12 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		a.log.Info("update succeeded", "name", name, "old_image", oldImage, "new_digest", newDigest, "duration", dur)
 	}
 
+	// Push a fresh container list BEFORE the result so the server cache
+	// reflects the updated image/digest when the SSE-triggered row fetch
+	// arrives. gRPC stream messages are processed in order, so the cache
+	// update will complete before handleUpdateResult fires the SSE event.
+	_ = a.handleListContainers(ctx, stream, "")
+
 	msg := &proto.AgentMessage{
 		Payload: &proto.AgentMessage_UpdateResult{
 			UpdateResult: result,
