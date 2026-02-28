@@ -327,8 +327,17 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 			// Delay clearing so the SSE-triggered row fetch still sees Maintenance=true.
 			// The SSE event is published by handleUpdateResult before deliverPending
 			// unblocks this goroutine, but the browser needs time to receive it and
-			// fetch the updated row HTML.
-			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(hostID, name) })
+			// fetch the updated row HTML. After clearing, fire a second SSE event
+			// so the row refreshes to show "Running" instead of lingering on "Updating".
+			time.AfterFunc(5*time.Second, func() {
+				s.clearRemoteUpdating(hostID, name)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerState,
+					ContainerName: name,
+					HostID:        hostID,
+					Timestamp:     time.Now(),
+				})
+			})
 		}()
 
 		s.logEvent(r, "update", name, "Remote update triggered on "+hostID)
