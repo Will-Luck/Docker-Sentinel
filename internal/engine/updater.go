@@ -493,6 +493,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	// Check Swarm mode and cache the services list once per scan,
 	// avoiding duplicate IsSwarmManager + ListServices API calls.
 	isSwarm := u.docker.IsSwarmManager(ctx)
+	u.log.Debug("swarm check", "isSwarm", isSwarm)
 	var swarmServices []swarm.Service
 	if isSwarm {
 		var svcErr error
@@ -501,6 +502,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			u.log.Error("failed to list services", "error", svcErr)
 			result.Errors = append(result.Errors, svcErr)
 		}
+		u.log.Debug("swarm services listed", "count", len(swarmServices))
 	}
 
 	// Prune queue entries for containers/services that no longer exist.
@@ -568,16 +570,12 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 
 		// Rate limit check: skip if registry quota is too low.
+		// Continue to next container — other registries may still be available.
 		imageRef := c.Image
 		if u.rateTracker != nil {
 			host := registry.RegistryHost(imageRef)
 			canProceed, wait := u.rateTracker.CanProceed(host, reserve)
 			if !canProceed {
-				if mode == ScanManual {
-					u.log.Warn("rate limit exhausted, stopping manual scan", "registry", host, "resets_in", wait)
-					result.RateLimited++
-					break // manual scan: stop entirely
-				}
 				u.log.Debug("rate limit low, skipping container", "name", name, "registry", host, "resets_in", wait)
 				_ = u.store.RecordUpdate(store.UpdateRecord{
 					Timestamp:     u.clock.Now(),

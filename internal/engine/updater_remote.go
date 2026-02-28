@@ -94,18 +94,13 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		}
 
 		// Rate limit check (shared server-side pool).
+		// Skip this container but keep scanning — other registries may be available.
 		if u.rateTracker != nil {
 			regHost := registry.RegistryHost(c.Image)
 			canProceed, wait := u.rateTracker.CanProceed(regHost, reserve)
 			if !canProceed {
-				if mode == ScanManual {
-					u.log.Warn("rate limit exhausted during remote scan, stopping",
-						"registry", regHost, "resets_in", wait)
-					result.RateLimited++
-					return
-				}
 				u.log.Debug("rate limit low, skipping remote container",
-					"host", host.HostName, "name", c.Name, "registry", regHost)
+					"host", host.HostName, "name", c.Name, "registry", regHost, "resets_in", wait)
 				result.RateLimited++
 				continue
 			}
@@ -329,14 +324,8 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 			regHost := registry.RegistryHost(c.Image)
 			canProceed, wait := u.rateTracker.CanProceed(regHost, reserve)
 			if !canProceed {
-				if mode == ScanManual {
-					u.log.Warn("rate limit exhausted during Portainer scan, stopping",
-						"registry", regHost, "resets_in", wait)
-					result.RateLimited++
-					return
-				}
 				u.log.Debug("rate limit low, skipping Portainer container",
-					"endpoint", ep.Name, "name", c.Name, "registry", regHost)
+					"endpoint", ep.Name, "name", c.Name, "registry", regHost, "resets_in", wait)
 				result.RateLimited++
 				continue
 			}
