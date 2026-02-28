@@ -814,7 +814,15 @@ func (a *Agent) listLocalContainers(ctx context.Context) ([]*proto.ContainerInfo
 		if _, isTask := summaries[i].Labels["com.docker.swarm.task"]; isTask {
 			continue
 		}
-		out = append(out, containerInfoFromSummary(&summaries[i]))
+		ci := containerInfoFromSummary(&summaries[i])
+
+		// Populate the image digest so the server can compare against
+		// the registry without needing the image locally.
+		if digest, err := a.docker.ImageDigest(ctx, summaries[i].Image); err == nil {
+			ci.ImageDigest = digest
+		}
+
+		out = append(out, ci)
 	}
 	return out, nil
 }
