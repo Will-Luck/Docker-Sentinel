@@ -81,7 +81,7 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 				first = false // first non-bridge is in --network flag
 				continue
 			}
-			extraNetCmds += fmt.Sprintf("\necho \"Connecting to network %s...\"\ndocker network connect \"%s\" \"%s\"\n", netName, netName, selfName)
+			extraNetCmds += fmt.Sprintf("\necho \"Connecting to network %s...\"\ndocker network connect \"%s\" \"%s\" || echo \"Warning: failed to connect to network %s\"\n", netName, netName, selfName, netName)
 		}
 	}
 

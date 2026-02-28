@@ -124,6 +124,74 @@ func TestParseWindow_WeeklyWindow(t *testing.T) {
 	}
 }
 
+func TestParseWindow_WeeklyCrossDay(t *testing.T) {
+	// "Sat 22:00-Sun 06:00" — window that spans across midnight into a different weekday.
+	w, err := ParseWindow("Sat 22:00-Sun 06:00")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 2025-01-04 is Saturday, 2025-01-05 is Sunday, 2025-01-03 is Friday.
+	tests := []struct {
+		name   string
+		time   time.Time
+		expect bool
+	}{
+		{"Saturday at 22:00 (start inclusive)", makeTime(2025, 1, 4, 22, 0), true},
+		{"Saturday at 23:00 (inside)", makeTime(2025, 1, 4, 23, 0), true},
+		{"Saturday at 23:59 (inside)", makeTime(2025, 1, 4, 23, 59), true},
+		{"Sunday at 00:00 (inside)", makeTime(2025, 1, 5, 0, 0), true},
+		{"Sunday at 04:00 (inside)", makeTime(2025, 1, 5, 4, 0), true},
+		{"Sunday at 05:59 (inside)", makeTime(2025, 1, 5, 5, 59), true},
+		{"Sunday at 06:00 (end exclusive)", makeTime(2025, 1, 5, 6, 0), false},
+		{"Sunday at 12:00 (outside)", makeTime(2025, 1, 5, 12, 0), false},
+		{"Saturday at 21:59 (before start)", makeTime(2025, 1, 4, 21, 59), false},
+		{"Saturday at 12:00 (outside)", makeTime(2025, 1, 4, 12, 0), false},
+		{"Friday at 23:00 (wrong day)", makeTime(2025, 1, 3, 23, 0), false},
+		{"Monday at 03:00 (wrong day)", makeTime(2025, 1, 6, 3, 0), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := w.IsOpen(tt.time)
+			if got != tt.expect {
+				t.Errorf("IsOpen(%v) = %v, want %v (weekday=%v)", tt.time, got, tt.expect, tt.time.Weekday())
+			}
+		})
+	}
+}
+
+func TestParseWindow_WeeklyCrossDayFriSat(t *testing.T) {
+	// Different cross-day pair to ensure it's not Saturday-specific.
+	w, err := ParseWindow("Fri 23:00-Sat 02:00")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 2025-01-03 is Friday, 2025-01-04 is Saturday.
+	tests := []struct {
+		name   string
+		time   time.Time
+		expect bool
+	}{
+		{"Friday at 23:30 (inside)", makeTime(2025, 1, 3, 23, 30), true},
+		{"Friday at 23:00 (start inclusive)", makeTime(2025, 1, 3, 23, 0), true},
+		{"Saturday at 01:00 (inside)", makeTime(2025, 1, 4, 1, 0), true},
+		{"Saturday at 02:00 (end exclusive)", makeTime(2025, 1, 4, 2, 0), false},
+		{"Friday at 22:59 (before start)", makeTime(2025, 1, 3, 22, 59), false},
+		{"Sunday at 00:00 (wrong day)", makeTime(2025, 1, 5, 0, 0), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := w.IsOpen(tt.time)
+			if got != tt.expect {
+				t.Errorf("IsOpen(%v) = %v, want %v (weekday=%v)", tt.time, got, tt.expect, tt.time.Weekday())
+			}
+		})
+	}
+}
+
 func TestParseWindow_WeeklyShortNames(t *testing.T) {
 	// Test various weekday name formats.
 	cases := []struct {
