@@ -70,6 +70,15 @@
             </div>
         </div>
 
+        <div class="filter-bar" id="history-filter-bar">
+            <button class="filter-pill history-filter-pill active" data-outcome="all" onclick="filterHistory('all')">All</button>
+            <button class="filter-pill history-filter-pill" data-outcome="success" onclick="filterHistory('success')">Success</button>
+            <button class="filter-pill history-filter-pill" data-outcome="failed" onclick="filterHistory('failed')">Failed</button>
+            <button class="filter-pill history-filter-pill" data-outcome="rollback" onclick="filterHistory('rollback')">Rollback</button>
+            <button class="filter-pill history-filter-pill" data-outcome="skipped" onclick="filterHistory('skipped')">Skipped</button>
+            <button class="filter-pill history-filter-pill" data-outcome="other" onclick="filterHistory('other')">Other</button>
+        </div>
+
         <div class="card">
             <div class="card-header">
                 <h2>Recent Updates ({{len .History}})</h2>
@@ -87,7 +96,7 @@
                     <tbody>
                         {{if .History}}
                             {{range $i, $r := .History}}
-                            <tr class="container-row" onclick="onRowClick(event, 'history-{{$i}}')">
+                            <tr class="container-row history-row" data-outcome="{{$r.Outcome}}" onclick="onRowClick(event, 'history-{{$i}}')">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
                                 <td><a href="{{serviceOrContainer $r.Type $r.ContainerName $r.HostID}}" class="container-link">{{$r.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td>
@@ -168,6 +177,44 @@
     <script src="/static/auth.js"></script>
     <script>
     var lastHistoryTimestamp = '{{.NextCursor}}';
+    var _historyFilter = 'all';
+
+    var OUTCOME_GROUPS = {
+        success:  ['success'],
+        failed:   ['failed', 'rollback_failed'],
+        rollback: ['rollback', 'rollback_success'],
+        skipped:  ['skipped'],
+        other:    ['dry_run', 'pull_only', 'finalise_warning']
+    };
+
+    function filterHistory(filter) {
+        _historyFilter = filter;
+        var pills = document.querySelectorAll('.history-filter-pill');
+        for (var i = 0; i < pills.length; i++) {
+            pills[i].classList.toggle('active', pills[i].getAttribute('data-outcome') === filter);
+        }
+        var rows = document.querySelectorAll('.history-row');
+        var shown = 0;
+        for (var i = 0; i < rows.length; i++) {
+            var outcome = rows[i].getAttribute('data-outcome');
+            var match = filter === 'all' || (OUTCOME_GROUPS[filter] && OUTCOME_GROUPS[filter].indexOf(outcome) >= 0);
+            rows[i].style.display = match ? '' : 'none';
+            // Also hide the accordion panel for hidden rows.
+            var panel = rows[i].nextElementSibling;
+            if (panel && panel.classList.contains('accordion-panel')) {
+                if (!match) panel.style.display = 'none';
+            }
+            if (match) shown++;
+        }
+        var header = document.querySelector('.card-header h2');
+        if (header) {
+            var total = rows.length;
+            header.textContent = filter === 'all'
+                ? 'Recent Updates (' + total + ')'
+                : 'Recent Updates (' + shown + ' of ' + total + ')';
+        }
+    }
+    window.filterHistory = filterHistory;
 
     function loadMoreHistory() {
         if (!lastHistoryTimestamp) return;
@@ -188,8 +235,14 @@
                 records.forEach(function(r, i) {
                     var idx = existingCount + i;
                     var tr = document.createElement('tr');
-                    tr.className = 'container-row';
+                    tr.className = 'container-row history-row';
+                    tr.setAttribute('data-outcome', r.outcome || '');
                     tr.setAttribute('onclick', "onRowClick(event, 'history-" + idx + "')");
+                    // Respect active filter.
+                    if (_historyFilter !== 'all') {
+                        var grp = OUTCOME_GROUPS[_historyFilter] || [];
+                        if (grp.indexOf(r.outcome) < 0) tr.style.display = 'none';
+                    }
                     var ts = new Date(r.timestamp);
                     var ago = timeAgoHist(ts);
                     var dur = r.duration ? (r.duration / 1e9).toFixed(1) + 's' : '-';
@@ -255,10 +308,8 @@
                 lastHistoryTimestamp = records[records.length - 1].timestamp;
                 btn.textContent = 'Load more';
                 btn.disabled = false;
-                var header = document.querySelector('.card-header h2');
-                if (header) {
-                    header.textContent = 'Recent Updates (' + document.querySelectorAll('.container-row').length + ')';
-                }
+                // Reapply current filter to update counts.
+                filterHistory(_historyFilter);
             })
             .catch(function() {
                 btn.textContent = 'Load more';

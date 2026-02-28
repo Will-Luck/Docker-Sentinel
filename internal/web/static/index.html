@@ -297,12 +297,6 @@
                                         Update
                                     </button>
                                 {{end}}
-                                {{if eq .UpdateStatus "completed"}}
-                                    <button class="btn btn-sm"
-                                            onclick="event.stopPropagation(); rollbackSvc('{{.Name}}', event)">
-                                        Rollback
-                                    </button>
-                                {{end}}
                                     <a href="/service/{{.Name}}" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>
                                 </div>
                             </td>

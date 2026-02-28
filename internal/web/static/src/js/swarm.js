@@ -234,29 +234,19 @@ function refreshServiceRow(name) {
                 var actionCell = header.querySelector("td:last-child .btn-group");
                 if (actionCell) {
                     var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
-                    var isRolling  = window._svcLoadingBtns && window._svcLoadingBtns["rb:" + name];
                     var btns = "";
                     if (svc.HasUpdate && svc.Policy !== "pinned") {
                         btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? ' loading' : '') + '"' +
                             (isUpdating ? ' disabled' : '') +
                             ' onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHtml(name) + '\', event)">Update</button>';
                     }
-                    if (svc.UpdateStatus === "completed") {
-                        btns += '<button class="btn btn-sm' + (isRolling ? ' loading' : '') + '"' +
-                            (isRolling ? ' disabled' : '') +
-                            ' onclick="event.stopPropagation(); rollbackSvc(\'' + escapeHtml(name) + '\', event)">Rollback</button>';
-                    }
+                    // Rollback only available on service detail page — not on dashboard.
                     btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
                     actionCell.innerHTML = btns;
 
-                    // Update the tracked button references to the new DOM elements.
                     if (isUpdating) {
                         var newBtn = actionCell.querySelector(".btn-warning");
                         if (newBtn) window._svcLoadingBtns[name] = newBtn;
-                    }
-                    if (isRolling) {
-                        var newRbBtn = actionCell.querySelector(".btn:not(.btn-warning)");
-                        if (newRbBtn) window._svcLoadingBtns["rb:" + name] = newRbBtn;
                     }
                 }
             }
@@ -268,13 +258,9 @@ function refreshServiceRow(name) {
             // rendered at all, naturally clearing the spinner.
             // We only force-clear here if the button is gone from the DOM entirely.
             if (window._svcLoadingBtns) {
-                var keys = [name, "rb:" + name];
-                for (var k = 0; k < keys.length; k++) {
-                    var b = window._svcLoadingBtns[keys[k]];
-                    if (b && !b.isConnected) {
-                        // Button was removed from DOM (e.g. update completed, no longer shown).
-                        delete window._svcLoadingBtns[keys[k]];
-                    }
+                var b = window._svcLoadingBtns[name];
+                if (b && !b.isConnected) {
+                    delete window._svcLoadingBtns[name];
                 }
             }
 

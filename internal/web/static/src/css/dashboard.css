@@ -917,3 +917,51 @@ table.managing .td-checkbox {
     background: var(--success);
     color: #fff;
 }
+
+
+/* --------------------------------------------------------------------------
+   28. Images Page — tag layout, table sizing
+   -------------------------------------------------------------------------- */
+
+.table-images {
+    table-layout: fixed;
+}
+.table-images th:nth-child(1),
+.table-images td:nth-child(1) { width: 30%; }  /* Repo Tags */
+.table-images th:nth-child(2),
+.table-images td:nth-child(2) { width: 14%; }  /* Image ID */
+.table-images th:nth-child(3),
+.table-images td:nth-child(3) { width: 10%; }  /* Size */
+.table-images th:nth-child(4),
+.table-images td:nth-child(4) { width: 12%; }  /* Created */
+.table-images th:nth-child(5),
+.table-images td:nth-child(5) { width: 12%; }  /* Status */
+.table-images th:nth-child(6),
+.table-images td:nth-child(6) { width: 10%; }  /* Actions */
+
+.cell-image-tags {
+    word-break: break-all;
+}
+.image-tag {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    padding: 1px 4px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    margin-bottom: 2px;
+}
+.cell-image-id { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-image-size { white-space: nowrap; }
+
+.filter-divider {
+    display: inline-block;
+    width: 1px;
+    height: 1.2em;
+    background: var(--border);
+    margin: 0 var(--sp-2);
+    vertical-align: middle;
+}
