@@ -173,8 +173,20 @@ import {
 import {
     loadImages,
     pruneImages,
-    removeImage
+    removeImage,
+    filterImages,
+    sortImages,
+    toggleManageMode as toggleImageManageMode,
+    toggleImageSelect,
+    toggleSelectAll as toggleImageSelectAll,
+    removeSelectedImages
 } from "./images.js";
+
+import {
+    loadActivityLogs,
+    filterLogs,
+    exportLogs
+} from "./logs.js";
 
 // Wire updateStats into dashboard module (avoids circular import).
 setUpdateStatsFn(updateStats);
@@ -329,6 +341,17 @@ window.loadReleaseSources = loadReleaseSources;
 window.loadImages = loadImages;
 window.pruneImages = pruneImages;
 window.removeImage = removeImage;
+window.filterImages = filterImages;
+window.sortImages = sortImages;
+window.toggleImageManageMode = toggleImageManageMode;
+window.toggleImageSelect = toggleImageSelect;
+window.toggleImageSelectAll = toggleImageSelectAll;
+window.removeSelectedImages = removeSelectedImages;
+
+// Activity Logs
+window.loadActivityLogs = loadActivityLogs;
+window.filterLogs = filterLogs;
+window.exportLogs = exportLogs;
 
 /* ------------------------------------------------------------
    12. Initialisation

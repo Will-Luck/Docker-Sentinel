@@ -65,13 +65,23 @@
                 <p class="subtitle" id="images-summary">Loading...</p>
             </div>
             <div class="page-header-actions">
+                <button class="btn" id="manage-btn" onclick="toggleImageManageMode()">Manage</button>
                 <button class="btn btn-warning" onclick="pruneImages()">Prune Dangling</button>
             </div>
         </div>
 
+        <div class="filter-bar">
+            <button class="filter-pill images-filter-pill active" data-filter="all" onclick="filterImages('all')">All</button>
+            <button class="filter-pill images-filter-pill" data-filter="in-use" onclick="filterImages('in-use')">In Use</button>
+            <button class="filter-pill images-filter-pill" data-filter="unused" onclick="filterImages('unused')">Unused</button>
+            <span class="filter-divider"></span>
+            <button class="filter-pill images-sort-pill active" data-sort="default" onclick="sortImages('default')">Status</button>
+            <button class="filter-pill images-sort-pill" data-sort="alpha" onclick="sortImages('alpha')">A-Z</button>
+        </div>
+
         <div class="card">
             <div class="table-wrap">
-                <table class="table-logs">
+                <table class="table-logs table-images">
                     <thead>
                         <tr>
                             <th>Repository Tags</th>
@@ -87,6 +97,13 @@
                     </tbody>
                 </table>
             </div>
+        </div>
+
+        <!-- Bulk action bar for manage mode -->
+        <div id="images-bulk-bar" class="bulk-bar" style="display:none">
+            <span class="bulk-count">0 selected</span>
+            <button class="btn btn-danger btn-sm" onclick="removeSelectedImages()">Remove Selected</button>
+            <button class="btn btn-sm" onclick="toggleImageManageMode()">Cancel</button>
         </div>
     </main>
 

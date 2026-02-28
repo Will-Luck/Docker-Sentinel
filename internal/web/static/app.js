@@ -1593,13 +1593,9 @@
         var actionCell = header.querySelector("td:last-child .btn-group");
         if (actionCell) {
           var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
-          var isRolling = window._svcLoadingBtns && window._svcLoadingBtns["rb:" + name];
           var btns = "";
           if (svc.HasUpdate && svc.Policy !== "pinned") {
             btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? " loading" : "") + '"' + (isUpdating ? " disabled" : "") + ` onclick="event.stopPropagation(); triggerSvcUpdate('` + escapeHtml2(name) + `', event)">Update</button>`;
-          }
-          if (svc.UpdateStatus === "completed") {
-            btns += '<button class="btn btn-sm' + (isRolling ? " loading" : "") + '"' + (isRolling ? " disabled" : "") + ` onclick="event.stopPropagation(); rollbackSvc('` + escapeHtml2(name) + `', event)">Rollback</button>`;
           }
           btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
           actionCell.innerHTML = btns;
@@ -1607,19 +1603,12 @@
             var newBtn = actionCell.querySelector(".btn-warning");
             if (newBtn) window._svcLoadingBtns[name] = newBtn;
           }
-          if (isRolling) {
-            var newRbBtn = actionCell.querySelector(".btn:not(.btn-warning)");
-            if (newRbBtn) window._svcLoadingBtns["rb:" + name] = newRbBtn;
-          }
         }
       }
       if (window._svcLoadingBtns) {
-        var keys = [name, "rb:" + name];
-        for (var k = 0; k < keys.length; k++) {
-          var b = window._svcLoadingBtns[keys[k]];
-          if (b && !b.isConnected) {
-            delete window._svcLoadingBtns[keys[k]];
-          }
+        var b = window._svcLoadingBtns[name];
+        if (b && !b.isConnected) {
+          delete window._svcLoadingBtns[name];
         }
       }
       var taskRows = group.querySelectorAll(".svc-task-row");
@@ -4602,48 +4591,232 @@
   }
 
   // internal/web/static/src/js/images.js
+  var _allImages = [];
+  var _currentFilter = "all";
+  var _currentSort = "default";
+  var _manageMode = false;
+  var _selectedIds = /* @__PURE__ */ new Set();
   async function loadImages() {
     try {
       var resp = await fetch("/api/images");
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       var data = await resp.json();
-      renderImagesTable(data.images || []);
+      _allImages = data.images || [];
+      renderImagesTable();
     } catch (err) {
       console.error("Failed to load images:", err);
     }
   }
-  function renderImagesTable(images) {
+  function filterImages(filter) {
+    _currentFilter = filter;
+    var pills = document.querySelectorAll(".images-filter-pill");
+    for (var i = 0; i < pills.length; i++) {
+      pills[i].classList.toggle("active", pills[i].getAttribute("data-filter") === filter);
+    }
+    renderImagesTable();
+  }
+  function sortImages(sort) {
+    _currentSort = sort;
+    var pills = document.querySelectorAll(".images-sort-pill");
+    for (var i = 0; i < pills.length; i++) {
+      pills[i].classList.toggle("active", pills[i].getAttribute("data-sort") === sort);
+    }
+    renderImagesTable();
+  }
+  function getFilteredAndSorted() {
+    var filtered = _allImages;
+    if (_currentFilter === "in-use") {
+      filtered = _allImages.filter(function(img) {
+        return img.in_use;
+      });
+    } else if (_currentFilter === "unused") {
+      filtered = _allImages.filter(function(img) {
+        return !img.in_use;
+      });
+    }
+    filtered = filtered.slice();
+    if (_currentSort === "alpha") {
+      filtered.sort(function(a, b) {
+        var tagA = a.repo_tags && a.repo_tags.length > 0 ? a.repo_tags[0].toLowerCase() : "zzz";
+        var tagB = b.repo_tags && b.repo_tags.length > 0 ? b.repo_tags[0].toLowerCase() : "zzz";
+        return tagA < tagB ? -1 : tagA > tagB ? 1 : 0;
+      });
+    } else {
+      filtered.sort(function(a, b) {
+        if (a.in_use !== b.in_use) return a.in_use ? -1 : 1;
+        return b.created - a.created;
+      });
+    }
+    return filtered;
+  }
+  function toggleManageMode2() {
+    _manageMode = !_manageMode;
+    _selectedIds.clear();
+    var btn = document.getElementById("manage-btn");
+    if (btn) btn.textContent = _manageMode ? "Cancel" : "Manage";
+    updateBulkBar();
+    renderImagesTable();
+  }
+  function updateBulkBar() {
+    var bar = document.getElementById("images-bulk-bar");
+    if (!bar) return;
+    if (_manageMode && _selectedIds.size > 0) {
+      bar.style.display = "flex";
+      var countEl = bar.querySelector(".bulk-count");
+      if (countEl) countEl.textContent = _selectedIds.size + " selected";
+    } else {
+      bar.style.display = "none";
+    }
+  }
+  function toggleImageSelect(id) {
+    if (_selectedIds.has(id)) {
+      _selectedIds.delete(id);
+    } else {
+      _selectedIds.add(id);
+    }
+    var cb = document.querySelector('input[data-image-id="' + CSS.escape(id) + '"]');
+    if (cb) cb.checked = _selectedIds.has(id);
+    var selectAll = document.getElementById("images-select-all");
+    if (selectAll) {
+      var visible = getFilteredAndSorted().filter(function(img) {
+        return !img.in_use;
+      });
+      selectAll.checked = visible.length > 0 && visible.every(function(img) {
+        return _selectedIds.has(img.id);
+      });
+    }
+    updateBulkBar();
+  }
+  function toggleSelectAll() {
+    var visible = getFilteredAndSorted().filter(function(img) {
+      return !img.in_use;
+    });
+    var allSelected = visible.length > 0 && visible.every(function(img) {
+      return _selectedIds.has(img.id);
+    });
+    if (allSelected) {
+      visible.forEach(function(img) {
+        _selectedIds.delete(img.id);
+      });
+    } else {
+      visible.forEach(function(img) {
+        _selectedIds.add(img.id);
+      });
+    }
+    renderImagesTable();
+    updateBulkBar();
+  }
+  async function removeSelectedImages() {
+    var count = _selectedIds.size;
+    if (count === 0) return;
+    if (!confirm("Remove " + count + " selected image" + (count > 1 ? "s" : "") + "? This cannot be undone.")) return;
+    var ids = Array.from(_selectedIds);
+    var removed = 0;
+    var failed = 0;
+    for (var i = 0; i < ids.length; i++) {
+      try {
+        var resp = await fetch("/api/images/" + encodeURIComponent(ids[i]), { method: "DELETE" });
+        if (resp.ok) {
+          removed++;
+        } else {
+          failed++;
+        }
+      } catch (_) {
+        failed++;
+      }
+    }
+    if (window.showToast) {
+      if (failed > 0) {
+        window.showToast("Removed " + removed + ", failed " + failed, "warning");
+      } else {
+        window.showToast("Removed " + removed + " image" + (removed > 1 ? "s" : ""));
+      }
+    }
+    _selectedIds.clear();
+    _manageMode = false;
+    var btn = document.getElementById("manage-btn");
+    if (btn) btn.textContent = "Manage";
+    updateBulkBar();
+    loadImages();
+  }
+  function renderImagesTable() {
     var tbody = document.getElementById("images-tbody");
     if (!tbody) return;
     while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    var images = getFilteredAndSorted();
     if (images.length === 0) {
       var emptyRow = document.createElement("tr");
       var emptyCell = document.createElement("td");
-      emptyCell.colSpan = 6;
+      emptyCell.colSpan = _manageMode ? 7 : 6;
       emptyCell.style.textAlign = "center";
       emptyCell.style.padding = "2rem";
       emptyCell.style.color = "var(--text-secondary)";
-      emptyCell.textContent = "No images found";
+      emptyCell.textContent = _currentFilter !== "all" ? "No " + _currentFilter + " images" : "No images found";
       emptyRow.appendChild(emptyCell);
       tbody.appendChild(emptyRow);
       return;
     }
-    images.sort(function(a, b) {
-      return b.created - a.created;
-    });
-    var totalSize = images.reduce(function(sum, img2) {
+    var totalSize = _allImages.reduce(function(sum, img2) {
       return sum + img2.size;
     }, 0);
+    var inUse = _allImages.filter(function(img2) {
+      return img2.in_use;
+    }).length;
     var summaryEl = document.getElementById("images-summary");
     if (summaryEl) {
-      summaryEl.textContent = images.length + " images, " + formatBytes(totalSize) + " total";
+      summaryEl.textContent = _allImages.length + " images (" + inUse + " in use), " + formatBytes(totalSize) + " total";
+    }
+    var thead = tbody.closest("table").querySelector("thead tr");
+    var existingTh = thead ? thead.querySelector(".th-select") : null;
+    if (_manageMode && !existingTh && thead) {
+      var th = document.createElement("th");
+      th.className = "th-select";
+      th.style.width = "40px";
+      var selectAll = document.createElement("input");
+      selectAll.type = "checkbox";
+      selectAll.id = "images-select-all";
+      selectAll.title = "Select all unused";
+      selectAll.addEventListener("change", function() {
+        toggleSelectAll();
+      });
+      th.appendChild(selectAll);
+      thead.insertBefore(th, thead.firstChild);
+    } else if (!_manageMode && existingTh) {
+      existingTh.remove();
     }
     for (var i = 0; i < images.length; i++) {
       var img = images[i];
       var row = document.createElement("tr");
+      if (_manageMode) {
+        var checkCell = document.createElement("td");
+        checkCell.className = "td-checkbox";
+        if (!img.in_use) {
+          var cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = _selectedIds.has(img.id);
+          cb.setAttribute("data-image-id", img.id);
+          cb.addEventListener("change", /* @__PURE__ */ (function(id) {
+            return function() {
+              toggleImageSelect(id);
+            };
+          })(img.id));
+          checkCell.appendChild(cb);
+        }
+        row.appendChild(checkCell);
+      }
       var tagsCell = document.createElement("td");
+      tagsCell.className = "cell-image-tags";
       if (img.repo_tags && img.repo_tags.length > 0) {
-        tagsCell.textContent = img.repo_tags.join(", ");
+        for (var t = 0; t < img.repo_tags.length; t++) {
+          var tagSpan = document.createElement("code");
+          tagSpan.className = "image-tag";
+          tagSpan.textContent = img.repo_tags[t];
+          tagSpan.title = img.repo_tags[t];
+          tagsCell.appendChild(tagSpan);
+          if (t < img.repo_tags.length - 1) {
+            tagsCell.appendChild(document.createElement("br"));
+          }
+        }
       } else {
         var noneSpan = document.createElement("span");
         noneSpan.className = "text-muted";
@@ -4652,12 +4825,14 @@
       }
       row.appendChild(tagsCell);
       var idCell = document.createElement("td");
+      idCell.className = "cell-image-id";
       var code = document.createElement("code");
       code.title = img.id;
       code.textContent = img.id.replace("sha256:", "").substring(0, 12);
       idCell.appendChild(code);
       row.appendChild(idCell);
       var sizeCell = document.createElement("td");
+      sizeCell.className = "cell-image-size";
       sizeCell.textContent = formatBytes(img.size);
       row.appendChild(sizeCell);
       var createdCell = document.createElement("td");
@@ -4671,21 +4846,23 @@
       useCell.appendChild(badge);
       row.appendChild(useCell);
       var actionsCell = document.createElement("td");
-      var btn = document.createElement("button");
-      btn.className = "btn btn-sm btn-danger";
-      btn.textContent = "Remove";
-      if (img.in_use) {
-        btn.disabled = true;
-        btn.title = "Cannot remove: image is in use by a container";
-      } else {
-        btn.setAttribute("data-image-id", img.id);
-        btn.addEventListener("click", /* @__PURE__ */ (function(imageId) {
-          return function() {
-            removeImage(imageId);
-          };
-        })(img.id));
+      if (!_manageMode) {
+        var btn = document.createElement("button");
+        btn.className = "btn btn-sm btn-danger";
+        btn.textContent = "Remove";
+        if (img.in_use) {
+          btn.disabled = true;
+          btn.title = "Cannot remove: image is in use by a container";
+        } else {
+          btn.setAttribute("data-image-id", img.id);
+          btn.addEventListener("click", /* @__PURE__ */ (function(imageId) {
+            return function() {
+              removeImage(imageId);
+            };
+          })(img.id));
+        }
+        actionsCell.appendChild(btn);
       }
-      actionsCell.appendChild(btn);
       row.appendChild(actionsCell);
       tbody.appendChild(row);
     }
@@ -4729,6 +4906,190 @@
     } catch (err) {
       if (window.showToast) window.showToast("Remove failed: " + err.message, "error");
     }
+  }
+
+  // internal/web/static/src/js/logs.js
+  var _allLogs = [];
+  var _currentType = "all";
+  var TYPE_GROUPS = {
+    update: [
+      "update",
+      "rollback",
+      "approve",
+      "reject",
+      "ignore",
+      "check",
+      "self_update",
+      "update_to_version",
+      "restart",
+      "start",
+      "stop",
+      "scale",
+      "scan",
+      "webhook",
+      "ghcr_switch",
+      "image_prune",
+      "image_remove"
+    ],
+    policy: ["policy_set", "policy_delete", "bulk_policy", "notify_pref", "notify_states_cleared"],
+    auth: ["auth"],
+    settings: ["settings", "cluster-settings", "config-import", "digest", "hooks"]
+  };
+  var TYPE_BADGE = {
+    policy_set: "badge-info",
+    policy_delete: "badge-muted",
+    approve: "badge-success",
+    reject: "badge-error",
+    update: "badge-success",
+    rollback: "badge-warning",
+    start: "badge-success",
+    stop: "badge-error",
+    restart: "badge-warning",
+    auth: "badge-info",
+    settings: "badge-muted",
+    scan: "badge-info",
+    check: "badge-info"
+  };
+  async function loadActivityLogs() {
+    try {
+      var resp = await fetch("/api/logs");
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      _allLogs = await resp.json();
+      if (!Array.isArray(_allLogs)) _allLogs = [];
+      renderLogs();
+    } catch (err) {
+      console.error("Failed to load logs:", err);
+    }
+  }
+  function filterLogs(type) {
+    _currentType = type;
+    var pills = document.querySelectorAll(".logs-type-pill");
+    for (var i = 0; i < pills.length; i++) {
+      pills[i].classList.toggle("active", pills[i].getAttribute("data-type") === type);
+    }
+    renderLogs();
+  }
+  function getFiltered() {
+    if (_currentType === "all") return _allLogs;
+    var types = TYPE_GROUPS[_currentType] || [];
+    return _allLogs.filter(function(log) {
+      return types.indexOf(log.type) >= 0;
+    });
+  }
+  function renderLogs() {
+    var tbody = document.getElementById("logs-tbody");
+    if (!tbody) return;
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    var logs = getFiltered();
+    var summary = document.getElementById("logs-summary");
+    if (summary) {
+      var text = _allLogs.length + " total entries";
+      if (_currentType !== "all") text += " (" + logs.length + " shown)";
+      summary.textContent = text;
+    }
+    if (logs.length === 0) {
+      var tr = document.createElement("tr");
+      var td = document.createElement("td");
+      td.colSpan = 5;
+      td.style.textAlign = "center";
+      td.style.padding = "2rem";
+      td.style.color = "var(--text-secondary)";
+      td.textContent = _currentType !== "all" ? "No " + _currentType + " entries" : "No activity logged yet.";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+    for (var i = 0; i < logs.length; i++) {
+      var log = logs[i];
+      var row = document.createElement("tr");
+      var timeCell = document.createElement("td");
+      var ts = new Date(log.timestamp);
+      timeCell.title = ts.toISOString();
+      timeCell.textContent = formatTimeAgo(ts);
+      row.appendChild(timeCell);
+      var userCell = document.createElement("td");
+      if (log.user) {
+        userCell.textContent = log.user;
+      } else {
+        var sys = document.createElement("span");
+        sys.className = "text-muted";
+        sys.textContent = "system";
+        userCell.appendChild(sys);
+      }
+      row.appendChild(userCell);
+      var typeCell = document.createElement("td");
+      var badge = document.createElement("span");
+      badge.className = "badge " + (TYPE_BADGE[log.type] || "badge-muted");
+      badge.textContent = log.type;
+      typeCell.appendChild(badge);
+      row.appendChild(typeCell);
+      var containerCell = document.createElement("td");
+      containerCell.className = "mono";
+      if (log.container) {
+        var link = document.createElement("a");
+        link.href = (log.kind === "service" ? "/service/" : "/container/") + encodeURIComponent(log.container);
+        link.textContent = log.container;
+        containerCell.appendChild(link);
+      } else {
+        containerCell.textContent = "-";
+      }
+      row.appendChild(containerCell);
+      var msgCell = document.createElement("td");
+      msgCell.title = log.message;
+      msgCell.textContent = log.message;
+      row.appendChild(msgCell);
+      tbody.appendChild(row);
+    }
+  }
+  function exportLogs(format) {
+    var logs = getFiltered();
+    if (logs.length === 0) {
+      if (window.showToast) window.showToast("No logs to export", "warning");
+      return;
+    }
+    var content, filename, mime;
+    if (format === "json") {
+      content = JSON.stringify(logs, null, 2);
+      filename = "sentinel-logs.json";
+      mime = "application/json";
+    } else {
+      var rows = ["Time,User,Type,Container,Message"];
+      for (var i = 0; i < logs.length; i++) {
+        var l = logs[i];
+        rows.push([
+          new Date(l.timestamp).toISOString(),
+          csvEscape(l.user || "system"),
+          csvEscape(l.type),
+          csvEscape(l.container || ""),
+          csvEscape(l.message)
+        ].join(","));
+      }
+      content = rows.join("\n");
+      filename = "sentinel-logs.csv";
+      mime = "text/csv";
+    }
+    var blob = new Blob([content], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  function csvEscape(str) {
+    if (!str) return "";
+    if (str.indexOf(",") >= 0 || str.indexOf('"') >= 0 || str.indexOf("\n") >= 0) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  }
+  function formatTimeAgo(date) {
+    var diff = (Date.now() - date.getTime()) / 1e3;
+    if (diff < 60) return "just now";
+    if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+    if (diff < 604800) return Math.floor(diff / 86400) + "d ago";
+    return date.toLocaleDateString();
   }
 
   // internal/web/static/src/js/main.js
@@ -4853,6 +5214,15 @@
   window.loadImages = loadImages;
   window.pruneImages = pruneImages;
   window.removeImage = removeImage;
+  window.filterImages = filterImages;
+  window.sortImages = sortImages;
+  window.toggleImageManageMode = toggleManageMode2;
+  window.toggleImageSelect = toggleImageSelect;
+  window.toggleImageSelectAll = toggleSelectAll;
+  window.removeSelectedImages = removeSelectedImages;
+  window.loadActivityLogs = loadActivityLogs;
+  window.filterLogs = filterLogs;
+  window.exportLogs = exportLogs;
   document.addEventListener("DOMContentLoaded", function() {
     initTheme();
     var path = window.location.pathname;
