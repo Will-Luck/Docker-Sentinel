@@ -370,9 +370,16 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build target image: look up the queue for a newer version (semver bump).
+	// Without this, the updater re-pulls the current tag instead of the newer version.
+	targetImage := ""
+	if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
+		targetImage = webReplaceTag(pending.CurrentImage, pending.NewerVersions[0])
+	}
+
 	// Trigger update in background — detached context since r.Context() dies with the response.
 	go func() {
-		err := s.deps.Updater.UpdateContainer(context.Background(), containerID, name, "")
+		err := s.deps.Updater.UpdateContainer(context.Background(), containerID, name, targetImage)
 		if errors.Is(err, engine.ErrUpdateInProgress) {
 			s.deps.Log.Warn("manual update skipped, already in progress", "name", name)
 			s.deps.EventBus.Publish(events.SSEEvent{
