@@ -431,6 +431,11 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 			}
 			return err
 		}
+		// If our context was cancelled (stream replaced by a newer connection),
+		// exit so the agent detects the broken stream and reconnects cleanly.
+		if ctx.Err() != nil {
+			return nil
+		}
 		s.handleAgentMessage(hostID, as, msg)
 	}
 }
