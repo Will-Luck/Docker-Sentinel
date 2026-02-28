@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"path"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -19,14 +20,16 @@ type SettingsReader interface {
 
 // Scheduler runs scan cycles at the configured poll interval.
 type Scheduler struct {
-	updater   *Updater
-	cfg       *config.Config
-	log       *logging.Logger
-	clock     clock.Clock
-	settings  SettingsReader
-	resetCh   chan struct{}
-	lastScan  time.Time
-	readyGate <-chan struct{} // if set, wait for close before initial scan
+	updater      *Updater
+	cfg          *config.Config
+	log          *logging.Logger
+	clock        clock.Clock
+	settings     SettingsReader
+	resetCh      chan struct{}
+	mu           sync.Mutex
+	lastScan     time.Time
+	readyGate    <-chan struct{} // if set, wait for close before initial scan
+	scanCallback func()          // called after each scan completes (optional)
 }
 
 // NewScheduler creates a Scheduler.
@@ -43,6 +46,11 @@ func NewScheduler(u *Updater, cfg *config.Config, log *logging.Logger, clk clock
 // SetSettingsReader attaches a settings reader for runtime pause/filter checks.
 func (s *Scheduler) SetSettingsReader(sr SettingsReader) {
 	s.settings = sr
+}
+
+// SetScanCallback registers a function called after each scan completes.
+func (s *Scheduler) SetScanCallback(fn func()) {
+	s.scanCallback = fn
 }
 
 // SetReadyGate sets a channel the scheduler waits on before running the initial
@@ -68,7 +76,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	if !s.isPaused() {
 		s.log.Info("starting initial scan")
 		result := s.updater.Scan(ctx, ScanScheduled)
+		s.mu.Lock()
 		s.lastScan = s.clock.Now()
+		s.mu.Unlock()
 		s.logResult(result)
 	} else {
 		s.log.Info("scheduler is paused, skipping initial scan")
@@ -83,7 +93,9 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			}
 			s.log.Info("starting scheduled scan")
 			result := s.updater.Scan(ctx, ScanScheduled)
+			s.mu.Lock()
 			s.lastScan = s.clock.Now()
+			s.mu.Unlock()
 			s.logResult(result)
 		case <-s.resetCh:
 			s.log.Info("poll interval changed, resetting timer", "interval", s.cfg.PollInterval())
@@ -105,6 +117,9 @@ func (s *Scheduler) logResult(r ScanResult) {
 		"failed", r.Failed,
 		"errors", len(r.Errors),
 	)
+	if s.scanCallback != nil {
+		s.scanCallback()
+	}
 }
 
 // SetPollInterval updates the poll interval at runtime and signals the scheduler to reset its timer.
@@ -122,12 +137,16 @@ func (s *Scheduler) SetPollInterval(d time.Duration) {
 func (s *Scheduler) TriggerScan(ctx context.Context) {
 	s.log.Info("starting manual scan")
 	result := s.updater.Scan(ctx, ScanManual)
+	s.mu.Lock()
 	s.lastScan = s.clock.Now()
+	s.mu.Unlock()
 	s.logResult(result)
 }
 
 // LastScanTime returns when the last scan completed.
 func (s *Scheduler) LastScanTime() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.lastScan
 }
 
@@ -155,8 +174,9 @@ func (s *Scheduler) nextTick() <-chan time.Time {
 			s.log.Warn("invalid cron schedule, falling back to poll interval", "schedule", sched, "error", err)
 			return s.clock.After(s.cfg.PollInterval())
 		}
-		next := schedule.Next(time.Now())
-		wait := time.Until(next)
+		now := s.clock.Now()
+		next := schedule.Next(now)
+		wait := next.Sub(now)
 		if wait < 0 {
 			wait = 0
 		}

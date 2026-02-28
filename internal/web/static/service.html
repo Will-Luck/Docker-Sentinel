@@ -25,8 +25,10 @@
             <a href="/queue" class="nav-link">Pending Updates</a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
+            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -49,7 +51,7 @@
             </div>
         </div>
         {{end}}{{else}}
-        <div class="nav-auth-off">Auth: Off</div>
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
         {{end}}
     </nav>
 
@@ -145,21 +147,21 @@
                     <p class="accordion-intro">Controls how Sentinel handles updates for this service.</p>
                     <div class="policy-cards" id="policy-cards">
                         <label class="policy-card{{if eq .Service.Policy "auto"}} selected{{end}}">
-                            <input type="radio" name="policy" value="auto"{{if eq .Service.Policy "auto"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value); updatePolicyCards()">
+                            <input type="radio" name="policy" value="auto"{{if eq .Service.Policy "auto"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value)">
                             <div class="policy-card-inner">
                                 <span class="policy-card-title">Auto</span>
                                 <span class="policy-card-desc">Updates applied automatically when detected</span>
                             </div>
                         </label>
                         <label class="policy-card{{if eq .Service.Policy "manual"}} selected{{end}}">
-                            <input type="radio" name="policy" value="manual"{{if eq .Service.Policy "manual"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value); updatePolicyCards()">
+                            <input type="radio" name="policy" value="manual"{{if eq .Service.Policy "manual"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value)">
                             <div class="policy-card-inner">
                                 <span class="policy-card-title">Manual</span>
                                 <span class="policy-card-desc">Queued for your approval before applying</span>
                             </div>
                         </label>
                         <label class="policy-card{{if eq .Service.Policy "pinned"}} selected{{end}}">
-                            <input type="radio" name="policy" value="pinned"{{if eq .Service.Policy "pinned"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value); updatePolicyCards()">
+                            <input type="radio" name="policy" value="pinned"{{if eq .Service.Policy "pinned"}} checked{{end}} onchange="changeSvcPolicy('{{.Service.Name}}', this.value)">
                             <div class="policy-card-inner">
                                 <span class="policy-card-title">Pinned</span>
                                 <span class="policy-card-desc">Never updated — stays on current version</span>

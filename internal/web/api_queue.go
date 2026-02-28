@@ -5,17 +5,60 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
-// apiQueue returns all pending manual approvals.
+// queueResponse wraps a PendingUpdate with additional display fields.
+type queueResponse struct {
+	PendingUpdate
+	ReleaseNotesURL string `json:"release_notes_url,omitempty"`
+}
+
+// apiQueue returns all pending manual approvals, enriched with release notes URLs.
 func (s *Server) apiQueue(w http.ResponseWriter, r *http.Request) {
+	sources := s.loadReleaseSources()
 	items := s.deps.Queue.List()
-	if items == nil {
-		items = []PendingUpdate{}
+	out := make([]queueResponse, len(items))
+	for i, item := range items {
+		out[i] = queueResponse{PendingUpdate: item}
+		if len(item.NewerVersions) > 0 {
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			info := registry.FetchReleaseNotesWithSources(ctx, item.CurrentImage, item.NewerVersions[0], sources)
+			cancel()
+			if info != nil {
+				out[i].ReleaseNotesURL = info.URL
+			}
+		}
 	}
-	writeJSON(w, http.StatusOK, items)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// apiQueueCount returns just the number of pending items (no release notes enrichment).
+func (s *Server) apiQueueCount(w http.ResponseWriter, r *http.Request) {
+	count := len(s.deps.Queue.List())
+	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}
+
+// loadReleaseSources returns custom sources from the store, converted to registry types.
+func (s *Server) loadReleaseSources() []registry.ReleaseSource {
+	if s.deps.ReleaseSources == nil {
+		return nil
+	}
+	webSrcs, err := s.deps.ReleaseSources.GetReleaseSources()
+	if err != nil || len(webSrcs) == 0 {
+		return nil
+	}
+	out := make([]registry.ReleaseSource, len(webSrcs))
+	for i, src := range webSrcs {
+		out[i] = registry.ReleaseSource{
+			ImagePattern: src.ImagePattern,
+			GitHubRepo:   src.GitHubRepo,
+		}
+	}
+	return out
 }
 
 // queueKeyName extracts the queue key and plain container name from the
@@ -63,7 +106,9 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		var err error
 		if update.HostID != "" && s.deps.Cluster.Enabled() {
 			// Remote container — dispatch to the agent via cluster.
+			s.markRemoteUpdating(update.HostID, update.ContainerName)
 			err = s.deps.Cluster.UpdateRemoteContainer(context.Background(), update.HostID, update.ContainerName, approveTarget, update.RemoteDigest)
+			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(update.HostID, update.ContainerName) })
 		} else if update.Type == "service" && s.deps.Swarm != nil {
 			err = s.deps.Swarm.UpdateService(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
 		} else {

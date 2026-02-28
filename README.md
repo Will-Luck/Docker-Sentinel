@@ -1,516 +1,93 @@
-# Docker-Sentinel
+# Docker-Sentinel — Dev Testing Branch
 
-[![CI](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml/badge.svg)](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/releases/latest)
-[![Docker Pulls](https://img.shields.io/docker/pulls/willluck/docker-sentinel)](https://hub.docker.com/r/willluck/docker-sentinel)
-[![Downloads](https://img.shields.io/github/downloads/Will-Luck/Docker-Sentinel/total)](https://github.com/Will-Luck/Docker-Sentinel/releases)
-[![Last Commit](https://img.shields.io/github/last-commit/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/commits)
-[![GHCR](https://img.shields.io/badge/ghcr.io-docker--sentinel-blue?logo=github)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
+[![Dev Build](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/dev-testing.yml/badge.svg?branch=dev-testing)](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/dev-testing.yml)
 
-A container update orchestrator with a web dashboard, written in Go. Supports standalone Docker and Docker Swarm. Replaces Watchtower with per-container and per-service update policies, pre-update snapshots, post-update health validation, automatic rollback, and real-time notifications.
-
-<p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="Docker-Sentinel Dashboard" width="900">
-</p>
-
-## Quick Start
+This branch contains features and fixes that are being tested before merging into the stable release. If you'd like to help test, pull the dev image:
 
 ```bash
-docker run -d \
-  --name docker-sentinel \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v sentinel-data:/data \
-  -p 8080:8080 \
-  willluck/docker-sentinel:latest
+docker pull ghcr.io/will-luck/docker-sentinel:dev
 ```
 
-Open `http://localhost:8080` and complete the setup wizard. Sentinel defers the first scan until you reach the dashboard, so nothing runs before you've chosen your settings.
+For the stable release, see the [`main` branch](https://github.com/Will-Luck/Docker-Sentinel/tree/main).
 
-Also available from GHCR: `ghcr.io/will-luck/docker-sentinel:latest`
+---
 
-## Why Sentinel?
-
-| | Sentinel | Watchtower | Diun |
-|---|---|---|---|
-| Per-container policies | auto / manual / pinned | all-or-nothing | N/A (notify only) |
-| Web dashboard | full UI with real-time updates | none | none |
-| Pre-update snapshots | full `docker inspect` saved | none | N/A |
-| Automatic rollback | rolls back on health check failure | none | N/A |
-| Update approval queue | review and approve/reject | none | N/A |
-| Docker Swarm support | services, scaling, rollback | limited | notify only |
-| Newer version discovery | finds newer semver tags | digest only | digest + tag |
-| Notifications | 7 providers + digest | Slack, email, Gotify | many providers |
-| Auth / multi-user | passwords, passkeys, RBAC | none | none |
-| Lifecycle hooks | pre/post-update commands | none | N/A |
-
-## Features
+## Implemented Features
 
 ### Update Engine
-- **Per-container update policies** via Docker labels (`auto`, `manual`, `pinned`)
-- **Pre-update snapshots** — full `docker inspect` captured before every update
-- **Automatic rollback** — if a container fails health checks after updating, Sentinel rolls back to the snapshot
-- **Version resolution** — resolves actual versions behind mutable tags like `:latest` so you can see what version is really running
-- **Self-update** — Sentinel can check and update its own image (with opt-out via `sentinel.self` label)
-- **[Docker-Guardian](https://github.com/Will-Luck/Docker-Guardian) integration** — maintenance labels prevent restart conflicts during updates
-- **Image cleanup** — automatically removes old images after successful updates (toggle via settings)
-- **Dependency-aware updates** — topological sort ensures dependencies update first; dependents auto-restart on network/volume changes
-- **Cron scheduling** — optional cron expression via `SENTINEL_SCHEDULE` (e.g. `0 2 * * *`) alongside poll interval for precise scan timing
-
-### Docker Swarm
-- **Automatic detection** — runs in Swarm mode when deployed on a manager node
-- **Per-service update policies** — auto, manual, or pinned per service
-- **Service detail page** — task status across nodes, replica counts, image versions
-- **Scale up/down** — adjust replica count directly from the dashboard
-- **Native rollback** — uses Docker's built-in service rollback API
-- **Rollback policy** — automatically change policy on rollback to prevent retry loops
-- **Swarm task filtering** — task containers excluded from standalone scan
-
-### Registry Intelligence
-- **Digest comparison** for mutable tags (`:latest`) — detects upstream changes without pulling
-- **Semver tag discovery** — finds newer versioned tags for images using semver conventions
-- **Registry source badges** — each container shows where its image comes from (Docker Hub, GHCR, LSCR, Gitea, or custom registries)
-- **GHCR alternative detection** — automatically finds GitHub Container Registry mirrors for Docker Hub images and offers one-click migration
-- **Rate limit tracking** — monitors Docker Hub API rate limits and displays remaining quota on the dashboard
-- **Registry credential management** — add, test, and manage credentials for private registries from the web UI
+- **Pre-pull validation** — pulls the new image before stopping the container, so containers are never left down if a registry pull fails
+- **Update delay / cooldown** — only update to images N+ days old via label, avoiding day-zero breakage
+- **Per-container grace period label** — `sentinel.grace-period=60s` to override the global grace period per container (max 1 hour)
+- **Semver constraint pinning** — `sentinel.semver-constraint=^2.0.0` label to restrict tag discovery to a semver range
+- **Semver constraint labels** — `sentinel.semver=minor` to restrict updates to patch-only or minor-only
+- **Tag include/exclude regex** — user-configurable regex patterns to filter valid update targets per container
+- **Per-container cron schedule** — different containers update on different schedules via labels
+- **Pull-only mode** — pull new images without restarting containers, for planned maintenance windows
+- **Image backup/retag** — tag the previous image before pulling a new one, with configurable expiry
+- **Include stopped containers** — monitor and optionally update stopped/exited containers
+- **Remove anonymous volumes on update** — optionally remove anonymous volumes when recreating
+- **Parallel registry checks** — configurable concurrency for registry API calls during scans
+- **Update maintenance windows** — time-range expressions gating when auto-policy updates are applied
+- **Dependency-aware updates** — topological sort ensures dependencies update first
+- **Docker Compose file sync** — edit docker-compose.yml tag references in-place and run `compose up -d`
+- **Skip updating stopped containers** — do not pull or recreate containers in a stopped state
 
 ### Web Dashboard
-- **Real-time updates** — SSE-powered inline row updates with live ticking scan timer, no full page reloads
-- **Stack grouping** — containers sharing a Docker network are grouped into collapsible stacks with drag-and-drop reordering
-- **Filter pills** — filter the container list by Running, Stopped, Updatable, or sort alphabetically / by status
-- **Clickable stat cards** — dashboard header cards (Total, Running, Updates Pending, Rate Limits) filter the view when clicked
-- **Accordion UI** — collapsible detail panels across all pages with persistent open/close state
-- **Container controls** — start, stop, restart, rollback containers directly from the dashboard
-- **Bulk actions** — select multiple containers to change policies at once
-- **Update queue** — review, approve, reject, or ignore pending updates for manual-policy containers
-- **History & logs** — full update history with timestamps and searchable activity logs
-- **Activity log with user tracking** — every action records which user performed it (when auth is enabled)
-- **About page** — version info, uptime, runtime stats, integration status, and GitHub links
-- **Dashboard footer** — persistent version number and beta notice with link to issue tracker
-
-<details>
-<summary>Screenshots</summary>
-
-| | |
-|---|---|
-| <img src="docs/screenshots/setup.png" alt="First-run setup wizard" width="400"> | <img src="docs/screenshots/service-detail.png" alt="Service detail — tasks across Swarm nodes" width="400"> |
-| <img src="docs/screenshots/queue.png" alt="Pending Updates" width="400"> | <img src="docs/screenshots/history.png" alt="Update History" width="400"> |
-| <img src="docs/screenshots/logs.png" alt="Activity Log" width="400"> | <img src="docs/screenshots/container-detail.png" alt="Container Detail" width="400"> |
-| <img src="docs/screenshots/settings-registries.png" alt="Registry rate limits and credentials" width="400"> | <img src="docs/screenshots/cluster-two-hosts.png" alt="Cluster — multi-host management" width="400"> |
-
-</details>
+- **Dedicated images management page** — `/images` page listing all Docker images with repo tags, size, creation date, in-use status, prune and remove
+- **Container log viewer** — quick tail of container logs with line count selector (50/100/200/500)
+- **Changelog / release notes in queue** — fetch release notes via OCI labels and display in the approval queue and container detail
+- **GitHub release notes in UI** — inline display of release notes from GitHub/Gitea Releases API
+- **Watch all tags mode** — display all available tags for an image in the UI
+- **Mobile-responsive UI** — fully responsive layout for phone and tablet screens
+- **Container grouping by stack** — visual grouping by compose project with drag-and-drop reordering
+- **Dry-run / simulation mode** — show what updates would happen without applying them
+- **History export (CSV/JSON)** — download update history for audit trails
+- **Configuration export / import** — full settings backup and restore with merge semantics via GUI
+- **Multiple release sources** — track primary + secondary repos for release info
+- **Portainer API integration** — trigger updates through Portainer's API for Portainer-managed stacks
 
 ### Notifications
-- **7 providers** — Gotify, Slack, Discord, Ntfy, Telegram, Pushover, generic webhooks — each with per-event filtering
-- **Smart deduplication** — never re-notifies for the same update already seen
-- **Per-container modes** — immediate + summary, every scan, summary only, or silent
-- **Daily digest** — consolidated summary of all pending updates at a configurable time
+- **Email / SMTP provider** — full SMTP config (host, port, TLS, from/to, credentials)
+- **MQTT provider** — publish update events to an MQTT broker for home automation
+- **Home Assistant MQTT discovery** — MQTT discovery entities so HASS shows native update badges per container
+- **Apprise backend** — integration with Apprise for 100+ notification services
+- **Customisable notification templates** — Go `text/template` engine with per-event-type overrides, preview, and reset-to-default
+- **Notification snooze / dedup timer** — suppress repeat notifications for the same container+version
+- **Markdown-formatted notifications** — Markdown bodies for providers that support it (Telegram, ntfy)
 
-### Lifecycle Hooks
-- **Pre/post-update hooks** — execute custom commands inside containers before or after updates (backups, health checks, cache warming)
-- **Exit code 75 skip** — hooks returning exit 75 abort the update without error (useful for conditional updates)
-- **Hook management UI** — create, edit, test, and delete hooks from the settings page
-- **Label persistence** — optionally write hook config as container labels for portability across recreations
-
-### Cluster Mode
-- **Multi-host management** — deploy a central server and lightweight agents to monitor containers across multiple Docker hosts from a single dashboard
-- **mTLS security** — all cluster communication uses gRPC over mutual TLS (TLS 1.3); the server acts as its own certificate authority
-- **One-time enrollment** — agents enroll with a single-use token and receive a signed certificate via PKCS#10 CSR exchange
-- **Autonomous mode** — agents continue monitoring and applying auto-policy updates when disconnected from the server
-- **Host lifecycle** — drain, revoke, or remove agents from the cluster page; revoked certificates are added to a CRL
-- **Setup wizard** — guided first-run wizard supports both server and agent roles with connection testing
+### Security & Auth
+- **OIDC / SSO authentication** — login via Authelia, Authentik, Keycloak etc. with auto-create users and default roles
+- **TOTP / 2FA** — time-based one-time passwords as a second factor, QR enrolment, recovery codes
+- **Docker socket proxy support** — `DOCKER_HOST=tcp://socket-proxy:port` with TLS certificate configuration
+- **Inbound webhook trigger** — `POST /api/webhook` for CI/CD pipelines to push update signals after image builds (Docker Hub, GHCR, generic JSON payloads)
 
 ### Observability
-- **Prometheus metrics** — 10 metrics at `/metrics` endpoint (containers total, updates total/duration, scan duration, queue length, image cleanups, registry errors)
-- Enable via `SENTINEL_METRICS=true` or the settings UI
+- **Grafana dashboard template** — official Grafana dashboard JSON for Sentinel's Prometheus metrics
+- **Prometheus textfile collector** — write metrics as a textfile for node_exporter
 
-### Settings & Appearance
-- **Runtime configuration** — adjust poll interval, grace period, default policy, pause scanning, notification behaviour, container filters, and more from the web UI without restart
-- **Appearance settings** — light mode, dark mode, or automatic (follows system preference)
-- **Scanning tab** — configure poll interval, grace period, default policy, container filters, and `:latest` auto-update behaviour
-- **Notification channels** — add/edit/test/delete notification providers with per-event filtering
-- **Registry credentials** — manage authentication for private registries (Docker Hub, GHCR, custom)
-- **Per-container overrides** — set notification mode per container from settings or container detail
+---
 
-<details>
-<summary>Screenshot</summary>
+## Bug Fixes (this branch only)
 
-<img src="docs/screenshots/settings-general.png" alt="Settings" width="800">
+- **Auth disabled state no longer locks out the GUI** ([#7](https://github.com/Will-Luck/Docker-Sentinel/issues/7)) — Security tab stays visible when auth is off. The auth toggle is always accessible, other sections are greyed out. "Auth: Off" badge is now a clickable link to the Security tab. Improved confirmation dialog and setup wizard hint.
 
-</details>
+---
 
-### Authentication & Security
-- **WebAuthn/passkey login** — passwordless authentication via hardware keys, biometrics, or platform authenticators
-- **Password authentication** — traditional username/password with bcrypt hashing
-- **Multi-user support** — create and manage users with role-based access control
-- **API tokens** — generate long-lived tokens for programmatic access
-- **Session management** — view and revoke active sessions, configurable session expiry
-- **Built-in TLS** — serve HTTPS directly with your own certificates or automatic self-signed
-- **Rate limiting** — login attempt throttling to prevent brute force attacks
+## Known Issues
 
-<details>
-<summary>Screenshots</summary>
+- **Swarm update timeouts** ([#42](https://github.com/Will-Luck/Docker-Sentinel/issues/42)) — Multiple swarm service updates can time out when applied in bulk
 
-| | |
-|---|---|
-| <img src="docs/screenshots/login.png" alt="Login" width="400"> | <img src="docs/screenshots/settings-auth.png" alt="Auth Settings" width="400"> |
+## Backburner
 
-</details>
+These are high-impact but need significant design work:
 
-### REST API
-All dashboard functionality is exposed as JSON endpoints. See the [full API reference](#rest-api-1) below.
+- **Vulnerability scanning** — Scan images with Trivy/Grype before update, block if new CVEs found
+- **AI release note summary** — Ollama integration for breaking change detection in release notes
+- **Image signing verification** — Verify cosign/Notary signatures before allowing updates
+- **Automatic non-breaking updates** — Use local LLM to classify updates and auto-apply only safe ones
 
-## Documentation
+---
 
-For detailed guides on every feature, see the **[Wiki](https://github.com/Will-Luck/Docker-Sentinel/wiki)**.
+## Reporting Issues
 
-## Configuration
-
-All configuration is via environment variables. Settings marked with * can also be changed at runtime from the web UI.
-
-### Core
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SENTINEL_POLL_INTERVAL` | `6h` | How often to scan for updates * |
-| `SENTINEL_GRACE_PERIOD` | `30s` | Wait time after update before health check * |
-| `SENTINEL_DEFAULT_POLICY` | `manual` | Policy for unlabelled containers * |
-| `SENTINEL_LATEST_AUTO_UPDATE` | `true` | Auto-update `:latest`-tagged containers when digest changes * |
-| `SENTINEL_DB_PATH` | `/data/sentinel.db` | BoltDB database path |
-| `SENTINEL_LOG_JSON` | `true` | JSON structured logging |
-| `SENTINEL_DOCKER_SOCK` | `/var/run/docker.sock` | Docker socket path |
-| `SENTINEL_IMAGE_CLEANUP` | `true` | Remove old images after successful updates * |
-| `SENTINEL_SCHEDULE` | | Cron expression for scan scheduling (overrides poll interval when set) * |
-| `SENTINEL_ROLLBACK_POLICY` | | Policy to set after a rollback (e.g. `pinned`) to prevent retry loops |
-| `SENTINEL_HOOKS_WRITE_LABELS` | `false` | Write hook config back to container labels for portability * |
-| `SENTINEL_METRICS` | `false` | Enable Prometheus metrics at `/metrics` * |
-| `SENTINEL_HOOKS` | `false` | Enable lifecycle hooks * |
-| `SENTINEL_DEPS` | `true` | Enable dependency-aware update ordering * |
-
-### Web & Authentication
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SENTINEL_WEB_ENABLED` | `true` | Enable web dashboard |
-| `SENTINEL_WEB_PORT` | `8080` | Web dashboard port |
-| `SENTINEL_AUTH_ENABLED` | (auto) | Force auth on/off. Omit to auto-detect (enabled when users exist) |
-| `SENTINEL_SESSION_EXPIRY` | `720h` | Session lifetime (30 days default) |
-| `SENTINEL_COOKIE_SECURE` | `true` | Set `Secure` flag on session cookies (disable for HTTP-only setups) |
-| `SENTINEL_TLS_CERT` | | Path to TLS certificate file |
-| `SENTINEL_TLS_KEY` | | Path to TLS private key file |
-| `SENTINEL_TLS_AUTO` | `false` | Generate self-signed TLS certificate automatically |
-| `SENTINEL_WEBAUTHN_RPID` | | WebAuthn Relying Party ID (your domain, e.g. `sentinel.example.com`) |
-| `SENTINEL_WEBAUTHN_DISPLAY_NAME` | `Docker-Sentinel` | WebAuthn display name shown during registration |
-| `SENTINEL_WEBAUTHN_ORIGINS` | | Allowed WebAuthn origins, comma-separated |
-
-### Legacy Notifications
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SENTINEL_GOTIFY_URL` | | Gotify server URL (prefer web UI for new setups) |
-| `SENTINEL_GOTIFY_TOKEN` | | Gotify application token |
-| `SENTINEL_WEBHOOK_URL` | | Webhook URL for JSON POST |
-| `SENTINEL_WEBHOOK_HEADERS` | | Custom webhook headers, comma-separated `Key:Value` pairs |
-
-### Cluster
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SENTINEL_MODE` | (auto) | Instance role: `server` or `agent`. Omit for standalone |
-| `SENTINEL_CLUSTER` | `false` | Enable cluster mode on the server |
-| `SENTINEL_CLUSTER_PORT` | `9443` | gRPC listen port for the cluster server |
-| `SENTINEL_CLUSTER_DIR` | `/data/cluster` | Directory for mTLS certificates and cluster state |
-| `SENTINEL_SERVER_ADDR` | | Server address for agents (`host:port`) |
-| `SENTINEL_ENROLL_TOKEN` | | One-time enrollment token (from server's cluster page) |
-| `SENTINEL_HOST_NAME` | | Display name for this agent in the cluster view |
-| `SENTINEL_GRACE_PERIOD_OFFLINE` | `30m` | How long before a disconnected agent enters autonomous mode |
-
-## Container Labels
-
-| Label | Values | Default | Description |
-|-------|--------|---------|-------------|
-| `sentinel.policy` | `auto`, `manual`, `pinned` | `manual` | Update policy |
-| `sentinel.maintenance` | `true` | (absent) | Set during updates, read by Docker-Guardian |
-| `sentinel.self` | `true` | (absent) | Prevents Sentinel from updating itself |
-| `sentinel.depends-on` | comma-separated names | (absent) | Container dependencies for ordered updates |
-| `sentinel.hook.pre-update` | shell command | (absent) | Command to run inside the container before updating |
-| `sentinel.hook.post-update` | shell command | (absent) | Command to run inside the new container after updating |
-| `sentinel.hook.timeout` | integer (seconds) | `30` | Timeout for hook commands |
-
-- **auto** — updates applied automatically when a new image is detected
-- **manual** — updates queued for approval in the dashboard
-- **pinned** — container is never checked or updated
-
-## Notifications
-
-### Channels
-
-Notification channels are configured from the **Settings > Notification Channels** section in the web UI. Each channel supports per-event filtering so you can, for example, send only failures to Slack while sending everything to a webhook.
-
-| Provider | Required Settings |
-|----------|-------------------|
-| **Gotify** | Server URL, application token |
-| **Slack** | Incoming webhook URL |
-| **Discord** | Webhook URL |
-| **Ntfy** | Server URL, topic, priority |
-| **Telegram** | Bot token, chat ID |
-| **Pushover** | App token, user key |
-| **Webhook** | URL, optional custom headers |
-
-Filterable event types: `update_available`, `update_started`, `update_succeeded`, `update_failed`, `rollback_succeeded`, `rollback_failed`, `container_state`.
-
-### Notification Modes
-
-Control how each container triggers notifications. Set a global default from **Settings > Notification Behaviour**, or override per-container from the container detail page or **Settings > Per-Container Overrides**.
-
-| Mode | Description |
-|------|-------------|
-| **Immediate + summary** | Alert as soon as an update is detected, plus a scheduled summary. Won't re-alert for the same update. |
-| **Every scan** | Alert every time a scan finds updates, even if already notified. No summary. |
-| **Summary only** | No immediate alerts — only the scheduled summary. |
-| **Silent** | No notifications of any kind. |
-
-### Daily Digest
-
-When using a mode that includes a summary (immediate + summary, or summary only), Sentinel compiles a consolidated report of all pending updates and sends it at a configurable time and frequency (default: daily at 09:00). The dashboard also shows a dismissible banner when updates are pending.
-
-Legacy environment variables (`SENTINEL_GOTIFY_*`, `SENTINEL_WEBHOOK_*`) are still supported but the web UI is recommended for new setups.
-
-## Building from Source
-
-```bash
-make build        # Build binary to bin/sentinel
-make test         # Run tests with race detector
-make lint         # Run golangci-lint
-make docker       # Build Docker image
-```
-
-Requires Go 1.24+, Docker, and golangci-lint.
-
-<details>
-<summary><strong>Update Lifecycle</strong></summary>
-
-1. **Scan** — enumerate running containers, check policies
-2. **Check** — query registry for new digests or semver tags
-3. **Queue** — auto-policy containers proceed; manual-policy containers wait for approval
-4. **Snapshot** — capture full container config via `docker inspect`
-5. **Maintenance** — set `sentinel.maintenance=true` label (Docker-Guardian integration)
-6. **Update** — pull new image, stop, remove, recreate with identical config, start
-7. **Validate** — wait for grace period, check container is still running
-8. **Finalise** — on success: clear maintenance label, log, notify. On failure: rollback from snapshot, notify
-
-</details>
-
-<details>
-<summary><strong>REST API</strong></summary>
-
-**Containers**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/containers` | List all containers with policy, status, and registry info |
-| `GET` | `/api/containers/{name}` | Container detail (history, snapshots, versions) |
-| `GET` | `/api/containers/{name}/versions` | Available image versions from registry |
-| `GET` | `/api/containers/{name}/row` | HTML partial for live SSE row update |
-| `GET` | `/api/containers/{name}/ghcr` | GHCR alternative info for this container |
-| `GET` | `/api/containers/{name}/notify-pref` | Get per-container notification mode |
-| `POST` | `/api/containers/{name}/policy` | Set policy override |
-| `DELETE` | `/api/containers/{name}/policy` | Remove policy override (fall back to label) |
-| `POST` | `/api/containers/{name}/rollback` | Rollback to last snapshot |
-| `POST` | `/api/containers/{name}/restart` | Restart container |
-| `POST` | `/api/containers/{name}/stop` | Stop container |
-| `POST` | `/api/containers/{name}/start` | Start container |
-| `POST` | `/api/containers/{name}/switch-ghcr` | Switch container image to GHCR alternative |
-| `POST` | `/api/containers/{name}/notify-pref` | Set per-container notification mode |
-| `POST` | `/api/check/{name}` | Manual registry check for single container |
-| `POST` | `/api/update/{name}` | Trigger immediate update |
-| `POST` | `/api/approve/{key}` | Approve queued update (key = name or hostID::name) |
-| `POST` | `/api/reject/{key}` | Reject queued update (key = name or hostID::name) |
-| `POST` | `/api/ignore/{key}` | Ignore this specific version (key = name or hostID::name) |
-| `POST` | `/api/bulk/policy` | Bulk policy change for multiple containers |
-| `POST` | `/api/scan` | Trigger a full scan immediately |
-
-**Queue, History & Logs**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/queue` | List pending updates |
-| `GET` | `/api/history` | Update history |
-| `GET` | `/api/logs` | Activity log entries |
-| `GET` | `/api/events` | SSE event stream (real-time updates) |
-| `GET` | `/api/last-scan` | Timestamp of last completed scan |
-
-**Settings**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/settings` | Current configuration |
-| `POST` | `/api/settings/poll-interval` | Update poll interval at runtime |
-| `POST` | `/api/settings/default-policy` | Set default policy at runtime |
-| `POST` | `/api/settings/grace-period` | Set grace period at runtime |
-| `POST` | `/api/settings/pause` | Pause or unpause the scheduler |
-| `POST` | `/api/settings/filters` | Set container name filter patterns |
-| `POST` | `/api/settings/stack-order` | Save custom stack ordering |
-| `POST` | `/api/settings/latest-auto-update` | Toggle auto-update for `:latest` tags |
-| `POST` | `/api/settings/image-cleanup` | Toggle image cleanup * |
-| `POST` | `/api/settings/schedule` | Set cron schedule * |
-| `POST` | `/api/settings/hooks-enabled` | Toggle hooks * |
-| `POST` | `/api/settings/hooks-write-labels` | Toggle hook label persistence * |
-| `POST` | `/api/settings/dependency-aware` | Toggle dependency-aware updates * |
-| `POST` | `/api/settings/rollback-policy` | Set post-rollback policy * |
-| `POST` | `/api/settings/general` | Save a general setting by key * |
-| `POST` | `/api/settings/switch-role` | Switch between server and agent mode * |
-| `POST` | `/api/settings/metrics` | Toggle Prometheus metrics * |
-
-**Notifications**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/settings/notifications` | Get notification channels (secrets masked) |
-| `PUT` | `/api/settings/notifications` | Save notification channels |
-| `POST` | `/api/settings/notifications/test` | Send a test notification |
-| `GET` | `/api/settings/notifications/event-types` | List available event types |
-| `GET` | `/api/settings/digest` | Get digest scheduler config |
-| `POST` | `/api/settings/digest` | Save digest config (mode, time, interval) |
-| `GET` | `/api/settings/container-notify-prefs` | Get all per-container notification modes |
-| `POST` | `/api/digest/trigger` | Trigger an immediate digest |
-| `GET` | `/api/digest/banner` | Get pending updates for dashboard banner |
-| `POST` | `/api/digest/banner/dismiss` | Dismiss the digest banner |
-| `DELETE` | `/api/notify-states` | Clear all notification dedup state |
-
-**Registry**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/settings/registries` | List registry credentials |
-| `PUT` | `/api/settings/registries` | Save registry credentials |
-| `POST` | `/api/settings/registries/test` | Test a registry credential |
-| `DELETE` | `/api/settings/registries/{id}` | Delete a registry credential |
-| `GET` | `/api/ratelimits` | Docker Hub rate limit status |
-| `GET` | `/api/ghcr/alternatives` | GHCR alternatives for all Docker Hub images |
-
-**About**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/about` | Version, uptime, runtime stats, integrations |
-
-**Authentication**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/login` | Password login |
-| `POST` | `/setup` | Initial admin account creation |
-| `POST` | `/logout` | End session |
-| `POST` | `/api/auth/change-password` | Change current user's password |
-| `GET` | `/api/auth/sessions` | List active sessions |
-| `DELETE` | `/api/auth/sessions/{token}` | Revoke a session |
-| `DELETE` | `/api/auth/sessions` | Revoke all sessions |
-| `POST` | `/api/auth/tokens` | Create API token |
-| `DELETE` | `/api/auth/tokens/{id}` | Delete API token |
-| `GET` | `/api/auth/me` | Current user info and permissions |
-| `GET` | `/api/auth/users` | List all users (admin only) |
-| `POST` | `/api/auth/users` | Create user (admin only) |
-| `DELETE` | `/api/auth/users/{id}` | Delete user (admin only) |
-| `POST` | `/api/auth/settings` | Update auth settings (admin only) |
-
-**WebAuthn / Passkeys**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/auth/passkeys/available` | Check if passkey login is available |
-| `POST` | `/api/auth/passkeys/login/begin` | Begin passkey authentication |
-| `POST` | `/api/auth/passkeys/login/finish` | Complete passkey authentication |
-| `POST` | `/api/auth/passkeys/register/begin` | Begin passkey registration |
-| `POST` | `/api/auth/passkeys/register/finish` | Complete passkey registration |
-| `GET` | `/api/auth/passkeys` | List registered passkeys |
-| `DELETE` | `/api/auth/passkeys/{id}` | Delete a passkey |
-
-**Self-Update**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/self-update` | Trigger self-update via ephemeral helper |
-
-**Hooks**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/hooks/{container}` | List hooks for a container |
-| `POST` | `/api/hooks/{container}` | Create or update a hook |
-| `DELETE` | `/api/hooks/{container}/{phase}` | Delete a hook phase (pre-update or post-update) |
-
-**Cluster**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/cluster/hosts` | List enrolled hosts |
-| `POST` | `/api/cluster/enroll-token` | Generate a one-time enrollment token |
-| `DELETE` | `/api/cluster/hosts/{id}` | Remove a host from the cluster |
-| `POST` | `/api/cluster/hosts/{id}/revoke` | Revoke a host's certificate |
-| `POST` | `/api/cluster/hosts/{id}/drain` | Drain a host (stop scheduling updates) |
-| `GET` | `/api/settings/cluster` | Get cluster settings |
-| `POST` | `/api/settings/cluster` | Save cluster settings |
-
-**Services (Swarm)**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/services` | List Swarm services |
-| `GET` | `/api/services/{name}/detail` | Service detail (tasks, replicas) |
-| `POST` | `/api/services/{name}/update` | Trigger service update |
-| `POST` | `/api/services/{name}/rollback` | Rollback a service |
-| `POST` | `/api/services/{name}/scale` | Scale service replicas |
-
-**Dependencies**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/deps` | Get the dependency graph |
-| `GET` | `/api/deps/{container}` | Get dependencies for a container |
-
-**Observability**
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/metrics` | Prometheus metrics (requires `SENTINEL_METRICS=true`) |
-
-</details>
-
-<details>
-<summary><strong>Architecture</strong></summary>
-
-```
-Docker-Sentinel/
-├── cmd/sentinel/          # Entry point
-├── internal/
-│   ├── auth/              # Authentication, sessions, passkeys, permissions
-│   ├── clock/             # Time abstraction (testable)
-│   ├── cluster/           # Multi-host cluster (gRPC, mTLS, enrollment)
-│   │   ├── agent/         # Agent-side connection and autonomous mode
-│   │   ├── server/        # Server-side host registry and CA
-│   │   └── proto/         # Protobuf service definitions
-│   ├── config/            # Environment variable configuration
-│   ├── deps/              # Dependency graph, topological sort
-│   ├── docker/            # Docker API client, labels, snapshots
-│   ├── engine/            # Scheduler, updater, rollback, queue, policy
-│   ├── events/            # Event bus (SSE fan-out)
-│   ├── guardian/          # Docker-Guardian maintenance label integration
-│   ├── hooks/             # Lifecycle hooks (pre/post-update)
-│   ├── logging/           # Structured slog logger
-│   ├── metrics/           # Prometheus metrics exposition
-│   ├── notify/            # Notification providers (7 channels + log)
-│   ├── registry/          # Registry digest checker, semver tag discovery, rate limits
-│   ├── store/             # BoltDB persistence
-│   └── web/               # HTTP server, REST API, embedded dashboard
-│       └── static/        # HTML templates, CSS, JavaScript
-├── Dockerfile             # Multi-stage Alpine build
-├── Makefile
-└── LICENSE                # Apache 2.0
-```
-
-</details>
-
-## License
-
-Apache License 2.0 — see [LICENSE](LICENSE) for details.
+If you find any issues with this dev build, please [open an issue](https://github.com/Will-Luck/Docker-Sentinel/issues/new) or start a [discussion](https://github.com/Will-Luck/Docker-Sentinel/discussions).

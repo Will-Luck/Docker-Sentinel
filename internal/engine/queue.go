@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,11 +61,14 @@ func NewQueue(s *store.Store, bus *events.Bus, log *slog.Logger) *Queue {
 }
 
 // Add adds or replaces a pending update.
+// Snapshots data under lock (fast), persists to BoltDB outside lock (slow I/O).
 func (q *Queue) Add(update PendingUpdate) {
+	var data []byte
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	q.pending[update.Key()] = update
-	q.persist()
+	data = q.snapshotLocked()
+	q.mu.Unlock()
+	q.persistData(data)
 	q.publishEvent(update.Key(), "added")
 }
 
@@ -79,10 +83,12 @@ func (u PendingUpdate) Key() string {
 
 // Remove removes a pending update by container name.
 func (q *Queue) Remove(name string) {
+	var data []byte
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	delete(q.pending, name)
-	q.persist()
+	data = q.snapshotLocked()
+	q.mu.Unlock()
+	q.persistData(data)
 	q.publishEvent(name, "removed")
 }
 
@@ -97,12 +103,16 @@ func (q *Queue) Get(name string) (PendingUpdate, bool) {
 // Approve atomically retrieves and removes a pending update.
 // Returns the update and true if found, or zero value and false if not.
 func (q *Queue) Approve(name string) (PendingUpdate, bool) {
+	var data []byte
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	u, ok := q.pending[name]
 	if ok {
 		delete(q.pending, name)
-		q.persist()
+		data = q.snapshotLocked()
+	}
+	q.mu.Unlock()
+	if ok {
+		q.persistData(data)
 		q.publishEvent(name, "approved")
 	}
 	return u, ok
@@ -146,28 +156,49 @@ func (q *Queue) Prune(liveNames map[string]bool) int {
 }
 
 // publishEvent emits a queue change SSE event if the event bus is configured.
+// For remote containers the name is a scoped key ("hostID::name"); this is
+// split so the SSE event carries proper HostID and ContainerName fields.
 func (q *Queue) publishEvent(name, message string) {
 	if q.events == nil {
 		return
 	}
-	q.events.Publish(events.SSEEvent{
+	evt := events.SSEEvent{
 		Type:          events.EventQueueChange,
 		ContainerName: name,
 		Message:       message,
 		Timestamp:     time.Now(),
-	})
+	}
+	if idx := strings.Index(name, "::"); idx >= 0 {
+		evt.HostID = name[:idx]
+		evt.ContainerName = name[idx+2:]
+	}
+	q.events.Publish(evt)
 }
 
-func (q *Queue) persist() {
+// snapshotLocked marshals the current queue state. Must be called with q.mu held.
+func (q *Queue) snapshotLocked() []byte {
 	items := make([]PendingUpdate, 0, len(q.pending))
 	for _, u := range q.pending {
 		items = append(items, u)
 	}
 	data, err := json.Marshal(items)
 	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// persistData writes pre-marshalled queue data to BoltDB. Safe to call without lock.
+func (q *Queue) persistData(data []byte) {
+	if data == nil {
 		return
 	}
 	if err := q.store.SavePendingQueue(data); err != nil && q.log != nil {
 		q.log.Warn("failed to persist pending queue", "error", err)
 	}
+}
+
+// persist snapshots and writes in one step. Used by Prune which already holds the lock.
+func (q *Queue) persist() {
+	q.persistData(q.snapshotLocked())
 }

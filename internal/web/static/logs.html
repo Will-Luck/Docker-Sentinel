@@ -28,8 +28,10 @@
             </a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link active" aria-current="page">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
+            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -52,7 +54,7 @@
             </div>
         </div>
         {{end}}{{else}}
-        <div class="nav-auth-off">Auth: Off</div>
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
         {{end}}
     </nav>
 
@@ -60,12 +62,23 @@
         <div class="page-header">
             <div>
                 <h1>Activity Log</h1>
-                <p class="subtitle">All actions performed via the dashboard</p>
+                <p class="subtitle" id="logs-summary">All actions performed via the dashboard</p>
+            </div>
+            <div class="page-header-actions">
+                <button class="btn btn-sm" onclick="exportLogs('json')">Export JSON</button>
+                <button class="btn btn-sm" onclick="exportLogs('csv')">Export CSV</button>
             </div>
         </div>
 
+        <div class="filter-bar" id="logs-filter-bar">
+            <button class="filter-pill logs-type-pill active" data-type="all" onclick="filterLogs('all')">All</button>
+            <button class="filter-pill logs-type-pill" data-type="update" onclick="filterLogs('update')">Updates</button>
+            <button class="filter-pill logs-type-pill" data-type="policy" onclick="filterLogs('policy')">Policy</button>
+            <button class="filter-pill logs-type-pill" data-type="auth" onclick="filterLogs('auth')">Auth</button>
+            <button class="filter-pill logs-type-pill" data-type="settings" onclick="filterLogs('settings')">Settings</button>
+        </div>
+
         <div class="card">
-            {{if .Logs}}
             <div class="table-wrap">
                 <table class="table-logs">
                     <thead>
@@ -77,32 +90,22 @@
                             <th>Message</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        {{range .Logs}}
-                        <tr>
-                            <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
-                            <td>{{if .User}}{{.User}}{{else}}<span class="text-muted">system</span>{{end}}</td>
-                            <td><span class="badge {{if eq .Type "policy_set"}}badge-info{{else if eq .Type "policy_delete"}}badge-muted{{else if eq .Type "approve"}}badge-success{{else if eq .Type "reject"}}badge-error{{else if eq .Type "update"}}badge-success{{else if eq .Type "rollback"}}badge-warning{{else}}badge-muted{{end}}">{{.Type}}</span></td>
-                            <td class="mono">{{if .Container}}<a href="{{serviceOrContainer .Kind .Container}}">{{.Container}}</a>{{else}}-{{end}}</td>
-                            <td title="{{.Message}}">{{.Message}}</td>
-                        </tr>
-                        {{end}}
+                    <tbody id="logs-tbody">
+                        <tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-secondary)">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
-            {{else}}
-            <div class="card-body">
-                <div class="empty-state">
-                    <p>No activity logged yet. Actions like policy changes, approvals, and updates will appear here.</p>
-                </div>
-            </div>
-            {{end}}
         </div>
     </main>
 
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof loadActivityLogs === 'function') loadActivityLogs();
+        });
+    </script>
 </body>
 </html>
 {{end}}

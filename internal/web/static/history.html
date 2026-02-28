@@ -28,8 +28,10 @@
             </a>
             <a href="/history" class="nav-link active" aria-current="page">History</a>
             <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
+            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -52,7 +54,7 @@
             </div>
         </div>
         {{end}}{{else}}
-        <div class="nav-auth-off">Auth: Off</div>
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
         {{end}}
     </nav>
 
@@ -62,6 +64,19 @@
                 <h1>Update History</h1>
                 <p class="subtitle">Chronological record of container updates and rollbacks</p>
             </div>
+            <div class="page-header-actions">
+                <a href="/api/history/export?format=json" class="btn btn-sm">Export JSON</a>
+                <a href="/api/history/export?format=csv" class="btn btn-sm">Export CSV</a>
+            </div>
+        </div>
+
+        <div class="filter-bar" id="history-filter-bar">
+            <button class="filter-pill history-filter-pill active" data-outcome="all" onclick="filterHistory('all')">All</button>
+            <button class="filter-pill history-filter-pill" data-outcome="success" onclick="filterHistory('success')">Success</button>
+            <button class="filter-pill history-filter-pill" data-outcome="failed" onclick="filterHistory('failed')">Failed</button>
+            <button class="filter-pill history-filter-pill" data-outcome="rollback" onclick="filterHistory('rollback')">Rollback</button>
+            <button class="filter-pill history-filter-pill" data-outcome="skipped" onclick="filterHistory('skipped')">Skipped</button>
+            <button class="filter-pill history-filter-pill" data-outcome="other" onclick="filterHistory('other')">Other</button>
         </div>
 
         <div class="card">
@@ -81,7 +96,7 @@
                     <tbody>
                         {{if .History}}
                             {{range $i, $r := .History}}
-                            <tr class="container-row" onclick="onRowClick(event, 'history-{{$i}}')">
+                            <tr class="container-row history-row" data-outcome="{{$r.Outcome}}" onclick="onRowClick(event, 'history-{{$i}}')">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
                                 <td><a href="{{serviceOrContainer $r.Type $r.ContainerName $r.HostID}}" class="container-link">{{$r.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td>
@@ -99,6 +114,10 @@
                                         <span class="badge badge-warning">Warning</span>
                                     {{else if eq $r.Outcome "skipped"}}
                                         <span class="badge badge-warning">Skipped</span>
+                                    {{else if eq $r.Outcome "dry_run"}}
+                                        <span class="badge badge-muted">Dry Run</span>
+                                    {{else if eq $r.Outcome "pull_only"}}
+                                        <span class="badge badge-muted">Pull Only</span>
                                     {{else}}
                                         <span class="badge badge-muted">{{$r.Outcome}}</span>
                                     {{end}}
@@ -145,12 +164,191 @@
                     </tbody>
                 </table>
             </div>
+            {{if .History}}
+            <div style="padding: var(--sp-4); text-align: center;">
+                <button id="load-more-btn" class="btn" onclick="loadMoreHistory()">Load more</button>
+            </div>
+            {{end}}
         </div>
     </main>
 
     <div id="toast-container" class="toast-container"></div>
     <script src="/static/app.js"></script>
     <script src="/static/auth.js"></script>
+    <script>
+    var lastHistoryTimestamp = '{{.NextCursor}}';
+    var _historyFilter = 'all';
+
+    var OUTCOME_GROUPS = {
+        success:  ['success'],
+        failed:   ['failed', 'rollback_failed'],
+        rollback: ['rollback', 'rollback_success'],
+        skipped:  ['skipped'],
+        other:    ['dry_run', 'pull_only', 'finalise_warning']
+    };
+
+    function filterHistory(filter) {
+        _historyFilter = filter;
+        var pills = document.querySelectorAll('.history-filter-pill');
+        for (var i = 0; i < pills.length; i++) {
+            pills[i].classList.toggle('active', pills[i].getAttribute('data-outcome') === filter);
+        }
+        var rows = document.querySelectorAll('.history-row');
+        var shown = 0;
+        for (var i = 0; i < rows.length; i++) {
+            var outcome = rows[i].getAttribute('data-outcome');
+            var match = filter === 'all' || (OUTCOME_GROUPS[filter] && OUTCOME_GROUPS[filter].indexOf(outcome) >= 0);
+            rows[i].style.display = match ? '' : 'none';
+            // Also hide the accordion panel for hidden rows.
+            var panel = rows[i].nextElementSibling;
+            if (panel && panel.classList.contains('accordion-panel')) {
+                if (!match) panel.style.display = 'none';
+            }
+            if (match) shown++;
+        }
+        var header = document.querySelector('.card-header h2');
+        if (header) {
+            var total = rows.length;
+            header.textContent = filter === 'all'
+                ? 'Recent Updates (' + total + ')'
+                : 'Recent Updates (' + shown + ' of ' + total + ')';
+        }
+    }
+    window.filterHistory = filterHistory;
+
+    function loadMoreHistory() {
+        if (!lastHistoryTimestamp) return;
+        var btn = document.getElementById('load-more-btn');
+        btn.textContent = 'Loading...';
+        btn.disabled = true;
+
+        fetch('/api/history?limit=50&before=' + encodeURIComponent(lastHistoryTimestamp))
+            .then(function(r) { return r.json(); })
+            .then(function(records) {
+                if (!records || records.length === 0) {
+                    btn.textContent = 'No more records';
+                    btn.disabled = true;
+                    return;
+                }
+                var tbody = document.querySelector('.table-history tbody');
+                var existingCount = document.querySelectorAll('.container-row').length;
+                records.forEach(function(r, i) {
+                    var idx = existingCount + i;
+                    var tr = document.createElement('tr');
+                    tr.className = 'container-row history-row';
+                    tr.setAttribute('data-outcome', r.outcome || '');
+                    tr.setAttribute('onclick', "onRowClick(event, 'history-" + idx + "')");
+                    // Respect active filter.
+                    if (_historyFilter !== 'all') {
+                        var grp = OUTCOME_GROUPS[_historyFilter] || [];
+                        if (grp.indexOf(r.outcome) < 0) tr.style.display = 'none';
+                    }
+                    var ts = new Date(r.timestamp);
+                    var ago = timeAgoHist(ts);
+                    var dur = r.duration ? (r.duration / 1e9).toFixed(1) + 's' : '-';
+
+                    var tdTime = document.createElement('td');
+                    tdTime.title = ts.toISOString();
+                    tdTime.textContent = ago;
+
+                    var tdName = document.createElement('td');
+                    var link = document.createElement('a');
+                    link.href = '/container/' + encodeURIComponent(r.container_name);
+                    link.className = 'container-link';
+                    link.textContent = r.container_name;
+                    tdName.appendChild(link);
+
+                    var tdOutcome = document.createElement('td');
+                    tdOutcome.appendChild(badgeForHist(r.outcome));
+
+                    var tdDur = document.createElement('td');
+                    tdDur.className = 'mono';
+                    tdDur.textContent = dur;
+
+                    tr.appendChild(tdTime);
+                    tr.appendChild(tdName);
+                    tr.appendChild(tdOutcome);
+                    tr.appendChild(tdDur);
+                    tbody.appendChild(tr);
+
+                    var detail = document.createElement('tr');
+                    detail.className = 'accordion-panel';
+                    detail.id = 'accordion-history-' + idx;
+                    detail.style.display = 'none';
+                    var detailTd = document.createElement('td');
+                    detailTd.colSpan = 4;
+                    var content = document.createElement('div');
+                    content.className = 'accordion-content';
+                    var grid = document.createElement('div');
+                    grid.className = 'accordion-grid';
+
+                    var sec1 = document.createElement('div');
+                    sec1.className = 'accordion-section';
+                    appendLabelValue(sec1, 'Timestamp', ts.toISOString());
+                    appendLabelValue(sec1, 'Old Image', r.old_image || '');
+                    appendLabelValue(sec1, 'New Image', r.new_image || '');
+
+                    var sec2 = document.createElement('div');
+                    sec2.className = 'accordion-section';
+                    appendLabelValue(sec2, 'Old Digest', r.old_digest || '-');
+                    appendLabelValue(sec2, 'New Digest', r.new_digest || '-');
+                    if (r.error) {
+                        var errVal = appendLabelValue(sec2, 'Error', r.error);
+                        errVal.style.color = 'var(--error)';
+                    }
+
+                    grid.appendChild(sec1);
+                    grid.appendChild(sec2);
+                    content.appendChild(grid);
+                    detailTd.appendChild(content);
+                    detail.appendChild(detailTd);
+                    tbody.appendChild(detail);
+                });
+
+                lastHistoryTimestamp = records[records.length - 1].timestamp;
+                btn.textContent = 'Load more';
+                btn.disabled = false;
+                // Reapply current filter to update counts.
+                filterHistory(_historyFilter);
+            })
+            .catch(function() {
+                btn.textContent = 'Load more';
+                btn.disabled = false;
+            });
+    }
+
+    function badgeForHist(outcome) {
+        var map = {success:'badge-success',rollback:'badge-error',rollback_success:'badge-warning',rollback_failed:'badge-error',failed:'badge-error',finalise_warning:'badge-warning',skipped:'badge-warning',dry_run:'badge-muted',pull_only:'badge-muted'};
+        var label = {success:'Success',rollback:'Rollback',rollback_success:'Rollback OK',rollback_failed:'Rollback Failed',failed:'Failed',finalise_warning:'Warning',skipped:'Skipped',dry_run:'Dry Run',pull_only:'Pull Only'};
+        var cls = map[outcome] || 'badge-muted';
+        var txt = label[outcome] || outcome;
+        var span = document.createElement('span');
+        span.className = 'badge ' + cls;
+        span.textContent = txt;
+        return span;
+    }
+
+    function appendLabelValue(parent, labelText, valueText) {
+        var lbl = document.createElement('div');
+        lbl.className = 'accordion-label';
+        lbl.textContent = labelText;
+        var val = document.createElement('div');
+        val.className = 'accordion-value mono';
+        val.textContent = valueText;
+        parent.appendChild(lbl);
+        parent.appendChild(val);
+        return val;
+    }
+
+    function timeAgoHist(date) {
+        var now = new Date();
+        var diff = Math.floor((now - date) / 1000);
+        if (diff < 60) return diff + 's ago';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        return Math.floor(diff / 86400) + 'd ago';
+    }
+    </script>
 </body>
 </html>
 {{end}}

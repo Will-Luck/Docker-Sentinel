@@ -613,7 +613,7 @@ func TestUpdateFinaliseStopFailureRecordsWarning(t *testing.T) {
 	}
 
 	// Verify update was recorded as "finalise_warning" (not "success").
-	history, hErr := u.store.ListHistory(10)
+	history, hErr := u.store.ListHistory(10, "")
 	if hErr != nil {
 		t.Fatalf("ListHistory: %v", hErr)
 	}
@@ -659,7 +659,7 @@ func TestUpdateFinaliseRemoveFailureTriggersRollback(t *testing.T) {
 
 	// History should record "failed", never "success".
 	// doRollback also records a "rollback" entry, so we may have 2 records.
-	history, hErr := u.store.ListHistory(10)
+	history, hErr := u.store.ListHistory(10, "")
 	if hErr != nil {
 		t.Fatalf("ListHistory: %v", hErr)
 	}

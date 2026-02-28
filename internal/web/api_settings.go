@@ -1,16 +1,30 @@
 package web
 
 import (
+	_ "embed"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	cron "github.com/robfig/cron/v3"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
+
+//go:embed grafana-dashboard.json
+var grafanaDashboard []byte
+
+func (s *Server) apiGrafanaDashboard(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="sentinel-grafana-dashboard.json"`)
+	_, _ = w.Write(grafanaDashboard)
+}
 
 // apiSettings returns the current configuration values, merged with runtime overrides from BoltDB.
 func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
@@ -445,6 +459,103 @@ func (s *Server) apiSetRollbackPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
 }
 
+// apiSetDryRun enables or disables dry-run mode.
+// When enabled, updates are detected and notified but never executed.
+func (s *Server) apiSetDryRun(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("dry_run", value); err != nil {
+		s.deps.Log.Error("failed to save dry_run", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Dry-run mode "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "dry-run mode " + label})
+}
+
+// apiSetUpdateDelay sets the global update delay. Updates are only applied
+// after the delay has elapsed since first detection.
+func (s *Server) apiSetUpdateDelay(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Duration string `json:"duration"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	if err := s.deps.SettingsStore.SaveSetting("update_delay", req.Duration); err != nil {
+		s.deps.Log.Error("failed to save update_delay", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	msg := "Update delay cleared"
+	if req.Duration != "" {
+		msg = "Update delay set to " + req.Duration
+	}
+	s.logEvent(r, "settings", "", msg)
+	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
+}
+
+// apiSetPullOnly enables or disables pull-only mode.
+// When enabled, the new image is pulled but containers are not restarted.
+func (s *Server) apiSetPullOnly(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("pull_only", value); err != nil {
+		s.deps.Log.Error("failed to save pull_only", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Pull-only mode "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "pull-only mode " + label})
+}
+
 // apiClusterSettings returns the current cluster configuration with defaults
 // for any keys not yet saved to BoltDB.
 func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
@@ -641,4 +752,489 @@ func (s *Server) apiSwitchRole(w http.ResponseWriter, r *http.Request) {
 
 	s.logEvent(r, "settings", "", "Instance role changed to "+body.Role)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "restart_required": "true"})
+}
+
+// apiSetComposeSync enables or disables Docker Compose file sync after updates.
+func (s *Server) apiSetComposeSync(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("compose_sync", value); err != nil {
+		s.deps.Log.Error("failed to save compose_sync", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Compose file sync "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "compose file sync " + label})
+}
+
+// apiSetShowStopped enables or disables showing stopped containers in the dashboard.
+func (s *Server) apiSetShowStopped(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("show_stopped", value); err != nil {
+		s.deps.Log.Error("failed to save show_stopped", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Show stopped containers "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "show stopped containers " + label})
+}
+
+// apiSetImageBackup enables or disables image retag backup before updates.
+func (s *Server) apiSetImageBackup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("image_backup", value); err != nil {
+		s.deps.Log.Error("failed to save image_backup", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Image backup "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "image backup " + label})
+}
+
+// apiSetRemoveVolumes enables or disables anonymous volume removal during updates.
+func (s *Server) apiSetRemoveVolumes(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if body.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("remove_volumes", value); err != nil {
+		s.deps.Log.Error("failed to save remove_volumes", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetRemoveVolumes(body.Enabled)
+	}
+	label := "disabled"
+	if body.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Remove volumes on update "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "remove volumes on update " + label})
+}
+
+// apiSetScanConcurrency sets the number of parallel registry checks during a scan.
+func (s *Server) apiSetScanConcurrency(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Concurrency int `json:"concurrency"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Concurrency < 1 || body.Concurrency > 20 {
+		writeError(w, http.StatusBadRequest, "concurrency must be between 1 and 20")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	val := strconv.Itoa(body.Concurrency)
+	if err := s.deps.SettingsStore.SaveSetting("scan_concurrency", val); err != nil {
+		s.deps.Log.Error("failed to save scan_concurrency", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetScanConcurrency(body.Concurrency)
+	}
+	s.logEvent(r, "settings", "", "Scan concurrency set to "+val)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "scan concurrency set to " + val})
+}
+
+// apiSetHADiscovery enables or disables Home Assistant MQTT auto-discovery.
+func (s *Server) apiSetHADiscovery(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool   `json:"enabled"`
+		Prefix  string `json:"prefix"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	value := "false"
+	if req.Enabled {
+		value = "true"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("ha_discovery_enabled", value); err != nil {
+		s.deps.Log.Error("failed to save ha_discovery_enabled", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if req.Prefix != "" {
+		if err := s.deps.SettingsStore.SaveSetting("ha_discovery_prefix", req.Prefix); err != nil {
+			s.deps.Log.Warn("failed to save ha_discovery_prefix", "error", err)
+		}
+	}
+	label := "disabled"
+	if req.Enabled {
+		label = "enabled"
+	}
+	s.logEvent(r, "settings", "", "Home Assistant discovery "+label)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// apiSetDockerTLS saves Docker TLS certificate paths for mTLS connections.
+// All three paths must be provided together, or all empty to disable.
+func (s *Server) apiSetDockerTLS(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CA   string `json:"ca"`
+		Cert string `json:"cert"`
+		Key  string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusInternalServerError, "settings store not available")
+		return
+	}
+
+	// Trim whitespace from paths.
+	req.CA = strings.TrimSpace(req.CA)
+	req.Cert = strings.TrimSpace(req.Cert)
+	req.Key = strings.TrimSpace(req.Key)
+
+	// All-or-nothing: either all three are provided, or all are empty.
+	has := req.CA != "" || req.Cert != "" || req.Key != ""
+	complete := req.CA != "" && req.Cert != "" && req.Key != ""
+	if has && !complete {
+		writeError(w, http.StatusBadRequest, "all three certificate paths must be provided, or leave all empty to disable")
+		return
+	}
+
+	// Validate that files exist when paths are provided.
+	if complete {
+		for label, path := range map[string]string{"CA certificate": req.CA, "client certificate": req.Cert, "client key": req.Key} {
+			if _, err := os.Stat(path); err != nil {
+				writeError(w, http.StatusBadRequest, label+" not found: "+path)
+				return
+			}
+		}
+	}
+
+	// Save all three settings atomically — roll back on partial failure to
+	// prevent inconsistent TLS config (e.g. CA saved but cert/key missing).
+	tlsPairs := []struct{ key, val string }{
+		{store.SettingDockerTLSCA, req.CA},
+		{store.SettingDockerTLSCert, req.Cert},
+		{store.SettingDockerTLSKey, req.Key},
+	}
+	for _, p := range tlsPairs {
+		if err := s.deps.SettingsStore.SaveSetting(p.key, p.val); err != nil {
+			// Roll back: clear all three to avoid partial config.
+			for _, rb := range tlsPairs {
+				_ = s.deps.SettingsStore.SaveSetting(rb.key, "")
+			}
+			writeError(w, http.StatusInternalServerError, "failed to save TLS config — rolled back")
+			return
+		}
+	}
+
+	msg := "Docker TLS certificates cleared"
+	if complete {
+		msg = "Docker TLS certificates saved"
+	}
+	s.logEvent(r, "settings", "", msg)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message":          msg,
+		"restart_required": "true",
+	})
+}
+
+// apiSetMaintenanceWindow sets the maintenance window expression for auto-updates.
+func (s *Server) apiSetMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Validate the expression if non-empty.
+	if req.Value != "" {
+		if _, err := engine.ParseWindow(req.Value); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid maintenance window: "+err.Error())
+			return
+		}
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("maintenance_window", req.Value); err != nil {
+		s.deps.Log.Error("failed to save maintenance_window", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetMaintenanceWindow(req.Value)
+	}
+
+	msg := "Maintenance window cleared"
+	if req.Value != "" {
+		msg = "Maintenance window set to " + req.Value
+	}
+	s.logEvent(r, "settings", "", msg)
+	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
+}
+
+// apiTestDockerTLS attempts to connect to the Docker daemon using the provided TLS certificates.
+func (s *Server) apiTestDockerTLS(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CA   string `json:"ca"`
+		Cert string `json:"cert"`
+		Key  string `json:"key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	req.CA = strings.TrimSpace(req.CA)
+	req.Cert = strings.TrimSpace(req.Cert)
+	req.Key = strings.TrimSpace(req.Key)
+
+	if req.CA == "" || req.Cert == "" || req.Key == "" {
+		writeError(w, http.StatusBadRequest, "all three certificate paths are required for testing")
+		return
+	}
+
+	// Read the Docker host from config values.
+	dockerHost := "/var/run/docker.sock"
+	if vals := s.deps.Config.Values(); vals["SENTINEL_DOCKER_SOCK"] != "" {
+		dockerHost = vals["SENTINEL_DOCKER_SOCK"]
+	}
+
+	// TLS only applies to TCP connections — testing against a Unix socket is meaningless.
+	if !strings.HasPrefix(dockerHost, "tcp://") && !strings.HasPrefix(dockerHost, "tcps://") {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "TLS certificates require a TCP Docker host (tcp:// or tcps://). Current host is a Unix socket.",
+		})
+		return
+	}
+
+	tlsCfg := &docker.TLSConfig{CACert: req.CA, ClientCert: req.Cert, ClientKey: req.Key}
+	testClient, err := docker.NewClient(dockerHost, tlsCfg)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "failed to create client: " + err.Error(),
+		})
+		return
+	}
+	defer testClient.Close()
+
+	if err := testClient.Ping(r.Context()); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "Docker ping failed: " + err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// apiGetOIDCSettings returns the current OIDC configuration (client_secret masked).
+func (s *Server) apiGetOIDCSettings(w http.ResponseWriter, _ *http.Request) {
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	load := func(key string) string {
+		v, _ := s.deps.SettingsStore.LoadSetting(key)
+		return v
+	}
+
+	secret := load("oidc_client_secret")
+	maskedSecret := ""
+	if secret != "" {
+		if len(secret) > 8 {
+			maskedSecret = secret[:4] + "****" + secret[len(secret)-4:]
+		} else {
+			maskedSecret = "****"
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":       load("oidc_enabled") == "true",
+		"issuer_url":    load("oidc_issuer_url"),
+		"client_id":     load("oidc_client_id"),
+		"client_secret": maskedSecret,
+		"redirect_url":  load("oidc_redirect_url"),
+		"auto_create":   load("oidc_auto_create") == "true",
+		"default_role":  load("oidc_default_role"),
+	})
+}
+
+// apiSaveOIDCSettings saves OIDC configuration and reinitialises the provider.
+func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	var req struct {
+		Enabled      bool   `json:"enabled"`
+		IssuerURL    string `json:"issuer_url"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		RedirectURL  string `json:"redirect_url"`
+		AutoCreate   bool   `json:"auto_create"`
+		DefaultRole  string `json:"default_role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate role.
+	if req.DefaultRole != "" {
+		switch req.DefaultRole {
+		case "admin", "operator", "viewer":
+			// valid
+		default:
+			writeError(w, http.StatusBadRequest, "invalid default role")
+			return
+		}
+	}
+
+	enabledVal := "false"
+	if req.Enabled {
+		enabledVal = "true"
+	}
+	autoCreateVal := "false"
+	if req.AutoCreate {
+		autoCreateVal = "true"
+	}
+
+	// If client_secret contains the masked pattern, preserve the existing secret.
+	if strings.Contains(req.ClientSecret, "****") {
+		existing, _ := s.deps.SettingsStore.LoadSetting("oidc_client_secret")
+		req.ClientSecret = existing
+	}
+
+	pairs := []struct{ key, val string }{
+		{"oidc_enabled", enabledVal},
+		{"oidc_issuer_url", req.IssuerURL},
+		{"oidc_client_id", req.ClientID},
+		{"oidc_client_secret", req.ClientSecret},
+		{"oidc_redirect_url", req.RedirectURL},
+		{"oidc_auto_create", autoCreateVal},
+		{"oidc_default_role", req.DefaultRole},
+	}
+
+	for _, p := range pairs {
+		if err := s.deps.SettingsStore.SaveSetting(p.key, p.val); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save OIDC settings")
+			return
+		}
+	}
+
+	// Reinitialise the OIDC provider with the new settings.
+	if req.Enabled && req.IssuerURL != "" && req.ClientID != "" {
+		oidcCfg := auth.OIDCConfig{
+			Enabled:      true,
+			IssuerURL:    req.IssuerURL,
+			ClientID:     req.ClientID,
+			ClientSecret: req.ClientSecret,
+			RedirectURL:  req.RedirectURL,
+			AutoCreate:   req.AutoCreate,
+			DefaultRole:  req.DefaultRole,
+		}
+		provider, err := auth.NewOIDCProvider(r.Context(), oidcCfg)
+		if err != nil {
+			s.deps.Log.Warn("OIDC provider reinitialisation failed", "error", err)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status":  "saved_with_warning",
+				"warning": "Settings saved but OIDC provider failed to initialise: " + err.Error(),
+			})
+			return
+		}
+		s.SetOIDCProvider(provider)
+	} else {
+		// Disabled or incomplete — clear the provider.
+		s.SetOIDCProvider(nil)
+	}
+
+	s.logEvent(r, "settings", "", "OIDC settings updated")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

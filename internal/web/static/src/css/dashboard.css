@@ -1,0 +1,972 @@
+/* --------------------------------------------------------------------------
+   10. Stack Groups — collapsible, chevron rotation, pending state
+   -------------------------------------------------------------------------- */
+
+.stack-group {
+    border-left: 3px solid var(--accent);
+}
+
+.stack-group.stack-healthy { border-left-color: var(--success); }
+.stack-group.stack-has-stopped { border-left-color: var(--error); }
+.stack-group.stack-has-pending { border-left-color: var(--warning); }
+
+.stack-header {
+    cursor: pointer;
+    background: var(--bg-raised);
+    user-select: none;
+    transition: background 150ms;
+
+    &:hover {
+        background: var(--bg-hover);
+    }
+
+    & td {
+        padding: var(--sp-2) var(--sp-4);
+    }
+}
+
+.stack-header-inner {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+
+.stack-chevron {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+    transition: transform 200ms;
+    display: inline-block;
+}
+
+/* Collapsed: chevron points right (default) */
+.stack-collapsed .stack-chevron {
+    transform: rotate(0deg);
+}
+
+/* Expanded: chevron rotates to point down */
+.stack-group:not(.stack-collapsed) .stack-chevron {
+    transform: rotate(90deg);
+}
+
+.stack-name {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--fg-primary);
+}
+
+.stack-counts {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-3);
+    margin-left: var(--sp-2);
+}
+
+.stack-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+}
+
+.stack-indicator::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    flex-shrink: 0;
+}
+
+.stack-indicator-running {
+    color: var(--success);
+}
+
+.stack-indicator-running::before {
+    background: var(--success);
+    box-shadow: 0 0 4px light-dark(rgba(46,125,50,0.4), rgba(129,199,132,0.4));
+}
+
+.stack-indicator-stopped {
+    color: var(--error);
+}
+
+.stack-indicator-stopped::before {
+    background: var(--error);
+    box-shadow: 0 0 4px light-dark(rgba(176,0,32,0.3), rgba(207,102,121,0.3));
+}
+
+.stack-indicator-pending {
+    color: var(--warning);
+}
+
+.stack-indicator-pending::before {
+    background: var(--warning);
+    box-shadow: 0 0 4px light-dark(rgba(230,81,0,0.3), rgba(255,213,79,0.3));
+}
+
+/* Pending stack highlight */
+.stack-pending {
+    background: var(--warning-bg);
+
+    & .stack-name {
+        color: var(--warning);
+    }
+}
+
+/* Collapsed stacks: hide rows and accordion panels */
+.stack-collapsed .container-row,
+.stack-collapsed .accordion-panel {
+    display: none !important;
+}
+
+
+/* --------------------------------------------------------------------------
+   10b. Swarm Services — separate section with collapsible per-node tasks
+   -------------------------------------------------------------------------- */
+
+.section-separator {
+    border: none;
+}
+
+.section-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-top: 2px solid var(--border);
+    margin-top: var(--sp-2);
+}
+
+.section-divider .expand-icon {
+    font-size: 0.9rem;
+    color: var(--fg-tertiary);
+    transition: transform 0.15s ease;
+}
+
+.section-title {
+    font-weight: 700;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-secondary);
+}
+
+.section-summary {
+    font-size: 0.75rem;
+    color: var(--fg-tertiary);
+}
+
+.svc-group {
+    border-left: 3px solid var(--accent);
+}
+
+.svc-header {
+    cursor: pointer;
+    background: var(--bg-raised);
+    user-select: none;
+    transition: background 150ms;
+
+    &:hover {
+        background: var(--bg-hover);
+    }
+
+    & td {
+        padding: var(--sp-2) var(--sp-4);
+    }
+}
+
+.svc-header.has-update {
+    border-left: 3px solid var(--warning);
+    background: var(--warning-bg);
+}
+
+.svc-name {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.svc-name:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
+/* Chevron rotation for svc-group (reuses stack-chevron class) */
+.svc-collapsed .stack-chevron {
+    transform: rotate(0deg);
+}
+
+.svc-group:not(.svc-collapsed) .stack-chevron {
+    transform: rotate(90deg);
+}
+
+/* Collapsed: hide task rows */
+.svc-collapsed .svc-task-row {
+    display: none !important;
+}
+
+.svc-task-row {
+    background: var(--bg-body);
+
+    & td {
+        padding: var(--sp-1) var(--sp-4);
+        font-size: 0.8rem;
+    }
+}
+
+.svc-node {
+    font-family: var(--font-mono);
+    color: var(--fg-secondary);
+    padding-left: var(--sp-6) !important;
+}
+
+.svc-node-addr {
+    color: var(--fg-tertiary);
+    font-size: 0.75rem;
+}
+
+.svc-replicas {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 0.75rem;
+}
+
+.svc-replicas-healthy { background: var(--badge-success-bg); color: var(--badge-success-text); }
+.svc-replicas-degraded { background: var(--badge-warning-bg); color: var(--badge-warning-text); }
+.svc-replicas-down { background: var(--badge-error-bg); color: var(--badge-error-text); }
+
+
+/* --------------------------------------------------------------------------
+   15. Breadcrumb — container detail page
+   -------------------------------------------------------------------------- */
+
+.breadcrumb {
+    font-size: 0.85rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-5);
+
+    & a {
+        color: var(--accent);
+        text-decoration: none;
+
+        &:hover {
+            text-decoration: underline;
+        }
+    }
+}
+
+.breadcrumb-current {
+    color: var(--fg-primary);
+    font-weight: 600;
+}
+
+
+/* --------------------------------------------------------------------------
+   16. Container Detail Page
+   -------------------------------------------------------------------------- */
+
+/* Container detail — overview bar */
+
+.detail-overview {
+    margin-bottom: var(--sp-4);
+}
+
+.detail-overview-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-4);
+    padding: var(--sp-4) var(--sp-5);
+    flex-wrap: wrap;
+}
+
+.detail-overview-info {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    flex-wrap: wrap;
+}
+
+.detail-overview-image {
+    font-size: 0.9rem;
+    color: var(--fg-primary);
+}
+
+.detail-overview-actions {
+    display: flex;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+}
+
+/* Container detail — accordion sections */
+
+.accordion-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+}
+
+.accordion {
+    overflow: hidden;
+}
+
+.accordion-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-4) var(--sp-5);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: background 150ms;
+}
+
+.accordion-header:hover {
+    background: var(--md-hover-state);
+}
+
+.accordion-header::-webkit-details-marker {
+    display: none;
+}
+
+.accordion-header h2 {
+    font-size: 0.95rem;
+    font-weight: 500;
+    flex: 1;
+}
+
+.accordion-chevron {
+    flex-shrink: 0;
+    transition: transform 200ms var(--md-motion-standard);
+    color: var(--fg-secondary);
+}
+
+details[open] > .accordion-header .accordion-chevron {
+    transform: rotate(180deg);
+}
+
+.accordion-preview {
+    font-size: 0.75rem;
+    color: var(--fg-secondary);
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.accordion-body {
+    padding: 0 var(--sp-5) var(--sp-5);
+}
+
+.accordion-body-flush {
+    padding: 0 0 0;
+}
+
+.accordion-intro {
+    font-size: 0.85rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-4);
+    line-height: 1.5;
+}
+
+.accordion-empty {
+    padding: var(--sp-5);
+    text-align: center;
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+}
+
+/* Legacy detail grid (kept for other pages if used) */
+
+.detail-summary {
+    margin-bottom: var(--sp-6);
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--sp-5);
+    padding: var(--sp-5);
+}
+
+.detail-item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+}
+
+.detail-label {
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-secondary);
+}
+
+.detail-value {
+    font-size: 0.9rem;
+    color: var(--fg-primary);
+}
+
+.detail-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    padding: 0 var(--sp-5) var(--sp-3);
+    border-top: 1px solid var(--border);
+    margin: 0 var(--sp-5);
+    padding-top: var(--sp-3);
+}
+
+.detail-meta-label {
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-muted);
+}
+
+.detail-meta-value {
+    font-size: 0.75rem;
+    font-family: var(--font-mono);
+    color: var(--fg-secondary);
+    background: none;
+}
+
+.detail-meta-copy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: color 150ms, background 150ms;
+}
+
+.detail-meta-copy:hover {
+    color: var(--fg-primary);
+    background: var(--md-hover-state);
+}
+
+.detail-actions {
+    padding: var(--sp-3) var(--sp-5) var(--sp-5);
+    display: flex;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+}
+
+.detail-section {
+    margin-bottom: var(--sp-6);
+}
+
+/* Version picker */
+
+.version-picker {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+
+    & select {
+        appearance: none;
+        -webkit-appearance: none;
+        background: var(--bg-input);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 6px var(--sp-8) 6px var(--sp-3);
+        font-size: 0.85rem;
+        font-family: var(--font-mono);
+        color: var(--fg-primary);
+        cursor: pointer;
+        outline: none;
+        transition: border-color 150ms;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath fill='%23938F99' d='M4 5L0 0h8z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+
+        &:hover {
+            border-color: var(--border-strong);
+        }
+
+        &:focus {
+            border-color: var(--accent);
+        }
+    }
+}
+
+/* Changelog link */
+
+.changelog-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.8rem;
+    transition: color 150ms;
+
+    &:hover {
+        color: var(--accent-hover);
+        text-decoration: underline;
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   17. Container Row + Link
+   -------------------------------------------------------------------------- */
+
+.container-row {
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: background 150ms, border-left-color 150ms;
+}
+
+.container-row:hover {
+    background: var(--bg-hover);
+}
+
+.container-row.state-running { border-left-color: var(--success); }
+.container-row.state-exited,
+.container-row.state-stopped,
+.container-row.state-dead,
+.container-row.state-created {
+    border-left-color: var(--error);
+    background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
+}
+.container-row.has-update {
+    border-left-color: var(--warning);
+    background: light-dark(rgba(230, 81, 0, 0.06), rgba(255, 213, 79, 0.06));
+}
+.container-row.state-exited.has-update,
+.container-row.state-stopped.has-update {
+    border-left-color: var(--error);
+    background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
+}
+
+.container-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 150ms;
+
+    &:hover {
+        color: var(--accent-hover);
+        text-decoration: underline;
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   18. Checkbox Column
+   -------------------------------------------------------------------------- */
+
+.row-select,
+#select-all {
+    accent-color: var(--accent);
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+}
+
+.stack-select {
+    accent-color: var(--accent);
+    cursor: pointer;
+    width: 0;
+    height: 16px;
+    opacity: 0;
+    transition: width 250ms ease, opacity 200ms ease, margin 250ms ease;
+    margin: 0;
+    vertical-align: middle;
+}
+
+table.managing .stack-select {
+    width: 18px;
+    opacity: 1;
+    margin-right: var(--sp-1);
+}
+
+/* Stack drag handle — hidden by default, shown in manage mode */
+.stack-drag-handle {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    cursor: grab;
+    color: var(--on-surface);
+    font-size: 1.1rem;
+    line-height: 1;
+    user-select: none;
+    transition: width 250ms ease, opacity 250ms ease, margin 250ms ease;
+}
+table.managing .stack-drag-handle {
+    width: 20px;
+    opacity: 0.5;
+    margin-right: var(--sp-1);
+}
+table.managing .stack-drag-handle:hover {
+    opacity: 1;
+}
+table.managing .stack-drag-handle:active {
+    cursor: grabbing;
+}
+
+/* Drag states */
+.stack-group.dragging {
+    opacity: 0.4;
+}
+.stack-group.drag-over-above {
+    box-shadow: inset 0 3px 0 0 var(--accent);
+}
+.stack-group.drag-over-below {
+    box-shadow: inset 0 -3px 0 0 var(--accent);
+}
+
+
+/* --------------------------------------------------------------------------
+   22. Manage Mode — hidden checkboxes by default
+   -------------------------------------------------------------------------- */
+
+.th-checkbox,
+.td-checkbox {
+    width: 0;
+    max-width: 0;
+    overflow: hidden;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    opacity: 0;
+    transition: width 250ms ease, max-width 250ms ease, opacity 200ms ease, padding 250ms ease;
+}
+
+table.managing .th-checkbox,
+table.managing .td-checkbox {
+    width: 40px;
+    max-width: 40px;
+    opacity: 1;
+    padding-left: var(--sp-4) !important;
+    padding-right: var(--sp-4) !important;
+}
+
+#manage-btn.active {
+    background: var(--accent);
+    color: var(--md-on-primary);
+    border-color: var(--accent);
+}
+
+
+/* --------------------------------------------------------------------------
+   23. Status Badge Hover — Running -> Restart?
+   -------------------------------------------------------------------------- */
+
+.status-badge-wrap {
+    position: relative;
+    display: inline-flex;
+    cursor: pointer;
+}
+
+.status-badge-wrap .badge-default {
+    transition: opacity 150ms ease;
+}
+
+.status-badge-wrap .badge-hover {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+    white-space: nowrap;
+}
+
+.status-badge-wrap:hover .badge-default {
+    opacity: 0;
+}
+
+.status-badge-wrap:hover .badge-hover {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Pending action state — CSS-driven spinner, immune to JS DOM manipulation */
+.status-badge-wrap[data-pending] {
+    pointer-events: none;
+    cursor: default;
+}
+.status-badge-wrap[data-pending] .badge-default,
+.status-badge-wrap[data-pending] .badge-hover {
+    opacity: 0 !important;
+    display: none !important;
+}
+.status-badge-wrap[data-pending]::after {
+    content: "";
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--fg-muted);
+    border-top-color: var(--accent);
+    border-radius: var(--radius-full);
+    animation: badgeSpin 800ms linear infinite;
+}
+
+
+/* --------------------------------------------------------------------------
+   24. Self-Protected Container
+   -------------------------------------------------------------------------- */
+
+.policy-disabled {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.policy-badge-self {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border);
+    background-color: var(--bg-raised);
+    color: var(--fg-secondary);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+
+/* --------------------------------------------------------------------------
+   25. Stack Row Animation
+   -------------------------------------------------------------------------- */
+
+.stack-group:not(.stack-collapsed) .container-row {
+    animation: slideDown 200ms var(--md-motion-emphasized-decelerate);
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   26. Accordion Slide Animation
+   -------------------------------------------------------------------------- */
+
+.accordion-panel {
+    overflow: hidden;
+}
+
+.accordion-panel.accordion-open {
+    animation: accordionOpen 200ms var(--md-motion-emphasized-decelerate);
+}
+
+.accordion-panel.accordion-closing {
+    animation: accordionClose 120ms var(--md-motion-emphasized-accelerate) forwards;
+}
+
+@keyframes accordionOpen {
+    from {
+        opacity: 0;
+        max-height: 0;
+    }
+    to {
+        opacity: 1;
+        max-height: 500px;
+    }
+}
+
+@keyframes accordionClose {
+    from {
+        opacity: 1;
+        max-height: 500px;
+    }
+    to {
+        opacity: 0;
+        max-height: 0;
+    }
+}
+
+
+/* --------------------------------------------------------------------------
+   Dashboard Host Groups (cluster mode)
+   -------------------------------------------------------------------------- */
+
+.host-header {
+    cursor: pointer;
+    background: var(--bg-surface);
+}
+
+.host-header td {
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: 2px solid var(--border);
+}
+
+.host-header-inner {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.host-header-inner .expand-icon {
+    font-size: 0.85rem;
+    width: 1em;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.host-group.host-collapsed tr:not(.host-header) {
+    display: none;
+}
+
+.host-name {
+    flex: 1;
+}
+
+.host-count {
+    margin-left: auto;
+}
+
+.host-offline {
+    animation: host-pulse 2s ease-in-out infinite;
+}
+@keyframes host-pulse {
+    0%, 100% { background: var(--bg-surface); }
+    50% { background: color-mix(in srgb, var(--error) 15%, var(--bg-surface)); }
+}
+.host-offline-link {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--error);
+    text-decoration: none;
+    padding: 2px 10px;
+    border: 1px solid var(--error);
+    border-radius: var(--radius-full);
+}
+.host-offline-link:hover {
+    background: var(--error);
+    color: var(--bg);
+}
+
+
+/* --------------------------------------------------------------------------
+   Dashboard tabs
+   -------------------------------------------------------------------------- */
+
+.dashboard-tabs {
+    margin-bottom: var(--sp-4);
+    background: color-mix(in srgb, #6750A4 15%, var(--md-surface-container-highest));
+    border-radius: var(--radius-lg);
+    padding: 0 var(--sp-2);
+    border-bottom: none;
+}
+.dashboard-tabs .tab-btn {
+    padding: var(--sp-2) var(--sp-4);
+    border-right: 1px solid var(--border);
+    color: var(--fg-primary);
+    border-radius: var(--radius-md);
+}
+.dashboard-tabs .tab-btn:hover {
+    background: var(--bg-hover);
+}
+.dashboard-tabs .tab-btn:last-child {
+    border-right: none;
+}
+.dashboard-tabs .tab-btn.active {
+    color: var(--success);
+    border-bottom-color: var(--success);
+}
+.tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 var(--sp-1);
+    margin-left: var(--sp-1);
+    border-radius: var(--radius-full);
+    background: var(--border);
+    color: var(--fg-primary);
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+.dashboard-tabs .tab-btn.active .tab-badge {
+    background: var(--success);
+    color: #fff;
+}
+
+
+/* --------------------------------------------------------------------------
+   28. Images Page — tag layout, table sizing
+   -------------------------------------------------------------------------- */
+
+.table-images {
+    table-layout: fixed;
+}
+.table-images td,
+.table-images th { vertical-align: middle; }
+
+/* Column widths via class names (immune to checkbox column shift). */
+.cell-image-tags,
+.table-images .th-tags    { width: 36%; }
+.cell-image-id,
+.table-images .th-id      { width: 18%; }
+.cell-image-size,
+.table-images .th-size    { width: 10%; }
+.table-images .th-created,
+.table-images td:nth-last-child(3) { width: 12%; } /* Created */
+.table-images .th-status,
+.table-images td:nth-last-child(2) { width: 10%; } /* Status */
+.table-images .th-actions,
+.table-images td:last-child { width: 10%; }         /* Actions */
+.table-images .th-select  { width: 40px; }
+
+.cell-image-tags {
+    word-break: break-all;
+}
+.image-tag {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    padding: 1px 4px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    margin-bottom: 2px;
+}
+.cell-image-id { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-image-size { white-space: nowrap; }
+
+.filter-divider {
+    display: inline-block;
+    width: 1px;
+    height: 1.2em;
+    background: var(--border);
+    margin: 0 var(--sp-2);
+    vertical-align: middle;
+}

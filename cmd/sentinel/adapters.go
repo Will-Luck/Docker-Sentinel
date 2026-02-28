@@ -18,6 +18,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
@@ -28,8 +29,33 @@ import (
 // storeAdapter converts store.Store to web.HistoryStore.
 type storeAdapter struct{ s *store.Store }
 
-func (a *storeAdapter) ListHistory(limit int) ([]web.UpdateRecord, error) {
-	records, err := a.s.ListHistory(limit)
+func (a *storeAdapter) ListHistory(limit int, before string) ([]web.UpdateRecord, error) {
+	records, err := a.s.ListHistory(limit, before)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.UpdateRecord, len(records))
+	for i, r := range records {
+		result[i] = web.UpdateRecord{
+			Timestamp:     r.Timestamp,
+			ContainerName: r.ContainerName,
+			OldImage:      r.OldImage,
+			OldDigest:     r.OldDigest,
+			NewImage:      r.NewImage,
+			NewDigest:     r.NewDigest,
+			Outcome:       r.Outcome,
+			Duration:      r.Duration,
+			Error:         r.Error,
+			Type:          r.Type,
+			HostID:        r.HostID,
+			HostName:      r.HostName,
+		}
+	}
+	return result, nil
+}
+
+func (a *storeAdapter) ListAllHistory() ([]web.UpdateRecord, error) {
+	records, err := a.s.ListAllHistory()
 	if err != nil {
 		return nil, err
 	}
@@ -263,6 +289,10 @@ func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.Co
 	return ci, nil
 }
 
+func (a *dockerAdapter) ContainerLogs(ctx context.Context, containerID string, lines int) (string, error) {
+	return a.c.ContainerLogs(ctx, containerID, lines)
+}
+
 // restartAdapter bridges docker.Client to web.ContainerRestarter.
 type restartAdapter struct{ c *docker.Client }
 
@@ -311,13 +341,33 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	return versions, nil
 }
 
+// tagListerAdapter bridges registry.ListTags to web.RegistryTagLister.
+type tagListerAdapter struct {
+	log *logging.Logger
+}
+
+func (a *tagListerAdapter) ListAllTags(ctx context.Context, imageRef string) ([]string, error) {
+	repo := registry.RepoPath(imageRef)
+	host := registry.RegistryHost(imageRef)
+
+	token, err := registry.FetchToken(ctx, repo, nil, host)
+	if err != nil {
+		return nil, fmt.Errorf("fetch token: %w", err)
+	}
+	tagsResult, err := registry.ListTags(ctx, imageRef, token, host, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list tags: %w", err)
+	}
+	return tagsResult.Tags, nil
+}
+
 // registryCheckerAdapter bridges registry.Checker to web.RegistryChecker.
 type registryCheckerAdapter struct {
 	checker *registry.Checker
 }
 
 func (a *registryCheckerAdapter) CheckForUpdate(ctx context.Context, imageRef string) (bool, []string, string, string, error) {
-	result := a.checker.CheckVersioned(ctx, imageRef)
+	result := a.checker.CheckVersioned(ctx, imageRef, docker.ScopeDefault, "", "")
 	if result.Error != nil {
 		return false, nil, "", "", result.Error
 	}
@@ -417,6 +467,44 @@ func (a *startAdapter) StartContainer(ctx context.Context, id string) error {
 	return a.c.StartContainer(ctx, id)
 }
 
+// imageAdapter bridges docker.Client to web.ImageManager.
+type imageAdapter struct {
+	client *docker.Client
+}
+
+func (a *imageAdapter) ListImages(ctx context.Context) ([]web.ImageInfo, error) {
+	images, err := a.client.ListImages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.ImageInfo, len(images))
+	for i, img := range images {
+		result[i] = web.ImageInfo{
+			ID:       img.ID,
+			RepoTags: img.RepoTags,
+			Size:     img.Size,
+			Created:  img.Created,
+			InUse:    img.InUse,
+		}
+	}
+	return result, nil
+}
+
+func (a *imageAdapter) PruneImages(ctx context.Context) (web.ImagePruneReport, error) {
+	result, err := a.client.PruneImages(ctx)
+	if err != nil {
+		return web.ImagePruneReport{}, err
+	}
+	return web.ImagePruneReport{
+		ImagesDeleted:  result.ImagesDeleted,
+		SpaceReclaimed: result.SpaceReclaimed,
+	}, nil
+}
+
+func (a *imageAdapter) RemoveImageByID(ctx context.Context, id string) error {
+	return a.client.RemoveImageByID(ctx, id)
+}
+
 // notifyConfigAdapter bridges store.Store to web.NotificationConfigStore.
 type notifyConfigAdapter struct{ s *store.Store }
 
@@ -426,6 +514,21 @@ func (a *notifyConfigAdapter) GetNotificationChannels() ([]notify.Channel, error
 
 func (a *notifyConfigAdapter) SetNotificationChannels(channels []notify.Channel) error {
 	return a.s.SetNotificationChannels(channels)
+}
+
+// notifyTemplateAdapter bridges store.Store to web.NotifyTemplateStore.
+type notifyTemplateAdapter struct{ s *store.Store }
+
+func (a *notifyTemplateAdapter) GetAllNotifyTemplates() (map[string]string, error) {
+	return a.s.GetAllNotifyTemplates()
+}
+
+func (a *notifyTemplateAdapter) SaveNotifyTemplate(eventType, tmpl string) error {
+	return a.s.SaveNotifyTemplate(eventType, tmpl)
+}
+
+func (a *notifyTemplateAdapter) DeleteNotifyTemplate(eventType string) error {
+	return a.s.DeleteNotifyTemplate(eventType)
 }
 
 // notifyStateAdapter bridges store.Store to web.NotifyStateStore.
@@ -649,6 +752,35 @@ func (a *hookStoreAdapter) SaveHook(hook hooks.Hook) error {
 
 func (a *hookStoreAdapter) DeleteHook(containerName, phase string) error {
 	return a.s.DeleteHook(containerName, phase)
+}
+
+// releaseSourceAdapter bridges store.Store to web.ReleaseSourceStore.
+type releaseSourceAdapter struct{ s *store.Store }
+
+func (a *releaseSourceAdapter) GetReleaseSources() ([]web.ReleaseSource, error) {
+	srcs, err := a.s.GetReleaseSources()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.ReleaseSource, len(srcs))
+	for i, src := range srcs {
+		result[i] = web.ReleaseSource{
+			ImagePattern: src.ImagePattern,
+			GitHubRepo:   src.GitHubRepo,
+		}
+	}
+	return result, nil
+}
+
+func (a *releaseSourceAdapter) SetReleaseSources(sources []web.ReleaseSource) error {
+	regSrcs := make([]registry.ReleaseSource, len(sources))
+	for i, src := range sources {
+		regSrcs[i] = registry.ReleaseSource{
+			ImagePattern: src.ImagePattern,
+			GitHubRepo:   src.GitHubRepo,
+		}
+	}
+	return a.s.SetReleaseSources(regSrcs)
 }
 
 // webHookStoreAdapter converts store.Store to web.HookStore interface.
@@ -946,15 +1078,18 @@ func (a *clusterAdapter) AllHosts() []web.ClusterHost {
 		// fields like Connected and in-memory Containers).
 		if hs, ok := a.srv.GetHost(h.ID); ok {
 			result = append(result, web.ClusterHost{
-				ID:           hs.Info.ID,
-				Name:         hs.Info.Name,
-				Address:      hs.Info.Address,
-				State:        string(hs.Info.State),
-				Connected:    hs.Connected,
-				EnrolledAt:   hs.Info.EnrolledAt,
-				LastSeen:     hs.Info.LastSeen,
-				AgentVersion: hs.Info.AgentVersion,
-				Containers:   len(hs.Containers),
+				ID:            hs.Info.ID,
+				Name:          hs.Info.Name,
+				Address:       hs.Info.Address,
+				State:         string(hs.Info.State),
+				Connected:     hs.Connected,
+				EnrolledAt:    hs.Info.EnrolledAt,
+				LastSeen:      hs.Info.LastSeen,
+				AgentVersion:  hs.Info.AgentVersion,
+				Containers:    len(hs.Containers),
+				DisconnectAt:  hs.DisconnectAt,
+				DisconnectErr: hs.DisconnectErr,
+				DisconnectCat: hs.DisconnectCat,
 			})
 		}
 	}
@@ -967,15 +1102,18 @@ func (a *clusterAdapter) GetHost(id string) (web.ClusterHost, bool) {
 		return web.ClusterHost{}, false
 	}
 	return web.ClusterHost{
-		ID:           hs.Info.ID,
-		Name:         hs.Info.Name,
-		Address:      hs.Info.Address,
-		State:        string(hs.Info.State),
-		Connected:    hs.Connected,
-		EnrolledAt:   hs.Info.EnrolledAt,
-		LastSeen:     hs.Info.LastSeen,
-		AgentVersion: hs.Info.AgentVersion,
-		Containers:   len(hs.Containers),
+		ID:            hs.Info.ID,
+		Name:          hs.Info.Name,
+		Address:       hs.Info.Address,
+		State:         string(hs.Info.State),
+		Connected:     hs.Connected,
+		EnrolledAt:    hs.Info.EnrolledAt,
+		LastSeen:      hs.Info.LastSeen,
+		AgentVersion:  hs.Info.AgentVersion,
+		Containers:    len(hs.Containers),
+		DisconnectAt:  hs.DisconnectAt,
+		DisconnectErr: hs.DisconnectErr,
+		DisconnectCat: hs.DisconnectCat,
 	}, true
 }
 
@@ -1016,8 +1154,8 @@ func (a *clusterAdapter) RevokeHost(id string) error {
 	return a.srv.RevokeHost(id)
 }
 
-func (a *clusterAdapter) DrainHost(id string) error {
-	return a.srv.DrainHost(id)
+func (a *clusterAdapter) PauseHost(id string) error {
+	return a.srv.PauseHost(id)
 }
 
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
@@ -1105,4 +1243,155 @@ func (m *clusterManager) Stop() {
 	m.srv = nil
 
 	m.log.Info("cluster gRPC server stopped")
+}
+
+// portainerAdapter bridges portainer.Scanner to web.PortainerProvider.
+type portainerAdapter struct {
+	scanner *portainer.Scanner
+}
+
+func (a *portainerAdapter) TestConnection(ctx context.Context) error {
+	return a.scanner.Client().TestConnection(ctx)
+}
+
+func (a *portainerAdapter) Endpoints(ctx context.Context) ([]web.PortainerEndpoint, error) {
+	eps, err := a.scanner.Endpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return convertPortainerEndpoints(eps), nil
+}
+
+func (a *portainerAdapter) AllEndpoints(ctx context.Context) ([]web.PortainerEndpoint, error) {
+	eps, err := a.scanner.AllEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return convertPortainerEndpoints(eps), nil
+}
+
+func (a *portainerAdapter) EndpointContainers(ctx context.Context, endpointID int) ([]web.PortainerContainerInfo, error) {
+	ep, err := a.findEndpoint(ctx, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	containers, err := a.scanner.EndpointContainers(ctx, ep)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.PortainerContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		out = append(out, web.PortainerContainerInfo{
+			ID:           c.ID,
+			Name:         c.Name,
+			Image:        c.Image,
+			State:        c.State,
+			Labels:       c.Labels,
+			EndpointID:   c.EndpointID,
+			EndpointName: c.EndpointName,
+			StackID:      c.StackID,
+			StackName:    c.StackName,
+		})
+	}
+	return out, nil
+}
+
+func (a *portainerAdapter) findEndpoint(ctx context.Context, endpointID int) (portainer.Endpoint, error) {
+	all, err := a.scanner.AllEndpoints(ctx)
+	if err != nil {
+		return portainer.Endpoint{}, err
+	}
+	for _, ep := range all {
+		if ep.ID == endpointID {
+			return ep, nil
+		}
+	}
+	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
+}
+
+func convertPortainerEndpoints(eps []portainer.Endpoint) []web.PortainerEndpoint {
+	out := make([]web.PortainerEndpoint, 0, len(eps))
+	for _, ep := range eps {
+		status := "down"
+		if ep.Status == portainer.StatusUp {
+			status = "up"
+		}
+		out = append(out, web.PortainerEndpoint{
+			ID:     ep.ID,
+			Name:   ep.Name,
+			URL:    ep.URL,
+			Status: status,
+		})
+	}
+	return out
+}
+
+// portainerScannerAdapter bridges portainer.Scanner to engine.PortainerScanner.
+type portainerScannerAdapter struct {
+	scanner *portainer.Scanner
+}
+
+func (a *portainerScannerAdapter) Endpoints(ctx context.Context) ([]engine.PortainerEndpointInfo, error) {
+	eps, err := a.scanner.Endpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]engine.PortainerEndpointInfo, 0, len(eps))
+	for _, ep := range eps {
+		out = append(out, engine.PortainerEndpointInfo{
+			ID:   ep.ID,
+			Name: ep.Name,
+		})
+	}
+	return out, nil
+}
+
+func (a *portainerScannerAdapter) EndpointContainers(ctx context.Context, endpointID int) ([]engine.PortainerContainerResult, error) {
+	ep, err := a.findEndpoint(ctx, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	containers, err := a.scanner.EndpointContainers(ctx, ep)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]engine.PortainerContainerResult, 0, len(containers))
+	for _, c := range containers {
+		out = append(out, engine.PortainerContainerResult{
+			ID:         c.ID,
+			Name:       c.Name,
+			Image:      c.Image,
+			State:      c.State,
+			Labels:     c.Labels,
+			EndpointID: c.EndpointID,
+			StackID:    c.StackID,
+			StackName:  c.StackName,
+		})
+	}
+	return out, nil
+}
+
+func (a *portainerScannerAdapter) ResetCache() {
+	a.scanner.ResetCache()
+}
+
+func (a *portainerScannerAdapter) RedeployStack(ctx context.Context, stackID, endpointID int) error {
+	return a.scanner.RedeployStack(ctx, stackID, endpointID)
+}
+
+func (a *portainerScannerAdapter) UpdateStandaloneContainer(ctx context.Context, endpointID int, containerID, newImage string) error {
+	return a.scanner.UpdateStandaloneContainer(ctx, endpointID, containerID, newImage)
+}
+
+func (a *portainerScannerAdapter) findEndpoint(ctx context.Context, endpointID int) (portainer.Endpoint, error) {
+	all, err := a.scanner.AllEndpoints(ctx)
+	if err != nil {
+		return portainer.Endpoint{}, err
+	}
+	for _, ep := range all {
+		if ep.ID == endpointID {
+			return ep, nil
+		}
+	}
+	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
 }

@@ -19,7 +19,6 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
-	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
 
 //go:embed static/*
@@ -39,8 +38,10 @@ type Dependencies struct {
 	Restarter           ContainerRestarter
 	Stopper             ContainerStopper
 	Starter             ContainerStarter
+	LogViewer           ContainerLogViewer
 	Registry            RegistryVersionChecker
 	RegistryChecker     RegistryChecker
+	TagLister           RegistryTagLister
 	Policy              PolicyStore
 	EventLog            EventLogger
 	Scheduler           SchedulerController
@@ -49,6 +50,7 @@ type Dependencies struct {
 	NotifyConfig        NotificationConfigStore
 	NotifyReconfigurer  NotifierReconfigurer
 	NotifyState         NotifyStateStore
+	NotifyTemplateStore NotifyTemplateStore
 	Digest              DigestController
 	IgnoredVersions     IgnoredVersionStore
 	RegistryCredentials RegistryCredentialStore
@@ -56,8 +58,11 @@ type Dependencies struct {
 	GHCRCache           GHCRAlternativeProvider
 	AboutStore          AboutStore
 	HookStore           HookStore
+	ReleaseSources      ReleaseSourceStore
+	ImageManager        ImageManager       // nil when not available
 	Swarm               SwarmProvider      // nil when not in Swarm mode
 	Cluster             *ClusterController // thread-safe proxy; always non-nil, use .Enabled() to check
+	Portainer           PortainerProvider  // nil when Portainer not configured
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
@@ -66,432 +71,36 @@ type Dependencies struct {
 	Log                 *slog.Logger
 }
 
-// HistoryStore reads/writes update history and maintenance state.
-type HistoryStore interface {
-	ListHistory(limit int) ([]UpdateRecord, error)
-	ListHistoryByContainer(name string, limit int) ([]UpdateRecord, error)
-	GetMaintenance(name string) (bool, error)
-	RecordUpdate(rec UpdateRecord) error
-}
-
-// SnapshotStore reads container snapshots.
-type SnapshotStore interface {
-	ListSnapshots(name string) ([]SnapshotEntry, error)
-}
-
-// ContainerRollback triggers a rollback to the most recent snapshot.
-type ContainerRollback interface {
-	RollbackContainer(ctx context.Context, name string) error
-}
-
-// RegistryVersionChecker lists available image versions from a registry.
-type RegistryVersionChecker interface {
-	ListVersions(ctx context.Context, imageRef string) ([]string, error)
-}
-
-// RegistryChecker performs a full registry check for a single container.
-type RegistryChecker interface {
-	CheckForUpdate(ctx context.Context, imageRef string) (updateAvailable bool, newerVersions []string, resolvedCurrent string, resolvedTarget string, err error)
-}
-
-// PolicyStore reads and writes policy overrides in BoltDB.
-type PolicyStore interface {
-	GetPolicyOverride(name string) (string, bool)
-	SetPolicyOverride(name, policy string) error
-	DeletePolicyOverride(name string) error
-	AllPolicyOverrides() map[string]string
-}
-
-// EventLogger writes and reads activity log entries.
-type EventLogger interface {
-	AppendLog(entry LogEntry) error
-	ListLogs(limit int) ([]LogEntry, error)
-}
-
-// SelfUpdater triggers self-update via an ephemeral helper container.
-type SelfUpdater interface {
-	Update(ctx context.Context, targetImage string) error
-}
-
-// NotificationConfigStore persists notification channel configuration.
-type NotificationConfigStore interface {
-	GetNotificationChannels() ([]notify.Channel, error)
-	SetNotificationChannels(channels []notify.Channel) error
-}
-
-// NotifierReconfigurer allows runtime reconfiguration of the notification chain.
-type NotifierReconfigurer interface {
-	Reconfigure(notifiers ...notify.Notifier)
-}
-
-// NotifyStateStore reads and writes per-container notification state and preferences.
-type NotifyStateStore interface {
-	GetNotifyPref(name string) (*NotifyPref, error)
-	SetNotifyPref(name string, pref *NotifyPref) error
-	DeleteNotifyPref(name string) error
-	AllNotifyPrefs() (map[string]*NotifyPref, error)
-	AllNotifyStates() (map[string]*NotifyState, error)
-	ClearNotifyState(name string) error
-}
-
-// IgnoredVersionStore reads and writes per-container ignored versions.
-type IgnoredVersionStore interface {
-	AddIgnoredVersion(containerName, version string) error
-	GetIgnoredVersions(containerName string) ([]string, error)
-	ClearIgnoredVersions(containerName string) error
-}
-
-// RegistryCredentialStore persists registry credentials.
-type RegistryCredentialStore interface {
-	GetRegistryCredentials() ([]RegistryCredential, error)
-	SetRegistryCredentials(creds []RegistryCredential) error
-}
-
-// RegistryCredential mirrors registry.RegistryCredential for the web layer.
-type RegistryCredential struct {
-	ID       string `json:"id"`
-	Registry string `json:"registry"`
-	Username string `json:"username"`
-	Secret   string `json:"secret"`
-}
-
-// RateLimitProvider returns rate limit status for display.
-type RateLimitProvider interface {
-	Status() []RateLimitStatus
-	OverallHealth() string
-	// ProbeAndRecord makes a lightweight request to discover a registry's
-	// rate limits and records the result. Used after credential changes.
-	ProbeAndRecord(ctx context.Context, host string, cred RegistryCredential) error
-}
-
-// RateLimitStatus mirrors registry.RegistryStatus for the web layer.
-type RateLimitStatus struct {
-	Registry       string    `json:"registry"`
-	Limit          int       `json:"limit"`
-	Remaining      int       `json:"remaining"`
-	ResetAt        time.Time `json:"reset_at"`
-	IsAuth         bool      `json:"is_auth"`
-	HasLimits      bool      `json:"has_limits"`
-	ContainerCount int       `json:"container_count"`
-	LastUpdated    time.Time `json:"last_updated"`
-}
-
-// GHCRAlternativeProvider returns GHCR alternative detection results.
-type GHCRAlternativeProvider interface {
-	Get(repo, tag string) (*GHCRAlternative, bool)
-	All() []GHCRAlternative
-}
-
-// GHCRAlternative mirrors registry.GHCRAlternative for the web layer.
-type GHCRAlternative struct {
-	DockerHubImage string    `json:"docker_hub_image"`
-	GHCRImage      string    `json:"ghcr_image"`
-	Tag            string    `json:"tag"`
-	Available      bool      `json:"available"`
-	DigestMatch    bool      `json:"digest_match"`
-	HubDigest      string    `json:"hub_digest,omitempty"`
-	GHCRDigest     string    `json:"ghcr_digest,omitempty"`
-	CheckedAt      time.Time `json:"checked_at"`
-}
-
-// AboutStore provides aggregate counts for the About page.
-type AboutStore interface {
-	CountHistory() (int, error)
-	CountSnapshots() (int, error)
-}
-
-// DigestController controls the digest scheduler.
-type DigestController interface {
-	SetDigestConfig()
-	TriggerDigest(ctx context.Context)
-	LastRunTime() time.Time
-}
-
-// SchedulerController controls the scheduler's poll interval and scan triggers.
-type SchedulerController interface {
-	SetPollInterval(d time.Duration)
-	TriggerScan(ctx context.Context)
-	LastScanTime() time.Time
-	SetSchedule(sched string)
-}
-
-// ClusterProvider provides access to cluster host management.
-// Nil when clustering is disabled.
-type ClusterProvider interface {
-	// AllHosts returns info about all registered agent hosts.
-	AllHosts() []ClusterHost
-	// GetHost returns info about a specific host.
-	GetHost(id string) (ClusterHost, bool)
-	// ConnectedHosts returns the IDs of currently connected agents.
-	ConnectedHosts() []string
-	// GenerateEnrollToken creates a new one-time enrollment token.
-	// Returns the plaintext token (shown to admin once) and the token ID.
-	GenerateEnrollToken() (token string, id string, err error)
-	// RemoveHost removes a host from the cluster.
-	RemoveHost(id string) error
-	// RevokeHost revokes a host's certificate and removes it.
-	RevokeHost(id string) error
-	// DrainHost sets a host to draining state (no new updates).
-	DrainHost(id string) error
-	// UpdateRemoteContainer dispatches a container update to a remote agent.
-	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error
-	// RemoteContainerAction dispatches a lifecycle action to a container on a remote agent.
-	RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error
-	// AllHostContainers returns containers from all connected hosts.
-	AllHostContainers() []RemoteContainer
-}
-
-// RemoteContainer represents a container on a remote host.
-type RemoteContainer struct {
-	Name     string            `json:"name"`
-	Image    string            `json:"image"`
-	State    string            `json:"state"` // "running", "exited", etc.
-	HostID   string            `json:"host_id"`
-	HostName string            `json:"host_name"`
-	Labels   map[string]string `json:"labels,omitempty"`
-}
-
-// ClusterHost represents a remote agent host for the web layer.
-type ClusterHost struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Address      string    `json:"address"`
-	State        string    `json:"state"` // "active", "draining", "decommissioned"
-	Connected    bool      `json:"connected"`
-	EnrolledAt   time.Time `json:"enrolled_at"`
-	LastSeen     time.Time `json:"last_seen"`
-	AgentVersion string    `json:"agent_version,omitempty"`
-	Containers   int       `json:"containers"` // count of known containers
-}
-
-// SwarmProvider provides Swarm service operations for the dashboard.
-// Nil when the daemon is not a Swarm manager.
-type SwarmProvider interface {
-	IsSwarmMode() bool
-	ListServices(ctx context.Context) ([]ServiceSummary, error)
-	ListServiceDetail(ctx context.Context) ([]ServiceDetail, error)
-	UpdateService(ctx context.Context, id, name, targetImage string) error
-	RollbackService(ctx context.Context, id, name string) error
-	ScaleService(ctx context.Context, name string, replicas uint64) error
-}
-
-// ServiceSummary is a minimal Swarm service info struct for the web layer.
-type ServiceSummary struct {
-	ID              string
-	Name            string
-	Image           string
-	Labels          map[string]string
-	Replicas        string // e.g. "3/3"
-	DesiredReplicas uint64
-	RunningReplicas uint64
-}
-
-// TaskInfo describes a single Swarm task (one replica on one node).
-type TaskInfo struct {
-	NodeID   string
-	NodeName string
-	NodeAddr string
-	State    string
-	Image    string
-	Tag      string
-	Slot     int
-	Error    string
-}
-
-// ServiceDetail is a ServiceSummary enriched with per-node task info.
-type ServiceDetail struct {
-	ServiceSummary
-	Tasks        []TaskInfo
-	UpdateStatus string
-}
-
-// HookStore reads and writes lifecycle hook configurations.
-type HookStore interface {
-	ListHooks(containerName string) ([]HookEntry, error)
-	SaveHook(hook HookEntry) error
-	DeleteHook(containerName, phase string) error
-}
-
-// HookEntry mirrors hooks.Hook for the web layer.
-type HookEntry struct {
-	ContainerName string   `json:"container_name"`
-	Phase         string   `json:"phase"`
-	Command       []string `json:"command"`
-	Timeout       int      `json:"timeout"`
-}
-
-// SettingsStore reads and writes settings in BoltDB.
-type SettingsStore interface {
-	SaveSetting(key, value string) error
-	LoadSetting(key string) (string, error)
-	GetAllSettings() (map[string]string, error)
-}
-
-// ClusterLifecycle allows the settings API to start/stop the cluster
-// server at runtime without restarting the container.
-type ClusterLifecycle interface {
-	Start() error
-	Stop()
-}
-
-// LogEntry mirrors store.LogEntry.
-type LogEntry struct {
-	Timestamp time.Time `json:"timestamp"`
-	Type      string    `json:"type"`
-	Message   string    `json:"message"`
-	Container string    `json:"container,omitempty"`
-	User      string    `json:"user,omitempty"`
-	Kind      string    `json:"kind,omitempty"` // "service" or "" (default = container)
-}
-
-// NotifyPref mirrors store.NotifyPref.
-type NotifyPref struct {
-	Mode string `json:"mode"`
-}
-
-// NotifyState mirrors store.NotifyState.
-type NotifyState struct {
-	LastDigest   string    `json:"last_digest"`
-	LastNotified time.Time `json:"last_notified"`
-	FirstSeen    time.Time `json:"first_seen"`
-}
-
-// UpdateRecord mirrors store.UpdateRecord to avoid importing store.
-type UpdateRecord struct {
-	Timestamp     time.Time     `json:"timestamp"`
-	ContainerName string        `json:"container_name"`
-	OldImage      string        `json:"old_image"`
-	OldDigest     string        `json:"old_digest"`
-	NewImage      string        `json:"new_image"`
-	NewDigest     string        `json:"new_digest"`
-	Outcome       string        `json:"outcome"`
-	Duration      time.Duration `json:"duration"`
-	Error         string        `json:"error,omitempty"`
-	Type          string        `json:"type,omitempty"`      // "container" (default) or "service"
-	HostID        string        `json:"host_id,omitempty"`   // cluster host ID (empty = local)
-	HostName      string        `json:"host_name,omitempty"` // cluster host name (empty = local)
-}
-
-// SnapshotEntry represents a snapshot with a parsed image reference for display.
-type SnapshotEntry struct {
-	Timestamp time.Time `json:"timestamp"`
-	ImageRef  string    `json:"image_ref"`
-}
-
-// UpdateQueue manages pending manual approvals.
-type UpdateQueue interface {
-	List() []PendingUpdate
-	Get(name string) (PendingUpdate, bool)     // Returns a pending update without removing it.
-	Add(update PendingUpdate)                  // Adds or replaces a pending update.
-	Approve(name string) (PendingUpdate, bool) // Returns the update and removes it from the queue.
-	Remove(name string)
-}
-
-// PendingUpdate mirrors engine.PendingUpdate.
-type PendingUpdate struct {
-	ContainerID            string    `json:"container_id"`
-	ContainerName          string    `json:"container_name"`
-	CurrentImage           string    `json:"current_image"`
-	CurrentDigest          string    `json:"current_digest"`
-	RemoteDigest           string    `json:"remote_digest"`
-	DetectedAt             time.Time `json:"detected_at"`
-	NewerVersions          []string  `json:"newer_versions,omitempty"`
-	ResolvedCurrentVersion string    `json:"resolved_current_version,omitempty"`
-	ResolvedTargetVersion  string    `json:"resolved_target_version,omitempty"`
-	Type                   string    `json:"type,omitempty"`    // "container" (default) or "service"
-	HostID                 string    `json:"host_id,omitempty"` // cluster host ID (empty = local)
-	HostName               string    `json:"host_name,omitempty"`
-}
-
-// Key returns the queue map key. Remote containers use "hostID::name" to
-// avoid collisions with local or other-host containers of the same name.
-func (u PendingUpdate) Key() string {
-	if u.HostID == "" {
-		return u.ContainerName
-	}
-	return u.HostID + "::" + u.ContainerName
-}
-
-// ContainerLister lists containers.
-type ContainerLister interface {
-	ListContainers(ctx context.Context) ([]ContainerSummary, error)
-	ListAllContainers(ctx context.Context) ([]ContainerSummary, error)
-	InspectContainer(ctx context.Context, id string) (ContainerInspect, error)
-}
-
-// ContainerSummary is a minimal container info struct.
-type ContainerSummary struct {
-	ID     string
-	Names  []string
-	Image  string
-	Labels map[string]string
-	State  string
-}
-
-// ContainerInspect has just what the dashboard needs.
-type ContainerInspect struct {
-	ID    string
-	Name  string
-	Image string
-	State struct {
-		Status     string
-		Running    bool
-		Restarting bool
-	}
-}
-
-// ContainerUpdater triggers container updates.
-type ContainerUpdater interface {
-	UpdateContainer(ctx context.Context, id, name, targetImage string) error
-	IsUpdating(name string) bool
-}
-
-// ContainerRestarter restarts a container by ID.
-type ContainerRestarter interface {
-	RestartContainer(ctx context.Context, id string) error
-}
-
-// ContainerStopper stops a container by ID.
-type ContainerStopper interface {
-	StopContainer(ctx context.Context, id string) error
-}
-
-// ContainerStarter starts a container by ID.
-type ContainerStarter interface {
-	StartContainer(ctx context.Context, id string) error
-}
-
-// ConfigReader provides settings for display.
-type ConfigReader interface {
-	Values() map[string]string
-}
-
-// ConfigWriter updates mutable runtime settings in memory.
-type ConfigWriter interface {
-	SetDefaultPolicy(s string)
-	SetGracePeriod(d time.Duration)
-	SetLatestAutoUpdate(b bool)
-	SetImageCleanup(b bool)
-	SetHooksEnabled(b bool)
-	SetHooksWriteLabels(b bool)
-	SetDependencyAware(b bool)
-	SetRollbackPolicy(s string)
-}
-
 // Server is the web dashboard HTTP server.
 type Server struct {
-	deps             Dependencies
-	mux              *http.ServeMux
-	tmpl             *template.Template
-	server           *http.Server
-	startTime        time.Time          // when the server was created
-	setupDeadline    time.Time          // setup page closes after this; zero = no window
-	webauthn         *webauthn.WebAuthn // nil when WebAuthn is not configured
-	tlsCert          string             // path to TLS certificate PEM (empty = plain HTTP)
-	tlsKey           string             // path to TLS private key PEM
-	clusterLifecycle ClusterLifecycle   // nil until wired by main; enables dynamic start/stop
-	scanGate         chan struct{}      // closed on first dashboard load to unblock the scheduler
-	scanGateOnce     sync.Once
+	deps                 Dependencies
+	mux                  *http.ServeMux
+	tmpl                 *template.Template
+	server               *http.Server
+	startTime            time.Time          // when the server was created
+	setupDeadline        time.Time          // setup page closes after this; zero = no window
+	webauthn             *webauthn.WebAuthn // nil when WebAuthn is not configured
+	oidcProvider         *auth.OIDCProvider // nil when OIDC is not configured
+	oidcMu               sync.RWMutex       // protects oidcProvider replacement
+	tlsCert              string             // path to TLS certificate PEM (empty = plain HTTP)
+	tlsKey               string             // path to TLS private key PEM
+	clusterLifecycle     ClusterLifecycle   // nil until wired by main; enables dynamic start/stop
+	scanGate             chan struct{}      // closed on first dashboard load to unblock the scheduler
+	scanGateOnce         sync.Once
+	pendingRemoteUpdates sync.Map // key: "hostID::name" → struct{}
+}
+
+func (s *Server) markRemoteUpdating(hostID, name string) {
+	s.pendingRemoteUpdates.Store(hostID+"::"+name, struct{}{})
+}
+
+func (s *Server) clearRemoteUpdating(hostID, name string) {
+	s.pendingRemoteUpdates.Delete(hostID + "::" + name)
+}
+
+func (s *Server) isRemoteUpdating(hostID, name string) bool {
+	_, ok := s.pendingRemoteUpdates.Load(hostID + "::" + name)
+	return ok
 }
 
 // SetSetupDeadline sets the time limit for first-run setup.
@@ -535,6 +144,20 @@ func (s *Server) SetClusterLifecycle(cl ClusterLifecycle) {
 // SetWebAuthn configures WebAuthn support. When wa is nil, passkey routes return 404.
 func (s *Server) SetWebAuthn(wa *webauthn.WebAuthn) {
 	s.webauthn = wa
+}
+
+// SetOIDCProvider configures OIDC SSO support. When p is nil, OIDC routes return 404.
+func (s *Server) SetOIDCProvider(p *auth.OIDCProvider) {
+	s.oidcMu.Lock()
+	defer s.oidcMu.Unlock()
+	s.oidcProvider = p
+}
+
+// getOIDCProvider returns the current OIDC provider (thread-safe).
+func (s *Server) getOIDCProvider() *auth.OIDCProvider {
+	s.oidcMu.RLock()
+	defer s.oidcMu.RUnlock()
+	return s.oidcProvider
 }
 
 // NewServer creates a Server with all routes registered.
@@ -657,6 +280,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/auth/passkeys/login/begin", s.apiPasskeyLoginBegin)
 	s.mux.HandleFunc("POST /api/auth/passkeys/login/finish", s.apiPasskeyLoginFinish)
 	s.mux.HandleFunc("GET /api/auth/passkeys/available", s.apiPasskeysAvailable)
+	s.mux.HandleFunc("POST /api/auth/totp/verify", s.apiLoginTOTP)
+	s.mux.HandleFunc("GET /api/auth/oidc/login", s.apiOIDCLogin)
+	s.mux.HandleFunc("GET /api/auth/oidc/callback", s.apiOIDCCallback)
+	s.mux.HandleFunc("GET /api/auth/oidc/available", s.apiOIDCAvailable)
 
 	// --- Auth-only routes (authenticated, no specific permission) ---
 	s.mux.Handle("GET /account", authed(s.handleAccount))
@@ -671,6 +298,10 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/auth/passkeys/register/finish", authed(s.apiPasskeyRegisterFinish))
 	s.mux.Handle("GET /api/auth/passkeys", authed(s.apiListPasskeys))
 	s.mux.Handle("DELETE /api/auth/passkeys/{id}", authed(s.apiDeletePasskey))
+	s.mux.Handle("POST /api/auth/totp/setup", authed(s.apiTOTPSetup))
+	s.mux.Handle("POST /api/auth/totp/confirm", authed(s.apiTOTPConfirm))
+	s.mux.Handle("POST /api/auth/totp/disable", authed(s.apiTOTPDisable))
+	s.mux.Handle("GET /api/auth/totp/status", authed(s.apiTOTPStatus))
 
 	// --- Permission-gated routes ---
 
@@ -681,10 +312,13 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/containers", perm(auth.PermContainersView, s.apiContainers))
 	s.mux.Handle("GET /api/containers/{name}", perm(auth.PermContainersView, s.apiContainerDetail))
 	s.mux.Handle("GET /api/containers/{name}/versions", perm(auth.PermContainersView, s.apiContainerVersions))
+	s.mux.Handle("GET /api/containers/{name}/tags", perm(auth.PermContainersView, s.apiContainerAllTags))
 	s.mux.Handle("GET /api/containers/{name}/row", perm(auth.PermContainersView, s.handleContainerRow))
+	s.mux.Handle("GET /api/containers/{name}/logs", perm(auth.PermContainersView, s.apiContainerLogs))
 	s.mux.Handle("GET /api/stats", perm(auth.PermContainersView, s.handleDashboardStats))
 	s.mux.Handle("GET /api/events", perm(auth.PermContainersView, s.apiSSE))
 	s.mux.Handle("GET /api/queue", perm(auth.PermContainersView, s.apiQueue))
+	s.mux.Handle("GET /api/queue/count", perm(auth.PermContainersView, s.apiQueueCount))
 	s.mux.Handle("GET /api/last-scan", perm(auth.PermContainersView, s.apiLastScan))
 
 	// containers.update
@@ -720,7 +354,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/cluster/enroll-token", perm(auth.PermSettingsModify, s.handleGenerateEnrollToken))
 	s.mux.Handle("DELETE /api/cluster/hosts/{id}", perm(auth.PermSettingsModify, s.handleRemoveHost))
 	s.mux.Handle("POST /api/cluster/hosts/{id}/revoke", perm(auth.PermSettingsModify, s.handleRevokeHost))
-	s.mux.Handle("POST /api/cluster/hosts/{id}/drain", perm(auth.PermSettingsModify, s.handleDrainHost))
+	s.mux.Handle("POST /api/cluster/hosts/{id}/pause", perm(auth.PermSettingsModify, s.handlePauseHost))
 
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))
@@ -735,7 +369,9 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings", perm(auth.PermSettingsView, s.apiSettings))
 	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
+	s.mux.Handle("GET /api/settings/notifications/templates", perm(auth.PermSettingsView, s.apiGetNotifyTemplates))
 	s.mux.Handle("GET /api/settings/registries", perm(auth.PermSettingsView, s.apiGetRegistryCredentials))
+	s.mux.Handle("GET /api/release-sources", perm(auth.PermSettingsView, s.apiGetReleaseSources))
 	s.mux.Handle("GET /api/ratelimits", perm(auth.PermContainersView, s.apiGetRateLimits))
 	s.mux.Handle("GET /api/about", perm(auth.PermSettingsView, s.apiAbout))
 	s.mux.Handle("GET /api/ghcr/alternatives", perm(auth.PermContainersView, s.apiGetGHCRAlternatives))
@@ -761,6 +397,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
 	s.mux.Handle("PUT /api/settings/registries", perm(auth.PermSettingsModify, s.apiSaveRegistryCredentials))
+	s.mux.Handle("PUT /api/release-sources", perm(auth.PermSettingsModify, s.apiSetReleaseSources))
 	s.mux.Handle("POST /api/settings/registries/test", perm(auth.PermSettingsModify, s.apiTestRegistryCredential))
 	s.mux.Handle("DELETE /api/settings/registries/{id}", perm(auth.PermSettingsModify, s.apiDeleteRegistryCredential))
 	s.mux.Handle("POST /api/self-update", perm(auth.PermSettingsModify, s.apiSelfUpdate))
@@ -770,13 +407,37 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/hooks-write-labels", perm(auth.PermSettingsModify, s.apiSetHooksWriteLabels))
 	s.mux.Handle("POST /api/settings/dependency-aware", perm(auth.PermSettingsModify, s.apiSetDependencyAware))
 	s.mux.Handle("POST /api/settings/rollback-policy", perm(auth.PermSettingsModify, s.apiSetRollbackPolicy))
+	s.mux.Handle("POST /api/settings/dry-run", perm(auth.PermSettingsModify, s.apiSetDryRun))
+	s.mux.Handle("POST /api/settings/pull-only", perm(auth.PermSettingsModify, s.apiSetPullOnly))
+	s.mux.Handle("POST /api/settings/update-delay", perm(auth.PermSettingsModify, s.apiSetUpdateDelay))
 	s.mux.Handle("POST /api/settings/general", perm(auth.PermSettingsModify, s.apiSaveGeneralSetting))
 	s.mux.Handle("POST /api/settings/switch-role", perm(auth.PermSettingsModify, s.apiSwitchRole))
+	s.mux.Handle("POST /api/settings/ha-discovery", perm(auth.PermSettingsModify, s.apiSetHADiscovery))
+	s.mux.Handle("POST /api/settings/compose-sync", perm(auth.PermSettingsModify, s.apiSetComposeSync))
+	s.mux.Handle("POST /api/settings/image-backup", perm(auth.PermSettingsModify, s.apiSetImageBackup))
+	s.mux.Handle("POST /api/settings/show-stopped", perm(auth.PermSettingsModify, s.apiSetShowStopped))
+	s.mux.Handle("POST /api/settings/remove-volumes", perm(auth.PermSettingsModify, s.apiSetRemoveVolumes))
+	s.mux.Handle("POST /api/settings/scan-concurrency", perm(auth.PermSettingsModify, s.apiSetScanConcurrency))
+	s.mux.Handle("POST /api/settings/maintenance-window", perm(auth.PermSettingsModify, s.apiSetMaintenanceWindow))
+	s.mux.Handle("POST /api/settings/docker-tls", perm(auth.PermSettingsModify, s.apiSetDockerTLS))
+	s.mux.Handle("POST /api/settings/docker-tls-test", perm(auth.PermSettingsModify, s.apiTestDockerTLS))
+	s.mux.Handle("GET /api/config/export", perm(auth.PermSettingsModify, s.apiConfigExport))
+	s.mux.Handle("POST /api/config/import", perm(auth.PermSettingsModify, s.apiConfigImport))
+	s.mux.Handle("GET /api/grafana-dashboard", perm(auth.PermSettingsModify, s.apiGrafanaDashboard))
 
 	// Cluster settings — always available so the admin can enable/configure cluster
 	// even when the cluster server is not yet running.
 	s.mux.Handle("GET /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettings))
 	s.mux.Handle("POST /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettingsSave))
+
+	// Portainer
+	s.mux.Handle("GET /portainer", perm(auth.PermSettingsModify, s.handlePortainer))
+	s.mux.Handle("GET /api/portainer/endpoints", perm(auth.PermContainersView, s.apiPortainerEndpoints))
+	s.mux.Handle("GET /api/portainer/endpoints/{id}/containers", perm(auth.PermContainersView, s.apiPortainerContainers))
+	s.mux.Handle("POST /api/settings/portainer-enabled", perm(auth.PermSettingsModify, s.apiSetPortainerEnabled))
+	s.mux.Handle("POST /api/settings/portainer-url", perm(auth.PermSettingsModify, s.apiSetPortainerURL))
+	s.mux.Handle("POST /api/settings/portainer-token", perm(auth.PermSettingsModify, s.apiSetPortainerToken))
+	s.mux.Handle("POST /api/settings/portainer-test", perm(auth.PermSettingsModify, s.apiTestPortainerConnection))
 
 	s.mux.Handle("POST /api/hooks/{container}", perm(auth.PermSettingsModify, s.apiSaveHook))
 	s.mux.Handle("DELETE /api/hooks/{container}/{phase}", perm(auth.PermSettingsModify, s.apiDeleteHook))
@@ -788,11 +449,29 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/digest/trigger", perm(auth.PermSettingsModify, s.apiTriggerDigest))
 	s.mux.Handle("POST /api/digest/banner/dismiss", perm(auth.PermContainersView, s.apiDismissDigestBanner))
 
+	// Notification templates (write)
+	s.mux.Handle("PUT /api/settings/notifications/templates", perm(auth.PermSettingsModify, s.apiSaveNotifyTemplate))
+	s.mux.Handle("DELETE /api/settings/notifications/templates/{type}", perm(auth.PermSettingsModify, s.apiDeleteNotifyTemplate))
+	s.mux.Handle("POST /api/settings/notifications/templates/preview", perm(auth.PermSettingsModify, s.apiPreviewNotifyTemplate))
+
+	// OIDC settings (admin-only, requires settings.modify)
+	s.mux.Handle("GET /api/settings/oidc", perm(auth.PermSettingsModify, s.apiGetOIDCSettings))
+	s.mux.Handle("POST /api/settings/oidc", perm(auth.PermSettingsModify, s.apiSaveOIDCSettings))
+
 	// users.manage
 	s.mux.Handle("GET /api/auth/users", perm(auth.PermUsersManage, s.apiListUsers))
 	s.mux.Handle("POST /api/auth/users", perm(auth.PermUsersManage, s.apiCreateUser))
 	s.mux.Handle("DELETE /api/auth/users/{id}", perm(auth.PermUsersManage, s.apiDeleteUser))
 	s.mux.Handle("POST /api/auth/settings", perm(auth.PermUsersManage, s.apiAuthSettings))
+
+	// Webhook endpoint — uses its own secret-based auth, no session/CSRF required.
+	// Always registered; returns 403 when disabled so the route is discoverable.
+	s.mux.HandleFunc("POST /api/webhook", s.apiWebhook)
+
+	// Webhook settings (admin-managed via the settings page).
+	s.mux.Handle("POST /api/settings/webhook-enabled", perm(auth.PermSettingsModify, s.apiSetWebhookEnabled))
+	s.mux.Handle("POST /api/settings/webhook-secret", perm(auth.PermSettingsModify, s.apiGenerateWebhookSecret))
+	s.mux.Handle("GET /api/settings/webhook-info", perm(auth.PermSettingsView, s.apiGetWebhookInfo))
 
 	// logs.view
 	s.mux.Handle("GET /logs", perm(auth.PermLogsView, s.handleLogs))
@@ -801,6 +480,13 @@ func (s *Server) registerRoutes() {
 	// history.view
 	s.mux.Handle("GET /history", perm(auth.PermHistoryView, s.handleHistory))
 	s.mux.Handle("GET /api/history", perm(auth.PermHistoryView, s.apiHistory))
+	s.mux.Handle("GET /api/history/export", perm(auth.PermHistoryView, s.apiHistoryExport))
+
+	// Images management
+	s.mux.Handle("GET /images", perm(auth.PermContainersView, s.handleImages))
+	s.mux.Handle("GET /api/images", perm(auth.PermContainersView, s.apiListImages))
+	s.mux.Handle("POST /api/images/prune", perm(auth.PermContainersManage, s.apiPruneImages))
+	s.mux.Handle("DELETE /api/images/{id}", perm(auth.PermContainersManage, s.apiRemoveImage))
 }
 
 func (s *Server) serveCSS(w http.ResponseWriter, r *http.Request) {
@@ -855,7 +541,12 @@ func (s *Server) serveFavicon(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
-	path := "static" + strings.TrimPrefix(r.URL.Path, "/static")
+	path := filepath.Clean("static" + strings.TrimPrefix(r.URL.Path, "/static"))
+	// Defence in depth: ensure cleaned path stays within the static directory.
+	if !strings.HasPrefix(path, "static") {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	data, err := staticFS.ReadFile(path)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
@@ -869,6 +560,8 @@ func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 	case ".ico":
 		w.Header().Set("Content-Type", "image/x-icon")
+	case ".map":
+		w.Header().Set("Content-Type", "application/json")
 	default:
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
@@ -939,17 +632,17 @@ func (s *Server) handleRevokeHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
-func (s *Server) handleDrainHost(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePauseHost(w http.ResponseWriter, r *http.Request) {
 	if !s.deps.Cluster.Enabled() {
 		writeError(w, http.StatusServiceUnavailable, "cluster not enabled")
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.deps.Cluster.DrainHost(id); err != nil {
+	if err := s.deps.Cluster.PauseHost(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "draining"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
 }
 
 // writeJSON encodes v as JSON and writes it to the response.

@@ -580,6 +580,27 @@ func (s *Store) DeleteAPIToken(id string) error {
 	})
 }
 
+// TouchAPIToken updates only the LastUsedAt timestamp for an API token.
+func (s *Store) TouchAPIToken(id string, t time.Time) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketAPITokens)
+		v := b.Get([]byte(id))
+		if v == nil {
+			return nil
+		}
+		var token auth.APIToken
+		if err := json.Unmarshal(v, &token); err != nil {
+			return err
+		}
+		token.LastUsedAt = t
+		data, err := json.Marshal(token)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), data)
+	})
+}
+
 // ListAPITokensForUser returns all API tokens belonging to the given user.
 func (s *Store) ListAPITokensForUser(userID string) ([]auth.APIToken, error) {
 	var tokens []auth.APIToken
@@ -603,4 +624,58 @@ func (s *Store) ListAPITokensForUser(userID string) ([]auth.APIToken, error) {
 		return nil
 	})
 	return tokens, err
+}
+
+// ============================================================
+// Pending TOTP Tokens (2FA login flow)
+// ============================================================
+
+// pendingTOTPEntry is the JSON envelope stored in BoltDB.
+type pendingTOTPEntry struct {
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// SavePendingTOTP stores a pending TOTP token with an expiry.
+func (s *Store) SavePendingTOTP(token, userID string, expiresAt time.Time) error {
+	data, err := json.Marshal(pendingTOTPEntry{UserID: userID, ExpiresAt: expiresAt})
+	if err != nil {
+		return fmt.Errorf("marshal pending TOTP: %w", err)
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketTOTPPending).Put([]byte(token), data)
+	})
+}
+
+// GetPendingTOTP retrieves the user ID for a pending TOTP token, checking expiry.
+// Returns empty string and nil error if the token is expired or not found.
+func (s *Store) GetPendingTOTP(token string) (string, error) {
+	var entry pendingTOTPEntry
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketTOTPPending).Get([]byte(token))
+		if v == nil {
+			return nil
+		}
+		return json.Unmarshal(v, &entry)
+	})
+	if err != nil {
+		return "", err
+	}
+	if entry.UserID == "" {
+		return "", nil
+	}
+	// Check expiry.
+	if time.Now().After(entry.ExpiresAt) {
+		// Expired — clean up.
+		_ = s.DeletePendingTOTP(token)
+		return "", nil
+	}
+	return entry.UserID, nil
+}
+
+// DeletePendingTOTP removes a pending TOTP token.
+func (s *Store) DeletePendingTOTP(token string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketTOTPPending).Delete([]byte(token))
+	})
 }

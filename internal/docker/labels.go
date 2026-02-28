@@ -1,6 +1,10 @@
 package docker
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // Policy represents a container's update policy.
 type Policy string
@@ -62,4 +66,115 @@ func IsLocalImage(imageRef string) bool {
 	// so we DON'T mark them as local — let the registry check try and fail
 	// gracefully for truly local images.
 	return false
+}
+
+// ContainerSchedule returns the sentinel.schedule label value (a cron expression),
+// or empty string if not set.
+func ContainerSchedule(labels map[string]string) string {
+	return labels["sentinel.schedule"]
+}
+
+// ContainerPullOnly returns true when the container has sentinel.pull-only=true.
+func ContainerPullOnly(labels map[string]string) bool {
+	return strings.EqualFold(labels["sentinel.pull-only"], "true")
+}
+
+// ContainerRemoveVolumes returns true when the container has sentinel.remove-volumes=true.
+func ContainerRemoveVolumes(labels map[string]string) bool {
+	return strings.EqualFold(labels["sentinel.remove-volumes"], "true")
+}
+
+// ContainerNotifySnooze reads the sentinel.notify-snooze label and returns
+// the suppression duration to apply after a notification is sent.
+// Returns 0 if the label is absent or invalid.
+func ContainerNotifySnooze(labels map[string]string) time.Duration {
+	v, ok := labels["sentinel.notify-snooze"]
+	if !ok || v == "" {
+		return 0
+	}
+	d, err := ParseDurationWithDays(v)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+// ContainerUpdateDelay reads the sentinel.delay label and returns the minimum
+// age an update must have been tracked before it is applied. Returns 0 if the
+// label is absent or invalid.
+func ContainerUpdateDelay(labels map[string]string) time.Duration {
+	v, ok := labels["sentinel.delay"]
+	if !ok || v == "" {
+		return 0
+	}
+	d, err := ParseDurationWithDays(v)
+	if err != nil {
+		return 0
+	}
+	return d
+}
+
+// ContainerGracePeriod reads the sentinel.grace-period label and returns
+// the per-container grace period override. Returns 0 if the label is
+// absent or invalid. Caps at 1 hour to prevent accidental huge values.
+func ContainerGracePeriod(labels map[string]string) time.Duration {
+	v, ok := labels["sentinel.grace-period"]
+	if !ok || v == "" {
+		return 0
+	}
+	d, err := ParseDurationWithDays(v)
+	if err != nil {
+		return 0
+	}
+	const maxGrace = time.Hour
+	if d > maxGrace {
+		return maxGrace
+	}
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// SemverScope controls the version range considered when finding newer versions.
+type SemverScope string
+
+const (
+	ScopeDefault SemverScope = ""      // infer from tag precision
+	ScopePatch   SemverScope = "patch" // same major.minor only
+	ScopeMinor   SemverScope = "minor" // same major only
+	ScopeMajor   SemverScope = "major" // any newer version
+)
+
+// ContainerTagFilters reads sentinel.include-tags and sentinel.exclude-tags labels.
+func ContainerTagFilters(labels map[string]string) (include, exclude string) {
+	return labels["sentinel.include-tags"], labels["sentinel.exclude-tags"]
+}
+
+// ContainerSemverScope reads the sentinel.semver label and returns the
+// explicit version scope. Returns ScopeDefault if the label is absent or invalid.
+func ContainerSemverScope(labels map[string]string) SemverScope {
+	switch strings.ToLower(labels["sentinel.semver"]) {
+	case "patch":
+		return ScopePatch
+	case "minor":
+		return ScopeMinor
+	case "major", "all":
+		return ScopeMajor
+	default:
+		return ScopeDefault
+	}
+}
+
+// ParseDurationWithDays extends time.ParseDuration with a "d" suffix for days.
+func ParseDurationWithDays(s string) (time.Duration, error) {
+	if strings.HasSuffix(s, "d") {
+		days := strings.TrimSuffix(s, "d")
+		n, err := strconv.Atoi(days)
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }

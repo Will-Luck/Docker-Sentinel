@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -117,8 +119,25 @@ func (c *Client) RemoveImage(ctx context.Context, id string) error {
 	return err
 }
 
+// TagImage applies a new tag to an existing image.
+func (c *Client) TagImage(ctx context.Context, src, target string) error {
+	_, err := c.api.ImageTag(ctx, client.ImageTagOptions{Source: src, Target: target})
+	return err
+}
+
+// RemoveContainerWithVolumes removes a container (force) and its anonymous volumes.
+func (c *Client) RemoveContainerWithVolumes(ctx context.Context, id string) error {
+	_, err := c.api.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
+	return err
+}
+
 // ExecContainer runs a command inside a container and returns exit code + output.
 func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error) {
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+		defer cancel()
+	}
 	execCfg := client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
@@ -135,10 +154,14 @@ func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, tim
 	}
 	defer attachResp.Close()
 
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, attachResp.Reader); err != nil {
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, attachResp.Reader); err != nil {
 		return -1, "", fmt.Errorf("exec read: %w", err)
 	}
+	if stderr.Len() > 0 {
+		stdout.WriteString(stderr.String())
+	}
+	buf := stdout
 
 	inspectResp, err := c.api.ExecInspect(ctx, execResp.ID, client.ExecInspectOptions{})
 	if err != nil {
@@ -146,4 +169,36 @@ func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, tim
 	}
 
 	return inspectResp.ExitCode, buf.String(), nil
+}
+
+// ContainerLogs returns the last N lines of a container's logs.
+func (c *Client) ContainerLogs(ctx context.Context, id string, lines int) (string, error) {
+	opts := client.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Tail:       fmt.Sprintf("%d", lines),
+	}
+	reader, err := c.api.ContainerLogs(ctx, id, opts)
+	if err != nil {
+		return "", fmt.Errorf("container logs: %w", err)
+	}
+	defer reader.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, reader); err != nil {
+		// Some containers use raw TTY mode — fall back to direct read.
+		reader2, err2 := c.api.ContainerLogs(ctx, id, opts)
+		if err2 != nil {
+			return "", fmt.Errorf("container logs fallback: %w", err2)
+		}
+		defer reader2.Close()
+		raw, _ := io.ReadAll(reader2)
+		return string(raw), nil
+	}
+
+	// Merge stdout and stderr.
+	if stderr.Len() > 0 {
+		stdout.WriteString(stderr.String())
+	}
+	return stdout.String(), nil
 }

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/swarm"
@@ -50,6 +51,11 @@ type mockDocker struct {
 	removeImageCalls []string
 	removeImageErr   map[string]error
 
+	tagImageCalls []string
+	tagImageErr   map[string]error
+
+	removeWithVolumesCalls []string
+
 	execCalls   []string
 	execResults map[string]struct {
 		exitCode int
@@ -90,6 +96,7 @@ func newMockDocker() *mockDocker {
 		distDigests:    make(map[string]string),
 		distErr:        make(map[string]error),
 		removeImageErr: make(map[string]error),
+		tagImageErr:    make(map[string]error),
 		execResults: make(map[string]struct {
 			exitCode int
 			output   string
@@ -209,6 +216,26 @@ func (m *mockDocker) RemoveImage(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *mockDocker) TagImage(_ context.Context, src, target string) error {
+	m.mu.Lock()
+	m.tagImageCalls = append(m.tagImageCalls, src+"->"+target)
+	m.mu.Unlock()
+	if err, ok := m.tagImageErr[src]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) RemoveContainerWithVolumes(_ context.Context, id string) error {
+	m.mu.Lock()
+	m.removeWithVolumesCalls = append(m.removeWithVolumesCalls, id)
+	m.mu.Unlock()
+	if err, ok := m.removeErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
 func (m *mockDocker) ExecContainer(_ context.Context, id string, cmd []string, _ int) (int, string, error) {
 	m.mu.Lock()
 	m.execCalls = append(m.execCalls, id)
@@ -220,6 +247,10 @@ func (m *mockDocker) ExecContainer(_ context.Context, id string, cmd []string, _
 		return r.exitCode, r.output, nil
 	}
 	return 0, "", nil
+}
+
+func (m *mockDocker) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
+	return "", nil
 }
 
 func (m *mockDocker) IsSwarmManager(_ context.Context) bool {
@@ -269,6 +300,18 @@ func (m *mockDocker) ListServiceTasks(_ context.Context, serviceID string) ([]sw
 
 func (m *mockDocker) ListNodes(_ context.Context) ([]swarm.Node, error) {
 	return m.nodes, m.nodesErr
+}
+
+func (m *mockDocker) ListImages(_ context.Context) ([]docker.ImageSummary, error) {
+	return nil, nil
+}
+
+func (m *mockDocker) PruneImages(_ context.Context) (docker.ImagePruneResult, error) {
+	return docker.ImagePruneResult{}, nil
+}
+
+func (m *mockDocker) RemoveImageByID(_ context.Context, _ string) error {
+	return nil
 }
 
 func (m *mockDocker) Close() error { return nil }

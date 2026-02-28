@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 )
@@ -29,8 +30,9 @@ func (u *Updater) cleanupOldImage(ctx context.Context, oldImageID, containerName
 			continue
 		}
 		if inspect.Image == oldImageID {
+			cName := strings.TrimPrefix(inspect.Name, "/")
 			u.log.Info("cleanup: old image still in use, skipping removal",
-				"image", oldImageID, "used_by", containerName)
+				"image", oldImageID, "used_by", cName)
 			return
 		}
 	}

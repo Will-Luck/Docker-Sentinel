@@ -36,12 +36,13 @@ func (t *Telegram) Name() string { return "telegram" }
 
 // Send posts a notification message via the Telegram Bot API.
 func (t *Telegram) Send(ctx context.Context, event Event) error {
-	text := formatTitle(event.Type) + "\n" + formatMessage(event)
+	text := formatTitle(event.Type) + "\n" + formatMessageMarkdown(event)
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
 
 	body, err := json.Marshal(telegramPayload{
-		ChatID: t.chatID,
-		Text:   text,
+		ChatID:    t.chatID,
+		Text:      text,
+		ParseMode: "Markdown",
 	})
 	if err != nil {
 		return fmt.Errorf("marshal telegram payload: %w", err)
@@ -66,6 +67,7 @@ func (t *Telegram) Send(ctx context.Context, event Event) error {
 }
 
 type telegramPayload struct {
-	ChatID string `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID    string `json:"chat_id"`
+	Text      string `json:"text"`
+	ParseMode string `json:"parse_mode,omitempty"`
 }

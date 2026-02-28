@@ -43,7 +43,7 @@ func (m *mockClusterProvider) RevokeHost(id string) error {
 	return nil
 }
 
-func (m *mockClusterProvider) DrainHost(id string) error {
+func (m *mockClusterProvider) PauseHost(id string) error {
 	return nil
 }
 
@@ -91,8 +91,8 @@ func TestEnabledReturnsFalseWithNoProvider(t *testing.T) {
 	if err := cc.RevokeHost("any"); err == nil {
 		t.Error("RevokeHost() should return error when disabled")
 	}
-	if err := cc.DrainHost("any"); err == nil {
-		t.Error("DrainHost() should return error when disabled")
+	if err := cc.PauseHost("any"); err == nil {
+		t.Error("PauseHost() should return error when disabled")
 	}
 	if err := cc.UpdateRemoteContainer(context.Background(), "h", "c", "img", "dig"); err == nil {
 		t.Error("UpdateRemoteContainer() should return error when disabled")
@@ -158,8 +158,8 @@ func TestSetProviderEnablesAndDelegates(t *testing.T) {
 	if err := cc.RevokeHost("host-1"); err != nil {
 		t.Errorf("RevokeHost() error: %v", err)
 	}
-	if err := cc.DrainHost("host-1"); err != nil {
-		t.Errorf("DrainHost() error: %v", err)
+	if err := cc.PauseHost("host-1"); err != nil {
+		t.Errorf("PauseHost() error: %v", err)
 	}
 	if err := cc.UpdateRemoteContainer(context.Background(), "host-1", "nginx", "nginx:latest", "sha256:abc"); err != nil {
 		t.Errorf("UpdateRemoteContainer() error: %v", err)
@@ -247,7 +247,7 @@ func TestDisabledMethodsReturnConsistentErrors(t *testing.T) {
 		{"GenerateEnrollToken", func() error { _, _, err := cc.GenerateEnrollToken(); return err }},
 		{"RemoveHost", func() error { return cc.RemoveHost("x") }},
 		{"RevokeHost", func() error { return cc.RevokeHost("x") }},
-		{"DrainHost", func() error { return cc.DrainHost("x") }},
+		{"PauseHost", func() error { return cc.PauseHost("x") }},
 		{"UpdateRemoteContainer", func() error {
 			return cc.UpdateRemoteContainer(context.Background(), "h", "c", "i", "d")
 		}},

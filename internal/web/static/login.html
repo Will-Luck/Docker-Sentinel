@@ -48,6 +48,32 @@
                 </button>
             </div>
             {{end}}
+            {{if .OIDCEnabled}}
+            <div id="oidc-login">
+                <div class="login-divider">
+                    <span>or</span>
+                </div>
+                <button type="button" class="login-btn-passkey" style="width: 100%;" onclick="window.location.href='/api/auth/oidc/login'">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:8px"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                    Sign in with SSO
+                </button>
+            </div>
+            {{end}}
+
+            <!-- Hidden until 2FA is needed -->
+            <div id="totp-step" style="display: none;">
+                <h2 style="font-size:1.25rem;font-weight:500;margin:0 0 var(--sp-2,0.5rem) 0;text-align:center">Two-Factor Authentication</h2>
+                <p style="font-size:0.875rem;color:var(--fg-secondary,#888);margin:0 0 var(--sp-3,0.75rem) 0;text-align:center">Enter the 6-digit code from your authenticator app, or a recovery code.</p>
+                <div class="form-group">
+                    <label class="form-label" for="totp-code">Code</label>
+                    <input type="text" id="totp-code" class="form-input" placeholder="000000" autocomplete="one-time-code" maxlength="8" inputmode="numeric" autofocus>
+                </div>
+                <button type="button" id="totp-submit" class="login-btn" onclick="submitTOTP()">Verify</button>
+                <div id="totp-error" class="login-error" style="display: none;"></div>
+                <p style="font-size:0.8rem;color:var(--fg-secondary,#888);margin:var(--sp-3,0.75rem) 0 0 0;text-align:center">
+                    <a href="#" onclick="backToLogin(); return false;" style="color:var(--md-primary,#7e57c2);text-decoration:none">Back to login</a>
+                </p>
+            </div>
         </div>
     </div>
     <div id="toast-container" class="toast-container"></div>

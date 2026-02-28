@@ -1,6 +1,10 @@
 package registry
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+)
 
 func TestParseSemVerValid(t *testing.T) {
 	tests := []struct {
@@ -196,6 +200,77 @@ func TestNewerVersionsTwoPartScope(t *testing.T) {
 		if sv.Raw != expected[i] {
 			t.Errorf("newer[%d] = %q, want %q", i, sv.Raw, expected[i])
 		}
+	}
+}
+
+func TestNewerVersionsScoped(t *testing.T) {
+	tags := []string{"1.13.4", "1.13.5", "1.14.0", "1.15.0", "2.0.0", "1.12.0"}
+
+	tests := []struct {
+		name     string
+		current  string
+		scope    docker.SemverScope
+		expected []string
+	}{
+		{"3part_default_patch_only", "v1.13.3", docker.ScopeDefault, []string{"1.13.5", "1.13.4"}},
+		{"3part_patch_same_as_default", "v1.13.3", docker.ScopePatch, []string{"1.13.5", "1.13.4"}},
+		{"3part_minor_widens", "v1.13.3", docker.ScopeMinor, []string{"1.15.0", "1.14.0", "1.13.5", "1.13.4"}},
+		{"3part_major_all", "v1.13.3", docker.ScopeMajor, []string{"2.0.0", "1.15.0", "1.14.0", "1.13.5", "1.13.4"}},
+		// 2-part current: default is same-major; patch narrows to same major.minor
+		{"2part_default_same_major", "1.13", docker.ScopeDefault, []string{"1.15.0", "1.14.0", "1.13.4", "1.13.5"}},
+		{"2part_patch_narrows", "1.13", docker.ScopePatch, []string{"1.13.4", "1.13.5"}},
+		{"2part_minor_same_as_default", "1.13", docker.ScopeMinor, []string{"1.15.0", "1.14.0", "1.13.4", "1.13.5"}},
+		{"2part_major_all", "1.13", docker.ScopeMajor, []string{"2.0.0", "1.15.0", "1.14.0", "1.13.4", "1.13.5"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewerVersionsScoped(tt.current, tags, tt.scope)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("got %d versions, want %d: %v", len(got), len(tt.expected), got)
+			}
+			gotSet := make(map[string]bool, len(got))
+			for _, sv := range got {
+				gotSet[sv.Raw] = true
+			}
+			for _, exp := range tt.expected {
+				if !gotSet[exp] {
+					t.Errorf("expected %q in results, got %v", exp, got)
+				}
+			}
+		})
+	}
+}
+
+func TestFilterTags(t *testing.T) {
+	tags := []string{"1.0.0", "1.0.1", "1.1.0", "2.0.0-rc1", "2.0.0", "latest", "alpine"}
+
+	tests := []struct {
+		name    string
+		include string
+		exclude string
+		want    []string
+	}{
+		{"no filters", "", "", tags},
+		{"include only", `^\d+\.\d+\.\d+$`, "", []string{"1.0.0", "1.0.1", "1.1.0", "2.0.0"}},
+		{"exclude rc", "", `rc`, []string{"1.0.0", "1.0.1", "1.1.0", "2.0.0", "latest", "alpine"}},
+		{"include and exclude", `^\d`, `rc`, []string{"1.0.0", "1.0.1", "1.1.0", "2.0.0"}},
+		{"invalid include regex ignored", `[invalid`, "", tags},
+		{"empty result", `^nonexistent$`, "", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FilterTags(tags, tt.include, tt.exclude)
+			if len(got) != len(tt.want) {
+				t.Fatalf("FilterTags len = %d, want %d: got %v", len(got), len(tt.want), got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("FilterTags[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
 	}
 }
 

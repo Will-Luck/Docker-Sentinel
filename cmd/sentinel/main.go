@@ -27,8 +27,9 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
-	_ "github.com/Will-Luck/Docker-Sentinel/internal/metrics"
+	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	portainerpkg "github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
@@ -113,19 +114,30 @@ func main() {
 	fmt.Printf("SENTINEL_TLS_AUTO=%t\n", cfg.TLSAuto)
 	fmt.Printf("SENTINEL_WEBAUTHN_RPID=%s\n", cfg.WebAuthnRPID)
 
-	client, err := docker.NewClient(cfg.DockerSock)
-	if err != nil {
-		log.Error("failed to create Docker client", "error", err)
-		os.Exit(1)
-	}
-	defer client.Close()
-
+	// Open DB first so we can load TLS settings before creating the Docker client.
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {
 		log.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Load Docker TLS certificate paths from BoltDB.
+	var tlsCfg *docker.TLSConfig
+	tlsCA, _ := db.LoadSetting(store.SettingDockerTLSCA)
+	tlsCert, _ := db.LoadSetting(store.SettingDockerTLSCert)
+	tlsKey, _ := db.LoadSetting(store.SettingDockerTLSKey)
+	if tlsCA != "" && tlsCert != "" && tlsKey != "" {
+		tlsCfg = &docker.TLSConfig{CACert: tlsCA, ClientCert: tlsCert, ClientKey: tlsKey}
+		log.Info("Docker TLS configured", "ca", tlsCA, "cert", tlsCert)
+	}
+
+	client, err := docker.NewClient(cfg.DockerSock, tlsCfg)
+	if err != nil {
+		log.Error("failed to create Docker client", "error", err)
+		os.Exit(1)
+	}
+	defer client.Close()
 
 	// Initialise auth buckets and seed built-in roles.
 	if err := db.EnsureAuthBuckets(); err != nil {
@@ -149,6 +161,7 @@ func main() {
 		Tokens:         db,
 		Settings:       db,
 		WebAuthnCreds:  webAuthnCreds,
+		PendingTOTP:    db,
 		Log:            log.Logger,
 		CookieSecure:   cfg.CookieSecure,
 		SessionExpiry:  cfg.SessionExpiry,
@@ -399,6 +412,39 @@ func main() {
 	hookRunner := hooks.NewRunner(client, &hookStoreAdapter{db}, log.Logger)
 	updater.SetHookRunner(hookRunner)
 
+	// Set up HA discovery if enabled and an MQTT channel is configured.
+	if haEnabled, _ := db.LoadSetting("ha_discovery_enabled"); haEnabled == "true" {
+		if haChannels, haErr := db.GetNotificationChannels(); haErr == nil {
+			for _, ch := range haChannels {
+				if ch.Type == notify.ProviderMQTT && ch.Enabled {
+					var mqttSettings notify.MQTTSettings
+					if json.Unmarshal(ch.Settings, &mqttSettings) == nil {
+						haPrefix, _ := db.LoadSetting("ha_discovery_prefix")
+						clientID := mqttSettings.ClientID
+						if clientID == "" {
+							clientID = "docker-sentinel"
+						}
+						ha, haConnErr := notify.NewHADiscovery(notify.HADiscoveryConfig{
+							Broker:   mqttSettings.Broker,
+							ClientID: clientID,
+							Username: mqttSettings.Username,
+							Password: mqttSettings.Password,
+							Prefix:   haPrefix,
+						})
+						if haConnErr != nil {
+							log.Warn("failed to start HA discovery", "error", haConnErr)
+						} else {
+							updater.SetHADiscovery(ha)
+							defer ha.Close()
+							log.Info("home assistant MQTT discovery enabled", "broker", mqttSettings.Broker)
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+
 	// Detect Swarm mode.
 	isSwarm := client.IsSwarmManager(ctx)
 	if isSwarm {
@@ -408,6 +454,14 @@ func main() {
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	scheduler.SetReadyGate(scanGate)
+	if cfg.MetricsTextfile != "" {
+		textfilePath := cfg.MetricsTextfile
+		scheduler.SetScanCallback(func() {
+			if err := metrics.WriteTextfile(textfilePath); err != nil {
+				log.Warn("failed to write metrics textfile", "path", textfilePath, "error", err)
+			}
+		})
+	}
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
 
@@ -438,6 +492,29 @@ func main() {
 		defer cm.Stop()
 	}
 
+	// Portainer integration.
+	portainerURL := cfg.PortainerURL
+	portainerToken := cfg.PortainerToken
+	if portainerURL == "" {
+		if v, err := db.LoadSetting(store.SettingPortainerURL); err == nil && v != "" {
+			portainerURL = v
+		}
+	}
+	if portainerToken == "" {
+		if v, err := db.LoadSetting(store.SettingPortainerToken); err == nil && v != "" {
+			portainerToken = v
+		}
+	}
+	portainerEnabled, _ := db.LoadSetting(store.SettingPortainerEnabled)
+	var portainerProvider *portainerAdapter
+	if portainerURL != "" && portainerToken != "" && portainerEnabled == "true" {
+		pc := portainerpkg.NewClient(portainerURL, portainerToken)
+		ps := portainerpkg.NewScanner(pc)
+		portainerProvider = &portainerAdapter{scanner: ps}
+		updater.SetPortainerScanner(&portainerScannerAdapter{scanner: ps})
+		log.Info("portainer integration enabled", "url", portainerURL)
+	}
+
 	if cfg.WebEnabled {
 		webDeps := web.Dependencies{
 			Store:               &storeAdapter{db},
@@ -452,6 +529,7 @@ func main() {
 			Rollback:            &rollbackAdapter{d: client, s: db, log: log},
 			Restarter:           &restartAdapter{client},
 			Registry:            &registryAdapter{log: log},
+			TagLister:           &tagListerAdapter{log: log},
 			RegistryChecker:     &registryCheckerAdapter{checker: checker},
 			Policy:              &policyStoreAdapter{db},
 			EventLog:            &eventLogAdapter{db},
@@ -459,15 +537,19 @@ func main() {
 			SettingsStore:       &settingsStoreAdapter{db},
 			Stopper:             &stopAdapter{client},
 			Starter:             &startAdapter{client},
+			LogViewer:           &dockerAdapter{client},
 			SelfUpdater:         &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
 			NotifyConfig:        &notifyConfigAdapter{db},
 			NotifyReconfigurer:  notifier,
 			NotifyState:         &notifyStateAdapter{db},
+			NotifyTemplateStore: &notifyTemplateAdapter{db},
 			IgnoredVersions:     &ignoredVersionAdapter{db},
 			RegistryCredentials: &registryCredentialAdapter{db},
 			RateTracker:         &rateLimitAdapter{t: rateTracker, saver: db.SaveRateLimits},
 			GHCRCache:           &ghcrCacheAdapter{c: ghcrCache},
 			HookStore:           &webHookStoreAdapter{db},
+			ReleaseSources:      &releaseSourceAdapter{db},
+			ImageManager:        &imageAdapter{client: client},
 			Cluster:             clusterCtrl,
 			MetricsEnabled:      cfg.MetricsEnabled,
 			Digest:              digestSched,
@@ -480,9 +562,14 @@ func main() {
 		if isSwarm {
 			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
 		}
+		if portainerProvider != nil {
+			webDeps.Portainer = portainerProvider
+		}
 		srv := web.NewServer(webDeps)
 		srv.SetClusterLifecycle(cm)
-		srv.SetScanGate(scanGate)
+		if freshSetup {
+			srv.SetScanGate(scanGate)
+		}
 
 		// Configure WebAuthn passkeys if RPID is set.
 		if cfg.WebAuthnEnabled() {
@@ -497,6 +584,24 @@ func main() {
 			}
 			srv.SetWebAuthn(wa)
 			log.Info("webauthn passkeys enabled", "rpid", cfg.WebAuthnRPID, "origins", cfg.WebAuthnOrigins)
+		}
+
+		// Configure OIDC provider if settings are present.
+		oidcCfg := auth.OIDCConfig{
+			Enabled:      loadSettingBool(db, "oidc_enabled"),
+			IssuerURL:    loadSettingStr(db, "oidc_issuer_url"),
+			ClientID:     loadSettingStr(db, "oidc_client_id"),
+			ClientSecret: loadSettingStr(db, "oidc_client_secret"),
+			RedirectURL:  loadSettingStr(db, "oidc_redirect_url"),
+			AutoCreate:   loadSettingBool(db, "oidc_auto_create"),
+			DefaultRole:  loadSettingStr(db, "oidc_default_role"),
+		}
+		oidcProvider, oidcErr := auth.NewOIDCProvider(context.Background(), oidcCfg)
+		if oidcErr != nil {
+			log.Warn("OIDC provider init failed (will retry on settings save)", "error", oidcErr)
+		} else if oidcProvider != nil {
+			srv.SetOIDCProvider(oidcProvider)
+			log.Info("OIDC SSO enabled", "issuer", oidcCfg.IssuerURL)
 		}
 
 		// Configure TLS if enabled.
@@ -590,19 +695,29 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	fmt.Printf("SENTINEL_HOST_NAME=%s\n", cfg.HostName)
 	fmt.Printf("SENTINEL_CLUSTER_DIR=%s\n", cfg.ClusterDataDir)
 
-	client, err := docker.NewClient(cfg.DockerSock)
-	if err != nil {
-		log.Error("failed to create Docker client", "error", err)
-		os.Exit(1)
-	}
-	defer client.Close()
-
 	db, err := store.Open(cfg.DBPath)
 	if err != nil {
 		log.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Load Docker TLS settings for agent mode too.
+	var agentTLSCfg *docker.TLSConfig
+	agentCA, _ := db.LoadSetting(store.SettingDockerTLSCA)
+	agentCert, _ := db.LoadSetting(store.SettingDockerTLSCert)
+	agentKey, _ := db.LoadSetting(store.SettingDockerTLSKey)
+	if agentCA != "" && agentCert != "" && agentKey != "" {
+		agentTLSCfg = &docker.TLSConfig{CACert: agentCA, ClientCert: agentCert, ClientKey: agentKey}
+		log.Info("Docker TLS configured (agent)", "ca", agentCA, "cert", agentCert)
+	}
+
+	client, err := docker.NewClient(cfg.DockerSock, agentTLSCfg)
+	if err != nil {
+		log.Error("failed to create Docker client", "error", err)
+		os.Exit(1)
+	}
+	defer client.Close()
 
 	if err := db.EnsureAuthBuckets(); err != nil {
 		log.Error("failed to create auth buckets", "error", err)
@@ -615,6 +730,7 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		Roles:          db,
 		Tokens:         db,
 		Settings:       db,
+		PendingTOTP:    db,
 		Log:            log.Logger,
 		CookieSecure:   cfg.CookieSecure,
 		SessionExpiry:  cfg.SessionExpiry,
@@ -706,6 +822,20 @@ func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutCancel()
 	_ = ws.Shutdown(shutCtx)
+}
+
+// loadSettingStr loads a setting from the DB, returning "" on error.
+func loadSettingStr(db *store.Store, key string) string {
+	v, err := db.LoadSetting(key)
+	if err != nil {
+		return ""
+	}
+	return v
+}
+
+// loadSettingBool loads a boolean setting from the DB.
+func loadSettingBool(db *store.Store, key string) bool {
+	return loadSettingStr(db, key) == "true"
 }
 
 // parseHeaders parses comma-separated "Key:Value" pairs into a map.
