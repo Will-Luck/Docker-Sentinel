@@ -76,6 +76,9 @@ export function toggleManageMode() {
     _selectedIds.clear();
     var btn = document.getElementById('manage-btn');
     if (btn) btn.textContent = _manageMode ? 'Cancel' : 'Manage';
+    // Toggle 'managing' class so td-checkbox cells become visible.
+    var table = document.querySelector('.table-images');
+    if (table) table.classList.toggle('managing', _manageMode);
     updateBulkBar();
     renderImagesTable();
 }
