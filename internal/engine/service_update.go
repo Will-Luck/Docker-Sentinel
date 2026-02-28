@@ -19,6 +19,7 @@ import (
 // routing them through the same policy/queue/notification flow as containers.
 // The services list is fetched once in Scan() to avoid duplicate API calls.
 func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mode ScanMode, result *ScanResult, filters []string, reserve int) {
+	u.log.Debug("scanning swarm services", "count", len(services))
 	result.Services = len(services)
 
 	for _, svc := range services {
@@ -27,6 +28,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		}
 
 		name := svc.Spec.Name
+		u.log.Debug("checking swarm service", "name", name, "image", svc.Spec.TaskTemplate.ContainerSpec.Image)
 		labels := svc.Spec.Labels
 		if labels == nil {
 			labels = map[string]string{}
@@ -75,15 +77,14 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 			}
 		}
 
-		// Rate limit check.
+		// Rate limit check — skip this registry but keep scanning
+		// services on other registries (e.g. GHCR when Docker Hub is exhausted).
 		if u.rateTracker != nil {
 			host := registry.RegistryHost(imageRef)
 			canProceed, wait := u.rateTracker.CanProceed(host, reserve)
 			if !canProceed {
 				if mode == ScanManual {
-					u.log.Warn("rate limit exhausted, stopping manual scan (services)", "registry", host, "resets_in", wait)
-					result.RateLimited++
-					break
+					u.log.Warn("rate limit exhausted, skipping service", "name", name, "registry", host, "resets_in", wait)
 				}
 				result.RateLimited++
 				continue
