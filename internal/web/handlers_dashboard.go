@@ -477,6 +477,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// the same way we do for local containers.
 		byHost := make(map[string][]containerView)
 		for _, rc := range remoteContainers {
+			// Skip Swarm task containers — same as local filtering.
+			if _, isTask := rc.Labels["com.docker.swarm.task"]; isTask {
+				continue
+			}
+
 			tag := registry.ExtractTag(rc.Image)
 			if tag == "" {
 				if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {

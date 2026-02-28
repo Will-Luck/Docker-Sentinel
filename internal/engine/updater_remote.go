@@ -65,6 +65,11 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			return
 		}
 
+		// Skip Swarm task containers — managed by the orchestrator.
+		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+
 		result.Total++
 
 		// Skip based on policy (same resolution as local containers).

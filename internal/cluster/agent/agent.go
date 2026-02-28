@@ -809,6 +809,11 @@ func (a *Agent) listLocalContainers(ctx context.Context) ([]*proto.ContainerInfo
 
 	out := make([]*proto.ContainerInfo, 0, len(summaries))
 	for i := range summaries {
+		// Skip Swarm task containers — they're managed by the Swarm
+		// orchestrator and can't be updated through the recreate flow.
+		if _, isTask := summaries[i].Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
 		out = append(out, containerInfoFromSummary(&summaries[i]))
 	}
 	return out, nil
