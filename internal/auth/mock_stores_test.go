@@ -250,6 +250,16 @@ func (m *mockAPITokenStore) ListAPITokensForUser(userID string) ([]APIToken, err
 	return result, nil
 }
 
+func (m *mockAPITokenStore) TouchAPIToken(id string, t time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if tok, ok := m.tokens[id]; ok {
+		tok.LastUsedAt = t
+		m.tokens[id] = tok
+	}
+	return nil
+}
+
 // mockSettingsReader is an in-memory implementation of SettingsReader for testing.
 type mockSettingsReader struct {
 	mu       sync.Mutex

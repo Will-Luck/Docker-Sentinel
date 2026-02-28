@@ -7,7 +7,7 @@ type HostState string
 
 const (
 	HostActive         HostState = "active"
-	HostDraining       HostState = "draining"       // no new updates, finish in-progress
+	HostPaused         HostState = "paused"         // no new updates, finish in-progress
 	HostDecommissioned HostState = "decommissioned" // certs revoked, data GC'd
 )
 

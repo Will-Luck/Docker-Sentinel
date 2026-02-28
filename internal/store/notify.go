@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -15,6 +16,7 @@ type NotifyState struct {
 	LastDigest   string    `json:"last_digest"`
 	LastNotified time.Time `json:"last_notified"`
 	FirstSeen    time.Time `json:"first_seen"`
+	SnoozedUntil time.Time `json:"snoozed_until,omitempty"`
 }
 
 // NotifyPref holds per-container notification mode preferences.
@@ -67,7 +69,8 @@ func (s *Store) AllNotifyStates() (map[string]*NotifyState, error) {
 		return b.ForEach(func(k, v []byte) error {
 			var state NotifyState
 			if err := json.Unmarshal(v, &state); err != nil {
-				return nil // skip malformed entries
+				slog.Warn("corrupt entry in notify_state bucket, skipping", "key", string(k), "error", err)
+				return nil
 			}
 			result[string(k)] = &state
 			return nil
@@ -121,7 +124,8 @@ func (s *Store) AllNotifyPrefs() (map[string]*NotifyPref, error) {
 		return b.ForEach(func(k, v []byte) error {
 			var pref NotifyPref
 			if err := json.Unmarshal(v, &pref); err != nil {
-				return nil // skip malformed entries
+				slog.Warn("corrupt entry in notify_prefs bucket, skipping", "key", string(k), "error", err)
+				return nil
 			}
 			result[string(k)] = &pref
 			return nil

@@ -337,6 +337,8 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		return status.Errorf(codes.NotFound, "host %s not registered", hostID)
 	}
 
+	var streamErr error
+
 	ctx, cancel := context.WithCancel(stream.Context())
 	defer cancel()
 
@@ -385,12 +387,13 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		}
 		s.pendingMu.Unlock()
 
-		s.registry.SetConnected(hostID, false)
+		s.registry.SetDisconnected(hostID, streamErr)
 		if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
 			s.log.Warn("failed to update last seen on disconnect", "hostID", hostID, "error", err)
 		}
 
-		s.log.Info("agent disconnected", "hostID", hostID)
+		cat, _ := classifyDisconnect(streamErr)
+		s.log.Info("agent disconnected", "hostID", hostID, "category", cat, "error", streamErr)
 		s.bus.Publish(events.SSEEvent{
 			Type:      events.EventClusterHost,
 			HostName:  hostID,
@@ -422,10 +425,16 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
+			streamErr = err
 			if err == io.EOF || ctx.Err() != nil {
-				return nil // clean disconnect
+				return nil
 			}
 			return err
+		}
+		// If our context was cancelled (stream replaced by a newer connection),
+		// exit so the agent detects the broken stream and reconnects cleanly.
+		if ctx.Err() != nil {
+			return nil
 		}
 		s.handleAgentMessage(hostID, as, msg)
 	}
@@ -512,9 +521,9 @@ func (s *Server) RemoveHost(id string) error {
 	return s.registry.Remove(id)
 }
 
-// DrainHost sets a host to "draining" state -- no new updates will be dispatched.
-func (s *Server) DrainHost(id string) error {
-	return s.registry.SetState(id, cluster.HostDraining)
+// PauseHost sets a host to "paused" state -- no new updates will be dispatched.
+func (s *Server) PauseHost(id string) error {
+	return s.registry.SetState(id, cluster.HostPaused)
 }
 
 // RevokeHost revokes the host's certificate, disconnects its stream, and

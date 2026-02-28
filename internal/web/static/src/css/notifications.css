@@ -1,0 +1,125 @@
+/* --------------------------------------------------------------------------
+   30. Digest Banner
+   -------------------------------------------------------------------------- */
+
+.digest-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--sp-3) var(--sp-4);
+    margin-bottom: var(--sp-4);
+    background: var(--md-tertiary-container);
+    color: var(--md-on-tertiary-container);
+    border-radius: var(--radius);
+    gap: var(--sp-3);
+    transition: opacity 300ms ease, max-height 300ms ease, padding 300ms ease, margin 300ms ease;
+    overflow: hidden;
+}
+.digest-banner.banner-hidden {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
+}
+
+.digest-banner-content {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+
+/* Notification preferences — radio card layout */
+
+.notify-intro {
+    font-size: 0.85rem;
+    color: var(--fg-secondary);
+    margin-bottom: var(--sp-4);
+    line-height: 1.5;
+}
+
+.notify-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+}
+
+.notify-option {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: border-color 150ms, background 150ms;
+}
+
+.notify-option:hover {
+    background: var(--md-hover-state);
+    border-color: var(--border-strong);
+}
+
+.notify-option:has(input:checked) {
+    border-color: var(--accent);
+    background: light-dark(rgba(103,80,164,0.08), rgba(208,188,255,0.08));
+}
+
+.notify-option input[type="radio"] {
+    margin-top: 3px;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+}
+
+.notify-option-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.notify-option-title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--fg-primary);
+}
+
+.notify-option-desc {
+    font-size: 0.75rem;
+    color: var(--fg-secondary);
+    line-height: 1.4;
+}
+
+/* Digest schedule callout */
+
+#digest-schedule-section {
+    margin-top: var(--sp-4);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--accent);
+    background: light-dark(
+        rgba(103, 80, 164, 0.05),
+        rgba(208, 188, 255, 0.06)
+    );
+}
+
+.digest-schedule-heading {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    margin: 0 0 var(--sp-3) 0;
+}
+
+#digest-schedule-section .settings-rows {
+    gap: var(--sp-2);
+}
+
+#digest-schedule-section .setting-row {
+    padding: var(--sp-2) 0;
+}
+
+#digest-schedule-section .setting-actions {
+    padding-top: var(--sp-2);
+}

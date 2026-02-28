@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/guardian"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
@@ -86,6 +87,16 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 	}
 
+	// 2.8. Retag current image as backup before pulling.
+	if u.isImageBackup() {
+		backupTag := u.backupTag(oldImage)
+		if tagErr := u.docker.TagImage(ctx, oldImage, backupTag); tagErr != nil {
+			u.log.Warn("image backup tag failed", "name", name, "tag", backupTag, "error", tagErr)
+		} else {
+			u.log.Info("image backup tag created", "name", name, "tag", backupTag)
+		}
+	}
+
 	// 3. Pull the new image.
 	u.log.Info("pulling image", "name", name, "image", pullImage)
 	if err := u.docker.PullImage(ctx, pullImage); err != nil {
@@ -106,11 +117,18 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	if err := u.docker.StopContainer(ctx, id, 30); err != nil {
 		u.log.Warn("stop failed, proceeding with force remove", "name", name, "error", err)
 	}
-	if err := u.docker.RemoveContainer(ctx, id); err != nil {
+	removeVolumes := docker.ContainerRemoveVolumes(inspect.Config.Labels) || u.isRemoveVolumes()
+	var removeErr error
+	if removeVolumes {
+		removeErr = u.docker.RemoveContainerWithVolumes(ctx, id)
+	} else {
+		removeErr = u.docker.RemoveContainer(ctx, id)
+	}
+	if removeErr != nil {
 		if mErr := u.store.SetMaintenance(name, false); mErr != nil {
 			u.log.Warn("failed to clear maintenance flag after remove failure", "name", name, "error", mErr)
 		}
-		return fmt.Errorf("remove old container %s: %w", name, err)
+		return fmt.Errorf("remove old container %s: %w", name, removeErr)
 	}
 
 	// 5. Create and start the new container.
@@ -141,6 +159,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	// 6. Wait grace period and validate.
 	gracePeriod := u.cfg.GracePeriod()
+	if override := docker.ContainerGracePeriod(inspect.Config.Labels); override > 0 {
+		gracePeriod = override
+	}
 	u.log.Info("waiting grace period", "name", name, "duration", gracePeriod)
 	select {
 	case <-u.clock.After(gracePeriod):
@@ -287,6 +308,28 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.log.Warn("failed to clear notify state after update", "name", name, "error", err)
 	}
 
+	// Compose file sync (opt-in).
+	if u.isComposeSync() {
+		labels := inspect.Config.Labels
+		workDir := labels["com.docker.compose.project.working_dir"]
+		configFiles := labels["com.docker.compose.project.config_files"]
+		svcName := labels["com.docker.compose.service"]
+		if workDir != "" && configFiles != "" && svcName != "" {
+			composePath := configFiles
+			if i := strings.Index(composePath, ","); i >= 0 {
+				composePath = composePath[:i]
+			}
+			if !strings.HasPrefix(composePath, "/") {
+				composePath = workDir + "/" + composePath
+			}
+			if err := UpdateComposeTag(composePath, svcName, pullImage); err != nil {
+				u.log.Warn("compose sync failed", "name", name, "file", composePath, "error", err)
+			} else {
+				u.log.Info("compose file updated", "name", name, "file", composePath)
+			}
+		}
+	}
+
 	// Clear ignored versions — container moved past them.
 	if err := u.store.ClearIgnoredVersions(name); err != nil {
 		u.log.Warn("failed to clear ignored versions after update", "name", name, "error", err)
@@ -328,7 +371,8 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	return nil
 }
 
-// validateContainer checks that a container is running and not restarting.
+// validateContainer checks that a container is running, not restarting, and
+// healthy (if a healthcheck is defined).
 func (u *Updater) validateContainer(ctx context.Context, id string) (bool, error) {
 	inspect, err := u.docker.InspectContainer(ctx, id)
 	if err != nil {
@@ -338,7 +382,55 @@ func (u *Updater) validateContainer(ctx context.Context, id string) (bool, error
 	if state == nil {
 		return false, fmt.Errorf("container state is nil")
 	}
-	return state.Running && !state.Restarting, nil
+	if !state.Running || state.Restarting {
+		return false, nil
+	}
+	if state.Health == nil || state.Health.Status == "" {
+		return true, nil
+	}
+	switch state.Health.Status {
+	case "healthy":
+		return true, nil
+	case "unhealthy":
+		return false, nil
+	case "starting":
+		return u.waitForHealthy(ctx, id)
+	default:
+		return true, nil
+	}
+}
+
+const healthPollInterval = 2 * time.Second
+const healthPollTimeout = 60 * time.Second
+
+// waitForHealthy polls the container's healthcheck status until it resolves
+// to healthy/unhealthy or the timeout expires.
+func (u *Updater) waitForHealthy(ctx context.Context, id string) (bool, error) {
+	deadline := u.clock.Now().Add(healthPollTimeout)
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-u.clock.After(healthPollInterval):
+			if u.clock.Now().After(deadline) {
+				u.log.Warn("healthcheck timeout waiting for healthy", "id", id)
+				return false, nil
+			}
+			inspect, err := u.docker.InspectContainer(ctx, id)
+			if err != nil {
+				return false, err
+			}
+			if inspect.State == nil || inspect.State.Health == nil {
+				return true, nil
+			}
+			switch inspect.State.Health.Status {
+			case "healthy":
+				return true, nil
+			case "unhealthy":
+				return false, nil
+			}
+		}
+	}
 }
 
 // doRollback performs a rollback and records the failure.
@@ -383,6 +475,22 @@ func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []by
 	}); err != nil {
 		u.log.Warn("failed to persist rollback record", "name", name, "error", err)
 	}
+}
+
+// backupTag builds the backup image reference for the current image before an update.
+// Format: base-repo:sentinel-backup-20060102-150405
+func (u *Updater) backupTag(imageRef string) string {
+	ts := u.clock.Now().Format("20060102-150405")
+	base := imageRef
+	if i := strings.Index(base, "@"); i >= 0 {
+		base = base[:i]
+	}
+	if i := strings.LastIndex(base, ":"); i >= 0 {
+		if j := strings.LastIndex(base, "/"); j < i {
+			base = base[:i]
+		}
+	}
+	return base + ":sentinel-backup-" + ts
 }
 
 // containerName extracts the container name, stripping the leading /.

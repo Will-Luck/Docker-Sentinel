@@ -4,22 +4,30 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // HostState is the server-side view of a connected agent.
 // It pairs the persisted HostInfo with ephemeral runtime state (container list,
 // connectivity status) that only exists while the server is running.
 type HostState struct {
-	Info       cluster.HostInfo
-	Containers []cluster.ContainerInfo // latest known container list
-	Connected  bool                    // true while the agent stream is active
-	LastReport time.Time               // when the last container list was received
+	Info          cluster.HostInfo
+	Containers    []cluster.ContainerInfo // latest known container list
+	Connected     bool                    // true while the agent stream is active
+	LastReport    time.Time               // when the last container list was received
+	DisconnectAt  time.Time
+	DisconnectErr string
+	DisconnectCat string // "network", "cert", "server", ""
 }
 
 // Registry tracks connected agent hosts and their container state.
@@ -120,6 +128,55 @@ func (r *Registry) SetConnected(hostID string, connected bool) {
 
 	if hs, ok := r.hosts[hostID]; ok {
 		hs.Connected = connected
+		if connected {
+			hs.DisconnectAt = time.Time{}
+			hs.DisconnectErr = ""
+			hs.DisconnectCat = ""
+		}
+	}
+}
+
+func classifyDisconnect(err error) (cat, msg string) {
+	if err == nil {
+		return "server", "stream closed cleanly"
+	}
+	s := err.Error()
+	st, ok := status.FromError(err)
+	if ok {
+		switch st.Code() {
+		case codes.PermissionDenied:
+			return "cert", "permission denied: " + st.Message()
+		case codes.NotFound:
+			return "cert", "host not registered on server"
+		case codes.Canceled:
+			return "server", "stream cancelled"
+		case codes.DeadlineExceeded:
+			return "network", "connection timed out"
+		case codes.Unavailable:
+			return "network", st.Message()
+		}
+	}
+	if errors.Is(err, io.EOF) || strings.Contains(s, "EOF") {
+		return "network", "connection lost (EOF)"
+	}
+	if strings.Contains(s, "connection reset") {
+		return "network", "connection reset by peer"
+	}
+	if strings.Contains(s, "transport is closing") {
+		return "network", "transport closed"
+	}
+	return "server", err.Error()
+}
+
+func (r *Registry) SetDisconnected(hostID string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if hs, ok := r.hosts[hostID]; ok {
+		hs.Connected = false
+		hs.DisconnectAt = time.Now()
+		cat, msg := classifyDisconnect(err)
+		hs.DisconnectCat = cat
+		hs.DisconnectErr = msg
 	}
 }
 
@@ -214,7 +271,7 @@ func (r *Registry) AllHosts() []cluster.HostInfo {
 }
 
 // SetState transitions a host to a new lifecycle state and persists it.
-// Valid transitions: active -> draining -> decommissioned.
+// Valid transitions: active -> paused -> decommissioned.
 func (r *Registry) SetState(hostID string, state cluster.HostState) error {
 	r.mu.Lock()
 	hs, ok := r.hosts[hostID]

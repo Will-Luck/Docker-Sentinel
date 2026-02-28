@@ -28,8 +28,10 @@
             </a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
+            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -52,7 +54,7 @@
             </div>
         </div>
         {{end}}{{else}}
-        <div class="nav-auth-off">Auth: Off</div>
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
         {{end}}
     </nav>
 
@@ -159,12 +161,13 @@
                     {{if .HostGroups}}
                         {{range .HostGroups}}
                         <tbody class="host-group" data-host="{{.ID}}" data-tab="{{.ID}}">
-                            <tr class="host-header" onclick="toggleHostGroup(this)">
+                            <tr class="host-header{{if not .Connected}} host-offline{{end}}" onclick="toggleHostGroup(this)">
                                 <td colspan="6">
                                     <div class="host-header-inner">
                                         <span class="expand-icon">&#9656;</span>
                                         <span class="host-status-dot {{if .Connected}}connected{{else}}disconnected{{end}}"></span>
                                         <span class="host-name">{{.Name}}</span>
+                                        {{if not .Connected}}<a href="/cluster" class="host-offline-link" onclick="event.stopPropagation()">OFFLINE — TROUBLESHOOT</a>{{end}}
                                         <span class="host-count badge">{{.Count}}</span>
                                     </div>
                                 </td>
@@ -292,12 +295,6 @@
                                     <button class="btn btn-warning btn-sm"
                                             onclick="event.stopPropagation(); triggerSvcUpdate('{{.Name}}', event)">
                                         Update
-                                    </button>
-                                {{end}}
-                                {{if eq .UpdateStatus "completed"}}
-                                    <button class="btn btn-sm"
-                                            onclick="event.stopPropagation(); rollbackSvc('{{.Name}}', event)">
-                                        Rollback
                                     </button>
                                 {{end}}
                                     <a href="/service/{{.Name}}" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>
@@ -455,6 +452,8 @@
                                             {{else}}
                                             <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="btn" onclick="event.stopPropagation()">Details</a>
                                             {{end}}
+                                        {{else if .Maintenance}}
+                                        <button class="btn btn-warning loading" disabled>Updating</button>
                                         {{else if and .HasUpdate (ne .Policy "pinned")}}
                                         <button class="btn btn-warning"
                                                 onclick="triggerUpdate('{{.Name}}', event, '{{.HostID}}')">

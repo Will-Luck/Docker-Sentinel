@@ -190,7 +190,7 @@ func TestUpdateServicePollPaused(t *testing.T) {
 		t.Fatal("expected error for paused service update")
 	}
 
-	history, _ := u.store.ListHistory(10)
+	history, _ := u.store.ListHistory(10, "")
 	if len(history) == 0 {
 		t.Fatal("expected history record")
 	}
@@ -215,7 +215,7 @@ func TestUpdateServicePollRollback(t *testing.T) {
 		t.Fatal("expected error for rolled-back service")
 	}
 
-	history, _ := u.store.ListHistory(10)
+	history, _ := u.store.ListHistory(10, "")
 	if len(history) == 0 {
 		t.Fatal("expected history record")
 	}
@@ -243,7 +243,7 @@ func TestUpdateServicePollContextCancel(t *testing.T) {
 		t.Fatal("expected error from context cancellation")
 	}
 
-	history, _ := u.store.ListHistory(10)
+	history, _ := u.store.ListHistory(10, "")
 	if len(history) == 0 {
 		t.Fatal("expected history record")
 	}
@@ -280,7 +280,7 @@ func TestUpdateServiceSuccess(t *testing.T) {
 		t.Error("queue entry should be removed after successful update")
 	}
 
-	history, _ := u.store.ListHistory(10)
+	history, _ := u.store.ListHistory(10, "")
 	if len(history) == 0 {
 		t.Fatal("expected history record")
 	}

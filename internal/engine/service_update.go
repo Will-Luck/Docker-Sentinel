@@ -12,12 +12,14 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/swarm"
+	"github.com/robfig/cron/v3"
 )
 
 // scanServices checks pre-fetched Swarm services for image updates,
 // routing them through the same policy/queue/notification flow as containers.
 // The services list is fetched once in Scan() to avoid duplicate API calls.
 func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mode ScanMode, result *ScanResult, filters []string, reserve int) {
+	u.log.Debug("scanning swarm services", "count", len(services))
 	result.Services = len(services)
 
 	for _, svc := range services {
@@ -26,6 +28,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		}
 
 		name := svc.Spec.Name
+		u.log.Debug("checking swarm service", "name", name, "image", svc.Spec.TaskTemplate.ContainerSpec.Image)
 		labels := svc.Spec.Labels
 		if labels == nil {
 			labels = map[string]string{}
@@ -59,24 +62,40 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 			continue
 		}
 
-		// Rate limit check.
+		// Per-container schedule check.
+		if sched := docker.ContainerSchedule(labels); sched != "" {
+			parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+			schedule, err := parser.Parse(sched)
+			if err != nil {
+				u.log.Warn("invalid schedule", "name", name, "schedule", sched, "error", err)
+			} else {
+				lastChecked, _ := u.store.GetLastContainerScan(name)
+				if !lastChecked.IsZero() && u.clock.Now().Before(schedule.Next(lastChecked)) {
+					result.Skipped++
+					continue
+				}
+			}
+		}
+
+		// Rate limit check — skip this registry but keep scanning
+		// services on other registries (e.g. GHCR when Docker Hub is exhausted).
 		if u.rateTracker != nil {
 			host := registry.RegistryHost(imageRef)
 			canProceed, wait := u.rateTracker.CanProceed(host, reserve)
 			if !canProceed {
 				if mode == ScanManual {
-					u.log.Warn("rate limit exhausted, stopping manual scan (services)", "registry", host, "resets_in", wait)
-					result.RateLimited++
-					break
+					u.log.Warn("rate limit exhausted, skipping service", "name", name, "registry", host, "resets_in", wait)
 				}
 				result.RateLimited++
 				continue
 			}
 		}
 
+		semverScope := docker.ContainerSemverScope(labels)
+		includeRE, excludeRE := docker.ContainerTagFilters(labels)
 		var check registry.CheckResult
 		if specDigest != "" {
-			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, specDigest)
+			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, specDigest, semverScope, includeRE, excludeRE)
 		} else {
 			// Try local image inspect first; fall back to registry digest
 			// for multi-node swarm where images only exist on worker nodes.
@@ -90,13 +109,16 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				}
 				localDigest = remoteDigest
 			}
-			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, localDigest)
+			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, localDigest, semverScope, includeRE, excludeRE)
 		}
 		if check.Error != nil {
 			u.log.Warn("service registry check failed", "name", name, "image", imageRef, "error", check.Error)
 			result.Errors = append(result.Errors, fmt.Errorf("service %s: %w", name, check.Error))
 			continue
 		}
+
+		// Record scan time for per-container schedule tracking.
+		_ = u.store.SetLastContainerScan(name, u.clock.Now())
 
 		if check.IsLocal || !check.UpdateAvailable {
 			if !check.UpdateAvailable {
@@ -143,7 +165,13 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		default:
 			state, _ := u.store.GetNotifyState(name)
 			if state != nil && state.LastDigest == check.RemoteDigest && !state.LastNotified.IsZero() {
-				shouldNotify = false
+				if !state.SnoozedUntil.IsZero() && u.clock.Now().Before(state.SnoozedUntil) {
+					shouldNotify = false
+					u.log.Debug("notification snoozed", "name", name, "until", state.SnoozedUntil)
+				} else if state.SnoozedUntil.IsZero() {
+					shouldNotify = false
+				}
+				// If snooze expired, shouldNotify stays true — re-notify.
 			}
 		}
 
@@ -172,10 +200,16 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		if notifyOK {
 			lastNotified = now
 		}
+		snoozeDur := docker.ContainerNotifySnooze(labels)
+		var snoozedUntil time.Time
+		if snoozeDur > 0 && notifyOK {
+			snoozedUntil = now.Add(snoozeDur)
+		}
 		if err := u.store.SetNotifyState(name, &store.NotifyState{
 			LastDigest:   check.RemoteDigest,
 			LastNotified: lastNotified,
 			FirstSeen:    firstSeen,
+			SnoozedUntil: snoozedUntil,
 		}); err != nil {
 			u.log.Warn("failed to persist service notify state", "name", name, "error", err)
 		}
@@ -188,6 +222,62 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		switch policy {
 		case docker.PolicyAuto:
 			result.AutoCount++
+			if u.isDryRun() {
+				u.log.Info("dry-run: would update service", "name", name, "target", scanTarget)
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: name,
+					OldImage:      imageRef,
+					NewImage:      scanTarget,
+					Outcome:       "dry_run",
+					Type:          "service",
+				})
+				continue
+			}
+			// Delay check.
+			delay := docker.ContainerUpdateDelay(labels)
+			if delay == 0 {
+				delay = u.globalUpdateDelay()
+			}
+			if delay > 0 {
+				state, _ := u.store.GetNotifyState(name)
+				if state != nil && !state.FirstSeen.IsZero() {
+					age := u.clock.Now().Sub(state.FirstSeen)
+					if age < delay {
+						u.log.Info("service update delayed", "name", name,
+							"age", age.Round(time.Minute), "required", delay)
+						result.Skipped++
+						continue
+					}
+				} else {
+					u.log.Info("service update delay: first detection, waiting", "name", name, "delay", delay)
+					result.Skipped++
+					continue
+				}
+			}
+			pullOnly := docker.ContainerPullOnly(labels) || u.isPullOnly()
+			if pullOnly {
+				target := scanTarget
+				if target == "" {
+					target = imageRef
+				}
+				if err := u.docker.PullImage(ctx, target); err != nil {
+					u.log.Error("pull-only failed (service)", "name", name, "error", err)
+					result.Failed++
+					result.Errors = append(result.Errors, fmt.Errorf("service %s: pull-only: %w", name, err))
+					continue
+				}
+				_ = u.store.RecordUpdate(store.UpdateRecord{
+					Timestamp:     u.clock.Now(),
+					ContainerName: name,
+					OldImage:      imageRef,
+					NewImage:      target,
+					Outcome:       "pull_only",
+					Type:          "service",
+				})
+				result.Updated++
+				continue
+			}
 			if err := u.UpdateService(ctx, svc.ID, name, scanTarget); err != nil {
 				u.log.Error("auto service update failed", "name", name, "error", err)
 				result.Failed++

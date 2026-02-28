@@ -585,6 +585,12 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		a.log.Info("update succeeded", "name", name, "old_image", oldImage, "new_digest", newDigest, "duration", dur)
 	}
 
+	// Push a fresh container list BEFORE the result so the server cache
+	// reflects the updated image/digest when the SSE-triggered row fetch
+	// arrives. gRPC stream messages are processed in order, so the cache
+	// update will complete before handleUpdateResult fires the SSE event.
+	_ = a.handleListContainers(ctx, stream, "")
+
 	msg := &proto.AgentMessage{
 		Payload: &proto.AgentMessage_UpdateResult{
 			UpdateResult: result,
@@ -775,13 +781,20 @@ func configFromInspect(inspect *container.InspectResponse, targetImage string) (
 	hostCfg := inspect.HostConfig
 
 	// Rebuild NetworkingConfig from the inspect's network settings.
-	// Docker inspect returns per-network endpoint configs that we can
-	// feed directly back into container create.
+	// Only copy user-specified fields (IPAM, aliases, driver opts).
+	// Copying runtime fields (Gateway, IPAddress, etc.) causes conflicts
+	// when Docker tries to assign them on the new container.
 	netCfg := &network.NetworkingConfig{}
 	if inspect.NetworkSettings != nil && len(inspect.NetworkSettings.Networks) > 0 {
 		netCfg.EndpointsConfig = make(map[string]*network.EndpointSettings, len(inspect.NetworkSettings.Networks))
 		for name, ep := range inspect.NetworkSettings.Networks {
-			netCfg.EndpointsConfig[name] = ep
+			netCfg.EndpointsConfig[name] = &network.EndpointSettings{
+				IPAMConfig: ep.IPAMConfig,
+				Aliases:    ep.Aliases,
+				DriverOpts: ep.DriverOpts,
+				NetworkID:  ep.NetworkID,
+				MacAddress: ep.MacAddress,
+			}
 		}
 	}
 
@@ -802,7 +815,20 @@ func (a *Agent) listLocalContainers(ctx context.Context) ([]*proto.ContainerInfo
 
 	out := make([]*proto.ContainerInfo, 0, len(summaries))
 	for i := range summaries {
-		out = append(out, containerInfoFromSummary(&summaries[i]))
+		// Skip Swarm task containers — they're managed by the Swarm
+		// orchestrator and can't be updated through the recreate flow.
+		if _, isTask := summaries[i].Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+		ci := containerInfoFromSummary(&summaries[i])
+
+		// Populate the image digest so the server can compare against
+		// the registry without needing the image locally.
+		if digest, err := a.docker.ImageDigest(ctx, summaries[i].Image); err == nil {
+			ci.ImageDigest = digest
+		}
+
+		out = append(out, ci)
 	}
 	return out, nil
 }

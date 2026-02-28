@@ -16,6 +16,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+      - name: Install esbuild
+        run: go install github.com/evanw/esbuild/cmd/esbuild@latest
+      - name: Bundle frontend
+        run: make frontend
       - name: Run tests
         run: go test -count=1 ./...
 
@@ -72,6 +76,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+      - name: Install esbuild
+        run: go install github.com/evanw/esbuild/cmd/esbuild@latest
+      - name: Bundle frontend
+        run: make frontend
       - name: Build binaries
         run: |
           mkdir -p dist

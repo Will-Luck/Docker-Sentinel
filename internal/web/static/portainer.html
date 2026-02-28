@@ -1,0 +1,272 @@
+{{define "portainer.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portainer — Docker-Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <img src="/favicon.svg" alt="S" class="nav-logo">
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">
+                Pending Updates
+                {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
+            </a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
+            <a href="/settings" class="nav-link">Settings</a>
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
+            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link active" aria-current="page">Portainer</a>{{end}}
+        </div>
+        <div class="nav-status" aria-live="polite">
+            <span id="sse-indicator" class="status-dot disconnected"></span>
+            <span id="sse-label" class="nav-status-text">Disconnected</span>
+        </div>
+        {{if .AuthEnabled}}{{if .CurrentUser}}
+        <div class="nav-user">
+            <button class="nav-user-btn" onclick="toggleUserDropdown(event)" aria-haspopup="true" aria-expanded="false">
+                <span>{{.CurrentUser.Username}}</span>
+                <span class="nav-user-role">{{.CurrentUser.RoleID}}</span>
+                <span class="nav-user-chevron">&#9662;</span>
+            </button>
+            <div class="nav-user-dropdown" id="user-dropdown">
+                <a href="/account">My Account</a>
+                <div class="dropdown-divider"></div>
+                <form method="POST" action="/logout" style="margin:0">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <button type="submit">Logout</button>
+                </form>
+            </div>
+        </div>
+        {{end}}{{else}}
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
+        {{end}}
+    </nav>
+
+    <main class="main-content" id="main-content">
+        <div class="page-header">
+            <div>
+                <h1>Portainer</h1>
+                <p class="subtitle">Containers and stacks from connected Portainer endpoints</p>
+            </div>
+        </div>
+
+        <!-- Stat cards -->
+        <dl class="stats">
+            <div class="stat-card">
+                <dt class="stat-label">Endpoints</dt>
+                <dd class="stat-value info" id="stat-endpoints">—</dd>
+            </div>
+            <div class="stat-card">
+                <dt class="stat-label">Containers</dt>
+                <dd class="stat-value warning" id="stat-containers">—</dd>
+            </div>
+            <div class="stat-card">
+                <dt class="stat-label">Stacks</dt>
+                <dd class="stat-value success" id="stat-stacks">—</dd>
+            </div>
+        </dl>
+
+        <!-- Endpoint cards -->
+        <div id="endpoints-list">
+            <div class="empty-state">
+                <p class="text-muted">Loading...</p>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <footer class="footer"><span>{{.Version}}</span></footer>
+
+    <script src="/static/app.js"></script>
+    <script>
+    var _endpoints = [];
+    var _containers = {};
+
+    function stateClass(state) {
+        if (state === 'running') return 'success';
+        if (state === 'exited' || state === 'dead') return 'error';
+        return 'warning';
+    }
+
+    function renderEndpoints() {
+        var list = document.getElementById('endpoints-list');
+        if (!_endpoints.length) {
+            list.innerHTML = '<div class="empty-state"><h3>No endpoints</h3><p>No Portainer endpoints found. Check your Portainer URL and token in Settings.</p></div>';
+            return;
+        }
+
+        var totalContainers = 0;
+        var stackSet = new Set();
+
+        var html = '';
+        for (var i = 0; i < _endpoints.length; i++) {
+            var ep = _endpoints[i];
+            var ctrs = _containers[ep.id] || [];
+            totalContainers += ctrs.length;
+
+            // collect stacks
+            for (var j = 0; j < ctrs.length; j++) {
+                if (ctrs[j].stack_name) stackSet.add(ctrs[j].stack_name);
+            }
+
+            var statusDot = ep.status === 1
+                ? '<span class="status-dot connected" title="Up"></span>'
+                : '<span class="status-dot disconnected" title="Down"></span>';
+
+            html += '<div class="card" style="margin-bottom:var(--sp-4)">';
+            html += '<div class="card-header" style="display:flex;align-items:center;gap:var(--sp-2);justify-content:space-between">';
+            html += '<div style="display:flex;align-items:center;gap:var(--sp-2)">' + statusDot + '<h2 style="margin:0">' + escHtml(ep.name) + '</h2></div>';
+            html += '<span class="text-muted" style="font-size:0.85rem">' + escHtml(ep.url) + '</span>';
+            html += '</div>';
+            html += '<div class="card-body" style="padding:0">';
+
+            if (!ctrs.length) {
+                html += '<p class="text-muted" style="padding:var(--sp-4)">No containers found on this endpoint.</p>';
+            } else {
+                // group by stack
+                var stacks = {};
+                var standalone = [];
+                for (var k = 0; k < ctrs.length; k++) {
+                    var c = ctrs[k];
+                    if (c.stack_name) {
+                        if (!stacks[c.stack_name]) stacks[c.stack_name] = [];
+                        stacks[c.stack_name].push(c);
+                    } else {
+                        standalone.push(c);
+                    }
+                }
+
+                html += '<table class="table" style="margin:0">';
+                html += '<thead><tr><th>Name</th><th>Image</th><th>State</th><th>Stack</th></tr></thead>';
+                html += '<tbody>';
+
+                var stackNames = Object.keys(stacks).sort();
+                for (var s = 0; s < stackNames.length; s++) {
+                    var sname = stackNames[s];
+                    var sctrs = stacks[sname];
+                    html += '<tr><td colspan="4" style="background:var(--bg-2);font-weight:500;padding:var(--sp-1) var(--sp-3);font-size:0.8rem;color:var(--text-2)">' + escHtml(sname) + '</td></tr>';
+                    for (var m = 0; m < sctrs.length; m++) {
+                        html += renderContainerRow(sctrs[m]);
+                    }
+                }
+
+                if (standalone.length) {
+                    if (stackNames.length) {
+                        html += '<tr><td colspan="4" style="background:var(--bg-2);font-weight:500;padding:var(--sp-1) var(--sp-3);font-size:0.8rem;color:var(--text-2)">standalone</td></tr>';
+                    }
+                    for (var n = 0; n < standalone.length; n++) {
+                        html += renderContainerRow(standalone[n]);
+                    }
+                }
+
+                html += '</tbody></table>';
+            }
+
+            html += '</div></div>';
+        }
+
+        list.innerHTML = html;
+
+        document.getElementById('stat-endpoints').textContent = _endpoints.length;
+        document.getElementById('stat-containers').textContent = totalContainers;
+        document.getElementById('stat-stacks').textContent = stackSet.size;
+    }
+
+    function renderContainerRow(c) {
+        var sc = stateClass(c.state);
+        var name = c.name.replace(/^\//, '');
+        var img = c.image || '';
+        if (img.length > 50) img = img.substring(0, 47) + '...';
+        return '<tr>' +
+            '<td><span class="mono">' + escHtml(name) + '</span></td>' +
+            '<td><span class="mono text-muted" style="font-size:0.8rem">' + escHtml(img) + '</span></td>' +
+            '<td><span class="badge badge-' + sc + '">' + escHtml(c.state) + '</span></td>' +
+            '<td>' + (c.stack_name ? escHtml(c.stack_name) : '<span class="text-muted">—</span>') + '</td>' +
+            '</tr>';
+    }
+
+    function escHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function loadPortainer() {
+        fetch('/api/portainer/endpoints')
+            .then(function(r) { return r.json(); })
+            .then(function(endpoints) {
+                if (!endpoints || !endpoints.length) {
+                    _endpoints = [];
+                    _containers = {};
+                    renderEndpoints();
+                    return;
+                }
+                _endpoints = endpoints;
+                var pending = endpoints.length;
+                for (var i = 0; i < endpoints.length; i++) {
+                    (function(ep) {
+                        fetch('/api/portainer/endpoints/' + ep.id + '/containers')
+                            .then(function(r) { return r.json(); })
+                            .then(function(ctrs) {
+                                _containers[ep.id] = ctrs || [];
+                            })
+                            .catch(function() {
+                                _containers[ep.id] = [];
+                            })
+                            .finally(function() {
+                                pending--;
+                                if (pending === 0) renderEndpoints();
+                            });
+                    })(_endpoints[i]);
+                }
+            })
+            .catch(function(err) {
+                document.getElementById('endpoints-list').innerHTML =
+                    '<div class="empty-state"><h3>Failed to load</h3><p>' + escHtml(String(err)) + '</p></div>';
+            });
+    }
+
+    loadPortainer();
+
+    if (typeof EventSource !== 'undefined') {
+        var es = new EventSource('/api/events');
+        es.addEventListener('scan_complete', function() {
+            loadPortainer();
+        });
+        es.addEventListener('connected', function() {
+            var dot = document.getElementById('sse-indicator');
+            var label = document.getElementById('sse-label');
+            if (dot) dot.className = 'status-dot connected';
+            if (label) label.textContent = 'Connected';
+        });
+        es.onerror = function() {
+            var dot = document.getElementById('sse-indicator');
+            var label = document.getElementById('sse-label');
+            if (dot) dot.className = 'status-dot disconnected';
+            if (label) label.textContent = 'Disconnected';
+        };
+    }
+    </script>
+</body>
+</html>
+{{end}}

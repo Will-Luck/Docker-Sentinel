@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
@@ -32,6 +33,7 @@ type DigestScheduler struct {
 	clock    clock.Clock
 	settings SettingsReader
 	resetCh  chan struct{}
+	mu       sync.Mutex
 	lastRun  time.Time
 }
 
@@ -102,6 +104,8 @@ func (d *DigestScheduler) TriggerDigest(ctx context.Context) {
 
 // LastRunTime returns when the last digest was sent.
 func (d *DigestScheduler) LastRunTime() time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.lastRun
 }
 
@@ -134,7 +138,9 @@ func (d *DigestScheduler) fire(ctx context.Context) {
 		}
 	}
 
+	d.mu.Lock()
 	d.lastRun = d.clock.Now()
+	d.mu.Unlock()
 
 	if len(seen) == 0 {
 		d.log.Info("digest: no pending updates")

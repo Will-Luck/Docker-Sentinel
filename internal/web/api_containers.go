@@ -2,8 +2,12 @@ package web
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 )
 
 // apiContainers returns all monitored containers with policy and maintenance status.
@@ -76,7 +80,15 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 
 // apiHistory returns the most recent update records.
 func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
-	records, err := s.deps.Store.ListHistory(100)
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	before := r.URL.Query().Get("before")
+
+	records, err := s.deps.Store.ListHistory(limit, before)
 	if err != nil {
 		s.deps.Log.Error("failed to list history", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list history")
@@ -257,6 +269,124 @@ func (s *Server) apiSaveStackOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// apiHistoryExport streams all history records as CSV or JSON.
+func (s *Server) apiHistoryExport(w http.ResponseWriter, r *http.Request) {
+	records, err := s.deps.Store.ListAllHistory()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	format := r.URL.Query().Get("format")
+	switch format {
+	case "csv":
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=sentinel-history.csv")
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"timestamp", "container", "type", "old_image", "new_image", "outcome", "duration_s", "error", "host_id", "host_name"})
+		for _, rec := range records {
+			dur := ""
+			if rec.Duration > 0 {
+				dur = fmt.Sprintf("%.1f", rec.Duration.Seconds())
+			}
+			_ = cw.Write([]string{
+				rec.Timestamp.Format(time.RFC3339),
+				rec.ContainerName,
+				rec.Type,
+				rec.OldImage,
+				rec.NewImage,
+				rec.Outcome,
+				dur,
+				rec.Error,
+				rec.HostID,
+				rec.HostName,
+			})
+		}
+		cw.Flush()
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", "attachment; filename=sentinel-history.json")
+		_ = json.NewEncoder(w).Encode(records)
+	}
+}
+
+// apiContainerAllTags returns all available tags for a container's image from the registry.
+func (s *Server) apiContainerAllTags(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "container name required")
+		return
+	}
+
+	if s.deps.TagLister == nil {
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+
+	containers, err := s.deps.Docker.ListAllContainers(r.Context())
+	if err != nil {
+		s.deps.Log.Error("failed to list containers", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list containers")
+		return
+	}
+
+	var imageRef string
+	for _, c := range containers {
+		if containerName(c) == name {
+			imageRef = c.Image
+			break
+		}
+	}
+	if imageRef == "" {
+		writeError(w, http.StatusNotFound, "container not found: "+name)
+		return
+	}
+
+	tags, err := s.deps.TagLister.ListAllTags(r.Context(), imageRef)
+	if err != nil {
+		s.deps.Log.Warn("failed to list tags", "name", name, "image", imageRef, "error", err)
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
+	if tags == nil {
+		tags = []string{}
+	}
+
+	writeJSON(w, http.StatusOK, tags)
+}
+
+// apiGetReleaseSources returns the configured release note sources.
+func (s *Server) apiGetReleaseSources(w http.ResponseWriter, r *http.Request) {
+	if s.deps.ReleaseSources == nil {
+		writeJSON(w, http.StatusOK, []ReleaseSource{})
+		return
+	}
+	sources, err := s.deps.ReleaseSources.GetReleaseSources()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sources)
+}
+
+// apiSetReleaseSources replaces the release note sources list.
+func (s *Server) apiSetReleaseSources(w http.ResponseWriter, r *http.Request) {
+	if s.deps.ReleaseSources == nil {
+		writeError(w, http.StatusNotImplemented, "release sources store not available")
+		return
+	}
+	var sources []ReleaseSource
+	if err := json.NewDecoder(r.Body).Decode(&sources); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.deps.ReleaseSources.SetReleaseSources(sources); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // apiTriggerScan triggers an immediate scan cycle.

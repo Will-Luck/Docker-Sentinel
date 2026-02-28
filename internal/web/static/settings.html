@@ -28,8 +28,10 @@
             </a>
             <a href="/history" class="nav-link">History</a>
             <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link active" aria-current="page">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
+            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -52,7 +54,7 @@
             </div>
         </div>
         {{end}}{{else}}
-        <div class="nav-auth-off">Auth: Off</div>
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
         {{end}}
     </nav>
 
@@ -71,177 +73,323 @@
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-general" data-tab="general">General</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-cluster" data-tab="cluster">Cluster</button>
-            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-about" data-tab="about">About</button>
-            {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-portainer" data-tab="portainer">Portainer</button>
+            {{if .ShowSecurityTab}}
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-security" data-tab="security">Security</button>
-            {{end}}{{end}}{{end}}
+            {{end}}
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-about" data-tab="about">About</button>
         </div>
 
         <!-- Scanning tab -->
         <div class="tab-panel active" id="tab-scanning" role="tabpanel">
-            <div class="card">
-                <div class="card-header">
-                    <h2>Scanning &amp; Behaviour</h2>
-                </div>
-                <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
-                    <div class="settings-rows">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Poll interval</div>
-                                <div class="setting-desc">How often Sentinel checks for container updates</div>
-                            </div>
-                            <div class="poll-interval-control">
-                                <select id="poll-interval" class="setting-select" onchange="onPollIntervalChange(this.value)">
-                                    <option value="15m">15 minutes</option>
-                                    <option value="30m">30 minutes</option>
-                                    <option value="1h">1 hour</option>
-                                    <option value="6h">6 hours</option>
-                                    <option value="12h">12 hours</option>
-                                    <option value="24h">24 hours</option>
-                                    <option value="custom">Custom...</option>
-                                </select>
-                                <div id="poll-custom-wrap" class="custom-duration-wrap" style="display:none">
-                                    <select id="poll-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('poll')">
-                                        <option value="">Unit...</option>
-                                        <option value="s">Seconds</option>
-                                        <option value="m">Minutes</option>
-                                        <option value="h">Hours</option>
+            <div class="accordion-stack">
+
+                <details class="accordion card" open>
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Scan Schedule</h2>
+                        <span class="accordion-preview" id="scan-schedule-preview">Loading...</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Poll interval</div>
+                                    <div class="setting-desc">How often Sentinel checks for container updates</div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <select id="poll-interval" class="setting-select" onchange="onPollIntervalChange(this.value)">
+                                        <option value="15m">15 minutes</option>
+                                        <option value="30m">30 minutes</option>
+                                        <option value="1h">1 hour</option>
+                                        <option value="6h">6 hours</option>
+                                        <option value="12h">12 hours</option>
+                                        <option value="24h">24 hours</option>
+                                        <option value="custom">Custom...</option>
                                     </select>
-                                    <input id="poll-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
-                                    <button id="poll-custom-btn" class="btn btn-success" onclick="applyCustomPollInterval()" disabled>Apply</button>
+                                    <div id="poll-custom-wrap" class="custom-duration-wrap" style="display:none">
+                                        <select id="poll-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('poll')">
+                                            <option value="">Unit...</option>
+                                            <option value="s">Seconds</option>
+                                            <option value="m">Minutes</option>
+                                            <option value="h">Hours</option>
+                                        </select>
+                                        <input id="poll-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
+                                        <button id="poll-custom-btn" class="btn btn-success" onclick="applyCustomPollInterval()" disabled>Apply</button>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Default policy</div>
-                                <div class="setting-desc">Policy assigned to containers without a sentinel.policy label</div>
-                            </div>
-                            <select id="default-policy" class="setting-select" onchange="setDefaultPolicy(this.value)">
-                                <option value="auto">auto</option>
-                                <option value="manual">manual</option>
-                                <option value="pinned">pinned</option>
-                            </select>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">On Rollback</div>
-                                <div class="setting-desc">Automatically change update policy when a service or container rolls back, preventing the same broken update from being retried</div>
-                            </div>
-                            <select id="rollback-policy" class="setting-select" onchange="setRollbackPolicy(this.value)">
-                                <option value="">No change</option>
-                                <option value="manual">Set to Manual</option>
-                                <option value="pinned">Set to Pinned</option>
-                            </select>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Auto-update :latest containers</div>
-                                <div class="setting-desc">Containers using the :latest tag are set to auto-update, regardless of the default policy above</div>
-                            </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="latest-auto-toggle" class="channel-toggle" onchange="setLatestAutoUpdate(this.checked)">
-                                <span id="latest-auto-text" class="toggle-switch-text">On</span>
-                            </label>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Grace period</div>
-                                <div class="setting-desc">Time to wait after an update before checking container health</div>
-                            </div>
-                            <div class="poll-interval-control">
-                                <select id="grace-period" class="setting-select" onchange="onGracePeriodChange(this.value)">
-                                    <option value="10s">10 seconds</option>
-                                    <option value="15s">15 seconds</option>
-                                    <option value="30s">30 seconds</option>
-                                    <option value="1m0s">60 seconds</option>
-                                    <option value="2m0s">120 seconds</option>
-                                    <option value="custom">Custom...</option>
-                                </select>
-                                <div id="grace-custom-wrap" class="custom-duration-wrap" style="display:none">
-                                    <select id="grace-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('grace')">
-                                        <option value="">Unit...</option>
-                                        <option value="s">Seconds</option>
-                                        <option value="m">Minutes</option>
-                                        <option value="h">Hours</option>
-                                    </select>
-                                    <input id="grace-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
-                                    <button id="grace-custom-btn" class="btn btn-success" onclick="applyCustomGracePeriod()" disabled>Apply</button>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Cron schedule</div>
+                                    <div class="setting-desc">Use a cron expression instead of the poll interval (leave empty to use poll interval)</div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <input type="text" id="cron-schedule" class="setting-select" placeholder="e.g. 0 3 * * *" style="max-width:220px">
+                                    <button class="btn btn-success" onclick="saveCronSchedule()">Apply</button>
                                 </div>
                             </div>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Pause scanning</div>
-                                <div class="setting-desc">Temporarily stop all automatic update checks</div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Pause scanning</div>
+                                    <div class="setting-desc">Temporarily stop all automatic update checks</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="pause-toggle" class="channel-toggle" onchange="setPauseState(this.checked)">
+                                    <span id="pause-toggle-text" class="toggle-switch-text">Off</span>
+                                </label>
                             </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="pause-toggle" class="channel-toggle" onchange="setPauseState(this.checked)">
-                                <span id="pause-toggle-text" class="toggle-switch-text">Off</span>
-                            </label>
-                        </div>
-                        <div class="setting-row setting-row-top">
-                            <div class="setting-info">
-                                <div class="setting-label">Container filters</div>
-                                <div class="setting-desc">Exclude containers matching these patterns (one per line)</div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Scan concurrency</div>
+                                    <div class="setting-desc">Number of parallel registry checks per scan (1 = sequential). Experimental.</div>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:var(--sp-2)">
+                                    <input type="number" id="scan-concurrency-input" class="setting-input" min="1" max="20" value="1" style="width:5rem">
+                                    <button class="btn btn-sm btn-secondary" onclick="setScanConcurrency()">Save</button>
+                                </div>
                             </div>
-                            <div class="setting-control-stack">
-                                <textarea id="container-filters" class="setting-textarea" placeholder="e.g. watchtower&#10;test-*"></textarea>
-                                <button class="btn btn-success" onclick="saveFilters()">Save Filters</button>
-                            </div>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Image cleanup</div>
-                                <div class="setting-desc">Automatically remove old images after a successful update</div>
-                            </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="image-cleanup-toggle" class="channel-toggle" onchange="setImageCleanup(this.checked)">
-                                <span id="image-cleanup-text" class="toggle-switch-text">On</span>
-                            </label>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Cron schedule</div>
-                                <div class="setting-desc">Use a cron expression instead of the poll interval (leave empty to use poll interval)</div>
-                            </div>
-                            <div class="poll-interval-control">
-                                <input type="text" id="cron-schedule" class="setting-select" placeholder="e.g. 0 3 * * *" style="max-width:220px">
-                                <button class="btn btn-success" onclick="saveCronSchedule()">Apply</button>
-                            </div>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Dependency-aware updates</div>
-                                <div class="setting-desc">Restart containers that depend on an updated container (via labels or network mode)</div>
-                            </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="dep-aware-toggle" class="channel-toggle" onchange="setDependencyAware(this.checked)">
-                                <span id="dep-aware-text" class="toggle-switch-text">On</span>
-                            </label>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Lifecycle hooks</div>
-                                <div class="setting-desc">Run pre-update and post-update commands inside containers during updates</div>
-                            </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="hooks-toggle" class="channel-toggle" onchange="setHooksEnabled(this.checked)">
-                                <span id="hooks-toggle-text" class="toggle-switch-text">Off</span>
-                            </label>
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Write hook labels</div>
-                                <div class="setting-desc">Persist hook configurations as container labels for portability</div>
-                            </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="hooks-labels-toggle" class="channel-toggle" onchange="setHooksWriteLabels(this.checked)">
-                                <span id="hooks-labels-text" class="toggle-switch-text">Off</span>
-                            </label>
                         </div>
                     </div>
-                </div>
+                </details>
+
+                <details class="accordion card" open>
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Update Policy</h2>
+                        <span class="accordion-preview" id="update-policy-preview">Loading...</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Default policy</div>
+                                    <div class="setting-desc">Policy assigned to containers without a sentinel.policy label</div>
+                                </div>
+                                <select id="default-policy" class="setting-select" onchange="setDefaultPolicy(this.value)">
+                                    <option value="auto">auto</option>
+                                    <option value="manual">manual</option>
+                                    <option value="pinned">pinned</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Auto-update :latest containers</div>
+                                    <div class="setting-desc">Containers using the :latest tag are set to auto-update, regardless of the default policy above</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="latest-auto-toggle" class="channel-toggle" onchange="setLatestAutoUpdate(this.checked)">
+                                    <span id="latest-auto-text" class="toggle-switch-text">On</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">On Rollback</div>
+                                    <div class="setting-desc">Automatically change update policy when a service or container rolls back, preventing the same broken update from being retried</div>
+                                </div>
+                                <select id="rollback-policy" class="setting-select" onchange="setRollbackPolicy(this.value)">
+                                    <option value="">No change</option>
+                                    <option value="manual">Set to Manual</option>
+                                    <option value="pinned">Set to Pinned</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Grace period</div>
+                                    <div class="setting-desc">Time to wait after an update before checking container health</div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <select id="grace-period" class="setting-select" onchange="onGracePeriodChange(this.value)">
+                                        <option value="10s">10 seconds</option>
+                                        <option value="15s">15 seconds</option>
+                                        <option value="30s">30 seconds</option>
+                                        <option value="1m0s">60 seconds</option>
+                                        <option value="2m0s">120 seconds</option>
+                                        <option value="custom">Custom...</option>
+                                    </select>
+                                    <div id="grace-custom-wrap" class="custom-duration-wrap" style="display:none">
+                                        <select id="grace-custom-unit" class="setting-select custom-duration-unit" onchange="onCustomUnitChange('grace')">
+                                            <option value="">Unit...</option>
+                                            <option value="s">Seconds</option>
+                                            <option value="m">Minutes</option>
+                                            <option value="h">Hours</option>
+                                        </select>
+                                        <input id="grace-custom-value" type="number" class="setting-select custom-duration-value" min="1" placeholder="Value" disabled>
+                                        <button id="grace-custom-btn" class="btn btn-success" onclick="applyCustomGracePeriod()" disabled>Apply</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Update delay</div>
+                                    <div class="setting-desc">Wait this long after first detecting an update before applying it. Per-container: <code>sentinel.delay</code> label (e.g. <code>72h</code>, <code>3d</code>)</div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <input type="text" id="update-delay" class="setting-select" placeholder="e.g. 72h, 3d" style="max-width:120px">
+                                    <button class="btn btn-success" onclick="setUpdateDelay()">Save</button>
+                                </div>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Maintenance window</div>
+                                    <div class="setting-desc">Time window when auto-updates are applied. Scans still run on schedule, but updates are deferred until inside the window. Manual approvals always bypass.</div>
+                                    <div class="setting-hint" style="margin-top:0.25rem;font-size:0.8rem;color:var(--text-muted)">Formats: <code>HH:MM-HH:MM</code> (daily), <code>Sat 02:00-Sat 06:00</code> (weekly), multiple with <code>;</code></div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <input type="text" id="maintenance-window" class="setting-select" placeholder="e.g. 02:00-06:00" style="max-width:220px">
+                                    <button class="btn btn-success" onclick="saveMaintenanceWindow()">Save</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Container Scope</h2>
+                        <span class="accordion-preview">Filters, visibility, and dependencies</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row setting-row-top">
+                                <div class="setting-info">
+                                    <div class="setting-label">Container filters</div>
+                                    <div class="setting-desc">Exclude containers matching these patterns (one per line)</div>
+                                </div>
+                                <div class="setting-control-stack">
+                                    <textarea id="container-filters" class="setting-textarea" placeholder="e.g. watchtower&#10;test-*"></textarea>
+                                    <button class="btn btn-success" onclick="saveFilters()">Save Filters</button>
+                                </div>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Show stopped containers</div>
+                                    <div class="setting-desc">Display stopped containers in the dashboard. Stopped containers are not scanned for updates.</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="show-stopped-toggle" class="channel-toggle" onchange="setShowStopped(this.checked)">
+                                    <span id="show-stopped-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Dependency-aware updates</div>
+                                    <div class="setting-desc">Restart containers that depend on an updated container (via labels or network mode)</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="dep-aware-toggle" class="channel-toggle" onchange="setDependencyAware(this.checked)">
+                                    <span id="dep-aware-text" class="toggle-switch-text">On</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Update Process</h2>
+                        <span class="accordion-preview">Modes, cleanup, and backups</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Dry-run mode</div>
+                                    <div class="setting-desc">Detect updates and send notifications without actually updating containers</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="dry-run-toggle" class="channel-toggle" onchange="setDryRun(this.checked)">
+                                    <span id="dry-run-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Pull-only mode</div>
+                                    <div class="setting-desc">Pull the new image without restarting containers (pre-stage updates). Override per container with <code>sentinel.pull-only=true</code></div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="pull-only-toggle" class="channel-toggle" onchange="setPullOnly(this.checked)">
+                                    <span id="pull-only-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Image cleanup</div>
+                                    <div class="setting-desc">Automatically remove old images after a successful update</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="image-cleanup-toggle" class="channel-toggle" onchange="setImageCleanup(this.checked)">
+                                    <span id="image-cleanup-text" class="toggle-switch-text">On</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Image backup before update</div>
+                                    <div class="setting-desc">Retag the current image as <code>:sentinel-backup-YYYYMMDD-HHmmss</code> before pulling a new one</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="image-backup-toggle" class="channel-toggle" onchange="setImageBackup(this.checked)">
+                                    <span id="image-backup-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Remove volumes on update</div>
+                                    <div class="setting-desc">Remove anonymous volumes when replacing a container. Can also be set per-container with <code>sentinel.remove-volumes=true</code>.</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="remove-volumes-toggle" class="channel-toggle" onchange="setRemoveVolumes(this.checked)">
+                                    <span id="remove-volumes-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Compose file sync</div>
+                                    <div class="setting-desc">Update the image tag in the Docker Compose file after a successful update. Only applies to Compose-managed containers. Creates <code>.bak</code> backups before modifying.</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="compose-sync-toggle" class="channel-toggle" onchange="setComposeSync(this.checked)">
+                                    <span id="compose-sync-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Lifecycle Hooks</h2>
+                        <span class="accordion-preview">Pre/post-update commands</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Lifecycle hooks</div>
+                                    <div class="setting-desc">Run pre-update and post-update commands inside containers during updates</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="hooks-toggle" class="channel-toggle" onchange="setHooksEnabled(this.checked)">
+                                    <span id="hooks-toggle-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Write hook labels</div>
+                                    <div class="setting-desc">Persist hook configurations as container labels for portability</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="hooks-labels-toggle" class="channel-toggle" onchange="setHooksWriteLabels(this.checked)">
+                                    <span id="hooks-labels-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
             </div>
         </div>
 
@@ -296,6 +444,108 @@
                                 </div>
                                 <button class="btn btn-sm btn-warning" id="general-switch-role-btn" onclick="switchRole()">Switch to Agent</button>
                             </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Grafana dashboard</div>
+                                    <div class="setting-desc">Pre-built dashboard for Prometheus metrics. Import into Grafana to visualise Sentinel metrics.</div>
+                                </div>
+                                <a href="/api/grafana-dashboard" class="btn btn-sm" download>Download Dashboard JSON</a>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Docker Connection -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Docker Connection</h2>
+                        <span class="accordion-preview">TLS certificates for socket proxy</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row setting-row-top">
+                                <div class="setting-info">
+                                    <div class="setting-label">TLS Certificates</div>
+                                    <div class="setting-desc">Configure mTLS certificates for connecting to a Docker socket proxy. Leave all fields empty for direct socket or unencrypted TCP. <span class="restart-badge">Restart required</span></div>
+                                </div>
+                                <div class="setting-control-stack">
+                                    <label class="setting-input-label" for="docker-tls-ca">CA Certificate Path</label>
+                                    <input type="text" id="docker-tls-ca" class="setting-input" placeholder="/path/to/ca.pem">
+                                    <label class="setting-input-label" for="docker-tls-cert">Client Certificate Path</label>
+                                    <input type="text" id="docker-tls-cert" class="setting-input" placeholder="/path/to/cert.pem">
+                                    <label class="setting-input-label" for="docker-tls-key">Client Key Path</label>
+                                    <input type="text" id="docker-tls-key" class="setting-input" placeholder="/path/to/key.pem">
+                                    <div style="display:flex; gap:var(--sp-2); margin-top:var(--sp-2)">
+                                        <button class="btn btn-success" onclick="saveDockerTLS()">Save</button>
+                                        <button class="btn btn-sm" id="docker-tls-test-btn" onclick="testDockerTLS()">Test Connection</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Inbound Webhooks -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Inbound Webhooks</h2>
+                        <span class="accordion-preview">Trigger scans from Docker Hub, GHCR, or CI/CD</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="settings-section-desc">Receive push notifications from Docker Hub, GHCR, or CI/CD pipelines to trigger immediate scans when images are updated.</p>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Enable Webhooks</div>
+                                    <div class="setting-desc">Accept inbound webhook requests to trigger scans</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="webhook-enabled-toggle" onchange="setWebhookEnabled(this.checked)">
+                                    <span id="webhook-enabled-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div id="webhook-config" style="display:none; margin-top:var(--sp-4)">
+                            <div class="settings-rows">
+                                <div class="setting-row setting-row-top">
+                                    <div class="setting-info">
+                                        <div class="setting-label">Webhook URL</div>
+                                        <div class="setting-desc">POST requests to this URL will trigger a scan</div>
+                                    </div>
+                                    <div class="setting-control-stack">
+                                        <div style="display:flex; gap:var(--sp-2); align-items:center; width:100%">
+                                            <input type="text" id="webhook-url" class="setting-input" readonly style="max-width:none; flex:1">
+                                            <button class="btn btn-sm" onclick="copyWebhookURL()">Copy</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="setting-row setting-row-top">
+                                    <div class="setting-info">
+                                        <div class="setting-label">Webhook Secret</div>
+                                        <div class="setting-desc">
+                                            Append <code>?secret=YOUR_SECRET</code> to the URL, or send it in the <code>X-Webhook-Secret</code> header
+                                        </div>
+                                    </div>
+                                    <div class="setting-control-stack">
+                                        <div style="display:flex; gap:var(--sp-2); align-items:center; width:100%">
+                                            <input type="text" id="webhook-secret" class="setting-input mono" readonly style="max-width:none; flex:1">
+                                            <button class="btn btn-sm" onclick="copyWebhookSecret()">Copy</button>
+                                            <button class="btn btn-sm btn-warning" onclick="regenerateWebhookSecret()">Regenerate</button>
+                                        </div>
+                                        <small id="webhook-secret-hint" class="text-muted" style="display:none">Secret is masked for security. Click Regenerate to create a new one (shown only once).</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <details style="margin-top:var(--sp-4)">
+                                <summary style="cursor:pointer; font-size:0.85rem; color:var(--fg-secondary); font-weight:500">Supported Payload Formats</summary>
+                                <div style="margin-top:var(--sp-2); font-size:0.8rem; color:var(--fg-secondary); line-height:1.6">
+                                    <p><strong>Generic:</strong> <code>{"image": "nginx", "tag": "latest"}</code> or <code>{"image": "nginx:latest"}</code></p>
+                                    <p><strong>Docker Hub:</strong> Automatic &mdash; point Docker Hub's webhook URL here.</p>
+                                    <p><strong>GHCR:</strong> Set up a GitHub webhook with the <code>package</code> event type.</p>
+                                </div>
+                            </details>
                         </div>
                     </div>
                 </details>
@@ -320,6 +570,47 @@
                                     {{end}}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Backup & Restore -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Backup &amp; Restore</h2>
+                        <span class="accordion-preview">Export and import full configuration</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="settings-section-desc">Export all settings, notification channels, and registry credentials as a JSON backup file. Import to restore or migrate to another instance.</p>
+                        <div class="settings-rows">
+                            <div class="setting-row setting-row-top">
+                                <div class="setting-info">
+                                    <div class="setting-label">Export Configuration</div>
+                                    <div class="setting-desc">Download a JSON file containing all current settings</div>
+                                </div>
+                                <div class="setting-control-stack">
+                                    <div style="display:flex; gap:var(--sp-2); align-items:center">
+                                        <button class="btn btn-success" onclick="exportConfig()">Export</button>
+                                        <label class="toggle-switch-label" style="margin-left:var(--sp-2)">
+                                            <input type="checkbox" id="export-secrets-toggle">
+                                            <span>Include secrets</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="setting-row setting-row-top">
+                                <div class="setting-info">
+                                    <div class="setting-label">Import Configuration</div>
+                                    <div class="setting-desc">Merge import &mdash; existing settings not in the backup are preserved. Redacted values are skipped.</div>
+                                </div>
+                                <div class="setting-control-stack">
+                                    <input type="file" id="config-import-file" accept=".json" class="setting-input" style="max-width:none">
+                                    <div style="margin-top:var(--sp-2)">
+                                        <button class="btn btn-warning" onclick="importConfig()">Import</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </details>
@@ -351,6 +642,9 @@
                                     <option value="ntfy">Ntfy</option>
                                     <option value="telegram">Telegram</option>
                                     <option value="pushover">Pushover</option>
+                                    <option value="smtp">Email (SMTP)</option>
+                                    <option value="apprise">Apprise</option>
+                                    <option value="mqtt">MQTT</option>
                                 </select>
                                 <button class="btn" onclick="addChannel()">Add</button>
                             </div>
@@ -431,6 +725,87 @@
                     </div>
                 </details>
 
+                <!-- Message Templates -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Message Templates</h2>
+                        <span class="accordion-preview">Customise notification message format per event type</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="accordion-intro">Override the default notification message format for each event type using <a href="https://pkg.go.dev/text/template" target="_blank" rel="noopener">Go text/template</a> syntax. Leave blank to use the built-in format.</p>
+
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Event type</div>
+                                    <div class="setting-desc">Select which event to customise</div>
+                                </div>
+                                <select id="template-event-type" class="setting-select" onchange="loadTemplateForEvent()">
+                                    <option value="update_available">Update Available</option>
+                                    <option value="update_started">Update Started</option>
+                                    <option value="update_succeeded">Update Succeeded</option>
+                                    <option value="update_failed">Update Failed</option>
+                                    <option value="rollback_succeeded">Rollback Succeeded</option>
+                                    <option value="rollback_failed">Rollback Failed</option>
+                                </select>
+                            </div>
+                            <div class="setting-row" style="flex-direction:column; align-items:stretch">
+                                <div class="setting-info" style="margin-bottom:var(--sp-2)">
+                                    <div class="setting-label">Template</div>
+                                    <div class="setting-desc">Available variables: <code>{{`{{.ContainerName}}`}}</code>, <code>{{`{{.OldImage}}`}}</code>, <code>{{`{{.NewImage}}`}}</code>, <code>{{`{{.OldDigest}}`}}</code>, <code>{{`{{.NewDigest}}`}}</code>, <code>{{`{{.Error}}`}}</code>, <code>{{`{{.Type}}`}}</code>, <code>{{`{{.Timestamp}}`}}</code>, <code>{{`{{.Title}}`}}</code>, <code>{{`{{.Emoji}}`}}</code>, <code>{{`{{.Severity}}`}}</code></div>
+                                </div>
+                                <textarea id="template-body" class="setting-input" rows="6" placeholder="Leave blank to use the default format" style="font-family:var(--font-mono); font-size:0.85rem; width:100%; resize:vertical"></textarea>
+                            </div>
+                        </div>
+
+                        <div id="template-preview-output" style="display:none; margin-top:var(--sp-3)">
+                            <div class="setting-label" style="margin-bottom:var(--sp-1)">Preview</div>
+                            <pre id="template-preview-text" style="background:var(--bg-tertiary); padding:var(--sp-3); border-radius:var(--radius); white-space:pre-wrap; font-family:var(--font-mono); font-size:0.85rem; border:1px solid var(--border)"></pre>
+                        </div>
+
+                        <div class="setting-actions" style="margin-top:var(--sp-3)">
+                            <button class="btn" onclick="previewNotifyTemplate()">Preview</button>
+                            <button class="btn btn-success" onclick="saveNotifyTemplate()">Save</button>
+                            <button class="btn btn-error" onclick="deleteNotifyTemplate()">Reset to Default</button>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Home Assistant MQTT Discovery -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Home Assistant Integration</h2>
+                        <span class="accordion-preview">MQTT auto-discovery for Home Assistant</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="accordion-intro">Publish MQTT auto-discovery payloads so Sentinel containers appear as entities in Home Assistant. Requires an MQTT notification channel to be configured.</p>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Enable HA discovery</div>
+                                    <div class="setting-desc">Publish update state to Home Assistant via MQTT after each scan. Uses the first enabled MQTT notification channel.</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="ha-discovery-toggle" class="channel-toggle" onchange="setHADiscovery(this.checked)">
+                                    <span id="ha-discovery-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Discovery prefix</div>
+                                    <div class="setting-desc">MQTT topic prefix for HA auto-discovery (default: homeassistant)</div>
+                                </div>
+                                <div class="poll-interval-control">
+                                    <input type="text" id="ha-discovery-prefix" class="setting-select" placeholder="homeassistant" style="max-width:200px">
+                                    <button class="btn btn-success" onclick="saveHADiscoveryPrefix()">Save</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- Per-Container Notification Overrides -->
                 <details class="accordion card">
                     <summary class="accordion-header">
@@ -494,6 +869,21 @@
                         <div id="ghcr-alternatives-table"></div>
                     </div>
                 </details>
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Release Note Sources</h2>
+                        <span class="accordion-preview">Map container images to GitHub repos for release notes</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="setting-desc" style="margin-bottom:var(--sp-4)">Custom mappings checked before built-in ones. Pattern examples: <code>nginx</code>, <code>ghcr.io/owner/*</code>, <code>myregistry.io/app</code>.</p>
+                        <div id="release-sources-list"></div>
+                        <div class="setting-actions" style="margin-top:var(--sp-4)">
+                            <button class="btn" onclick="addReleaseSource()">Add Source</button>
+                            <button class="btn btn-success" onclick="saveReleaseSources(event)">Save All</button>
+                        </div>
+                    </div>
+                </details>
             </div>
         </div>
 
@@ -546,12 +936,12 @@
             </div>
         </div>
 
-        <!-- Security tab (admin only) -->
-        {{if .AuthEnabled}}{{if .CurrentUser}}{{if eq .CurrentUser.RoleID "admin"}}
+        <!-- Security tab (visible when auth off or admin) -->
+        {{if .ShowSecurityTab}}
         <div class="tab-panel" id="tab-security" role="tabpanel">
             <div class="accordion-stack">
 
-                <!-- Authentication -->
+                <!-- Authentication — always live -->
                 <details class="accordion card">
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -566,16 +956,20 @@
                                     <div class="setting-desc">When disabled, all endpoints are accessible without login</div>
                                 </div>
                                 <label class="toggle-switch-label">
-                                    <input type="checkbox" id="auth-toggle" class="channel-toggle" checked onchange="confirmAuthToggle(this)">
-                                    <span class="toggle-switch-text">Enabled</span>
+                                    <input type="checkbox" id="auth-toggle" class="channel-toggle" {{if .AuthEnabled}}checked{{end}} onchange="confirmAuthToggle(this)">
+                                    <span class="toggle-switch-text">{{if .AuthEnabled}}Enabled{{else}}Disabled{{end}}</span>
                                 </label>
                             </div>
                         </div>
                     </div>
                 </details>
 
+                {{if not .AuthEnabled}}
+                <p class="auth-disabled-hint">Enable authentication to manage users and SSO settings.</p>
+                {{end}}
+
                 <!-- User Management -->
-                <details class="accordion card">
+                <details class="accordion card{{if not .AuthEnabled}} accordion-disabled{{end}}">
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>User Management</h2>
@@ -600,7 +994,7 @@
                 </details>
 
                 <!-- Create User -->
-                <details class="accordion card">
+                <details class="accordion card{{if not .AuthEnabled}} accordion-disabled{{end}}">
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Create User</h2>
@@ -638,9 +1032,88 @@
                     </div>
                 </details>
 
+                <!-- OIDC / SSO -->
+                <details class="accordion card{{if not .AuthEnabled}} accordion-disabled{{end}}">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Single Sign-On (OIDC)</h2>
+                        <span class="accordion-preview">OpenID Connect identity provider integration</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p style="font-size:0.875rem;color:var(--fg-secondary);margin:0 0 var(--sp-4) 0">
+                            Connect an external Identity Provider (Authelia, Authentik, Keycloak, etc.) for single sign-on.
+                            Password login always remains available as fallback.
+                        </p>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Enable OIDC</div>
+                                    <div class="setting-desc">Show the "Sign in with SSO" button on the login page</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="oidc-enabled" class="channel-toggle" onchange="updateToggleText('oidc-enabled-text', this.checked)">
+                                    <span id="oidc-enabled-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Issuer URL</div>
+                                    <div class="setting-desc">OpenID Connect discovery endpoint, e.g. https://auth.example.com</div>
+                                </div>
+                                <input type="text" id="oidc-issuer-url" class="setting-input" placeholder="https://auth.example.com">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Client ID</div>
+                                    <div class="setting-desc">OAuth2 client ID registered with your Identity Provider</div>
+                                </div>
+                                <input type="text" id="oidc-client-id" class="setting-input" placeholder="sentinel">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Client Secret</div>
+                                    <div class="setting-desc">OAuth2 client secret (stored encrypted in the database)</div>
+                                </div>
+                                <input type="password" id="oidc-client-secret" class="setting-input" placeholder="secret">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Redirect URL</div>
+                                    <div class="setting-desc">Callback URL registered with your IdP. Auto-detected if left empty.</div>
+                                </div>
+                                <input type="text" id="oidc-redirect-url" class="setting-input" placeholder="https://sentinel.example.com/api/auth/oidc/callback">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Auto-create users</div>
+                                    <div class="setting-desc">Automatically create local accounts for users who sign in via OIDC for the first time</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="oidc-auto-create" class="channel-toggle" onchange="updateToggleText('oidc-auto-create-text', this.checked)">
+                                    <span id="oidc-auto-create-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Default role for new users</div>
+                                    <div class="setting-desc">Role assigned to auto-created OIDC users</div>
+                                </div>
+                                <select id="oidc-default-role" class="setting-select">
+                                    <option value="viewer">viewer</option>
+                                    <option value="operator">operator</option>
+                                    <option value="admin">admin</option>
+                                </select>
+                            </div>
+                            <div class="setting-row" style="justify-content:flex-end;gap:var(--sp-2)">
+                                <button class="btn btn-success" onclick="saveOIDCSettings()">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
             </div>
         </div>
-        {{end}}{{end}}{{end}}
+        {{end}}
 
         <!-- Cluster tab -->
         <div class="tab-panel" id="tab-cluster" role="tabpanel">
@@ -702,6 +1175,55 @@
             </div>
         </div>
 
+        <!-- Portainer tab -->
+        <div class="tab-panel" id="tab-portainer" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Portainer Integration</h2>
+                </div>
+                <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
+                    <p class="accordion-intro">Connect to a Portainer instance to view endpoints and containers from the Portainer dashboard.</p>
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Enable Portainer</div>
+                                <div class="setting-desc">Show the Portainer dashboard and scan Portainer-managed containers. Requires a restart after changing URL or token.</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="portainer-enabled" class="channel-toggle" onchange="onPortainerToggle(this.checked)">
+                                <span id="portainer-enabled-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="portainer-fields" class="cluster-fields disabled">
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Portainer URL</div>
+                                <div class="setting-desc">Base URL of your Portainer instance, e.g. https://portainer.example.com</div>
+                            </div>
+                            <input type="text" id="portainer-url" class="setting-input" placeholder="https://portainer.example.com" onchange="savePortainerURL()">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">API Token</div>
+                                <div class="setting-desc">Portainer API access token (Settings &#8250; Users &#8250; Access tokens).</div>
+                            </div>
+                            <input type="password" id="portainer-token" class="setting-input" placeholder="ptr_..." onchange="savePortainerToken()">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Connection</div>
+                                <div class="setting-desc">Test connectivity with the current URL and token.</div>
+                            </div>
+                            <button class="btn btn-info" id="portainer-test-btn" onclick="testPortainerConnection()">Test Connection</button>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- About tab -->
         <div class="tab-panel" id="tab-about" role="tabpanel">
             <div class="card">
@@ -755,6 +1277,78 @@ function switchRole() {
     .catch(function() { showToast('Failed to save', 'error'); });
 }
 
+function onPortainerToggle(enabled) {
+    updateToggleText('portainer-enabled-text', enabled);
+    togglePortainerFields(enabled);
+    fetch('/api/settings/portainer-enabled', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({enabled: enabled})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer ' + (enabled ? 'enabled' : 'disabled') + ' — restart to apply');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function togglePortainerFields(enabled) {
+    var fields = document.getElementById('portainer-fields');
+    if (!fields) return;
+    if (enabled) {
+        fields.classList.remove('disabled');
+    } else {
+        fields.classList.add('disabled');
+    }
+}
+
+function savePortainerURL() {
+    var url = (document.getElementById('portainer-url') || {}).value || '';
+    fetch('/api/settings/portainer-url', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({url: url})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer URL saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function savePortainerToken() {
+    var token = (document.getElementById('portainer-token') || {}).value || '';
+    fetch('/api/settings/portainer-token', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({token: token})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer token saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function testPortainerConnection() {
+    var btn = document.getElementById('portainer-test-btn');
+    if (btn) btn.disabled = true;
+    fetch('/api/settings/portainer-test', {
+        method: 'POST',
+        headers: {'X-CSRF-Token': csrfToken}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast('Connection failed: ' + d.error, 'error'); }
+        else { showToast('Connection successful'); }
+    })
+    .catch(function() { showToast('Connection failed', 'error'); })
+    .finally(function() { if (btn) btn.disabled = false; });
+}
+
 // Load current values
 (function() {
     fetch('/api/settings')
@@ -785,6 +1379,25 @@ function switchRole() {
             if (role) role.textContent = currentRole;
             if (roleBtn) {
                 roleBtn.textContent = currentRole === 'agent' ? 'Switch to Server' : 'Switch to Agent';
+            }
+            // Docker TLS cert paths.
+            var tlsCaEl = document.getElementById('docker-tls-ca');
+            var tlsCertEl = document.getElementById('docker-tls-cert');
+            var tlsKeyEl = document.getElementById('docker-tls-key');
+            if (tlsCaEl) tlsCaEl.value = d['docker_tls_ca'] || '';
+            if (tlsCertEl) tlsCertEl.value = d['docker_tls_cert'] || '';
+            if (tlsKeyEl) tlsKeyEl.value = d['docker_tls_key'] || '';
+
+            var pUrl = document.getElementById('portainer-url');
+            if (pUrl && d['SENTINEL_PORTAINER_URL']) pUrl.value = d['SENTINEL_PORTAINER_URL'];
+            if (pUrl && d['portainer_url']) pUrl.value = d['portainer_url'];
+
+            var pEnabled = d['portainer_enabled'] === 'true';
+            var pToggle = document.getElementById('portainer-enabled');
+            if (pToggle) {
+                pToggle.checked = pEnabled;
+                updateToggleText('portainer-enabled-text', pEnabled);
+                togglePortainerFields(pEnabled);
             }
         });
 })();

@@ -49,6 +49,7 @@ type Config struct {
 	WebAuthnDisplayName string // RP display name shown by authenticators
 	WebAuthnOrigins     string // comma-separated allowed origins
 	MetricsEnabled      bool
+	MetricsTextfile     string // SENTINEL_METRICS_TEXTFILE — path for node_exporter textfile collector
 
 	// Cluster / multi-host
 	Mode               string        // "server" or "agent" — set via subcommand or SENTINEL_MODE env
@@ -60,18 +61,27 @@ type Config struct {
 	HostName           string        // agent: human-readable label for this host
 	GracePeriodOffline time.Duration // agent: time before switching to autonomous mode (default 30m)
 
+	// Portainer integration
+	PortainerURL   string
+	PortainerToken string
+
 	// mu protects the mutable runtime fields below.
-	mu               sync.RWMutex
-	pollInterval     time.Duration // how often to scan for updates
-	gracePeriod      time.Duration // wait after starting new container before health check
-	defaultPolicy    string        // "auto", "manual", or "pinned"
-	latestAutoUpdate bool          // auto-update :latest containers regardless of default policy
-	imageCleanup     bool
-	schedule         string
-	hooksEnabled     bool
-	hooksWriteLabels bool
-	dependencyAware  bool
-	rollbackPolicy   string // "", "manual", or "pinned"
+	mu                sync.RWMutex
+	pollInterval      time.Duration // how often to scan for updates
+	gracePeriod       time.Duration // wait after starting new container before health check
+	defaultPolicy     string        // "auto", "manual", or "pinned"
+	latestAutoUpdate  bool          // auto-update :latest containers regardless of default policy
+	imageCleanup      bool
+	schedule          string
+	hooksEnabled      bool
+	hooksWriteLabels  bool
+	dependencyAware   bool
+	rollbackPolicy    string // "", "manual", or "pinned"
+	imageBackup       bool
+	showStopped       bool
+	removeVolumes     bool
+	scanConcurrency   int
+	maintenanceWindow string // time-range expression for auto-update window
 }
 
 // NewTestConfig creates a Config with sensible defaults for testing.
@@ -119,6 +129,12 @@ func Load() *Config {
 		dependencyAware:     envBool("SENTINEL_DEPS", true),
 		rollbackPolicy:      envStr("SENTINEL_ROLLBACK_POLICY", ""),
 		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
+		MetricsTextfile:     envStr("SENTINEL_METRICS_TEXTFILE", ""),
+		imageBackup:         envBool("SENTINEL_IMAGE_BACKUP", false),
+		showStopped:         envBool("SENTINEL_SHOW_STOPPED", false),
+		removeVolumes:       envBool("SENTINEL_REMOVE_VOLUMES", false),
+		scanConcurrency:     envInt("SENTINEL_SCAN_CONCURRENCY", 1),
+		maintenanceWindow:   envStr("SENTINEL_MAINTENANCE_WINDOW", ""),
 
 		// Cluster / multi-host
 		Mode:               envStr("SENTINEL_MODE", ""),
@@ -129,6 +145,10 @@ func Load() *Config {
 		EnrollToken:        envStr("SENTINEL_ENROLL_TOKEN", ""),
 		HostName:           envStr("SENTINEL_HOST_NAME", ""),
 		GracePeriodOffline: envDuration("SENTINEL_GRACE_PERIOD_OFFLINE", 30*time.Minute),
+
+		// Portainer integration
+		PortainerURL:   envStr("SENTINEL_PORTAINER_URL", ""),
+		PortainerToken: envStr("SENTINEL_PORTAINER_TOKEN", ""),
 	}
 }
 
@@ -190,6 +210,11 @@ func (c *Config) Values() map[string]string {
 	hwl := c.hooksWriteLabels
 	da := c.dependencyAware
 	rp := c.rollbackPolicy
+	ib := c.imageBackup
+	ss := c.showStopped
+	rv := c.removeVolumes
+	sc := c.scanConcurrency
+	mw := c.maintenanceWindow
 	c.mu.RUnlock()
 
 	return map[string]string{
@@ -227,6 +252,14 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_SERVER_ADDR":          c.ServerAddr,
 		"SENTINEL_HOST_NAME":            c.HostName,
 		"SENTINEL_GRACE_PERIOD_OFFLINE": c.GracePeriodOffline.String(),
+		"SENTINEL_IMAGE_BACKUP":         fmt.Sprintf("%t", ib),
+		"SENTINEL_SHOW_STOPPED":         fmt.Sprintf("%t", ss),
+		"SENTINEL_REMOVE_VOLUMES":       fmt.Sprintf("%t", rv),
+		"SENTINEL_SCAN_CONCURRENCY":     fmt.Sprintf("%d", sc),
+		"SENTINEL_MAINTENANCE_WINDOW":   mw,
+
+		// Portainer
+		"SENTINEL_PORTAINER_URL": c.PortainerURL,
 	}
 }
 
@@ -260,6 +293,18 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
 }
 
 func envDuration(key string, def time.Duration) time.Duration {
@@ -399,6 +444,66 @@ func (c *Config) RollbackPolicy() string {
 func (c *Config) SetRollbackPolicy(s string) {
 	c.mu.Lock()
 	c.rollbackPolicy = s
+	c.mu.Unlock()
+}
+
+func (c *Config) ImageBackup() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.imageBackup
+}
+
+func (c *Config) SetImageBackup(b bool) {
+	c.mu.Lock()
+	c.imageBackup = b
+	c.mu.Unlock()
+}
+
+func (c *Config) ShowStopped() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.showStopped
+}
+
+func (c *Config) SetShowStopped(b bool) {
+	c.mu.Lock()
+	c.showStopped = b
+	c.mu.Unlock()
+}
+
+func (c *Config) RemoveVolumes() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.removeVolumes
+}
+
+func (c *Config) SetRemoveVolumes(b bool) {
+	c.mu.Lock()
+	c.removeVolumes = b
+	c.mu.Unlock()
+}
+
+func (c *Config) ScanConcurrency() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.scanConcurrency
+}
+
+func (c *Config) SetScanConcurrency(n int) {
+	c.mu.Lock()
+	c.scanConcurrency = n
+	c.mu.Unlock()
+}
+
+func (c *Config) MaintenanceWindow() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.maintenanceWindow
+}
+
+func (c *Config) SetMaintenanceWindow(s string) {
+	c.mu.Lock()
+	c.maintenanceWindow = s
 	c.mu.Unlock()
 }
 

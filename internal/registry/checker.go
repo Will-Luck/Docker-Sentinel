@@ -107,7 +107,7 @@ func extractHash(digest string) string {
 // lookup, using knownDigest instead. Used for Swarm services where the digest is
 // embedded in the service spec but the tag-only ref may not exist in the local
 // image store.
-func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownDigest string) CheckResult {
+func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownDigest string, scope docker.SemverScope, includeRE, excludeRE string) CheckResult {
 	result := CheckResult{ImageRef: imageRef}
 
 	if docker.IsLocalImage(imageRef) {
@@ -168,7 +168,8 @@ func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownD
 		c.tracker.SetAuth(host, cred != nil)
 	}
 
-	newer := NewerVersions(tag, tagsResult.Tags)
+	filteredTags := FilterTags(tagsResult.Tags, includeRE, excludeRE)
+	newer := NewerVersionsScoped(tag, filteredTags, scope)
 	for _, sv := range newer {
 		result.NewerVersions = append(result.NewerVersions, sv.Raw)
 	}
@@ -187,7 +188,7 @@ func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownD
 // only captured from the tag listing response, not from digest checks
 // (DistributionInspect uses the Docker daemon's internal client which does
 // not expose HTTP headers).
-func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResult {
+func (c *Checker) CheckVersioned(ctx context.Context, imageRef string, scope docker.SemverScope, includeRE, excludeRE string) CheckResult {
 	result := c.Check(ctx, imageRef)
 
 	// Only attempt version lookup if the base check succeeded and the image
@@ -237,7 +238,8 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string) CheckResu
 		c.tracker.SetAuth(host, cred != nil)
 	}
 
-	newer := NewerVersions(tag, tagsResult.Tags)
+	filteredTags := FilterTags(tagsResult.Tags, includeRE, excludeRE)
+	newer := NewerVersionsScoped(tag, filteredTags, scope)
 	for _, sv := range newer {
 		result.NewerVersions = append(result.NewerVersions, sv.Raw)
 	}

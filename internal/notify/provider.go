@@ -19,6 +19,9 @@ const (
 	ProviderNtfy     ProviderType = "ntfy"
 	ProviderTelegram ProviderType = "telegram"
 	ProviderPushover ProviderType = "pushover"
+	ProviderSMTP     ProviderType = "smtp"
+	ProviderApprise  ProviderType = "apprise"
+	ProviderMQTT     ProviderType = "mqtt"
 )
 
 // Channel represents a single notification channel with typed settings.
@@ -88,7 +91,7 @@ func BuildNotifier(ch Channel) (Notifier, error) {
 		if err := json.Unmarshal(ch.Settings, &s); err != nil {
 			return nil, fmt.Errorf("unmarshal ntfy settings: %w", err)
 		}
-		return NewNtfy(s.Server, s.Topic, s.Priority), nil
+		return NewNtfy(s.Server, s.Topic, s.Priority, s.Token, s.Username, s.Password), nil
 
 	case ProviderTelegram:
 		var s TelegramSettings
@@ -103,6 +106,27 @@ func BuildNotifier(ch Channel) (Notifier, error) {
 			return nil, fmt.Errorf("unmarshal pushover settings: %w", err)
 		}
 		return NewPushover(s.AppToken, s.UserKey), nil
+
+	case ProviderSMTP:
+		var s SMTPSettings
+		if err := json.Unmarshal(ch.Settings, &s); err != nil {
+			return nil, fmt.Errorf("unmarshal smtp settings: %w", err)
+		}
+		return NewSMTP(s.Host, s.Port, s.From, s.To, s.Username, s.Password, s.TLS), nil
+
+	case ProviderApprise:
+		var s AppriseSettings
+		if err := json.Unmarshal(ch.Settings, &s); err != nil {
+			return nil, fmt.Errorf("unmarshal apprise settings: %w", err)
+		}
+		return NewApprise(s.URL, s.Tag, s.Urls), nil
+
+	case ProviderMQTT:
+		var s MQTTSettings
+		if err := json.Unmarshal(ch.Settings, &s); err != nil {
+			return nil, fmt.Errorf("unmarshal mqtt settings: %w", err)
+		}
+		return NewMQTT(s.Broker, s.Topic, s.ClientID, s.Username, s.Password, s.QoS), nil
 
 	default:
 		return nil, fmt.Errorf("unknown provider type: %q", ch.Type)
@@ -126,6 +150,14 @@ func MaskSecrets(ch Channel) Channel {
 		masked.Settings = maskStringField(ch.Settings, "bot_token")
 	case ProviderPushover:
 		masked.Settings = maskStringField(ch.Settings, "app_token")
+	case ProviderNtfy:
+		masked.Settings = maskNtfySecrets(ch.Settings)
+	case ProviderSMTP:
+		masked.Settings = maskStringField(ch.Settings, "password")
+	case ProviderApprise:
+		masked.Settings = maskStringField(ch.Settings, "urls")
+	case ProviderMQTT:
+		masked.Settings = maskStringField(ch.Settings, "password")
 	}
 	return masked
 }
@@ -212,5 +244,20 @@ func maskStringField(settings json.RawMessage, field string) json.RawMessage {
 	masked, _ := json.Marshal(maskToken(val))
 	m[field] = masked
 	out, _ := json.Marshal(m)
+	return out
+}
+
+func maskNtfySecrets(settings json.RawMessage) json.RawMessage {
+	var s NtfySettings
+	if json.Unmarshal(settings, &s) != nil {
+		return settings
+	}
+	if s.Token != "" {
+		s.Token = maskToken(s.Token)
+	}
+	if s.Password != "" {
+		s.Password = maskToken(s.Password)
+	}
+	out, _ := json.Marshal(s)
 	return out
 }

@@ -1,0 +1,120 @@
+{{define "images.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Images — Docker-Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <img src="/favicon.svg" alt="S" class="nav-logo">
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">
+                Pending Updates
+                {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
+            </a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link active" aria-current="page">Images</a>
+            <a href="/settings" class="nav-link">Settings</a>
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
+            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
+        </div>
+        <div class="nav-status" aria-live="polite">
+            <span id="sse-indicator" class="status-dot disconnected"></span>
+            <span id="sse-label" class="nav-status-text">Disconnected</span>
+        </div>
+        {{if .AuthEnabled}}{{if .CurrentUser}}
+        <div class="nav-user">
+            <button class="nav-user-btn" onclick="toggleUserDropdown(event)" aria-haspopup="true" aria-expanded="false">
+                <span>{{.CurrentUser.Username}}</span>
+                <span class="nav-user-role">{{.CurrentUser.RoleID}}</span>
+                <span class="nav-user-chevron">&#9662;</span>
+            </button>
+            <div class="nav-user-dropdown" id="user-dropdown">
+                <a href="/account">My Account</a>
+                <div class="dropdown-divider"></div>
+                <form method="POST" action="/logout" style="margin:0">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <button type="submit">Logout</button>
+                </form>
+            </div>
+        </div>
+        {{end}}{{else}}
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
+        {{end}}
+    </nav>
+
+    <main class="main-content" id="main-content">
+        <div class="page-header">
+            <div>
+                <h1>Images</h1>
+                <p class="subtitle" id="images-summary">Loading...</p>
+            </div>
+            <div class="page-header-actions">
+                <button class="btn" id="manage-btn" onclick="toggleImageManageMode()">Manage</button>
+                <button class="btn btn-warning" onclick="pruneImages()">Prune Dangling</button>
+            </div>
+        </div>
+
+        <div class="filter-bar">
+            <button class="filter-pill images-filter-pill active" data-filter="all" onclick="filterImages('all')">All</button>
+            <button class="filter-pill images-filter-pill" data-filter="in-use" onclick="filterImages('in-use')">In Use</button>
+            <button class="filter-pill images-filter-pill" data-filter="unused" onclick="filterImages('unused')">Unused</button>
+            <span class="filter-divider"></span>
+            <button class="filter-pill images-sort-pill active" data-sort="default" onclick="sortImages('default')">Status</button>
+            <button class="filter-pill images-sort-pill" data-sort="alpha" onclick="sortImages('alpha')">A-Z</button>
+        </div>
+
+        <div class="card">
+            <div class="table-wrap">
+                <table class="table-images">
+                    <thead>
+                        <tr>
+                            <th class="th-tags">Repository Tags</th>
+                            <th class="th-id">Image ID</th>
+                            <th class="th-size">Size</th>
+                            <th class="th-created">Created</th>
+                            <th class="th-status">Status</th>
+                            <th class="th-actions">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="images-tbody">
+                        <tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-secondary)">Loading images...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Bulk action bar for manage mode -->
+        <div id="images-bulk-bar" class="bulk-bar" style="display:none">
+            <span class="bulk-count">0 selected</span>
+            <button class="btn btn-danger btn-sm" onclick="removeSelectedImages()">Remove Selected</button>
+            <button class="btn btn-sm" onclick="toggleImageManageMode()">Cancel</button>
+        </div>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/app.js"></script>
+    <script src="/static/auth.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof loadImages === 'function') loadImages();
+        });
+    </script>
+</body>
+</html>
+{{end}}

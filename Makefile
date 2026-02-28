@@ -11,9 +11,28 @@ DEV_CONTAINER := sentinel-test
 DEV_SSH_KEY := $(shell mktemp)
 DEV_SSH     := ssh -i $(DEV_SSH_KEY) -o StrictHostKeyChecking=no $(DEV_HOST)
 
-.PHONY: build test test-ci lint docker clean proto dev-deploy
+# Frontend bundling (esbuild)
+ESBUILD     := $(shell go env GOPATH)/bin/esbuild
+STATIC_DIR  := internal/web/static
+JS_ENTRY    := $(STATIC_DIR)/src/js/main.js
+JS_OUT      := $(STATIC_DIR)/app.js
+CSS_ENTRY   := $(STATIC_DIR)/src/css/index.css
+CSS_OUT     := $(STATIC_DIR)/style.css
 
-build:
+.PHONY: build test test-ci lint docker clean proto dev-deploy frontend js css
+
+js: $(ESBUILD)
+	$(ESBUILD) $(JS_ENTRY) --bundle --format=iife --sourcemap --outfile=$(JS_OUT)
+
+css: $(ESBUILD)
+	$(ESBUILD) $(CSS_ENTRY) --bundle --sourcemap --outfile=$(CSS_OUT)
+
+frontend: js css
+
+$(ESBUILD):
+	go install github.com/evanw/esbuild/cmd/esbuild@latest
+
+build: frontend
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/sentinel
 
 test:
@@ -31,8 +50,8 @@ docker:
 clean:
 	rm -rf bin/
 
-dev-deploy: docker
-	docker tag docker-sentinel:$(VERSION) $(DEV_IMAGE)
+dev-deploy:
+	docker build --build-arg VERSION=$(DEV_TAG) --build-arg COMMIT=$(COMMIT) -t $(DEV_IMAGE) .
 	op read "op://Server-Keys/ssh-test-server-1/s7ela6vsq6eltvuj7g3orn4jd4" | sed 's/^concealed]=//' > $(DEV_SSH_KEY) && chmod 600 $(DEV_SSH_KEY)
 	docker save $(DEV_IMAGE) | $(DEV_SSH) "docker load"
 	$(DEV_SSH) "docker stop $(DEV_CONTAINER) 2>/dev/null; docker rm $(DEV_CONTAINER) 2>/dev/null; \
