@@ -292,16 +292,23 @@ func (u *Updater) loadFilters() []string {
 }
 
 // publishEvent emits an SSE event if the event bus is configured.
+// For remote containers the name may be a scoped key ("hostID::name");
+// this is split so the SSE event carries proper HostID and ContainerName fields.
 func (u *Updater) publishEvent(evtType events.EventType, name, message string) {
 	if u.events == nil {
 		return
 	}
-	u.events.Publish(events.SSEEvent{
+	evt := events.SSEEvent{
 		Type:          evtType,
 		ContainerName: name,
 		Message:       message,
 		Timestamp:     u.clock.Now(),
-	})
+	}
+	if idx := strings.Index(name, "::"); idx >= 0 {
+		evt.HostID = name[:idx]
+		evt.ContainerName = name[idx+2:]
+	}
+	u.events.Publish(evt)
 }
 
 // isDryRun returns true when dry_run mode is enabled in settings.
