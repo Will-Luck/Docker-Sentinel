@@ -1686,29 +1686,36 @@ table.managing .td-checkbox {
 .table-images {
   table-layout: fixed;
 }
-.table-images th:nth-child(1),
-.table-images td:nth-child(1) {
-  width: 30%;
+.table-images td,
+.table-images th {
+  vertical-align: middle;
 }
-.table-images th:nth-child(2),
-.table-images td:nth-child(2) {
-  width: 14%;
+.cell-image-tags,
+.table-images .th-tags {
+  width: 36%;
 }
-.table-images th:nth-child(3),
-.table-images td:nth-child(3) {
+.cell-image-id,
+.table-images .th-id {
+  width: 18%;
+}
+.cell-image-size,
+.table-images .th-size {
   width: 10%;
 }
-.table-images th:nth-child(4),
-.table-images td:nth-child(4) {
+.table-images .th-created,
+.table-images td:nth-last-child(3) {
   width: 12%;
 }
-.table-images th:nth-child(5),
-.table-images td:nth-child(5) {
-  width: 12%;
-}
-.table-images th:nth-child(6),
-.table-images td:nth-child(6) {
+.table-images .th-status,
+.table-images td:nth-last-child(2) {
   width: 10%;
+}
+.table-images .th-actions,
+.table-images td:last-child {
+  width: 10%;
+}
+.table-images .th-select {
+  width: 40px;
 }
 .cell-image-tags {
   word-break: break-all;

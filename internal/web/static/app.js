@@ -4654,6 +4654,8 @@
     _selectedIds.clear();
     var btn = document.getElementById("manage-btn");
     if (btn) btn.textContent = _manageMode ? "Cancel" : "Manage";
+    var table = document.querySelector(".table-images");
+    if (table) table.classList.toggle("managing", _manageMode);
     updateBulkBar();
     renderImagesTable();
   }
