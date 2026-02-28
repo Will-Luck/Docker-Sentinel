@@ -4656,8 +4656,8 @@
     if (btn) btn.textContent = _manageMode ? "Cancel" : "Manage";
     var table = document.querySelector(".table-images");
     if (table) table.classList.toggle("managing", _manageMode);
+    filterImages(_manageMode ? "unused" : "all");
     updateBulkBar();
-    renderImagesTable();
   }
   function updateBulkBar() {
     var bar = document.getElementById("images-bulk-bar");

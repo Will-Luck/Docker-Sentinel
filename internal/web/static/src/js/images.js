@@ -79,8 +79,9 @@ export function toggleManageMode() {
     // Toggle 'managing' class so td-checkbox cells become visible.
     var table = document.querySelector('.table-images');
     if (table) table.classList.toggle('managing', _manageMode);
+    // Auto-switch to Unused filter (only unused images are selectable).
+    filterImages(_manageMode ? 'unused' : 'all');
     updateBulkBar();
-    renderImagesTable();
 }
 
 function updateBulkBar() {
