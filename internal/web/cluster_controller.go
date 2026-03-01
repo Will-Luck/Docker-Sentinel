@@ -155,3 +155,15 @@ func (c *ClusterController) RemoteContainerLogs(ctx context.Context, hostID, con
 	}
 	return c.provider.RemoteContainerLogs(ctx, hostID, containerName, lines)
 }
+
+// RollbackRemoteContainer triggers a rollback on a remote agent.
+// Returns an error when clustering is disabled.
+func (c *ClusterController) RollbackRemoteContainer(ctx context.Context, hostID, containerName string) error {
+	c.mu.RLock()
+	p := c.provider
+	c.mu.RUnlock()
+	if p == nil {
+		return fmt.Errorf("cluster not enabled")
+	}
+	return p.RollbackRemoteContainer(ctx, hostID, containerName)
+}

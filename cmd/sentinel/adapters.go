@@ -1067,7 +1067,8 @@ func (a *clusterScannerAdapter) UpdateContainer(ctx context.Context, hostID, con
 
 // clusterAdapter bridges cluster/server.Server to web.ClusterProvider.
 type clusterAdapter struct {
-	srv *clusterserver.Server
+	srv   *clusterserver.Server
+	store *store.Store
 }
 
 func (a *clusterAdapter) AllHosts() []web.ClusterHost {
@@ -1180,6 +1181,39 @@ func (a *clusterAdapter) RemoteContainerLogs(ctx context.Context, hostID, contai
 	return a.srv.FetchLogsSync(ctx, hostID, containerName, lines)
 }
 
+func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, containerName string) error {
+	// Look up the most recent successful update from history to find the old image.
+	scopedName := store.ScopedKey(hostID, containerName)
+	records, err := a.store.ListHistoryByContainer(scopedName, 10)
+	if err != nil {
+		return fmt.Errorf("lookup update history for %s: %w", scopedName, err)
+	}
+	// Find the most recent successful update with a valid old image.
+	var oldImage string
+	for _, rec := range records {
+		if rec.Outcome == "success" && rec.OldImage != "" {
+			oldImage = rec.OldImage
+			break
+		}
+	}
+	if oldImage == "" {
+		return fmt.Errorf("no successful update history found for %s, cannot determine rollback image", containerName)
+	}
+
+	// Use the existing update mechanism to switch back to the old image.
+	ur, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, oldImage, "")
+	if err != nil {
+		return err
+	}
+	if ur.Outcome != "success" {
+		if ur.Error != "" {
+			return fmt.Errorf("%s", ur.Error)
+		}
+		return fmt.Errorf("rollback failed")
+	}
+	return nil
+}
+
 // clusterManager implements web.ClusterLifecycle for dynamic cluster
 // start/stop from the settings API. Uses ClusterController.SetProvider()
 // to swap the active provider atomically — no value-copy issues.
@@ -1225,7 +1259,7 @@ func (m *clusterManager) Start() error {
 	m.updater.SetClusterScanner(&clusterScannerAdapter{srv: m.srv})
 
 	// Swap provider in controller — handlers see it immediately.
-	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv})
+	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv, store: m.db})
 
 	m.log.Info("cluster gRPC server started", "addr", addr)
 	return nil
