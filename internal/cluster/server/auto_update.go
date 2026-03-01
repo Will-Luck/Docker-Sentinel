@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 )
 
 // CheckAgentVersions iterates connected agents and triggers an update for any
@@ -29,7 +31,11 @@ func (s *Server) CheckAgentVersions(ctx context.Context, serverVersion string) {
 	s.mu.RUnlock()
 
 	for hostID, as := range agents {
-		baseAgent := baseVersion(as.version)
+		as.mu.RLock()
+		agentVer := as.version
+		as.mu.RUnlock()
+
+		baseAgent := baseVersion(agentVer)
 		if baseAgent == "" || baseAgent == "dev" {
 			continue // agent hasn't reported version yet, or is a dev build
 		}
@@ -39,7 +45,7 @@ func (s *Server) CheckAgentVersions(ctx context.Context, serverVersion string) {
 
 		s.log.Info("agent version mismatch",
 			"hostID", hostID,
-			"agent_version", as.version,
+			"agent_version", agentVer,
 			"server_version", serverVersion,
 		)
 
@@ -56,9 +62,13 @@ func (s *Server) updateAgentContainer(ctx context.Context, hostID, targetVersion
 		return
 	}
 
+	// Snapshot containers to avoid racing with registry updates.
+	containers := make([]cluster.ContainerInfo, len(hs.Containers))
+	copy(containers, hs.Containers)
+
 	// Find the sentinel container (has sentinel.self=true label).
 	var sentinelName, sentinelImage string
-	for _, c := range hs.Containers {
+	for _, c := range containers {
 		if c.Labels["sentinel.self"] == "true" {
 			sentinelName = c.Name
 			sentinelImage = c.Image
@@ -135,9 +145,18 @@ func baseVersion(v string) string {
 // "ghcr.io/foo/sentinel:v2.0.0" + "v2.0.1" -> "ghcr.io/foo/sentinel:v2.0.1"
 // "sentinel:latest" + "v2.0.1" -> "sentinel:v2.0.1"
 // "sentinel" + "v2.0.1" -> "sentinel:v2.0.1"
+// "ghcr.io/foo/sentinel@sha256:abc123" + "v2.0.1" -> "ghcr.io/foo/sentinel:v2.0.1"
+// "registry.example.com:5000/sentinel" + "v2.0.1" -> "registry.example.com:5000/sentinel:v2.0.1"
 func replaceImageTag(image, newTag string) string {
-	if idx := strings.LastIndex(image, ":"); idx != -1 {
-		return image[:idx] + ":" + newTag
+	// Strip digest if present.
+	if at := strings.Index(image, "@"); at != -1 {
+		image = image[:at]
+	}
+	// Find tag colon — must be after the last slash to avoid port confusion.
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon > lastSlash {
+		return image[:lastColon] + ":" + newTag
 	}
 	return image + ":" + newTag
 }
@@ -150,7 +169,9 @@ func (s *Server) AgentVersions() map[string]string {
 
 	out := make(map[string]string, len(s.streams))
 	for id, as := range s.streams {
+		as.mu.RLock()
 		out[id] = as.version
+		as.mu.RUnlock()
 	}
 	return out
 }

@@ -35,6 +35,10 @@ func TestReplaceImageTag(t *testing.T) {
 		{"sentinel", "v2.0.1", "sentinel:v2.0.1"},
 		{"registry.example.com:5000/sentinel:old", "v2.0.1", "registry.example.com:5000/sentinel:v2.0.1"},
 		{"ghcr.io/will-luck/docker-sentinel:v2.0.0", "v2.1.0", "ghcr.io/will-luck/docker-sentinel:v2.1.0"},
+		// Digest reference: strip digest and apply tag.
+		{"ghcr.io/foo/sentinel@sha256:abc123", "v2.0.1", "ghcr.io/foo/sentinel:v2.0.1"},
+		// Port-only registry without tag: colon is part of the hostname, not a tag.
+		{"registry.example.com:5000/sentinel", "v2.0.1", "registry.example.com:5000/sentinel:v2.0.1"},
 	}
 
 	for _, tt := range tests {

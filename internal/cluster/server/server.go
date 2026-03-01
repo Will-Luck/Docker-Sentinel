@@ -77,9 +77,11 @@ type Server struct {
 // agentStream tracks an active bidirectional stream with an agent.
 // One per connected agent; removed on disconnect.
 type agentStream struct {
-	hostID   string
-	send     chan *proto.ServerMessage
-	cancel   context.CancelFunc
+	hostID string
+	send   chan *proto.ServerMessage
+	cancel context.CancelFunc
+
+	mu       sync.RWMutex // protects version and features
 	features []string
 	version  string
 }
@@ -593,8 +595,10 @@ func (s *Server) handleAgentMessage(hostID string, as *agentStream, msg *proto.A
 
 func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heartbeat) {
 	// Cache the agent's version and features for the lifetime of this stream.
+	as.mu.Lock()
 	as.version = hb.AgentVersion
 	as.features = hb.SupportedFeatures
+	as.mu.Unlock()
 
 	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
 		s.log.Warn("failed to update last seen on heartbeat", "hostID", hostID, "error", err)

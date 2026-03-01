@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -485,6 +486,7 @@ func main() {
 	}
 
 	// Post-scan callback: metrics textfile + agent auto-update check.
+	var autoUpdateRunning atomic.Bool
 	scheduler.SetScanCallback(func() {
 		if cfg.MetricsTextfile != "" {
 			if err := metrics.WriteTextfile(cfg.MetricsTextfile); err != nil {
@@ -493,12 +495,17 @@ func main() {
 		}
 
 		// Check whether connected agents need a version update.
+		// Guard against overlapping runs — if a previous check is still
+		// in progress (slow image pull, etc.), skip this one.
 		if autoUpdate, _ := db.LoadSetting(store.SettingClusterAutoUpdateAgents); autoUpdate == "true" {
 			cm.mu.Lock()
 			srv := cm.srv
 			cm.mu.Unlock()
-			if srv != nil {
-				go srv.CheckAgentVersions(ctx, version)
+			if srv != nil && autoUpdateRunning.CompareAndSwap(false, true) {
+				go func() {
+					defer autoUpdateRunning.Store(false)
+					srv.CheckAgentVersions(ctx, version)
+				}()
 			}
 		}
 	})
