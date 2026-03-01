@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
@@ -361,6 +362,62 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 
 	if s.deps.GHCRCache == nil {
 		writeError(w, http.StatusNotImplemented, "GHCR detection not available")
+		return
+	}
+
+	// Route to remote agent if host parameter is present.
+	hostID := r.URL.Query().Get("host")
+	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		var rc *RemoteContainer
+		for _, c := range s.deps.Cluster.AllHostContainers() {
+			if c.HostID == hostID && c.Name == name {
+				rc = &c
+				break
+			}
+		}
+		if rc == nil {
+			writeError(w, http.StatusNotFound, "remote container not found: "+name)
+			return
+		}
+
+		repo := registry.RepoPath(rc.Image)
+		tag := registry.ExtractTag(rc.Image)
+		if tag == "" {
+			tag = "latest"
+		}
+
+		alt, ok := s.deps.GHCRCache.Get(repo, tag)
+		if !ok || !alt.Available {
+			writeError(w, http.StatusBadRequest, "no GHCR alternative available for "+name)
+			return
+		}
+
+		ghcrImage := alt.GHCRImage + ":" + alt.Tag
+
+		s.markRemoteUpdating(hostID, name)
+		go func() {
+			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, ghcrImage, ""); err != nil {
+				s.deps.Log.Error("remote GHCR switch failed", "name", name, "host", hostID, "ghcr_image", ghcrImage, "error", err)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: name,
+					HostID:        hostID,
+					Message:       "GHCR switch failed on " + hostID + ": " + err.Error(),
+					Timestamp:     time.Now(),
+				})
+			} else {
+				s.deps.Log.Info("remote GHCR switch complete", "name", name, "host", hostID, "ghcr_image", ghcrImage)
+			}
+			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(hostID, name) })
+		}()
+
+		s.logEvent(r, "ghcr_switch", name, "Remote GHCR switch to "+ghcrImage+" on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":     "started",
+			"name":       name,
+			"ghcr_image": ghcrImage,
+			"message":    "migration to GHCR started for " + name + " on " + hostID,
+		})
 		return
 	}
 
