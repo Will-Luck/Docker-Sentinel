@@ -571,6 +571,9 @@ func (s *Server) handleAgentMessage(hostID string, as *agentStream, msg *proto.A
 	case *proto.AgentMessage_ContainerActionResult:
 		s.handleContainerActionResult(hostID, msg, p.ContainerActionResult)
 
+	case *proto.AgentMessage_FetchLogsResult:
+		s.handleFetchLogsResult(hostID, msg, p.FetchLogsResult)
+
 	case *proto.AgentMessage_HookResult:
 		s.handleHookResult(hostID, p.HookResult)
 
@@ -676,6 +679,13 @@ func (s *Server) handleContainerActionResult(hostID string, msg *proto.AgentMess
 	// Route to a pending synchronous caller if one is waiting.
 	if ar.RequestId != "" {
 		s.deliverPending(hostID, ar.RequestId, msg)
+	}
+}
+
+func (s *Server) handleFetchLogsResult(hostID string, msg *proto.AgentMessage, lr *proto.FetchLogsResult) {
+	s.log.Debug("fetch logs result", "hostID", hostID, "container", lr.ContainerName, "requestID", lr.RequestId)
+	if lr.RequestId != "" {
+		s.deliverPending(hostID, lr.RequestId, msg)
 	}
 }
 
@@ -948,6 +958,54 @@ func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName,
 		return fmt.Errorf("%s failed: %s", action, ar.ContainerActionResult.Error)
 	}
 	return nil
+}
+
+// FetchLogsSync sends a FetchLogsRequest to the agent and blocks until the
+// agent responds with a FetchLogsResult or the context is cancelled.
+func (s *Server) FetchLogsSync(ctx context.Context, hostID, containerName string, lines int) (string, error) {
+	reqID := generateRequestID()
+	ch, err := s.registerPending(hostID, reqID)
+	if err != nil {
+		return "", err
+	}
+
+	if lines <= 0 {
+		lines = 50
+	}
+	if lines > 500 {
+		lines = 500
+	}
+
+	msg := &proto.ServerMessage{
+		RequestId: reqID,
+		Payload: &proto.ServerMessage_FetchLogs{
+			FetchLogs: &proto.FetchLogsRequest{
+				ContainerName: containerName,
+				Lines:         int32(lines), //nolint:gosec // clamped to 0-500 above
+			},
+		},
+	}
+
+	if err := s.SendCommand(hostID, msg); err != nil {
+		s.cancelPending(hostID, reqID, ch)
+		return "", fmt.Errorf("send fetch logs: %w", err)
+	}
+
+	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
+	if err != nil {
+		return "", fmt.Errorf("await fetch logs: %w", err)
+	}
+
+	lr, ok := resp.Payload.(*proto.AgentMessage_FetchLogsResult)
+	if !ok {
+		return "", fmt.Errorf("unexpected response type %T (wanted FetchLogsResult)", resp.Payload)
+	}
+
+	if lr.FetchLogsResult.Error != "" {
+		return "", fmt.Errorf("remote logs: %s", lr.FetchLogsResult.Error)
+	}
+
+	return lr.FetchLogsResult.Logs, nil
 }
 
 // generateRequestID creates a random 8-byte hex string for request correlation.

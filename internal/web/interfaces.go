@@ -191,6 +191,8 @@ type ClusterProvider interface {
 	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error
 	// RemoteContainerAction dispatches a lifecycle action to a container on a remote agent.
 	RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error
+	// RemoteContainerLogs fetches the last N lines of logs from a remote container.
+	RemoteContainerLogs(ctx context.Context, hostID, containerName string, lines int) (string, error)
 	// AllHostContainers returns containers from all connected hosts.
 	AllHostContainers() []RemoteContainer
 }

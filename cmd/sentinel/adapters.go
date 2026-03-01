@@ -1176,6 +1176,10 @@ func (a *clusterAdapter) RemoteContainerAction(ctx context.Context, hostID, cont
 	return a.srv.ContainerActionSync(ctx, hostID, containerName, action)
 }
 
+func (a *clusterAdapter) RemoteContainerLogs(ctx context.Context, hostID, containerName string, lines int) (string, error) {
+	return a.srv.FetchLogsSync(ctx, hostID, containerName, lines)
+}
+
 // clusterManager implements web.ClusterLifecycle for dynamic cluster
 // start/stop from the settings API. Uses ClusterController.SetProvider()
 // to swap the active provider atomically — no value-copy issues.
