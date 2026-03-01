@@ -115,13 +115,24 @@ func (s *Server) apiGetDeps(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
 		return
 	}
-	infos := make([]deps.ContainerInfo, len(containers))
-	for i, c := range containers {
-		infos[i] = deps.ContainerInfo{
+	infos := make([]deps.ContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		infos = append(infos, deps.ContainerInfo{
 			Name:   containerName(c),
 			Labels: c.Labels,
+		})
+	}
+
+	// Include remote containers from cluster agents.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			infos = append(infos, deps.ContainerInfo{
+				Name:   rc.HostID + "::" + rc.Name,
+				Labels: rc.Labels,
+			})
 		}
 	}
+
 	graph := deps.Build(infos)
 	order, sortErr := graph.Sort()
 	cycles := graph.DetectCycles()
@@ -131,13 +142,12 @@ func (s *Server) apiGetDeps(w http.ResponseWriter, r *http.Request) {
 		Dependencies []string `json:"dependencies"`
 		Dependents   []string `json:"dependents"`
 	}
-	result := make([]depInfo, 0, len(containers))
-	for _, c := range containers {
-		name := containerName(c)
+	result := make([]depInfo, 0, len(infos))
+	for _, ci := range infos {
 		result = append(result, depInfo{
-			Name:         name,
-			Dependencies: graph.Dependencies(name),
-			Dependents:   graph.Dependents(name),
+			Name:         ci.Name,
+			Dependencies: graph.Dependencies(ci.Name),
+			Dependents:   graph.Dependents(ci.Name),
 		})
 	}
 	resp := map[string]any{
@@ -158,22 +168,40 @@ func (s *Server) apiGetContainerDeps(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "container name required")
 		return
 	}
+
+	// Scope lookup by host when querying a remote container.
+	lookupName := name
+	if hostID := r.URL.Query().Get("host"); hostID != "" {
+		lookupName = hostID + "::" + name
+	}
+
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
 		return
 	}
-	infos := make([]deps.ContainerInfo, len(containers))
-	for i, c := range containers {
-		infos[i] = deps.ContainerInfo{
+	infos := make([]deps.ContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		infos = append(infos, deps.ContainerInfo{
 			Name:   containerName(c),
 			Labels: c.Labels,
+		})
+	}
+
+	// Include remote containers so cross-host dependencies are visible.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			infos = append(infos, deps.ContainerInfo{
+				Name:   rc.HostID + "::" + rc.Name,
+				Labels: rc.Labels,
+			})
 		}
 	}
+
 	graph := deps.Build(infos)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":         name,
-		"dependencies": graph.Dependencies(name),
-		"dependents":   graph.Dependents(name),
+		"name":         lookupName,
+		"dependencies": graph.Dependencies(lookupName),
+		"dependents":   graph.Dependents(lookupName),
 	})
 }
