@@ -1169,6 +1169,16 @@
                                     <option value="pinned">pinned</option>
                                 </select>
                             </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Auto-update agents</div>
+                                    <div class="setting-desc">Automatically update remote Sentinel agents when their version differs from the server.</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="cluster-auto-update" class="channel-toggle" onchange="saveClusterSettings()">
+                                    <span id="cluster-auto-update-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>

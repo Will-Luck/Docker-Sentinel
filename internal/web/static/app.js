@@ -3099,6 +3099,9 @@
       document.getElementById("cluster-port").value = s.port || "9443";
       document.getElementById("cluster-grace").value = s.grace_period || "30m";
       document.getElementById("cluster-policy").value = s.remote_policy || "manual";
+      var autoUpdate = s.auto_update_agents === "true";
+      document.getElementById("cluster-auto-update").checked = autoUpdate;
+      _updateToggleText("cluster-auto-update-text", autoUpdate);
       toggleClusterFields(enabled);
     }).catch(function(err) {
       console.error("Failed to load cluster settings:", err);
@@ -3126,6 +3129,8 @@
   }
   function saveClusterSettings() {
     var enabled = document.getElementById("cluster-enabled").checked;
+    var autoUpdateEl = document.getElementById("cluster-auto-update");
+    _updateToggleText("cluster-auto-update-text", autoUpdateEl.checked);
     fetch("/api/settings/cluster", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3133,7 +3138,8 @@
         enabled,
         port: document.getElementById("cluster-port").value,
         grace_period: document.getElementById("cluster-grace").value,
-        remote_policy: document.getElementById("cluster-policy").value
+        remote_policy: document.getElementById("cluster-policy").value,
+        auto_update_agents: autoUpdateEl.checked
       })
     }).then(function(resp) {
       return resp.json().then(function(data) {
