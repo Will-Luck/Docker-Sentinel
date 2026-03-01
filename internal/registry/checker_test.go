@@ -16,6 +16,8 @@ import (
 type mockDockerForRegistry struct {
 	imageDigests        map[string]string
 	imageDigestErr      map[string]error
+	imageIDs            map[string]string
+	imageIDErr          map[string]error
 	distributionDigests map[string]string
 	distributionErr     map[string]error
 }
@@ -24,6 +26,8 @@ func newMockRegistry() *mockDockerForRegistry {
 	return &mockDockerForRegistry{
 		imageDigests:        make(map[string]string),
 		imageDigestErr:      make(map[string]error),
+		imageIDs:            make(map[string]string),
+		imageIDErr:          make(map[string]error),
 		distributionDigests: make(map[string]string),
 		distributionErr:     make(map[string]error),
 	}
@@ -84,6 +88,13 @@ func (m *mockDockerForRegistry) PruneImages(_ context.Context) (docker.ImagePrun
 }
 func (m *mockDockerForRegistry) RemoveImageByID(_ context.Context, _ string) error { return nil }
 func (m *mockDockerForRegistry) Close() error                                      { return nil }
+
+func (m *mockDockerForRegistry) ImageID(_ context.Context, ref string) (string, error) {
+	if err, ok := m.imageIDErr[ref]; ok {
+		return "", err
+	}
+	return m.imageIDs[ref], nil
+}
 
 func (m *mockDockerForRegistry) ImageDigest(_ context.Context, ref string) (string, error) {
 	if err, ok := m.imageDigestErr[ref]; ok {
@@ -210,3 +221,52 @@ func TestDigestsMatch(t *testing.T) {
 
 // Verify mockDockerForRegistry implements docker.API.
 var _ docker.API = (*mockDockerForRegistry)(nil)
+
+// mockEquivChecker implements DigestEquivalenceChecker for testing.
+type mockEquivChecker struct {
+	pairs map[string]bool
+}
+
+func (m *mockEquivChecker) CheckDigestEquivalence(local, remote string) bool {
+	key := extractHash(local) + "|" + extractHash(remote)
+	return m.pairs[key]
+}
+
+func TestCheckWithEquivalenceCache(t *testing.T) {
+	mock := newMockRegistry()
+	// Different digests — would normally report UpdateAvailable.
+	mock.imageDigests["nginx:1.25"] = "docker.io/library/nginx@sha256:aaa111"
+	mock.distributionDigests["nginx:1.25"] = "sha256:bbb222"
+
+	equiv := &mockEquivChecker{
+		pairs: map[string]bool{
+			"sha256:aaa111|sha256:bbb222": true,
+		},
+	}
+
+	checker := NewChecker(mock, logging.New(false))
+	checker.SetDigestEquivalenceChecker(equiv)
+	result := checker.Check(context.Background(), "nginx:1.25")
+
+	if result.UpdateAvailable {
+		t.Error("expected UpdateAvailable=false when equivalence is cached")
+	}
+	if result.IsLocal {
+		t.Error("expected IsLocal=false")
+	}
+}
+
+func TestCheckWithoutEquivalenceCache(t *testing.T) {
+	mock := newMockRegistry()
+	// Different digests, no equivalence cache — should report update.
+	mock.imageDigests["nginx:1.25"] = "docker.io/library/nginx@sha256:aaa111"
+	mock.distributionDigests["nginx:1.25"] = "sha256:bbb222"
+
+	checker := NewChecker(mock, logging.New(false))
+	// No equiv checker set — nil
+	result := checker.Check(context.Background(), "nginx:1.25")
+
+	if !result.UpdateAvailable {
+		t.Error("expected UpdateAvailable=true when no equivalence cache")
+	}
+}

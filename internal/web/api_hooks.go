@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/deps"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // apiGetHooks returns hooks for a container.
@@ -19,7 +20,10 @@ func (s *Server) apiGetHooks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []HookEntry{})
 		return
 	}
-	entries, err := s.deps.HookStore.ListHooks(name)
+	// For remote containers, scope the key by host to avoid collisions.
+	hostID := r.URL.Query().Get("host")
+	storeKey := store.ScopedKey(hostID, name)
+	entries, err := s.deps.HookStore.ListHooks(storeKey)
 	if err != nil {
 		s.deps.Log.Error("failed to list hooks", "container", name, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list hooks")
@@ -62,8 +66,11 @@ func (s *Server) apiSaveHook(w http.ResponseWriter, r *http.Request) {
 	if body.Timeout <= 0 {
 		body.Timeout = 30
 	}
+	// For remote containers, scope the key by host to avoid collisions.
+	hostID := r.URL.Query().Get("host")
+	storeKey := store.ScopedKey(hostID, name)
 	entry := HookEntry{
-		ContainerName: name,
+		ContainerName: storeKey,
 		Phase:         body.Phase,
 		Command:       body.Command,
 		Timeout:       body.Timeout,
@@ -89,7 +96,10 @@ func (s *Server) apiDeleteHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "hook store not available")
 		return
 	}
-	if err := s.deps.HookStore.DeleteHook(name, phase); err != nil {
+	// For remote containers, scope the key by host to avoid collisions.
+	hostID := r.URL.Query().Get("host")
+	storeKey := store.ScopedKey(hostID, name)
+	if err := s.deps.HookStore.DeleteHook(storeKey, phase); err != nil {
 		s.deps.Log.Error("failed to delete hook", "container", name, "phase", phase, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete hook")
 		return
@@ -105,13 +115,24 @@ func (s *Server) apiGetDeps(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
 		return
 	}
-	infos := make([]deps.ContainerInfo, len(containers))
-	for i, c := range containers {
-		infos[i] = deps.ContainerInfo{
+	infos := make([]deps.ContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		infos = append(infos, deps.ContainerInfo{
 			Name:   containerName(c),
 			Labels: c.Labels,
+		})
+	}
+
+	// Include remote containers from cluster agents.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			infos = append(infos, deps.ContainerInfo{
+				Name:   rc.HostID + "::" + rc.Name,
+				Labels: rc.Labels,
+			})
 		}
 	}
+
 	graph := deps.Build(infos)
 	order, sortErr := graph.Sort()
 	cycles := graph.DetectCycles()
@@ -121,13 +142,12 @@ func (s *Server) apiGetDeps(w http.ResponseWriter, r *http.Request) {
 		Dependencies []string `json:"dependencies"`
 		Dependents   []string `json:"dependents"`
 	}
-	result := make([]depInfo, 0, len(containers))
-	for _, c := range containers {
-		name := containerName(c)
+	result := make([]depInfo, 0, len(infos))
+	for _, ci := range infos {
 		result = append(result, depInfo{
-			Name:         name,
-			Dependencies: graph.Dependencies(name),
-			Dependents:   graph.Dependents(name),
+			Name:         ci.Name,
+			Dependencies: graph.Dependencies(ci.Name),
+			Dependents:   graph.Dependents(ci.Name),
 		})
 	}
 	resp := map[string]any{
@@ -148,22 +168,40 @@ func (s *Server) apiGetContainerDeps(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "container name required")
 		return
 	}
+
+	// Scope lookup by host when querying a remote container.
+	lookupName := name
+	if hostID := r.URL.Query().Get("host"); hostID != "" {
+		lookupName = hostID + "::" + name
+	}
+
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list containers")
 		return
 	}
-	infos := make([]deps.ContainerInfo, len(containers))
-	for i, c := range containers {
-		infos[i] = deps.ContainerInfo{
+	infos := make([]deps.ContainerInfo, 0, len(containers))
+	for _, c := range containers {
+		infos = append(infos, deps.ContainerInfo{
 			Name:   containerName(c),
 			Labels: c.Labels,
+		})
+	}
+
+	// Include remote containers so cross-host dependencies are visible.
+	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		for _, rc := range s.deps.Cluster.AllHostContainers() {
+			infos = append(infos, deps.ContainerInfo{
+				Name:   rc.HostID + "::" + rc.Name,
+				Labels: rc.Labels,
+			})
 		}
 	}
+
 	graph := deps.Build(infos)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":         name,
-		"dependencies": graph.Dependencies(name),
-		"dependents":   graph.Dependents(name),
+		"name":         lookupName,
+		"dependencies": graph.Dependencies(lookupName),
+		"dependents":   graph.Dependents(lookupName),
 	})
 }

@@ -560,18 +560,20 @@ func (s *Server) apiSetPullOnly(w http.ResponseWriter, r *http.Request) {
 // for any keys not yet saved to BoltDB.
 func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
 	result := map[string]string{
-		"enabled":       "false",
-		"port":          "9443",
-		"grace_period":  "30m",
-		"remote_policy": "manual",
+		"enabled":            "false",
+		"port":               "9443",
+		"grace_period":       "30m",
+		"remote_policy":      "manual",
+		"auto_update_agents": "false",
 	}
 
 	if s.deps.SettingsStore != nil {
 		keys := map[string]string{
-			"enabled":       store.SettingClusterEnabled,
-			"port":          store.SettingClusterPort,
-			"grace_period":  store.SettingClusterGracePeriod,
-			"remote_policy": store.SettingClusterRemotePolicy,
+			"enabled":            store.SettingClusterEnabled,
+			"port":               store.SettingClusterPort,
+			"grace_period":       store.SettingClusterGracePeriod,
+			"remote_policy":      store.SettingClusterRemotePolicy,
+			"auto_update_agents": store.SettingClusterAutoUpdateAgents,
 		}
 		for field, dbKey := range keys {
 			if v, err := s.deps.SettingsStore.LoadSetting(dbKey); err == nil && v != "" {
@@ -588,10 +590,11 @@ func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
 // start or stop the gRPC server dynamically.
 func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Enabled      *bool  `json:"enabled"`
-		Port         string `json:"port"`
-		GracePeriod  string `json:"grace_period"`
-		RemotePolicy string `json:"remote_policy"`
+		Enabled          *bool  `json:"enabled"`
+		Port             string `json:"port"`
+		GracePeriod      string `json:"grace_period"`
+		RemotePolicy     string `json:"remote_policy"`
+		AutoUpdateAgents *bool  `json:"auto_update_agents"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -657,6 +660,16 @@ func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.RemotePolicy != "" {
 		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterRemotePolicy, req.RemotePolicy); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+	if req.AutoUpdateAgents != nil {
+		val := "false"
+		if *req.AutoUpdateAgents {
+			val = "true"
+		}
+		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterAutoUpdateAgents, val); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save setting")
 			return
 		}

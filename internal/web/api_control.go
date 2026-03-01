@@ -428,6 +428,37 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Route to remote agent if host parameter is present.
+	hostID := r.URL.Query().Get("host")
+	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		go func() {
+			if err := s.deps.Cluster.RollbackRemoteContainer(context.Background(), hostID, name); err != nil {
+				s.deps.Log.Error("remote rollback failed", "name", name, "host", hostID, "error", err)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: name,
+					HostID:        hostID,
+					Message:       "rollback failed: " + err.Error(),
+					Timestamp:     time.Now(),
+				})
+				return
+			}
+			// Apply rollback policy if configured.
+			if s.deps.SettingsStore != nil && s.deps.Policy != nil {
+				policyKey := hostID + "::" + name
+				if rp, err := s.deps.SettingsStore.LoadSetting("rollback_policy"); err == nil && (rp == "manual" || rp == "pinned") {
+					_ = s.deps.Policy.SetPolicyOverride(policyKey, rp)
+				}
+			}
+		}()
+
+		s.logEvent(r, "rollback", name, "Remote rollback triggered on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "started", "name": name, "message": "rollback started for " + name,
+		})
+		return
+	}
+
 	go func() {
 		if err := s.deps.Rollback.RollbackContainer(context.Background(), name); err != nil {
 			s.deps.Log.Error("rollback failed", "name", name, "error", err)

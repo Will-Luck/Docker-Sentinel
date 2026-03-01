@@ -103,6 +103,15 @@ func (c *Client) ImageDigest(ctx context.Context, imageRef string) (string, erro
 	return resp.ID, nil
 }
 
+// ImageID returns the image ID (sha256:...) for a given image reference.
+func (c *Client) ImageID(ctx context.Context, imageRef string) (string, error) {
+	resp, err := c.api.ImageInspect(ctx, imageRef)
+	if err != nil {
+		return "", err
+	}
+	return resp.ID, nil
+}
+
 // DistributionDigest queries the registry for the current digest of an image
 // reference, using the daemon's configured credentials.
 func (c *Client) DistributionDigest(ctx context.Context, imageRef string) (string, error) {

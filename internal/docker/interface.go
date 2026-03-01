@@ -21,6 +21,7 @@ type API interface {
 	RestartContainer(ctx context.Context, id string) error
 	PullImage(ctx context.Context, refStr string) error
 	ImageDigest(ctx context.Context, imageRef string) (string, error)
+	ImageID(ctx context.Context, imageRef string) (string, error)
 	DistributionDigest(ctx context.Context, imageRef string) (string, error)
 	RemoveImage(ctx context.Context, id string) error
 	TagImage(ctx context.Context, src, target string) error

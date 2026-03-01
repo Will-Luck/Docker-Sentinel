@@ -55,6 +55,14 @@ func (m *mockClusterProvider) RemoteContainerAction(_ context.Context, _, _, _ s
 	return nil
 }
 
+func (m *mockClusterProvider) RemoteContainerLogs(_ context.Context, _, _ string, _ int) (string, error) {
+	return "", nil
+}
+
+func (m *mockClusterProvider) RollbackRemoteContainer(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func (m *mockClusterProvider) AllHostContainers() []RemoteContainer {
 	return nil // not needed for existing tests
 }
@@ -96,6 +104,9 @@ func TestEnabledReturnsFalseWithNoProvider(t *testing.T) {
 	}
 	if err := cc.UpdateRemoteContainer(context.Background(), "h", "c", "img", "dig"); err == nil {
 		t.Error("UpdateRemoteContainer() should return error when disabled")
+	}
+	if err := cc.RollbackRemoteContainer(context.Background(), "h", "c"); err == nil {
+		t.Error("RollbackRemoteContainer() should return error when disabled")
 	}
 }
 
@@ -164,6 +175,9 @@ func TestSetProviderEnablesAndDelegates(t *testing.T) {
 	if err := cc.UpdateRemoteContainer(context.Background(), "host-1", "nginx", "nginx:latest", "sha256:abc"); err != nil {
 		t.Errorf("UpdateRemoteContainer() error: %v", err)
 	}
+	if err := cc.RollbackRemoteContainer(context.Background(), "host-1", "nginx"); err != nil {
+		t.Errorf("RollbackRemoteContainer() error: %v", err)
+	}
 }
 
 func TestSetProviderNilDisablesAgain(t *testing.T) {
@@ -227,6 +241,7 @@ func TestConcurrentAccess(t *testing.T) {
 					_, _, _ = cc.GenerateEnrollToken()
 					_ = cc.RemoveHost("h1")
 					_ = cc.UpdateRemoteContainer(context.Background(), "h1", "c", "i", "d")
+					_ = cc.RollbackRemoteContainer(context.Background(), "h1", "c")
 				}
 			}
 		}(g)
@@ -250,6 +265,9 @@ func TestDisabledMethodsReturnConsistentErrors(t *testing.T) {
 		{"PauseHost", func() error { return cc.PauseHost("x") }},
 		{"UpdateRemoteContainer", func() error {
 			return cc.UpdateRemoteContainer(context.Background(), "h", "c", "i", "d")
+		}},
+		{"RollbackRemoteContainer", func() error {
+			return cc.RollbackRemoteContainer(context.Background(), "h", "c")
 		}},
 	}
 
