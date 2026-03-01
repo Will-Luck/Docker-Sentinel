@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -399,6 +400,7 @@ func main() {
 	}
 	checker.SetCredentialStore(db)
 	checker.SetRateLimitTracker(rateTracker)
+	checker.SetDigestEquivalenceChecker(db)
 	bus := events.New()
 	queue := engine.NewQueue(db, bus, log.Logger)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
@@ -454,14 +456,6 @@ func main() {
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	scheduler.SetReadyGate(scanGate)
-	if cfg.MetricsTextfile != "" {
-		textfilePath := cfg.MetricsTextfile
-		scheduler.SetScanCallback(func() {
-			if err := metrics.WriteTextfile(textfilePath); err != nil {
-				log.Warn("failed to write metrics textfile", "path", textfilePath, "error", err)
-			}
-		})
-	}
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
 
@@ -491,6 +485,31 @@ func main() {
 		}
 		defer cm.Stop()
 	}
+
+	// Post-scan callback: metrics textfile + agent auto-update check.
+	var autoUpdateRunning atomic.Bool
+	scheduler.SetScanCallback(func() {
+		if cfg.MetricsTextfile != "" {
+			if err := metrics.WriteTextfile(cfg.MetricsTextfile); err != nil {
+				log.Warn("failed to write metrics textfile", "path", cfg.MetricsTextfile, "error", err)
+			}
+		}
+
+		// Check whether connected agents need a version update.
+		// Guard against overlapping runs — if a previous check is still
+		// in progress (slow image pull, etc.), skip this one.
+		if autoUpdate, _ := db.LoadSetting(store.SettingClusterAutoUpdateAgents); autoUpdate == "true" {
+			cm.mu.Lock()
+			srv := cm.srv
+			cm.mu.Unlock()
+			if srv != nil && autoUpdateRunning.CompareAndSwap(false, true) {
+				go func() {
+					defer autoUpdateRunning.Store(false)
+					srv.CheckAgentVersions(ctx, version)
+				}()
+			}
+		}
+	})
 
 	// Portainer integration.
 	portainerURL := cfg.PortainerURL

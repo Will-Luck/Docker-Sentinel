@@ -879,3 +879,116 @@ func TestRepairNetworkNamespace_NoDependents(t *testing.T) {
 		t.Errorf("restartCalls = %d, want 0 (no dependents)", len(mock.restartCalls))
 	}
 }
+
+func TestUpdateContainerImageIDGuardSkipsNoChange(t *testing.T) {
+	mock := newMockDocker()
+
+	// Original container with image ID sha256:same123.
+	mock.inspectResults["aaa"] = container.InspectResponse{
+		ID:    "aaa",
+		Name:  "/nginx",
+		Image: "sha256:same123",
+		Config: &container.Config{
+			Image:  "docker.io/library/nginx:latest",
+			Labels: map[string]string{},
+		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	// After pull, ImageID returns the SAME image ID.
+	mock.imageIDs["docker.io/library/nginx:latest"] = "sha256:same123"
+	mock.imageDigests["docker.io/library/nginx:latest"] = "docker.io/library/nginx@sha256:digest123"
+
+	u, _ := newTestUpdater(t, mock)
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+
+	// Pull should have been called.
+	if len(mock.pullCalls) != 1 {
+		t.Errorf("pullCalls = %d, want 1", len(mock.pullCalls))
+	}
+
+	// Destructive operations should NOT have been called.
+	if len(mock.stopCalls) != 0 {
+		t.Errorf("stopCalls = %d, want 0 (image ID guard should skip)", len(mock.stopCalls))
+	}
+	if len(mock.removeCalls) != 0 {
+		t.Errorf("removeCalls = %d, want 0", len(mock.removeCalls))
+	}
+	if len(mock.createCalls) != 0 {
+		t.Errorf("createCalls = %d, want 0", len(mock.createCalls))
+	}
+	if len(mock.startCalls) != 0 {
+		t.Errorf("startCalls = %d, want 0", len(mock.startCalls))
+	}
+
+	// History should show "no_change" outcome.
+	history, hErr := u.store.ListHistory(10, "")
+	if hErr != nil {
+		t.Fatalf("ListHistory: %v", hErr)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history len = %d, want 1", len(history))
+	}
+	if history[0].Outcome != "no_change" {
+		t.Errorf("outcome = %q, want %q", history[0].Outcome, "no_change")
+	}
+}
+
+func TestUpdateContainerImageIDGuardProceedsOnDifferentID(t *testing.T) {
+	mock := newMockDocker()
+
+	// Original container with old image ID.
+	mock.inspectResults["aaa"] = container.InspectResponse{
+		ID:    "aaa",
+		Name:  "/nginx",
+		Image: "sha256:old111",
+		Config: &container.Config{
+			Image:  "docker.io/library/nginx:latest",
+			Labels: map[string]string{},
+		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	// After pull, ImageID returns a DIFFERENT image ID.
+	mock.imageIDs["docker.io/library/nginx:latest"] = "sha256:new222"
+	mock.imageDigests["docker.io/library/nginx:latest"] = "docker.io/library/nginx@sha256:newdigest"
+
+	// New container after creation needs to pass validation.
+	mock.inspectResults["new-nginx"] = container.InspectResponse{
+		ID:   "new-nginx",
+		Name: "/nginx",
+		State: &container.State{
+			Running:    true,
+			Restarting: false,
+		},
+		Config: &container.Config{
+			Image:  "docker.io/library/nginx:latest",
+			Labels: map[string]string{"sentinel.maintenance": "true"},
+		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	u, _ := newTestUpdater(t, mock)
+	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+
+	// With different image ID, full update cycle should run.
+	if len(mock.pullCalls) != 1 {
+		t.Errorf("pullCalls = %d, want 1", len(mock.pullCalls))
+	}
+	// Should have stop/remove/create/start calls (update + finalise).
+	if len(mock.stopCalls) < 1 {
+		t.Errorf("stopCalls = %d, want >= 1", len(mock.stopCalls))
+	}
+	if len(mock.createCalls) < 1 {
+		t.Errorf("createCalls = %d, want >= 1", len(mock.createCalls))
+	}
+}

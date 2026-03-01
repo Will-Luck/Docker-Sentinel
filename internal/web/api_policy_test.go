@@ -137,6 +137,14 @@ func (m *mockClusterProviderWithContainers) RemoteContainerAction(_ context.Cont
 	return nil
 }
 
+func (m *mockClusterProviderWithContainers) RemoteContainerLogs(_ context.Context, _, _ string, _ int) (string, error) {
+	return "", nil
+}
+
+func (m *mockClusterProviderWithContainers) RollbackRemoteContainer(_ context.Context, _, _ string) error {
+	return nil
+}
+
 func (m *mockClusterProviderWithContainers) AllHostContainers() []RemoteContainer {
 	return m.containers
 }

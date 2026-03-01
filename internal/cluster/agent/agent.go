@@ -40,6 +40,7 @@ var supportedFeatures = []string{
 	"hooks",
 	"pull",
 	"list",
+	"logs",
 }
 
 // DockerAPI defines the subset of Docker operations the agent needs.
@@ -57,6 +58,7 @@ type DockerAPI interface {
 	PullImage(ctx context.Context, refStr string) error
 	ImageDigest(ctx context.Context, imageRef string) (string, error)
 	ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error)
+	ContainerLogs(ctx context.Context, id string, lines int) (string, error)
 }
 
 // Config holds agent-specific configuration.
@@ -482,6 +484,11 @@ func (a *Agent) receiveLoop(ctx context.Context, stream proto.AgentService_Chann
 				return a.handleContainerAction(ctx, stream, p.ContainerAction, reqID)
 			})
 
+		case *proto.ServerMessage_FetchLogs:
+			go a.safeHandle("fetch-logs", reqID, func() error {
+				return a.handleFetchLogs(ctx, stream, p.FetchLogs, reqID)
+			})
+
 		case *proto.ServerMessage_PullImage:
 			go a.safeHandle("pull-image", reqID, func() error {
 				return a.handlePullImage(ctx, p.PullImage)
@@ -643,6 +650,50 @@ func (a *Agent) handleContainerAction(ctx context.Context, stream proto.AgentSer
 	// Push a fresh container list so the server cache and UI reflect the
 	// new state immediately (e.g. a stopped container stays visible).
 	return a.handleListContainers(ctx, stream, "")
+}
+
+// handleFetchLogs fetches the last N lines of a container's logs and sends
+// the result back to the server.
+func (a *Agent) handleFetchLogs(ctx context.Context, stream proto.AgentService_ChannelClient, req *proto.FetchLogsRequest, requestID string) error {
+	name := req.GetContainerName()
+	lines := int(req.GetLines())
+	if lines <= 0 {
+		lines = 50
+	}
+	if lines > 500 {
+		lines = 500
+	}
+
+	a.log.Info("fetching logs", "container", name, "lines", lines, "request_id", requestID)
+
+	cID, err := a.findContainerID(ctx, name)
+	if err != nil {
+		return a.sendFetchLogsResult(stream, requestID, name, "", lines, err.Error())
+	}
+
+	output, err := a.docker.ContainerLogs(ctx, cID, lines)
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+
+	return a.sendFetchLogsResult(stream, requestID, name, output, lines, errStr)
+}
+
+// sendFetchLogsResult sends a FetchLogsResult message back to the server.
+func (a *Agent) sendFetchLogsResult(stream proto.AgentService_ChannelClient, requestID, container, logs string, lines int, errStr string) error {
+	msg := &proto.AgentMessage{
+		Payload: &proto.AgentMessage_FetchLogsResult{
+			FetchLogsResult: &proto.FetchLogsResult{
+				RequestId:     requestID,
+				ContainerName: container,
+				Logs:          logs,
+				Lines:         int32(lines), //nolint:gosec // clamped to 0-500 by caller
+				Error:         errStr,
+			},
+		},
+	}
+	return stream.Send(msg)
 }
 
 // handlePullImage pulls an image on the local Docker host.

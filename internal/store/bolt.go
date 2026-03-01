@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -35,14 +36,16 @@ var (
 	bucketClusterJournal     = []byte("cluster_journal")
 	bucketClusterConfigCache = []byte("cluster_config_cache")
 	bucketClusterRevoked     = []byte("cluster_revoked")
+	bucketDigestEquiv        = []byte("digest_equivalence")
 )
 
 // Cluster settings keys (stored in bucketSettings).
 const (
-	SettingClusterEnabled      = "cluster_enabled"       // "true" / "false"
-	SettingClusterPort         = "cluster_port"          // e.g. "9443"
-	SettingClusterGracePeriod  = "cluster_grace_period"  // e.g. "30m"
-	SettingClusterRemotePolicy = "cluster_remote_policy" // "auto" / "manual" / "pinned"
+	SettingClusterEnabled          = "cluster_enabled"            // "true" / "false"
+	SettingClusterPort             = "cluster_port"               // e.g. "9443"
+	SettingClusterGracePeriod      = "cluster_grace_period"       // e.g. "30m"
+	SettingClusterRemotePolicy     = "cluster_remote_policy"      // "auto" / "manual" / "pinned"
+	SettingClusterAutoUpdateAgents = "cluster_auto_update_agents" // "true" / "false"
 )
 
 // Portainer settings keys (stored in bucketSettings).
@@ -96,7 +99,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked, bucketDigestEquiv} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -784,4 +787,68 @@ func (s *Store) GetAllNotifyTemplates() (map[string]string, error) {
 		})
 	})
 	return result, err
+}
+
+// ---------------------------------------------------------------------------
+// Digest equivalence cache (multi-arch mismatch prevention)
+// ---------------------------------------------------------------------------
+
+// CacheDigestEquivalence records that localDigest and remoteDigest refer to the same image.
+func (s *Store) CacheDigestEquivalence(localDigest, remoteDigest string) error {
+	key := extractHash(localDigest) + "|" + extractHash(remoteDigest)
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketDigestEquiv)
+		return b.Put([]byte(key), []byte(time.Now().UTC().Format(time.RFC3339)))
+	})
+}
+
+// CheckDigestEquivalence returns true if this local/remote pair was previously cached as equivalent.
+func (s *Store) CheckDigestEquivalence(localDigest, remoteDigest string) bool {
+	key := extractHash(localDigest) + "|" + extractHash(remoteDigest)
+	var found bool
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketDigestEquiv)
+		found = b.Get([]byte(key)) != nil
+		return nil
+	})
+	return found
+}
+
+// ClearDigestEquivalence removes any cached equivalences containing the given image reference's hash.
+func (s *Store) ClearDigestEquivalence(imageRef string) error {
+	hash := extractHash(imageRef)
+	if hash == imageRef {
+		// No sha256: prefix found — nothing meaningful to match.
+		return nil
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketDigestEquiv)
+		var toDelete [][]byte
+		err := b.ForEach(func(k, _ []byte) error {
+			if strings.Contains(string(k), hash) {
+				keyCopy := make([]byte, len(k))
+				copy(keyCopy, k)
+				toDelete = append(toDelete, keyCopy)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		for _, k := range toDelete {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// extractHash returns the sha256:... portion of a digest string.
+// Duplicated from registry package to avoid import cycles.
+func extractHash(digest string) string {
+	if i := strings.LastIndex(digest, "sha256:"); i >= 0 {
+		return digest[i:]
+	}
+	return digest
 }

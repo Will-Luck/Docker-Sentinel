@@ -118,6 +118,8 @@
                                         <span class="badge badge-muted">Dry Run</span>
                                     {{else if eq $r.Outcome "pull_only"}}
                                         <span class="badge badge-muted">Pull Only</span>
+                                    {{else if eq $r.Outcome "no_change"}}
+                                        <span class="badge badge-info">No Change</span>
                                     {{else}}
                                         <span class="badge badge-muted">{{$r.Outcome}}</span>
                                     {{end}}
@@ -184,7 +186,7 @@
         failed:   ['failed', 'rollback_failed'],
         rollback: ['rollback', 'rollback_success'],
         skipped:  ['skipped'],
-        other:    ['dry_run', 'pull_only', 'finalise_warning']
+        other:    ['dry_run', 'pull_only', 'finalise_warning', 'no_change']
     };
 
     function filterHistory(filter) {
@@ -318,8 +320,8 @@
     }
 
     function badgeForHist(outcome) {
-        var map = {success:'badge-success',rollback:'badge-error',rollback_success:'badge-warning',rollback_failed:'badge-error',failed:'badge-error',finalise_warning:'badge-warning',skipped:'badge-warning',dry_run:'badge-muted',pull_only:'badge-muted'};
-        var label = {success:'Success',rollback:'Rollback',rollback_success:'Rollback OK',rollback_failed:'Rollback Failed',failed:'Failed',finalise_warning:'Warning',skipped:'Skipped',dry_run:'Dry Run',pull_only:'Pull Only'};
+        var map = {success:'badge-success',rollback:'badge-error',rollback_success:'badge-warning',rollback_failed:'badge-error',failed:'badge-error',finalise_warning:'badge-warning',skipped:'badge-warning',dry_run:'badge-muted',pull_only:'badge-muted',no_change:'badge-info'};
+        var label = {success:'Success',rollback:'Rollback',rollback_success:'Rollback OK',rollback_failed:'Rollback Failed',failed:'Failed',finalise_warning:'Warning',skipped:'Skipped',dry_run:'Dry Run',pull_only:'Pull Only',no_change:'No Change'};
         var cls = map[outcome] || 'badge-muted';
         var txt = label[outcome] || outcome;
         var span = document.createElement('span');
