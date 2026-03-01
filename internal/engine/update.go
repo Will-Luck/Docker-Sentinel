@@ -112,6 +112,36 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.log.Debug("could not resolve new image digest", "image", pullImage, "error", err)
 	}
 
+	// 3.5 Image ID guard: if the pull resolved to the same image, skip the update.
+	newImageID, idErr := u.docker.ImageID(ctx, pullImage)
+	if idErr != nil {
+		u.log.Debug("could not resolve new image ID", "image", pullImage, "error", idErr)
+	} else if oldImageID != "" && newImageID == oldImageID {
+		u.log.Info("pull resolved to same image, skipping update", "name", name, "imageID", oldImageID)
+		_ = u.store.SetMaintenance(name, false)
+		duration := u.clock.Since(start)
+		_ = u.store.RecordUpdate(store.UpdateRecord{
+			Timestamp:     u.clock.Now(),
+			ContainerName: name,
+			OldImage:      oldImage,
+			OldDigest:     oldImageID,
+			NewImage:      pullImage,
+			NewDigest:     newImageID,
+			Outcome:       "no_change",
+			Duration:      duration,
+		})
+		// Cache digest equivalence so future scans skip this pair.
+		if newDigest != "" {
+			localDigest, _ := u.docker.ImageDigest(ctx, oldImage)
+			if localDigest != "" {
+				_ = u.store.CacheDigestEquivalence(localDigest, newDigest)
+			}
+		}
+		u.queue.Remove(name)
+		u.publishEvent(events.EventContainerUpdate, name, "no change detected")
+		return nil
+	}
+
 	// 4. Stop and remove the old container.
 	u.log.Info("stopping old container", "name", name)
 	if err := u.docker.StopContainer(ctx, id, 30); err != nil {
@@ -293,6 +323,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	metrics.UpdatesTotal.WithLabelValues("success").Inc()
 	metrics.UpdateDuration.Observe(duration.Seconds())
+
+	// Clear stale digest equivalence entries for this image now that a real update succeeded.
+	_ = u.store.ClearDigestEquivalence(pullImage)
 
 	u.notifier.Notify(ctx, notify.Event{
 		Type:          notify.EventUpdateSucceeded,
