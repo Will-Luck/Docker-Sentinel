@@ -21,13 +21,19 @@ type CheckResult struct {
 	ResolvedTargetVersion  string   // Semver tag matching remote digest (for latest-tagged images)
 }
 
+// DigestEquivalenceChecker can look up cached digest equivalences.
+type DigestEquivalenceChecker interface {
+	CheckDigestEquivalence(localDigest, remoteDigest string) bool
+}
+
 // Checker queries the Docker daemon and remote registry to determine
 // whether an image has an update available.
 type Checker struct {
 	docker  docker.API
 	log     *logging.Logger
-	creds   CredentialStore   // optional: looks up creds by registry
-	tracker *RateLimitTracker // optional: records rate limit headers
+	creds   CredentialStore          // optional: looks up creds by registry
+	tracker *RateLimitTracker        // optional: records rate limit headers
+	equiv   DigestEquivalenceChecker // optional: cached digest equivalence lookups
 }
 
 // NewChecker creates a registry checker.
@@ -48,6 +54,11 @@ func (c *Checker) CredentialStore() CredentialStore {
 // SetRateLimitTracker attaches a rate limit tracker for header capture.
 func (c *Checker) SetRateLimitTracker(t *RateLimitTracker) {
 	c.tracker = t
+}
+
+// SetDigestEquivalenceChecker attaches a digest equivalence cache.
+func (c *Checker) SetDigestEquivalenceChecker(eq DigestEquivalenceChecker) {
+	c.equiv = eq
 }
 
 // Check compares the local digest of an image to the remote registry digest.
@@ -84,7 +95,14 @@ func (c *Checker) Check(ctx context.Context, imageRef string) CheckResult {
 	}
 	result.RemoteDigest = remoteDigest
 
-	result.UpdateAvailable = !digestsMatch(localDigest, remoteDigest)
+	if !digestsMatch(localDigest, remoteDigest) {
+		// Check equivalence cache before declaring update available.
+		if c.equiv != nil && c.equiv.CheckDigestEquivalence(localDigest, remoteDigest) {
+			c.log.Debug("digests differ but cached as equivalent", "image", imageRef)
+		} else {
+			result.UpdateAvailable = true
+		}
+	}
 	return result
 }
 
@@ -124,7 +142,13 @@ func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownD
 		return result
 	}
 	result.RemoteDigest = remoteDigest
-	result.UpdateAvailable = !digestsMatch(knownDigest, remoteDigest)
+	if !digestsMatch(knownDigest, remoteDigest) {
+		if c.equiv != nil && c.equiv.CheckDigestEquivalence(knownDigest, remoteDigest) {
+			c.log.Debug("digests differ but cached as equivalent", "image", imageRef)
+		} else {
+			result.UpdateAvailable = true
+		}
+	}
 
 	// Version lookup — same as CheckVersioned.
 	tag := ExtractTag(imageRef)

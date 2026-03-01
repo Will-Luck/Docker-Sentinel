@@ -45,6 +45,9 @@ type mockDocker struct {
 	imageDigests   map[string]string
 	imageDigestErr map[string]error
 
+	imageIDs   map[string]string
+	imageIDErr map[string]error
+
 	distDigests map[string]string
 	distErr     map[string]error
 
@@ -93,6 +96,8 @@ func newMockDocker() *mockDocker {
 		pullErr:        make(map[string]error),
 		imageDigests:   make(map[string]string),
 		imageDigestErr: make(map[string]error),
+		imageIDs:       make(map[string]string),
+		imageIDErr:     make(map[string]error),
 		distDigests:    make(map[string]string),
 		distErr:        make(map[string]error),
 		removeImageErr: make(map[string]error),
@@ -197,6 +202,13 @@ func (m *mockDocker) ImageDigest(_ context.Context, ref string) (string, error) 
 		return "", err
 	}
 	return m.imageDigests[ref], nil
+}
+
+func (m *mockDocker) ImageID(_ context.Context, ref string) (string, error) {
+	if err, ok := m.imageIDErr[ref]; ok {
+		return "", err
+	}
+	return m.imageIDs[ref], nil
 }
 
 func (m *mockDocker) DistributionDigest(_ context.Context, ref string) (string, error) {

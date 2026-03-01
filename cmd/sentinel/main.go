@@ -400,6 +400,7 @@ func main() {
 	}
 	checker.SetCredentialStore(db)
 	checker.SetRateLimitTracker(rateTracker)
+	checker.SetDigestEquivalenceChecker(db)
 	bus := events.New()
 	queue := engine.NewQueue(db, bus, log.Logger)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)

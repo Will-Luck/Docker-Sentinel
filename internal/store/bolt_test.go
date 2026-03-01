@@ -361,3 +361,65 @@ func TestDeleteOldSnapshotsKeepAll(t *testing.T) {
 		t.Fatalf("got %d entries, want 3", len(entries))
 	}
 }
+
+func TestDigestEquivalenceCacheAndCheck(t *testing.T) {
+	s := testStore(t)
+
+	local := "docker.io/library/nginx@sha256:aaa111"
+	remote := "sha256:bbb222"
+
+	// Not cached initially.
+	if s.CheckDigestEquivalence(local, remote) {
+		t.Error("expected false before caching")
+	}
+
+	// Cache it.
+	if err := s.CacheDigestEquivalence(local, remote); err != nil {
+		t.Fatalf("CacheDigestEquivalence: %v", err)
+	}
+
+	// Now should be found.
+	if !s.CheckDigestEquivalence(local, remote) {
+		t.Error("expected true after caching")
+	}
+
+	// Different pair should not match.
+	if s.CheckDigestEquivalence(local, "sha256:ccc333") {
+		t.Error("expected false for different remote digest")
+	}
+}
+
+func TestDigestEquivalenceClear(t *testing.T) {
+	s := testStore(t)
+
+	local := "docker.io/library/nginx@sha256:aaa111"
+	remote := "sha256:bbb222"
+
+	if err := s.CacheDigestEquivalence(local, remote); err != nil {
+		t.Fatalf("CacheDigestEquivalence: %v", err)
+	}
+
+	// Verify cached.
+	if !s.CheckDigestEquivalence(local, remote) {
+		t.Fatal("expected cached entry to exist")
+	}
+
+	// Clear by image ref containing the local hash.
+	if err := s.ClearDigestEquivalence("docker.io/library/nginx@sha256:aaa111"); err != nil {
+		t.Fatalf("ClearDigestEquivalence: %v", err)
+	}
+
+	// Should be gone.
+	if s.CheckDigestEquivalence(local, remote) {
+		t.Error("expected false after clearing")
+	}
+}
+
+func TestDigestEquivalenceClearNoHash(t *testing.T) {
+	s := testStore(t)
+
+	// ClearDigestEquivalence with no sha256: prefix should be a no-op.
+	if err := s.ClearDigestEquivalence("nginx:latest"); err != nil {
+		t.Fatalf("ClearDigestEquivalence: %v", err)
+	}
+}
