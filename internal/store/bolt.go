@@ -39,10 +39,11 @@ var (
 
 // Cluster settings keys (stored in bucketSettings).
 const (
-	SettingClusterEnabled      = "cluster_enabled"       // "true" / "false"
-	SettingClusterPort         = "cluster_port"          // e.g. "9443"
-	SettingClusterGracePeriod  = "cluster_grace_period"  // e.g. "30m"
-	SettingClusterRemotePolicy = "cluster_remote_policy" // "auto" / "manual" / "pinned"
+	SettingClusterEnabled          = "cluster_enabled"            // "true" / "false"
+	SettingClusterPort             = "cluster_port"               // e.g. "9443"
+	SettingClusterGracePeriod      = "cluster_grace_period"       // e.g. "30m"
+	SettingClusterRemotePolicy     = "cluster_remote_policy"      // "auto" / "manual" / "pinned"
+	SettingClusterAutoUpdateAgents = "cluster_auto_update_agents" // "true" / "false"
 )
 
 // Portainer settings keys (stored in bucketSettings).

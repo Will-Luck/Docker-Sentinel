@@ -454,14 +454,6 @@ func main() {
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	scheduler.SetReadyGate(scanGate)
-	if cfg.MetricsTextfile != "" {
-		textfilePath := cfg.MetricsTextfile
-		scheduler.SetScanCallback(func() {
-			if err := metrics.WriteTextfile(textfilePath); err != nil {
-				log.Warn("failed to write metrics textfile", "path", textfilePath, "error", err)
-			}
-		})
-	}
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
 
@@ -491,6 +483,25 @@ func main() {
 		}
 		defer cm.Stop()
 	}
+
+	// Post-scan callback: metrics textfile + agent auto-update check.
+	scheduler.SetScanCallback(func() {
+		if cfg.MetricsTextfile != "" {
+			if err := metrics.WriteTextfile(cfg.MetricsTextfile); err != nil {
+				log.Warn("failed to write metrics textfile", "path", cfg.MetricsTextfile, "error", err)
+			}
+		}
+
+		// Check whether connected agents need a version update.
+		if autoUpdate, _ := db.LoadSetting(store.SettingClusterAutoUpdateAgents); autoUpdate == "true" {
+			cm.mu.Lock()
+			srv := cm.srv
+			cm.mu.Unlock()
+			if srv != nil {
+				go srv.CheckAgentVersions(ctx, version)
+			}
+		}
+	})
 
 	// Portainer integration.
 	portainerURL := cfg.PortainerURL
