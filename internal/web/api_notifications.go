@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // apiGetNotifications returns the current notification channels with secrets masked.
@@ -173,7 +174,11 @@ func (s *Server) apiGetNotifyPref(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"mode": "default"})
 		return
 	}
-	pref, err := s.deps.NotifyState.GetNotifyPref(name)
+
+	// For remote containers, scope the key by host to avoid collisions.
+	prefKey := store.ScopedKey(r.URL.Query().Get("host"), name)
+
+	pref, err := s.deps.NotifyState.GetNotifyPref(prefKey)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load notification preference")
 		return
@@ -210,14 +215,18 @@ func (s *Server) apiSetNotifyPref(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "notification preferences not available")
 		return
 	}
+
+	// For remote containers, scope the key by host to avoid collisions.
+	prefKey := store.ScopedKey(r.URL.Query().Get("host"), name)
+
 	if body.Mode == "default" {
 		// "default" means remove override — fall back to global setting.
-		if err := s.deps.NotifyState.DeleteNotifyPref(name); err != nil {
+		if err := s.deps.NotifyState.DeleteNotifyPref(prefKey); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to delete notification preference")
 			return
 		}
 	} else {
-		if err := s.deps.NotifyState.SetNotifyPref(name, &NotifyPref{Mode: body.Mode}); err != nil {
+		if err := s.deps.NotifyState.SetNotifyPref(prefKey, &NotifyPref{Mode: body.Mode}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save notification preference")
 			return
 		}
