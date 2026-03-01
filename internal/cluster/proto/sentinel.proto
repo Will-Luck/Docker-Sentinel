@@ -55,6 +55,7 @@ message AgentMessage {
     OfflineJournal offline_journal = 6;
     CertRenewalCSR cert_renewal = 7;
     ContainerActionResult container_action_result = 8;
+    FetchLogsResult fetch_logs_result = 9;
   }
 }
 
@@ -72,6 +73,7 @@ message ServerMessage {
     SettingsSync settings_sync = 9;
     CertRenewalResponse cert_renewal_response = 10;
     ContainerActionRequest container_action = 11;
+    FetchLogsRequest fetch_logs = 12;
   }
 }
 
@@ -115,6 +117,19 @@ message UpdateContainerRequest {
 message ContainerActionRequest {
   string container_name = 1;
   string action = 2;  // "stop", "start", "restart"
+}
+
+message FetchLogsRequest {
+  string container_name = 1;
+  int32 lines = 2;  // tail N lines (default 50, max 500)
+}
+
+message FetchLogsResult {
+  string request_id = 1;
+  string container_name = 2;
+  string logs = 3;
+  int32 lines = 4;
+  string error = 5;
 }
 
 message ContainerActionResult {

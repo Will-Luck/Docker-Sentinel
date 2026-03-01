@@ -55,6 +55,10 @@ func (m *mockClusterProvider) RemoteContainerAction(_ context.Context, _, _, _ s
 	return nil
 }
 
+func (m *mockClusterProvider) RemoteContainerLogs(_ context.Context, _, _ string, _ int) (string, error) {
+	return "", nil
+}
+
 func (m *mockClusterProvider) AllHostContainers() []RemoteContainer {
 	return nil // not needed for existing tests
 }

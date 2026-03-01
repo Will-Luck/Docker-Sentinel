@@ -1,8 +1,10 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // apiContainerLogs returns the last N lines of a container's logs.
@@ -13,20 +15,7 @@ func (s *Server) apiContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remote containers — logs not available in v1.
-	if host := r.URL.Query().Get("host"); host != "" {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"logs":   "Logs not available for remote containers.",
-			"remote": true,
-		})
-		return
-	}
-
-	if s.deps.LogViewer == nil {
-		writeError(w, http.StatusServiceUnavailable, "log viewer not available")
-		return
-	}
-
+	// Parse lines early so it's available for both local and remote paths.
 	lines := 50
 	if v := r.URL.Query().Get("lines"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -35,6 +24,36 @@ func (s *Server) apiContainerLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	if lines > 500 {
 		lines = 500
+	}
+
+	// Remote containers — fetch logs via cluster gRPC.
+	if host := r.URL.Query().Get("host"); host != "" {
+		if s.deps.Cluster == nil || !s.deps.Cluster.Enabled() {
+			writeError(w, http.StatusServiceUnavailable, "cluster not available")
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+
+		output, err := s.deps.Cluster.RemoteContainerLogs(ctx, host, name, lines)
+		if err != nil {
+			s.deps.Log.Error("remote logs failed", "name", name, "host", host, "error", err)
+			writeError(w, http.StatusBadGateway, "failed to fetch remote logs: "+err.Error())
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"logs":   output,
+			"lines":  lines,
+			"remote": true,
+		})
+		return
+	}
+
+	if s.deps.LogViewer == nil {
+		writeError(w, http.StatusServiceUnavailable, "log viewer not available")
+		return
 	}
 
 	// Resolve container ID from name.
