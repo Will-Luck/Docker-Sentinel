@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/deps"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // apiGetHooks returns hooks for a container.
@@ -19,7 +20,10 @@ func (s *Server) apiGetHooks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []HookEntry{})
 		return
 	}
-	entries, err := s.deps.HookStore.ListHooks(name)
+	// For remote containers, scope the key by host to avoid collisions.
+	hostID := r.URL.Query().Get("host")
+	storeKey := store.ScopedKey(hostID, name)
+	entries, err := s.deps.HookStore.ListHooks(storeKey)
 	if err != nil {
 		s.deps.Log.Error("failed to list hooks", "container", name, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list hooks")
@@ -62,8 +66,11 @@ func (s *Server) apiSaveHook(w http.ResponseWriter, r *http.Request) {
 	if body.Timeout <= 0 {
 		body.Timeout = 30
 	}
+	// For remote containers, scope the key by host to avoid collisions.
+	hostID := r.URL.Query().Get("host")
+	storeKey := store.ScopedKey(hostID, name)
 	entry := HookEntry{
-		ContainerName: name,
+		ContainerName: storeKey,
 		Phase:         body.Phase,
 		Command:       body.Command,
 		Timeout:       body.Timeout,
@@ -89,7 +96,10 @@ func (s *Server) apiDeleteHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "hook store not available")
 		return
 	}
-	if err := s.deps.HookStore.DeleteHook(name, phase); err != nil {
+	// For remote containers, scope the key by host to avoid collisions.
+	hostID := r.URL.Query().Get("host")
+	storeKey := store.ScopedKey(hostID, name)
+	if err := s.deps.HookStore.DeleteHook(storeKey, phase); err != nil {
 		s.deps.Log.Error("failed to delete hook", "container", name, "phase", phase, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete hook")
 		return
