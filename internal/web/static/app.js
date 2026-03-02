@@ -1082,12 +1082,8 @@
     if (!rows.length) return;
     _bulkInProgress = true;
     var headerBtns = document.querySelectorAll(".queue-header .btn");
-    for (var i = 0; i < headerBtns.length; i++) {
-      headerBtns[i].disabled = true;
-    }
-    if (triggerBtn) {
-      triggerBtn.classList.add("loading");
-    }
+    for (var i = 0; i < headerBtns.length; i++) headerBtns[i].disabled = true;
+    if (triggerBtn) triggerBtn.classList.add("loading");
     for (var r = 0; r < rows.length; r++) {
       var rowBtns = rows[r].querySelectorAll(".btn");
       for (var b = 0; b < rowBtns.length; b++) {

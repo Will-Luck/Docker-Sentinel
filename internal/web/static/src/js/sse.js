@@ -21,14 +21,12 @@ function scheduleReload() {
     }, 800);
 }
 
-// Debounced reload for the queue page. Longer delay (2s) so rapid SSE events
-// from batch approvals don't cause repeated reloads.
+// Longer delay (2s) so batch approvals don't cause repeated reloads.
 var _queueReloadTimer = null;
 function scheduleQueueReload() {
     if (_queueReloadTimer) clearTimeout(_queueReloadTimer);
     _queueReloadTimer = setTimeout(function () {
         _queueReloadTimer = null;
-        // Don't reload mid-bulk — row-level JS handles removal.
         if (window._queueBulkInProgress && window._queueBulkInProgress()) return;
         window.location.reload();
     }, 2000);
@@ -256,8 +254,7 @@ function initSSE() {
             scheduleDigestBannerRefresh();
             updateQueueBadge();
         } else if (document.querySelector(".queue-table")) {
-            // Only full-reload for new items (scan found updates). Approved/removed/
-            // pruned events just update the badge — row-level JS handles DOM removal.
+            // Only reload for new items; removals are handled by row-level JS.
             var msg = data.message || "";
             var isNew = msg === "added" || msg.indexOf("queued") !== -1;
             var bulkActive = window._queueBulkInProgress && window._queueBulkInProgress();
