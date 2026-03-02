@@ -526,6 +526,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				HostID:        rc.HostID,
 				HostName:      rc.HostName,
 				Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
+				Ports:         rc.Ports,
 			}
 			byHost[rc.HostID] = append(byHost[rc.HostID], cv)
 		}

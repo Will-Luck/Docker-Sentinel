@@ -208,6 +208,7 @@ type RemoteContainer struct {
 	HostID   string            `json:"host_id"`
 	HostName string            `json:"host_name"`
 	Labels   map[string]string `json:"labels,omitempty"`
+	Ports    []PortMapping     `json:"ports,omitempty"`
 }
 
 // ClusterHost represents a remote agent host for the web layer.
