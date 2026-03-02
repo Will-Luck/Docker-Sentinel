@@ -1164,6 +1164,15 @@ func (a *clusterAdapter) AllHostContainers() []web.RemoteContainer {
 			continue
 		}
 		for _, c := range hs.Containers {
+			var ports []web.PortMapping
+			for _, p := range c.Ports {
+				ports = append(ports, web.PortMapping{
+					HostIP:        p.HostIP,
+					HostPort:      p.HostPort,
+					ContainerPort: p.ContainerPort,
+					Protocol:      p.Protocol,
+				})
+			}
 			result = append(result, web.RemoteContainer{
 				Name:     c.Name,
 				Image:    c.Image,
@@ -1171,6 +1180,7 @@ func (a *clusterAdapter) AllHostContainers() []web.RemoteContainer {
 				HostID:   info.ID,
 				HostName: info.Name,
 				Labels:   c.Labels,
+				Ports:    ports,
 			})
 		}
 	}

@@ -919,6 +919,19 @@ func containerInfoFromSummary(c *container.Summary) *proto.ContainerInfo {
 		info.Labels = c.Labels
 	}
 
+	// Extract host-bound port mappings (matching local convertPorts pattern).
+	for _, p := range c.Ports {
+		if p.PublicPort == 0 {
+			continue
+		}
+		info.Ports = append(info.Ports, &proto.PortMapping{
+			HostIp:        p.IP.String(),
+			HostPort:      uint32(p.PublicPort),
+			ContainerPort: uint32(p.PrivatePort),
+			Protocol:      p.Type,
+		})
+	}
+
 	// container.Summary.Created is Unix timestamp (int64).
 	if c.Created > 0 {
 		info.Created = timestamppb.New(time.Unix(c.Created, 0))

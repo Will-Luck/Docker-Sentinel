@@ -1198,6 +1198,14 @@ func protoToContainers(pcs []*proto.ContainerInfo) []cluster.ContainerInfo {
 		if pc.Created != nil {
 			out[i].Created = pc.Created.AsTime()
 		}
+		for _, pp := range pc.Ports {
+			out[i].Ports = append(out[i].Ports, cluster.PortMapping{
+				HostIP:        pp.HostIp,
+				HostPort:      uint16(min(pp.HostPort, 65535)),      //nolint:gosec // port values are always ≤65535
+				ContainerPort: uint16(min(pp.ContainerPort, 65535)), //nolint:gosec // port values are always ≤65535
+				Protocol:      pp.Protocol,
+			})
+		}
 	}
 	return out
 }
