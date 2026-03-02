@@ -132,10 +132,11 @@
                 <table id="container-table">
                     <colgroup>
                         <col style="width:40px">
-                        <col style="width:22%">
+                        <col style="width:20%">
                         <col>
                         <col style="width:120px">
                         <col style="width:100px">
+                        <col style="width:110px">
                         <col style="width:220px">
                     </colgroup>
                     <thead>
@@ -155,6 +156,7 @@
                                 </span>
                             </th>
                             <th>Status</th>
+                            <th>Ports</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -162,7 +164,7 @@
                         {{range .HostGroups}}
                         <tbody class="host-group" data-host="{{.ID}}" data-tab="{{.ID}}">
                             <tr class="host-header{{if not .Connected}} host-offline{{end}}" onclick="toggleHostGroup(this)">
-                                <td colspan="6">
+                                <td colspan="7">
                                     <div class="host-header-inner">
                                         <span class="expand-icon">&#9656;</span>
                                         <span class="host-status-dot {{if .Connected}}connected{{else}}disconnected{{end}}"></span>
@@ -174,7 +176,7 @@
                             </tr>
                             {{range .Stacks}}
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" data-stack="{{.Name}}" onclick="toggleStack(this)">
-                                <td colspan="6">
+                                <td colspan="7">
                                     <div class="stack-header-inner">
                                         <span class="stack-drag-handle" title="Drag to reorder">&#10495;</span>
                                         <input type="checkbox" class="stack-select" data-stack="{{.Name}}" title="Select all in {{.Name}}" onclick="event.stopPropagation()">
@@ -198,7 +200,7 @@
                         {{range .Stacks}}
                         <tbody class="stack-group stack-collapsed{{if gt .StoppedCount 0}} stack-has-stopped{{else if .HasPending}} stack-has-pending{{else}} stack-healthy{{end}}" data-stack="{{.Name}}" data-tab="local">
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
-                                <td colspan="6">
+                                <td colspan="7">
                                     <div class="stack-header-inner">
                                         <span class="stack-drag-handle" title="Drag to reorder">&#10495;</span>
                                         <input type="checkbox" class="stack-select" data-stack="{{.Name}}" title="Select all in {{.Name}}" onclick="event.stopPropagation()">
@@ -220,7 +222,7 @@
                     {{else}}
                         <tbody>
                             <tr>
-                                <td colspan="6">
+                                <td colspan="7">
                                     <div class="empty-state">
                                         <h3>No containers found</h3>
                                         <p>Sentinel is not monitoring any containers yet.</p>
@@ -232,7 +234,7 @@
 
                     {{if .SwarmServices}}
                     <tbody class="section-separator swarm-section" data-tab="swarm">
-                        <tr onclick="toggleSwarmSection(this)" style="cursor:pointer"><td colspan="6"><div class="section-divider">
+                        <tr onclick="toggleSwarmSection(this)" style="cursor:pointer"><td colspan="7"><div class="section-divider">
                             <span class="expand-icon">&#9662;</span>
                             <span class="section-title">Swarm Services</span>
                             <span class="section-summary">{{len .SwarmServices}} services</span>
@@ -289,6 +291,7 @@
                                 </span>
                                 {{end}}
                             </td>
+                            <td class="cell-ports"></td>
                             <td>
                                 <div class="btn-group">
                                 {{if and .HasUpdate (ne .Policy "pinned")}}
@@ -319,12 +322,13 @@
                                 {{end}}
                             </td>
                             <td></td>
+                            <td></td>
                         </tr>
                         {{end}}
                         {{else if eq .DesiredReplicas 0}}
                         <tr class="svc-task-row">
                             <td></td>
-                            <td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 &mdash; no active tasks</td>
+                            <td colspan="5" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 &mdash; no active tasks</td>
                             <td></td>
                         </tr>
                         {{end}}
@@ -441,8 +445,19 @@
                                         </span>
                                     {{end}}
                                 </td>
+                                <td class="cell-ports">
+                                    {{range .Ports}}
+                                        {{if .HostPort}}<span class="port-mapping" title="{{.HostIP}}:{{.HostPort}} → {{.ContainerPort}}/{{.Protocol}}">{{.HostPort}}:{{.ContainerPort}}</span>{{end}}
+                                    {{end}}
+                                </td>
                                 <td>
                                     <div class="btn-group">
+                                        {{if .WebURL}}
+                                        <a href="{{.WebURL}}" target="_blank" rel="noopener" class="btn btn-sm btn-open" onclick="event.stopPropagation()" title="Open in browser">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                            Open
+                                        </a>
+                                        {{end}}
                                         {{if .IsSelf}}
                                             {{if and .HasUpdate (eq .HostID "")}}
                                             <button class="btn btn-info"

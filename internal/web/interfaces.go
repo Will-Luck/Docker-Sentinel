@@ -427,6 +427,14 @@ type ContainerLister interface {
 	InspectContainer(ctx context.Context, id string) (ContainerInspect, error)
 }
 
+// PortMapping describes a single host ↔ container port binding.
+type PortMapping struct {
+	HostIP        string `json:"host_ip,omitempty"`
+	HostPort      uint16 `json:"host_port,omitempty"`
+	ContainerPort uint16 `json:"container_port"`
+	Protocol      string `json:"protocol"` // "tcp" or "udp"
+}
+
 // ContainerSummary is a minimal container info struct.
 type ContainerSummary struct {
 	ID     string
@@ -434,6 +442,7 @@ type ContainerSummary struct {
 	Image  string
 	Labels map[string]string
 	State  string
+	Ports  []PortMapping
 }
 
 // ContainerInspect has just what the dashboard needs.

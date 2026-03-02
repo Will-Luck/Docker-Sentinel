@@ -12,6 +12,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
+	"github.com/moby/moby/api/types/container"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
@@ -247,6 +248,7 @@ func (a *dockerAdapter) ListContainers(ctx context.Context) ([]web.ContainerSumm
 			Image:  c.Image,
 			Labels: c.Labels,
 			State:  string(c.State),
+			Ports:  convertPorts(c.Ports),
 		}
 	}
 	return result, nil
@@ -265,9 +267,31 @@ func (a *dockerAdapter) ListAllContainers(ctx context.Context) ([]web.ContainerS
 			Image:  c.Image,
 			Labels: c.Labels,
 			State:  string(c.State),
+			Ports:  convertPorts(c.Ports),
 		}
 	}
 	return result, nil
+}
+
+// convertPorts maps Docker container.PortSummary slices to web.PortMapping.
+func convertPorts(ports []container.PortSummary) []web.PortMapping {
+	if len(ports) == 0 {
+		return nil
+	}
+	result := make([]web.PortMapping, len(ports))
+	for i, p := range ports {
+		hostIP := ""
+		if p.IP.IsValid() {
+			hostIP = p.IP.String()
+		}
+		result[i] = web.PortMapping{
+			HostIP:        hostIP,
+			HostPort:      p.PublicPort,
+			ContainerPort: p.PrivatePort,
+			Protocol:      p.Type,
+		}
+	}
+	return result
 }
 
 func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.ContainerInspect, error) {

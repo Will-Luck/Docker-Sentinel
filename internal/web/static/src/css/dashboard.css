@@ -749,6 +749,38 @@ table.managing .td-checkbox {
 
 
 /* --------------------------------------------------------------------------
+   24b. Port Mapping Column
+   -------------------------------------------------------------------------- */
+
+.cell-ports {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--fg-secondary);
+    white-space: nowrap;
+}
+
+.port-mapping {
+    display: inline-block;
+    padding: 1px 6px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    margin: 1px 2px;
+    font-size: 0.7rem;
+    color: var(--fg-primary);
+}
+
+.btn-open {
+    gap: 4px;
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+.btn-open:hover {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+
+/* --------------------------------------------------------------------------
    25. Stack Row Animation
    -------------------------------------------------------------------------- */
 

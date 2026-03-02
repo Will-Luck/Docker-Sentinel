@@ -102,6 +102,8 @@ type containerView struct {
 	Replicas        string // e.g. "3/3" for services, empty for containers
 	HostID          string // cluster host ID (empty = local)
 	HostName        string // cluster host name (empty = local)
+	Ports           []PortMapping
+	WebURL          string // first usable http(s) URL derived from port mappings
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -230,6 +232,26 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 	return sv
 }
 
+// containerWebURL returns the first usable HTTP URL derived from port mappings.
+// It picks the first host-mapped TCP port and builds a URL from it.
+func containerWebURL(ports []PortMapping) string {
+	for _, p := range ports {
+		if p.HostPort == 0 || p.Protocol == "udp" {
+			continue
+		}
+		scheme := "http"
+		if p.ContainerPort == 443 || p.ContainerPort == 8443 {
+			scheme = "https"
+		}
+		host := p.HostIP
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = "localhost"
+		}
+		return fmt.Sprintf("%s://%s:%d", scheme, host, p.HostPort)
+	}
+	return ""
+}
+
 // handleDashboard renders the main container dashboard.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.signalScanReady()
@@ -322,6 +344,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			IsSelf:          c.Labels["sentinel.self"] == "true",
 			Stack:           c.Labels["com.docker.compose.project"],
 			Registry:        registry.RegistryHost(c.Image),
+			Ports:           c.Ports,
+			WebURL:          containerWebURL(c.Ports),
 		})
 	}
 
