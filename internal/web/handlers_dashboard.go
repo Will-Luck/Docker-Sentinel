@@ -102,6 +102,7 @@ type containerView struct {
 	Replicas        string // e.g. "3/3" for services, empty for containers
 	HostID          string // cluster host ID (empty = local)
 	HostName        string // cluster host name (empty = local)
+	Ports           []PortMapping
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -322,6 +323,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			IsSelf:          c.Labels["sentinel.self"] == "true",
 			Stack:           c.Labels["com.docker.compose.project"],
 			Registry:        registry.RegistryHost(c.Image),
+			Ports:           c.Ports,
 		})
 	}
 

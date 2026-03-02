@@ -43,9 +43,11 @@
         display: none;
     }
 
-    /* Hide low-priority table columns on tablet */
+    /* Hide low-priority table columns on tablet (Image + Ports) */
     #container-table th:nth-child(3),
-    #container-table td:nth-child(3) {
+    #container-table td:nth-child(3),
+    #container-table .th-ports,
+    #container-table .cell-ports {
         display: none;
     }
 
