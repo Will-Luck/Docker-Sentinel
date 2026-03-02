@@ -1081,12 +1081,19 @@
     var rows = document.querySelectorAll(".table-wrap tbody tr.container-row[data-queue-key]");
     if (!rows.length) return;
     _bulkInProgress = true;
-    var allBtns = document.querySelectorAll(".queue-table .btn, .queue-header .btn");
-    for (var i = 0; i < allBtns.length; i++) {
-      allBtns[i].disabled = true;
+    var headerBtns = document.querySelectorAll(".queue-header .btn");
+    for (var i = 0; i < headerBtns.length; i++) {
+      headerBtns[i].disabled = true;
     }
     if (triggerBtn) {
       triggerBtn.classList.add("loading");
+    }
+    for (var r = 0; r < rows.length; r++) {
+      var rowBtns = rows[r].querySelectorAll(".btn");
+      for (var b = 0; b < rowBtns.length; b++) {
+        rowBtns[b].classList.add("loading");
+        rowBtns[b].disabled = true;
+      }
     }
     var keys = [];
     for (var j = 0; j < rows.length; j++) {
@@ -1099,12 +1106,13 @@
         triggerBtn.classList.remove("loading");
         triggerBtn.disabled = false;
       }
+      for (var h = 0; h < headerBtns.length; h++) headerBtns[h].disabled = false;
       return;
     }
     var completed = 0;
     var failed = 0;
     var total = keys.length;
-    function onDone() {
+    function onAllDone() {
       if (completed + failed < total) return;
       _bulkInProgress = false;
       if (failed > 0) {
@@ -1112,27 +1120,52 @@
       } else {
         showToast("All " + completed + " updates " + actionLabel, "success");
       }
-      setTimeout(function() {
-        window.location.reload();
-      }, 400);
+      for (var h2 = 0; h2 < headerBtns.length; h2++) {
+        headerBtns[h2].disabled = false;
+        headerBtns[h2].classList.remove("loading");
+      }
+      if (triggerBtn) triggerBtn.classList.remove("loading");
     }
     for (var k = 0; k < keys.length; k++) {
       (function(queueKey, delay) {
         setTimeout(function() {
+          var row = document.querySelector(
+            'tr[data-queue-key="' + CSS.escape(queueKey) + '"]'
+          );
           fetch("/api/" + apiPath + "/" + encodeURIComponent(queueKey), {
             method: "POST",
             credentials: "same-origin"
-          }).then(function(r) {
-            return r.json();
+          }).then(function(r2) {
+            return r2.json();
           }).then(function(data) {
             if (data.error) {
               failed++;
+              if (row) {
+                var btns = row.querySelectorAll(".btn");
+                for (var i2 = 0; i2 < btns.length; i2++) {
+                  btns[i2].classList.remove("loading");
+                  btns[i2].disabled = false;
+                }
+              }
             } else {
               completed++;
+              if (row) {
+                var fakeBtn = row.querySelector(".btn");
+                removeQueueRow(fakeBtn || { closest: function() {
+                  return row;
+                } });
+              }
             }
           }).catch(function() {
             failed++;
-          }).then(onDone);
+            if (row) {
+              var btns = row.querySelectorAll(".btn");
+              for (var i2 = 0; i2 < btns.length; i2++) {
+                btns[i2].classList.remove("loading");
+                btns[i2].disabled = false;
+              }
+            }
+          }).then(onAllDone);
         }, delay);
       })(keys[k], k * 100);
     }
@@ -1675,6 +1708,7 @@
     if (_queueReloadTimer) clearTimeout(_queueReloadTimer);
     _queueReloadTimer = setTimeout(function() {
       _queueReloadTimer = null;
+      if (window._queueBulkInProgress && window._queueBulkInProgress()) return;
       window.location.reload();
     }, 2e3);
   }
@@ -1859,8 +1893,15 @@
         refreshDashboardStats();
         scheduleDigestBannerRefresh();
         updateQueueBadge();
-      } else if (document.querySelector(".queue-table") && !(window._queueBulkInProgress && window._queueBulkInProgress())) {
-        scheduleQueueReload();
+      } else if (document.querySelector(".queue-table")) {
+        var msg = data.message || "";
+        var isNew = msg === "added" || msg.indexOf("queued") !== -1;
+        var bulkActive = window._queueBulkInProgress && window._queueBulkInProgress();
+        if (isNew && !bulkActive) {
+          scheduleQueueReload();
+        } else {
+          updateQueueBadge();
+        }
       } else {
         updateQueueBadge();
       }
