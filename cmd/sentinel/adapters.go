@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
+
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
@@ -247,6 +249,7 @@ func (a *dockerAdapter) ListContainers(ctx context.Context) ([]web.ContainerSumm
 			Image:  c.Image,
 			Labels: c.Labels,
 			State:  string(c.State),
+			Ports:  convertPorts(c.Ports),
 		}
 	}
 	return result, nil
@@ -265,9 +268,31 @@ func (a *dockerAdapter) ListAllContainers(ctx context.Context) ([]web.ContainerS
 			Image:  c.Image,
 			Labels: c.Labels,
 			State:  string(c.State),
+			Ports:  convertPorts(c.Ports),
 		}
 	}
 	return result, nil
+}
+
+// convertPorts maps moby PortSummary to web PortMapping, keeping only
+// ports that have a host binding (PublicPort > 0).
+func convertPorts(ports []container.PortSummary) []web.PortMapping {
+	if len(ports) == 0 {
+		return nil
+	}
+	var result []web.PortMapping
+	for _, p := range ports {
+		if p.PublicPort == 0 {
+			continue // exposed but not mapped to host
+		}
+		result = append(result, web.PortMapping{
+			HostIP:        p.IP.String(),
+			HostPort:      p.PublicPort,
+			ContainerPort: p.PrivatePort,
+			Protocol:      p.Type,
+		})
+	}
+	return result
 }
 
 func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.ContainerInspect, error) {

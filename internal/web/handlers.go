@@ -607,6 +607,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			Maintenance:     maintenance,
 			IsSelf:          found.Labels["sentinel.self"] == "true",
 			Registry:        registry.RegistryHost(found.Image),
+			Ports:           found.Ports,
 		}
 		image = found.Image
 	}
