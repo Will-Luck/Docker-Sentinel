@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"sort"
 	"strconv"
@@ -59,6 +60,11 @@ type pageData struct {
 	AuthEnabled     bool
 	CSRFToken       string
 	ShowSecurityTab bool // true when auth off OR (auth on + admin)
+
+	// Dashboard column configuration.
+	ColumnVisible map[string]bool // which configurable columns are visible
+	ColCount      int             // total column count (for colspan)
+	ColumnConfig  template.JS     // JSON array of visible column names (for JS)
 }
 
 // tabStats holds per-tab container counts for the dashboard tab navigation.
@@ -447,6 +453,37 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		stacks = append(stacks, group)
 	}
 
+	// Load dashboard column visibility config.
+	columnVisible := map[string]bool{"image": true, "policy": true, "status": true, "ports": true}
+	if s.deps.SettingsStore != nil {
+		if colJSON, err := s.deps.SettingsStore.LoadSetting("dashboard_columns"); err == nil && colJSON != "" {
+			var cols []string
+			if err := json.Unmarshal([]byte(colJSON), &cols); err == nil {
+				// Reset all to false, then enable only those in the saved list.
+				columnVisible = map[string]bool{"image": false, "policy": false, "status": false, "ports": false}
+				for _, c := range cols {
+					columnVisible[c] = true
+				}
+			}
+		}
+	}
+	// Column count: checkbox + name + actions (3 fixed) + visible configurable cols.
+	colCount := 3
+	for _, v := range columnVisible {
+		if v {
+			colCount++
+		}
+	}
+
+	// JSON for the JS column config.
+	var visibleCols []string
+	for _, col := range []string{"image", "policy", "status", "ports"} {
+		if columnVisible[col] {
+			visibleCols = append(visibleCols, col)
+		}
+	}
+	colConfigJSON, _ := json.Marshal(visibleCols)
+
 	data := pageData{
 		Page:              "dashboard",
 		Containers:        views,
@@ -456,6 +493,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		RunningContainers: running,
 		PendingUpdates:    pending,
 		QueueCount:        len(s.deps.Queue.List()),
+		ColumnVisible:     columnVisible,
+		ColCount:          colCount,
+		ColumnConfig:      template.JS(colConfigJSON), //nolint:gosec // server-controlled JSON from json.Marshal
 	}
 
 	// Build host groups when cluster mode is active. Each host gets its own

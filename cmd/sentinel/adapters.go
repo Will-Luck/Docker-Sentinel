@@ -280,11 +280,21 @@ func convertPorts(ports []container.PortSummary) []web.PortMapping {
 	if len(ports) == 0 {
 		return nil
 	}
+	type portKey struct {
+		host, container uint16
+		proto           string
+	}
+	seen := make(map[portKey]bool)
 	var result []web.PortMapping
 	for _, p := range ports {
 		if p.PublicPort == 0 {
-			continue // exposed but not mapped to host
+			continue
 		}
+		k := portKey{p.PublicPort, p.PrivatePort, p.Type}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
 		result = append(result, web.PortMapping{
 			HostIP:        p.IP.String(),
 			HostPort:      p.PublicPort,

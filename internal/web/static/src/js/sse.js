@@ -78,7 +78,8 @@ function updateContainerRow(name, hostId) {
                 if (window.recomputeSelectionState) window.recomputeSelectionState();
             }
 
-            // Reapply badges and filters after DOM patch.
+            // Reapply column config, badges, and filters after DOM patch.
+            if (window.applyColumnConfig) window.applyColumnConfig();
             applyRegistryBadges();
             if (window.applyFiltersAndSort) window.applyFiltersAndSort();
             if (window.recalcTabStats) window.recalcTabStats();

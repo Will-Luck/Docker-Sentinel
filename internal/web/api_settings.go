@@ -1213,6 +1213,39 @@ func (s *Server) apiGetOIDCSettings(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// apiSetDashboardColumns saves the user's preferred dashboard column visibility and order.
+func (s *Server) apiSetDashboardColumns(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Columns []string `json:"columns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	allowed := map[string]bool{"image": true, "policy": true, "status": true, "ports": true}
+	for _, col := range body.Columns {
+		if !allowed[col] {
+			writeError(w, http.StatusBadRequest, "unknown column: "+col)
+			return
+		}
+	}
+
+	data, err := json.Marshal(body.Columns)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode columns")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("dashboard_columns", string(data)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save column config")
+		return
+	}
+
+	s.logEvent(r, "settings-change", "", "Dashboard columns updated")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // apiSaveOIDCSettings saves OIDC configuration and reinitialises the provider.
 func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
 	if s.deps.SettingsStore == nil {

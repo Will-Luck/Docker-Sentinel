@@ -130,6 +130,7 @@ var validSettingKeys = map[string]bool{
 	// UI state.
 	"stack_order":             true,
 	"digest_banner_dismissed": true,
+	"dashboard_columns":       true,
 
 	// General (restart-required).
 	"web_port":   true,

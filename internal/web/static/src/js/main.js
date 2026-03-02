@@ -14,6 +14,7 @@ import {
 } from "./utils.js";
 
 import {
+    applyColumnConfig,
     initTheme,
     applyTheme,
     initAccordionPersistence,
@@ -129,7 +130,9 @@ import {
     copyWebhookSecret,
     saveMaintenanceWindow,
     exportConfig,
-    importConfig
+    importConfig,
+    loadDashboardColumns,
+    saveDashboardColumns
 } from "./settings-core.js";
 
 import {
@@ -228,6 +231,7 @@ window.onRowClick = onRowClick;
 window.applyBulkPolicy = applyBulkPolicy;
 window.clearSelection = clearSelection;
 window.applyTheme = applyTheme;
+window.applyColumnConfig = applyColumnConfig;
 window.applyFiltersAndSort = applyFiltersAndSort;
 window.recalcTabStats = recalcTabStats;
 window.recomputeSelectionState = recomputeSelectionState;
@@ -305,6 +309,8 @@ window.copyWebhookSecret = copyWebhookSecret;
 window.saveMaintenanceWindow = saveMaintenanceWindow;
 window.exportConfig = exportConfig;
 window.importConfig = importConfig;
+window.saveDashboardColumns = saveDashboardColumns;
+window.loadDashboardColumns = loadDashboardColumns;
 
 // Settings cluster
 window.onClusterToggle = onClusterToggle;
@@ -370,6 +376,7 @@ document.addEventListener("DOMContentLoaded", function () {
     loadFooterVersion();
     loadDigestBanner();
     initFilters();
+    applyColumnConfig();
     initDashboardTabs();
     refreshLastScan();
 

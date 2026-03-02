@@ -1755,6 +1755,18 @@ table.managing .td-checkbox {
 .cell-image-size {
   white-space: nowrap;
 }
+#container-table.hide-col-image .col-image {
+  display: none;
+}
+#container-table.hide-col-policy .col-policy {
+  display: none;
+}
+#container-table.hide-col-status .col-status {
+  display: none;
+}
+#container-table.hide-col-ports .col-ports {
+  display: none;
+}
 .filter-divider {
   display: inline-block;
   width: 1px;

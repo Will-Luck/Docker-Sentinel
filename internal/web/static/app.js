@@ -196,6 +196,27 @@
   }
 
   // internal/web/static/src/js/dashboard.js
+  function applyColumnConfig() {
+    var table = document.getElementById("container-table");
+    if (!table) return;
+    var raw = table.getAttribute("data-column-config");
+    if (!raw) return;
+    try {
+      var cols = JSON.parse(raw);
+      var colSet = {};
+      for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
+      var allCols = ["image", "policy", "status", "ports"];
+      for (var j = 0; j < allCols.length; j++) {
+        var cls = "hide-col-" + allCols[j];
+        if (colSet[allCols[j]]) {
+          table.classList.remove(cls);
+        } else {
+          table.classList.add(cls);
+        }
+      }
+    } catch (e) {
+    }
+  }
   function initTheme() {
     var saved = localStorage.getItem("sentinel-theme") || "auto";
     applyTheme(saved);
@@ -1731,6 +1752,7 @@
         }
         if (window.recomputeSelectionState) window.recomputeSelectionState();
       }
+      if (window.applyColumnConfig) window.applyColumnConfig();
       applyRegistryBadges();
       if (window.applyFiltersAndSort) window.applyFiltersAndSort();
       if (window.recalcTabStats) window.recalcTabStats();
@@ -2421,6 +2443,7 @@
     if (window.loadAboutInfo) window.loadAboutInfo();
     if (window.loadClusterSettings) window.loadClusterSettings();
     loadWebhookSettings();
+    loadDashboardColumns();
   }
   function clearAccordionState() {
     var keys = [];
@@ -3137,6 +3160,59 @@
       });
     };
     reader.readAsText(file);
+  }
+  function loadDashboardColumns() {
+    fetch("/api/settings").then(function(r) {
+      return r.json();
+    }).then(function(settings) {
+      var raw = settings["dashboard_columns"];
+      if (!raw) return;
+      try {
+        var cols = JSON.parse(raw);
+        var allCols = ["image", "policy", "status", "ports"];
+        var colSet = {};
+        for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
+        var checkboxes = document.querySelectorAll("#dashboard-columns-list input[data-column]");
+        for (var j = 0; j < checkboxes.length; j++) {
+          checkboxes[j].checked = !!colSet[checkboxes[j].getAttribute("data-column")];
+        }
+        updateDashboardColumnsPreview(cols);
+      } catch (e) {
+      }
+    });
+  }
+  function saveDashboardColumns() {
+    var checkboxes = document.querySelectorAll("#dashboard-columns-list input[data-column]");
+    var cols = [];
+    for (var i = 0; i < checkboxes.length; i++) {
+      if (checkboxes[i].checked) {
+        cols.push(checkboxes[i].getAttribute("data-column"));
+      }
+    }
+    fetch("/api/settings/dashboard-columns", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ columns: cols })
+    }).then(function(r) {
+      if (r.ok) {
+        showToast("Dashboard columns saved", "success");
+        updateDashboardColumnsPreview(cols);
+      } else {
+        showToast("Failed to save columns", "error");
+      }
+    });
+  }
+  function updateDashboardColumnsPreview(cols) {
+    var preview = document.getElementById("dashboard-columns-preview");
+    if (!preview) return;
+    var allCols = ["image", "policy", "status", "ports"];
+    if (cols.length === allCols.length) {
+      preview.textContent = "All visible";
+    } else if (cols.length === 0) {
+      preview.textContent = "Name + Actions only";
+    } else {
+      preview.textContent = cols.length + " of " + allCols.length + " columns";
+    }
   }
 
   // internal/web/static/src/js/settings-cluster.js
@@ -5192,6 +5268,7 @@
   window.applyBulkPolicy = applyBulkPolicy;
   window.clearSelection = clearSelection;
   window.applyTheme = applyTheme;
+  window.applyColumnConfig = applyColumnConfig;
   window.applyFiltersAndSort = applyFiltersAndSort;
   window.recalcTabStats = recalcTabStats;
   window.recomputeSelectionState = recomputeSelectionState;
@@ -5261,6 +5338,8 @@
   window.saveMaintenanceWindow = saveMaintenanceWindow;
   window.exportConfig = exportConfig;
   window.importConfig = importConfig;
+  window.saveDashboardColumns = saveDashboardColumns;
+  window.loadDashboardColumns = loadDashboardColumns;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;
   window.loadClusterSettings = loadClusterSettings;
@@ -5308,6 +5387,7 @@
     loadFooterVersion();
     loadDigestBanner();
     initFilters();
+    applyColumnConfig();
     initDashboardTabs();
     refreshLastScan();
     var stackPref = localStorage.getItem("sentinel-stacks") || "collapsed";

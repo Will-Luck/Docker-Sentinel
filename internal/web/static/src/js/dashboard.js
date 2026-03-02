@@ -7,6 +7,35 @@
 import { showToast, escapeHTML } from "./utils.js";
 
 /* ------------------------------------------------------------
+   0. Column Visibility
+   ------------------------------------------------------------ */
+
+// Apply column visibility CSS classes to the container table.
+// Called on init and after SSE row updates to ensure dynamically-added
+// rows respect the column configuration.
+function applyColumnConfig() {
+    var table = document.getElementById("container-table");
+    if (!table) return;
+    var raw = table.getAttribute("data-column-config");
+    if (!raw) return;
+    try {
+        var cols = JSON.parse(raw);
+        var colSet = {};
+        for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
+
+        var allCols = ["image", "policy", "status", "ports"];
+        for (var j = 0; j < allCols.length; j++) {
+            var cls = "hide-col-" + allCols[j];
+            if (colSet[allCols[j]]) {
+                table.classList.remove(cls);
+            } else {
+                table.classList.add(cls);
+            }
+        }
+    } catch(e) { /* ignore */ }
+}
+
+/* ------------------------------------------------------------
    1. Theme System
    ------------------------------------------------------------ */
 
@@ -1000,6 +1029,7 @@ async function fetchContainerLogs(name, hostId) {
 }
 
 export {
+    applyColumnConfig,
     initTheme,
     applyTheme,
     initAccordionPersistence,
