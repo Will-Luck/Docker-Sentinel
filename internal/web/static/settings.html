@@ -174,6 +174,16 @@
                             </div>
                             <div class="setting-row">
                                 <div class="setting-info">
+                                    <div class="setting-label">Version scope</div>
+                                    <div class="setting-desc">How tag precision determines which updates are shown. Per-container override: <code>sentinel.semver</code> label</div>
+                                </div>
+                                <select id="version-scope" class="setting-select" onchange="setVersionScope(this.value)">
+                                    <option value="default">Relaxed &mdash; 1.25&rarr;minor+patch, 1.25.0&rarr;patch</option>
+                                    <option value="strict">Strict &mdash; 1&rarr;minor+patch, 1.25&rarr;patch, 1.25.0&rarr;none</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
                                     <div class="setting-label">Auto-update :latest containers</div>
                                     <div class="setting-desc">Containers using the :latest tag are set to auto-update, regardless of the default policy above</div>
                                 </div>
