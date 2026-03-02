@@ -919,11 +919,21 @@ func containerInfoFromSummary(c *container.Summary) *proto.ContainerInfo {
 		info.Labels = c.Labels
 	}
 
-	// Extract host-bound port mappings (matching local convertPorts pattern).
+	// Extract host-bound port mappings, deduplicating IPv4/IPv6 bindings.
+	type portKey struct {
+		host, container uint16
+		proto           string
+	}
+	seen := make(map[portKey]bool)
 	for _, p := range c.Ports {
 		if p.PublicPort == 0 {
 			continue
 		}
+		k := portKey{p.PublicPort, p.PrivatePort, p.Type}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
 		info.Ports = append(info.Ports, &proto.PortMapping{
 			HostIp:        p.IP.String(),
 			HostPort:      uint32(p.PublicPort),

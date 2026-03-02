@@ -979,6 +979,16 @@ table.managing .td-checkbox {
 .cell-image-id { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell-image-size { white-space: nowrap; }
 
+/* --------------------------------------------------------------------------
+   Configurable column hiding
+   -------------------------------------------------------------------------- */
+
+#container-table.hide-col-image .col-image { display: none; }
+#container-table.hide-col-policy .col-policy { display: none; }
+#container-table.hide-col-status .col-status { display: none; }
+#container-table.hide-col-ports .col-ports { display: none; }
+
+
 .filter-divider {
     display: inline-block;
     width: 1px;

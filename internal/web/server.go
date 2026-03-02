@@ -398,6 +398,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/latest-auto-update", perm(auth.PermSettingsModify, s.apiSetLatestAutoUpdate))
 	s.mux.Handle("POST /api/settings/filters", perm(auth.PermSettingsModify, s.apiSetFilters))
 	s.mux.Handle("POST /api/settings/stack-order", perm(auth.PermSettingsModify, s.apiSaveStackOrder))
+	s.mux.Handle("POST /api/settings/dashboard-columns", perm(auth.PermSettingsModify, s.apiSetDashboardColumns))
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
 	s.mux.Handle("PUT /api/settings/registries", perm(auth.PermSettingsModify, s.apiSaveRegistryCredentials))

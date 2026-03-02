@@ -943,6 +943,35 @@
                         </div>
                     </div>
                 </details>
+
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Dashboard Columns</h2>
+                        <span class="accordion-preview" id="dashboard-columns-preview">All visible</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="setting-description">Choose which columns appear on the main dashboard table. Name and Actions are always shown.</p>
+                        <div class="settings-rows" id="dashboard-columns-list">
+                            <label class="setting-row" style="cursor:pointer">
+                                <span class="setting-label">Image</span>
+                                <input type="checkbox" class="toggle-switch" data-column="image" checked onchange="saveDashboardColumns()">
+                            </label>
+                            <label class="setting-row" style="cursor:pointer">
+                                <span class="setting-label">Policy</span>
+                                <input type="checkbox" class="toggle-switch" data-column="policy" checked onchange="saveDashboardColumns()">
+                            </label>
+                            <label class="setting-row" style="cursor:pointer">
+                                <span class="setting-label">Status</span>
+                                <input type="checkbox" class="toggle-switch" data-column="status" checked onchange="saveDashboardColumns()">
+                            </label>
+                            <label class="setting-row" style="cursor:pointer">
+                                <span class="setting-label">Ports</span>
+                                <input type="checkbox" class="toggle-switch" data-column="ports" checked onchange="saveDashboardColumns()">
+                            </label>
+                        </div>
+                    </div>
+                </details>
             </div>
         </div>
 

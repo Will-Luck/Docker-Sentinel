@@ -129,22 +129,22 @@
                 </div>
             </div>
             <div class="table-wrap">
-                <table id="container-table">
+                <table id="container-table" data-column-config='{{.ColumnConfig}}'>
                     <colgroup>
                         <col style="width:40px">
                         <col style="width:22%">
-                        <col>
-                        <col style="width:120px">
-                        <col style="width:100px">
-                        <col style="width:120px">
+                        {{if index .ColumnVisible "image"}}<col class="col-image">{{end}}
+                        {{if index .ColumnVisible "policy"}}<col class="col-policy" style="width:120px">{{end}}
+                        {{if index .ColumnVisible "status"}}<col class="col-status" style="width:100px">{{end}}
+                        {{if index .ColumnVisible "ports"}}<col class="col-ports" style="width:120px">{{end}}
                         <col style="width:220px">
                     </colgroup>
                     <thead>
                         <tr>
                             <th class="th-checkbox"><input type="checkbox" id="select-all" title="Select all"><label for="select-all" class="sr-only">Select all containers</label></th>
                             <th>Name</th>
-                            <th>Image</th>
-                            <th class="policy-header">
+                            {{if index .ColumnVisible "image"}}<th class="col-image">Image</th>{{end}}
+                            {{if index .ColumnVisible "policy"}}<th class="col-policy policy-header">
                                 Policy
                                 <span class="policy-help" tabindex="0" role="button" aria-label="Policy information">
                                     <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><text x="8" y="12" text-anchor="middle" font-size="11" font-weight="700" font-family="system-ui">i</text></svg>
@@ -154,9 +154,9 @@
                                         <strong>pinned</strong> — never updated
                                     </span>
                                 </span>
-                            </th>
-                            <th>Status</th>
-                            <th class="th-ports">Ports</th>
+                            </th>{{end}}
+                            {{if index .ColumnVisible "status"}}<th class="col-status">Status</th>{{end}}
+                            {{if index .ColumnVisible "ports"}}<th class="col-ports th-ports">Ports</th>{{end}}
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -164,7 +164,7 @@
                         {{range .HostGroups}}
                         <tbody class="host-group" data-host="{{.ID}}" data-tab="{{.ID}}">
                             <tr class="host-header{{if not .Connected}} host-offline{{end}}" onclick="toggleHostGroup(this)">
-                                <td colspan="7">
+                                <td colspan="{{$.ColCount}}">
                                     <div class="host-header-inner">
                                         <span class="expand-icon">&#9656;</span>
                                         <span class="host-status-dot {{if .Connected}}connected{{else}}disconnected{{end}}"></span>
@@ -176,7 +176,7 @@
                             </tr>
                             {{range .Stacks}}
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" data-stack="{{.Name}}" onclick="toggleStack(this)">
-                                <td colspan="7">
+                                <td colspan="{{$.ColCount}}">
                                     <div class="stack-header-inner">
                                         <span class="stack-drag-handle" title="Drag to reorder">&#10495;</span>
                                         <input type="checkbox" class="stack-select" data-stack="{{.Name}}" title="Select all in {{.Name}}" onclick="event.stopPropagation()">
@@ -200,7 +200,7 @@
                         {{range .Stacks}}
                         <tbody class="stack-group stack-collapsed{{if gt .StoppedCount 0}} stack-has-stopped{{else if .HasPending}} stack-has-pending{{else}} stack-healthy{{end}}" data-stack="{{.Name}}" data-tab="local">
                             <tr class="stack-header{{if .HasPending}} stack-pending{{end}}" onclick="toggleStack(this)">
-                                <td colspan="7">
+                                <td colspan="{{$.ColCount}}">
                                     <div class="stack-header-inner">
                                         <span class="stack-drag-handle" title="Drag to reorder">&#10495;</span>
                                         <input type="checkbox" class="stack-select" data-stack="{{.Name}}" title="Select all in {{.Name}}" onclick="event.stopPropagation()">
@@ -222,7 +222,7 @@
                     {{else}}
                         <tbody>
                             <tr>
-                                <td colspan="7">
+                                <td colspan="{{$.ColCount}}">
                                     <div class="empty-state">
                                         <h3>No containers found</h3>
                                         <p>Sentinel is not monitoring any containers yet.</p>
@@ -234,7 +234,7 @@
 
                     {{if .SwarmServices}}
                     <tbody class="section-separator swarm-section" data-tab="swarm">
-                        <tr onclick="toggleSwarmSection(this)" style="cursor:pointer"><td colspan="7"><div class="section-divider">
+                        <tr onclick="toggleSwarmSection(this)" style="cursor:pointer"><td colspan="{{$.ColCount}}"><div class="section-divider">
                             <span class="expand-icon">&#9662;</span>
                             <span class="section-title">Swarm Services</span>
                             <span class="section-summary">{{len .SwarmServices}} services</span>
@@ -251,7 +251,7 @@
                                 <span class="stack-chevron">&#9656;</span>
                                 <a href="/service/{{.Name}}" class="svc-name" onclick="event.stopPropagation()">{{.Name}}</a>
                             </td>
-                            <td class="cell-image mono" title="{{.Image}}">
+                            <td class="col-image cell-image mono" title="{{.Image}}">
                                 {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}{{$rv := .ResolvedVersion}}
                                 {{if .NewestVersion}}
                                     <span class="version-current">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</span>
@@ -269,7 +269,7 @@
                                     {{end}}
                                 {{end}}
                             </td>
-                            <td>
+                            <td class="col-policy">
                                 <select class="policy-select policy-{{.Policy}}"
                                         onchange="this.className='policy-select policy-'+this.value; changeSvcPolicy('{{.Name}}', this.value)"
                                         data-current="{{.Policy}}">
@@ -278,7 +278,7 @@
                                     <option value="pinned"{{if eq .Policy "pinned"}} selected{{end}}>pinned</option>
                                 </select>
                             </td>
-                            <td>
+                            <td class="col-status">
                                 {{if gt .DesiredReplicas 0}}
                                 <span class="status-badge-wrap" data-service="{{.Name}}" data-prev-replicas="{{.DesiredReplicas}}">
                                     <span class="badge svc-replicas {{if eq .RunningReplicas .DesiredReplicas}}svc-replicas-healthy{{else if gt .RunningReplicas 0}}svc-replicas-degraded{{else}}svc-replicas-down{{end}} badge-default">{{.Replicas}}</span>
@@ -309,9 +309,9 @@
                         <tr class="svc-task-row">
                             <td></td>
                             <td class="svc-node">{{.NodeName}}{{if .NodeAddr}} <span class="svc-node-addr">({{.NodeAddr}})</span>{{end}}</td>
-                            <td class="mono">{{.Tag}}</td>
-                            <td></td>
-                            <td>
+                            <td class="col-image mono">{{.Tag}}</td>
+                            <td class="col-policy"></td>
+                            <td class="col-status">
                                 {{if eq .State "running"}}
                                     <span class="badge badge-success">running</span>
                                 {{else if eq .State "preparing"}}
@@ -377,7 +377,7 @@
                                     <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="container-link">{{.Name}}</a>
                                     {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
                                 </td>
-                                <td class="cell-image mono" title="{{.Image}}">
+                                <td class="col-image cell-image mono" title="{{.Image}}">
                                     {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}{{$rv := .ResolvedVersion}}
                                     {{if .NewestVersion}}
                                         <span class="version-current">{{$tag}}{{if $rv}} <span class="resolved-ver">({{$rv}})</span>{{end}}</span>
@@ -402,7 +402,7 @@
                                         {{end}}
                                     {{end}}
                                 </td>
-                                <td>
+                                <td class="col-policy">
                                     {{if .IsSelf}}
                                         <span class="policy-badge-self" title="Self-protected">
                                             <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;margin-right:2px"><path d="M8 1a4 4 0 00-4 4v3H3a1 1 0 00-1 1v5a1 1 0 001 1h10a1 1 0 001-1V9a1 1 0 00-1-1h-1V5a4 4 0 00-4-4zm-2 4a2 2 0 114 0v3H6V5z"/></svg>
@@ -418,7 +418,7 @@
                                         </select>
                                     {{end}}
                                 </td>
-                                <td>
+                                <td class="col-status">
                                     {{if .Maintenance}}
                                         <span class="badge badge-warning">Updating</span>
                                     {{else if and .HasUpdate (not .IsSelf)}}
@@ -443,7 +443,7 @@
                                         </span>
                                     {{end}}
                                 </td>
-                                <td class="cell-ports">{{range .Ports}}<span class="port-chip">{{.HostPort}}:{{.ContainerPort}}</span>{{end}}</td>
+                                <td class="col-ports cell-ports">{{range .Ports}}<span class="port-chip">{{.HostPort}}:{{.ContainerPort}}</span>{{end}}</td>
                                 <td>
                                     <div class="btn-group">
                                         {{if .IsSelf}}
