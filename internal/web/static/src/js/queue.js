@@ -124,9 +124,7 @@ function rejectUpdate(key, event) {
     );
 }
 
-// Bulk queue actions — fire staggered API calls with per-row feedback.
-// Each row fades out independently on success; failed rows re-enable for retry.
-// No page reload.
+// Staggered per-row API calls — rows fade out on success, re-enable on failure.
 var _bulkInProgress = false;
 
 function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
@@ -135,16 +133,10 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
 
     _bulkInProgress = true;
 
-    // Disable header buttons to prevent double-clicks.
     var headerBtns = document.querySelectorAll(".queue-header .btn");
-    for (var i = 0; i < headerBtns.length; i++) {
-        headerBtns[i].disabled = true;
-    }
-    if (triggerBtn) {
-        triggerBtn.classList.add("loading");
-    }
+    for (var i = 0; i < headerBtns.length; i++) headerBtns[i].disabled = true;
+    if (triggerBtn) triggerBtn.classList.add("loading");
 
-    // Mark every row's buttons as loading immediately.
     for (var r = 0; r < rows.length; r++) {
         var rowBtns = rows[r].querySelectorAll(".btn");
         for (var b = 0; b < rowBtns.length; b++) {
@@ -177,7 +169,6 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
         } else {
             showToast("All " + completed + " updates " + actionLabel, "success");
         }
-        // Re-enable header buttons (some rows may remain if they failed).
         for (var h = 0; h < headerBtns.length; h++) {
             headerBtns[h].disabled = false;
             headerBtns[h].classList.remove("loading");
@@ -188,8 +179,7 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
     for (var k = 0; k < keys.length; k++) {
         (function (queueKey, delay) {
             setTimeout(function () {
-                // Find the row by its data attribute. CSS.escape handles "::" in
-                // remote container keys (e.g. "hostid::container").
+                // CSS.escape handles "::" in remote keys (e.g. "hostid::container").
                 var row = document.querySelector(
                     'tr[data-queue-key="' + CSS.escape(queueKey) + '"]'
                 );
@@ -202,7 +192,6 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
                 .then(function (data) {
                     if (data.error) {
                         failed++;
-                        // Re-enable this row so the user can retry.
                         if (row) {
                             var btns = row.querySelectorAll(".btn");
                             for (var i = 0; i < btns.length; i++) {
@@ -212,7 +201,6 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
                         }
                     } else {
                         completed++;
-                        // Fade out and remove this row.
                         if (row) {
                             var fakeBtn = row.querySelector(".btn");
                             removeQueueRow(fakeBtn || { closest: function() { return row; } });
