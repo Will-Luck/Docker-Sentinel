@@ -124,8 +124,9 @@ function rejectUpdate(key, event) {
     );
 }
 
-// Bulk queue actions — fire staggered API calls, disable all buttons, show a
-// single summary toast, and reload the page when done.
+// Bulk queue actions — fire staggered API calls with per-row feedback.
+// Each row fades out independently on success; failed rows re-enable for retry.
+// No page reload.
 var _bulkInProgress = false;
 
 function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
@@ -134,13 +135,22 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
 
     _bulkInProgress = true;
 
-    // Disable every button on the page to prevent double-clicks.
-    var allBtns = document.querySelectorAll(".queue-table .btn, .queue-header .btn");
-    for (var i = 0; i < allBtns.length; i++) {
-        allBtns[i].disabled = true;
+    // Disable header buttons to prevent double-clicks.
+    var headerBtns = document.querySelectorAll(".queue-header .btn");
+    for (var i = 0; i < headerBtns.length; i++) {
+        headerBtns[i].disabled = true;
     }
     if (triggerBtn) {
         triggerBtn.classList.add("loading");
+    }
+
+    // Mark every row's buttons as loading immediately.
+    for (var r = 0; r < rows.length; r++) {
+        var rowBtns = rows[r].querySelectorAll(".btn");
+        for (var b = 0; b < rowBtns.length; b++) {
+            rowBtns[b].classList.add("loading");
+            rowBtns[b].disabled = true;
+        }
     }
 
     var keys = [];
@@ -151,6 +161,7 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
     if (!keys.length) {
         _bulkInProgress = false;
         if (triggerBtn) { triggerBtn.classList.remove("loading"); triggerBtn.disabled = false; }
+        for (var h = 0; h < headerBtns.length; h++) headerBtns[h].disabled = false;
         return;
     }
 
@@ -158,7 +169,7 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
     var failed = 0;
     var total = keys.length;
 
-    function onDone() {
+    function onAllDone() {
         if (completed + failed < total) return;
         _bulkInProgress = false;
         if (failed > 0) {
@@ -166,22 +177,59 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
         } else {
             showToast("All " + completed + " updates " + actionLabel, "success");
         }
-        setTimeout(function () { window.location.reload(); }, 400);
+        // Re-enable header buttons (some rows may remain if they failed).
+        for (var h = 0; h < headerBtns.length; h++) {
+            headerBtns[h].disabled = false;
+            headerBtns[h].classList.remove("loading");
+        }
+        if (triggerBtn) triggerBtn.classList.remove("loading");
     }
 
     for (var k = 0; k < keys.length; k++) {
         (function (queueKey, delay) {
             setTimeout(function () {
+                // Find the row by its data attribute. CSS.escape handles "::" in
+                // remote container keys (e.g. "hostid::container").
+                var row = document.querySelector(
+                    'tr[data-queue-key="' + CSS.escape(queueKey) + '"]'
+                );
+
                 fetch("/api/" + apiPath + "/" + encodeURIComponent(queueKey), {
                     method: "POST",
                     credentials: "same-origin"
                 })
                 .then(function (r) { return r.json(); })
                 .then(function (data) {
-                    if (data.error) { failed++; } else { completed++; }
+                    if (data.error) {
+                        failed++;
+                        // Re-enable this row so the user can retry.
+                        if (row) {
+                            var btns = row.querySelectorAll(".btn");
+                            for (var i = 0; i < btns.length; i++) {
+                                btns[i].classList.remove("loading");
+                                btns[i].disabled = false;
+                            }
+                        }
+                    } else {
+                        completed++;
+                        // Fade out and remove this row.
+                        if (row) {
+                            var fakeBtn = row.querySelector(".btn");
+                            removeQueueRow(fakeBtn || { closest: function() { return row; } });
+                        }
+                    }
                 })
-                .catch(function () { failed++; })
-                .then(onDone);
+                .catch(function () {
+                    failed++;
+                    if (row) {
+                        var btns = row.querySelectorAll(".btn");
+                        for (var i = 0; i < btns.length; i++) {
+                            btns[i].classList.remove("loading");
+                            btns[i].disabled = false;
+                        }
+                    }
+                })
+                .then(onAllDone);
             }, delay);
         })(keys[k], k * 100);
     }
