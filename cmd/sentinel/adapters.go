@@ -377,6 +377,19 @@ func (a *registryCheckerAdapter) CheckForUpdate(ctx context.Context, imageRef st
 	return result.UpdateAvailable, result.NewerVersions, result.ResolvedCurrentVersion, result.ResolvedTargetVersion, nil
 }
 
+// versionScopeAdapter bridges registry.Checker to web.VersionScopeUpdater.
+type versionScopeAdapter struct {
+	checker *registry.Checker
+}
+
+func (a *versionScopeAdapter) SetDefaultScope(scope string) {
+	if scope == "strict" {
+		a.checker.SetDefaultScope(docker.ScopeStrict)
+	} else {
+		a.checker.SetDefaultScope(docker.ScopeDefault)
+	}
+}
+
 // policyStoreAdapter bridges store.Store to web.PolicyStore.
 type policyStoreAdapter struct{ s *store.Store }
 

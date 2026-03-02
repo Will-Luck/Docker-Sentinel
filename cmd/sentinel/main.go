@@ -401,6 +401,9 @@ func main() {
 	checker.SetCredentialStore(db)
 	checker.SetRateLimitTracker(rateTracker)
 	checker.SetDigestEquivalenceChecker(db)
+	if vs := db.VersionScope(); vs != "default" {
+		checker.SetDefaultScope(docker.ScopeStrict)
+	}
 	bus := events.New()
 	queue := engine.NewQueue(db, bus, log.Logger)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)
@@ -550,6 +553,7 @@ func main() {
 			Registry:            &registryAdapter{log: log},
 			TagLister:           &tagListerAdapter{log: log},
 			RegistryChecker:     &registryCheckerAdapter{checker: checker},
+			VersionScope:        &versionScopeAdapter{checker: checker},
 			Policy:              &policyStoreAdapter{db},
 			EventLog:            &eventLogAdapter{db},
 			Scheduler:           scheduler,

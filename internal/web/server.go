@@ -59,10 +59,11 @@ type Dependencies struct {
 	AboutStore          AboutStore
 	HookStore           HookStore
 	ReleaseSources      ReleaseSourceStore
-	ImageManager        ImageManager       // nil when not available
-	Swarm               SwarmProvider      // nil when not in Swarm mode
-	Cluster             *ClusterController // thread-safe proxy; always non-nil, use .Enabled() to check
-	Portainer           PortainerProvider  // nil when Portainer not configured
+	ImageManager        ImageManager        // nil when not available
+	Swarm               SwarmProvider       // nil when not in Swarm mode
+	Cluster             *ClusterController  // thread-safe proxy; always non-nil, use .Enabled() to check
+	Portainer           PortainerProvider   // nil when Portainer not configured
+	VersionScope        VersionScopeUpdater // nil-safe: updates checker's default scope at runtime
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
@@ -407,6 +408,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/hooks-write-labels", perm(auth.PermSettingsModify, s.apiSetHooksWriteLabels))
 	s.mux.Handle("POST /api/settings/dependency-aware", perm(auth.PermSettingsModify, s.apiSetDependencyAware))
 	s.mux.Handle("POST /api/settings/rollback-policy", perm(auth.PermSettingsModify, s.apiSetRollbackPolicy))
+	s.mux.Handle("POST /api/settings/version-scope", perm(auth.PermSettingsModify, s.apiSetVersionScope))
 	s.mux.Handle("POST /api/settings/dry-run", perm(auth.PermSettingsModify, s.apiSetDryRun))
 	s.mux.Handle("POST /api/settings/pull-only", perm(auth.PermSettingsModify, s.apiSetPullOnly))
 	s.mux.Handle("POST /api/settings/update-delay", perm(auth.PermSettingsModify, s.apiSetUpdateDelay))

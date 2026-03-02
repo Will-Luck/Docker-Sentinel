@@ -62,6 +62,13 @@ function initSettingsPage() {
                 selectOptionByValue(policySelect, policy);
             }
 
+            // Version scope.
+            var scopeSelect = document.getElementById("version-scope");
+            if (scopeSelect) {
+                var scope = settings["version_scope"] || "strict";
+                selectOptionByValue(scopeSelect, scope);
+            }
+
             // Rollback policy.
             var rbSelect = document.getElementById("rollback-policy");
             if (rbSelect) {
@@ -483,6 +490,29 @@ function setDefaultPolicy(value) {
         })
         .catch(function() {
             showToast("Network error -- could not update default policy", "error");
+        });
+}
+
+function setVersionScope(value) {
+    fetch("/api/settings/version-scope", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: value })
+    })
+        .then(function(resp) {
+            return resp.json().then(function(data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function(result) {
+            if (result.ok) {
+                showToast(result.data.message || "Version scope updated", "success");
+            } else {
+                showToast(result.data.error || "Failed to update version scope", "error");
+            }
+        })
+        .catch(function() {
+            showToast("Network error -- could not update version scope", "error");
         });
 }
 
@@ -1068,6 +1098,7 @@ export {
     onCustomUnitChange,
     applyCustomPollInterval,
     setDefaultPolicy,
+    setVersionScope,
     setRollbackPolicy,
     onGracePeriodChange,
     applyCustomGracePeriod,

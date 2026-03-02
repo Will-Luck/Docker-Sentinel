@@ -459,6 +459,54 @@ func (s *Server) apiSetRollbackPolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
 }
 
+// apiSetVersionScope sets the global version scope at runtime.
+// Scope controls how tag precision determines which updates are shown.
+func (s *Server) apiSetVersionScope(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Scope string `json:"scope"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	switch body.Scope {
+	case "", "default", "strict":
+		// valid
+	default:
+		writeError(w, http.StatusBadRequest, "scope must be default or strict")
+		return
+	}
+
+	// Normalise: "default" and "" both mean relaxed.
+	if body.Scope == "" {
+		body.Scope = "default"
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("version_scope", body.Scope); err != nil {
+		s.deps.Log.Error("failed to save version scope", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save version scope")
+		return
+	}
+
+	// Apply to the checker at runtime.
+	if s.deps.VersionScope != nil {
+		s.deps.VersionScope.SetDefaultScope(body.Scope)
+	}
+
+	msg := "Version scope set to " + body.Scope
+	s.logEvent(r, "settings", "", msg)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": msg,
+	})
+}
+
 // apiSetDryRun enables or disables dry-run mode.
 // When enabled, updates are detected and notified but never executed.
 func (s *Server) apiSetDryRun(w http.ResponseWriter, r *http.Request) {

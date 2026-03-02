@@ -13,16 +13,21 @@ func TestParseSemVerValid(t *testing.T) {
 		minor int
 		patch int
 		pre   string
+		parts int
 	}{
-		{"1.2.3", 1, 2, 3, ""},
-		{"v1.2.3", 1, 2, 3, ""},
-		{"V1.2.3", 1, 2, 3, ""},
-		{"1.25", 1, 25, 0, ""},
-		{"v2.0", 2, 0, 0, ""},
-		{"1.0.0-rc1", 1, 0, 0, "rc1"},
-		{"v3.2.1-beta2", 3, 2, 1, "beta2"},
-		{"0.1.0", 0, 1, 0, ""},
-		{"10.20.30", 10, 20, 30, ""},
+		{"1.2.3", 1, 2, 3, "", 3},
+		{"v1.2.3", 1, 2, 3, "", 3},
+		{"V1.2.3", 1, 2, 3, "", 3},
+		{"1.25", 1, 25, 0, "", 2},
+		{"v2.0", 2, 0, 0, "", 2},
+		{"1.0.0-rc1", 1, 0, 0, "rc1", 3},
+		{"v3.2.1-beta2", 3, 2, 1, "beta2", 3},
+		{"0.1.0", 0, 1, 0, "", 3},
+		{"10.20.30", 10, 20, 30, "", 3},
+		// 1-part tags
+		{"1", 1, 0, 0, "", 1},
+		{"v2", 2, 0, 0, "", 1},
+		{"3-rc1", 3, 0, 0, "rc1", 1},
 	}
 
 	for _, tt := range tests {
@@ -43,6 +48,9 @@ func TestParseSemVerValid(t *testing.T) {
 			if sv.Pre != tt.pre {
 				t.Errorf("Pre = %q, want %q", sv.Pre, tt.pre)
 			}
+			if sv.Parts != tt.parts {
+				t.Errorf("Parts = %d, want %d", sv.Parts, tt.parts)
+			}
 			if sv.Raw != tt.tag {
 				t.Errorf("Raw = %q, want %q", sv.Raw, tt.tag)
 			}
@@ -55,7 +63,6 @@ func TestParseSemVerInvalid(t *testing.T) {
 		"latest",
 		"stable",
 		"alpine",
-		"1",
 		"v",
 		"",
 		"abc.def.ghi",
@@ -225,7 +232,7 @@ func TestNewerVersionsScoped(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewerVersionsScoped(tt.current, tags, tt.scope)
+			got := NewerVersionsScoped(tt.current, tags, tt.scope, docker.ScopeDefault)
 			if len(got) != len(tt.expected) {
 				t.Fatalf("got %d versions, want %d: %v", len(got), len(tt.expected), got)
 			}
@@ -240,6 +247,83 @@ func TestNewerVersionsScoped(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewerVersionsScopedStrict(t *testing.T) {
+	tags := []string{"1.13.4", "1.13.5", "1.14.0", "1.15.0", "2.0.0", "1.12.0"}
+
+	tests := []struct {
+		name     string
+		current  string
+		scope    docker.SemverScope
+		defScope docker.SemverScope
+		expected []string
+	}{
+		// Strict mode tests.
+		{"strict_3part_no_updates", "v1.13.3", docker.ScopeDefault, docker.ScopeStrict, nil},
+		{"strict_2part_patch_only", "1.13", docker.ScopeDefault, docker.ScopeStrict, []string{"1.13.4", "1.13.5"}},
+		// Per-container scope overrides global strict.
+		{"strict_override_minor", "v1.13.3", docker.ScopeMinor, docker.ScopeStrict, []string{"1.15.0", "1.14.0", "1.13.5", "1.13.4"}},
+		{"strict_override_major", "v1.13.3", docker.ScopeMajor, docker.ScopeStrict, []string{"2.0.0", "1.15.0", "1.14.0", "1.13.5", "1.13.4"}},
+		// Default (relaxed) unchanged.
+		{"relaxed_2part_same_major", "1.13", docker.ScopeDefault, docker.ScopeDefault, []string{"1.15.0", "1.14.0", "1.13.4", "1.13.5"}},
+		{"relaxed_3part_patch_only", "v1.13.3", docker.ScopeDefault, docker.ScopeDefault, []string{"1.13.5", "1.13.4"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewerVersionsScoped(tt.current, tags, tt.scope, tt.defScope)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("got %d versions, want %d: %v", len(got), len(tt.expected), rawVersions(got))
+			}
+			gotSet := make(map[string]bool, len(got))
+			for _, sv := range got {
+				gotSet[sv.Raw] = true
+			}
+			for _, exp := range tt.expected {
+				if !gotSet[exp] {
+					t.Errorf("expected %q in results, got %v", exp, rawVersions(got))
+				}
+			}
+		})
+	}
+}
+
+func TestNewerVersionsStrictOnePart(t *testing.T) {
+	tags := []string{"1.0.0", "1.1.0", "1.2.0", "2.0.0", "2.1.0", "3.0.0"}
+
+	// Strict + 1-part tag → minor+patch only (same major).
+	got := NewerVersionsScoped("1", tags, docker.ScopeDefault, docker.ScopeStrict)
+	expected := []string{"1.2.0", "1.1.0"}
+	if len(got) != len(expected) {
+		t.Fatalf("strict 1-part: got %d versions, want %d: %v", len(got), len(expected), rawVersions(got))
+	}
+	for _, sv := range got {
+		found := false
+		for _, exp := range expected {
+			if sv.Raw == exp {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("unexpected version %q in results", sv.Raw)
+		}
+	}
+
+	// Relaxed + 1-part tag → all newer (no scope filter).
+	got = NewerVersionsScoped("1", tags, docker.ScopeDefault, docker.ScopeDefault)
+	if len(got) != 5 {
+		t.Fatalf("relaxed 1-part: got %d versions, want 5: %v", len(got), rawVersions(got))
+	}
+}
+
+func rawVersions(svs []SemVer) []string {
+	out := make([]string, len(svs))
+	for i, sv := range svs {
+		out[i] = sv.Raw
+	}
+	return out
 }
 
 func TestFilterTags(t *testing.T) {
