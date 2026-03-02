@@ -63,6 +63,11 @@ const (
 	SettingDockerTLSKey  = "docker_tls_key"
 )
 
+// Version scope settings key (stored in bucketSettings).
+const (
+	SettingVersionScope = "version_scope" // "" (default/relaxed) or "strict"
+)
+
 // Webhook settings keys (stored in bucketSettings).
 const (
 	SettingWebhookEnabled = "webhook_enabled" // "true" / "false"
@@ -488,6 +493,17 @@ func (s *Store) LoadSetting(key string) (string, error) {
 		return nil
 	})
 	return val, err
+}
+
+// VersionScope returns the persisted version scope setting, or "" for default (relaxed).
+func (s *Store) VersionScope() string {
+	v, _ := s.LoadSetting(SettingVersionScope)
+	return v
+}
+
+// SetVersionScope persists the version scope setting.
+func (s *Store) SetVersionScope(scope string) error {
+	return s.SaveSetting(SettingVersionScope, scope)
 }
 
 // GetAllSettings returns all key-value pairs from the settings bucket.

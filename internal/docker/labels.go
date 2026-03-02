@@ -140,10 +140,11 @@ func ContainerGracePeriod(labels map[string]string) time.Duration {
 type SemverScope string
 
 const (
-	ScopeDefault SemverScope = ""      // infer from tag precision
-	ScopePatch   SemverScope = "patch" // same major.minor only
-	ScopeMinor   SemverScope = "minor" // same major only
-	ScopeMajor   SemverScope = "major" // any newer version
+	ScopeDefault SemverScope = ""       // infer from tag precision (relaxed)
+	ScopeStrict  SemverScope = "strict" // one level tighter than tag precision
+	ScopePatch   SemverScope = "patch"  // same major.minor only
+	ScopeMinor   SemverScope = "minor"  // same major only
+	ScopeMajor   SemverScope = "major"  // any newer version
 )
 
 // ContainerTagFilters reads sentinel.include-tags and sentinel.exclude-tags labels.

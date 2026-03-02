@@ -29,11 +29,12 @@ type DigestEquivalenceChecker interface {
 // Checker queries the Docker daemon and remote registry to determine
 // whether an image has an update available.
 type Checker struct {
-	docker  docker.API
-	log     *logging.Logger
-	creds   CredentialStore          // optional: looks up creds by registry
-	tracker *RateLimitTracker        // optional: records rate limit headers
-	equiv   DigestEquivalenceChecker // optional: cached digest equivalence lookups
+	docker       docker.API
+	log          *logging.Logger
+	creds        CredentialStore          // optional: looks up creds by registry
+	tracker      *RateLimitTracker        // optional: records rate limit headers
+	equiv        DigestEquivalenceChecker // optional: cached digest equivalence lookups
+	defaultScope docker.SemverScope       // global version scope (relaxed or strict)
 }
 
 // NewChecker creates a registry checker.
@@ -59,6 +60,12 @@ func (c *Checker) SetRateLimitTracker(t *RateLimitTracker) {
 // SetDigestEquivalenceChecker attaches a digest equivalence cache.
 func (c *Checker) SetDigestEquivalenceChecker(eq DigestEquivalenceChecker) {
 	c.equiv = eq
+}
+
+// SetDefaultScope sets the global version scope used when a container
+// has no per-container sentinel.semver label override.
+func (c *Checker) SetDefaultScope(scope docker.SemverScope) {
+	c.defaultScope = scope
 }
 
 // Check compares the local digest of an image to the remote registry digest.
@@ -193,7 +200,7 @@ func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownD
 	}
 
 	filteredTags := FilterTags(tagsResult.Tags, includeRE, excludeRE)
-	newer := NewerVersionsScoped(tag, filteredTags, scope)
+	newer := NewerVersionsScoped(tag, filteredTags, scope, c.defaultScope)
 	for _, sv := range newer {
 		result.NewerVersions = append(result.NewerVersions, sv.Raw)
 	}
@@ -263,7 +270,7 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string, scope doc
 	}
 
 	filteredTags := FilterTags(tagsResult.Tags, includeRE, excludeRE)
-	newer := NewerVersionsScoped(tag, filteredTags, scope)
+	newer := NewerVersionsScoped(tag, filteredTags, scope, c.defaultScope)
 	for _, sv := range newer {
 		result.NewerVersions = append(result.NewerVersions, sv.Raw)
 	}

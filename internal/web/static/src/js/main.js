@@ -97,6 +97,7 @@ import {
     onCustomUnitChange,
     applyCustomPollInterval,
     setDefaultPolicy,
+    setVersionScope,
     setRollbackPolicy,
     onGracePeriodChange,
     applyCustomGracePeriod,
@@ -271,6 +272,7 @@ window.onPollIntervalChange = onPollIntervalChange;
 window.onCustomUnitChange = onCustomUnitChange;
 window.applyCustomPollInterval = applyCustomPollInterval;
 window.setDefaultPolicy = setDefaultPolicy;
+window.setVersionScope = setVersionScope;
 window.setRollbackPolicy = setRollbackPolicy;
 window.onGracePeriodChange = onGracePeriodChange;
 window.applyCustomGracePeriod = applyCustomGracePeriod;

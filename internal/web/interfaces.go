@@ -491,6 +491,11 @@ type ImagePruneReport struct {
 	SpaceReclaimed int64 `json:"space_reclaimed"`
 }
 
+// VersionScopeUpdater updates the global version scope at runtime.
+type VersionScopeUpdater interface {
+	SetDefaultScope(scope string)
+}
+
 // ConfigReader provides settings for display.
 type ConfigReader interface {
 	Values() map[string]string

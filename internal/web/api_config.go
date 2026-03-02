@@ -294,6 +294,12 @@ func (s *Server) applyImportedSettings(settings map[string]string) {
 		s.deps.ConfigWriter.SetRollbackPolicy(v)
 	}
 
+	if v, ok := settings["version_scope"]; ok && v != redactedPlaceholder {
+		if s.deps.VersionScope != nil {
+			s.deps.VersionScope.SetDefaultScope(v)
+		}
+	}
+
 	if v, ok := settings["remove_volumes"]; ok && v != redactedPlaceholder {
 		s.deps.ConfigWriter.SetRemoveVolumes(v == "true")
 	}

@@ -2205,6 +2205,11 @@
         var policy = settings["default_policy"] || settings["SENTINEL_DEFAULT_POLICY"] || "manual";
         selectOptionByValue(policySelect, policy);
       }
+      var scopeSelect = document.getElementById("version-scope");
+      if (scopeSelect) {
+        var scope = settings["version_scope"] || "default";
+        selectOptionByValue(scopeSelect, scope);
+      }
       var rbSelect = document.getElementById("rollback-policy");
       if (rbSelect) {
         var rbPolicy = settings["rollback_policy"] || settings["SENTINEL_ROLLBACK_POLICY"] || "";
@@ -2537,6 +2542,25 @@
       }
     }).catch(function() {
       showToast("Network error -- could not update default policy", "error");
+    });
+  }
+  function setVersionScope(value) {
+    fetch("/api/settings/version-scope", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: value })
+    }).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      if (result.ok) {
+        showToast(result.data.message || "Version scope updated", "success");
+      } else {
+        showToast(result.data.error || "Failed to update version scope", "error");
+      }
+    }).catch(function() {
+      showToast("Network error -- could not update version scope", "error");
     });
   }
   function setRollbackPolicy(value) {
@@ -5168,6 +5192,7 @@
   window.onCustomUnitChange = onCustomUnitChange;
   window.applyCustomPollInterval = applyCustomPollInterval;
   window.setDefaultPolicy = setDefaultPolicy;
+  window.setVersionScope = setVersionScope;
   window.setRollbackPolicy = setRollbackPolicy;
   window.onGracePeriodChange = onGracePeriodChange;
   window.applyCustomGracePeriod = applyCustomGracePeriod;

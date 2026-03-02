@@ -130,7 +130,7 @@ func ParseSemVer(tag string) (SemVer, bool) {
 	}
 
 	parts := strings.Split(tag, ".")
-	if len(parts) < 2 || len(parts) > 3 {
+	if len(parts) < 1 || len(parts) > 3 {
 		return SemVer{}, false
 	}
 
@@ -139,9 +139,12 @@ func ParseSemVer(tag string) (SemVer, bool) {
 		return SemVer{}, false
 	}
 
-	minor, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return SemVer{}, false
+	var minor int
+	if len(parts) >= 2 {
+		minor, err = strconv.Atoi(parts[1])
+		if err != nil {
+			return SemVer{}, false
+		}
 	}
 
 	var patch int
@@ -194,12 +197,15 @@ func (v SemVer) LessThan(other SemVer) bool {
 // NewerVersions filters tags to find semver versions newer than current,
 // returning them sorted from newest to oldest. Non-semver tags are ignored.
 func NewerVersions(current string, tags []string) []SemVer {
-	return NewerVersionsScoped(current, tags, docker.ScopeDefault)
+	return NewerVersionsScoped(current, tags, docker.ScopeDefault, docker.ScopeDefault)
 }
 
-// NewerVersionsScoped is like NewerVersions but accepts an explicit scope
-// override. ScopeDefault preserves the existing tag-precision-based logic.
-func NewerVersionsScoped(current string, tags []string, scope docker.SemverScope) []SemVer {
+// NewerVersionsScoped is like NewerVersions but accepts an explicit per-container
+// scope and a global defaultScope. When scope is ScopeDefault (no per-container
+// override), defaultScope controls the precision-based filtering logic:
+//   - ScopeDefault (relaxed): 3-part→patch, 2-part→minor+patch, 1-part→all
+//   - ScopeStrict: 3-part→none, 2-part→patch, 1-part→minor+patch
+func NewerVersionsScoped(current string, tags []string, scope, defaultScope docker.SemverScope) []SemVer {
 	cur, ok := ParseSemVer(current)
 	if !ok {
 		return nil
@@ -219,12 +225,26 @@ func NewerVersionsScoped(current string, tags []string, scope docker.SemverScope
 		if !curIsCalver {
 			switch scope {
 			case docker.ScopeDefault:
-				// Infer from tag precision (existing behaviour).
-				if cur.Parts == 3 && (sv.Major != cur.Major || sv.Minor != cur.Minor) {
-					continue
-				}
-				if cur.Parts == 2 && sv.Major != cur.Major {
-					continue
+				if defaultScope == docker.ScopeStrict {
+					// Strict: one level tighter than tag precision.
+					if cur.Parts == 3 {
+						continue // 3-part: no updates
+					}
+					if cur.Parts == 2 && (sv.Major != cur.Major || sv.Minor != cur.Minor) {
+						continue // 2-part: patch only
+					}
+					if cur.Parts == 1 && sv.Major != cur.Major {
+						continue // 1-part: minor+patch only
+					}
+				} else {
+					// Default (relaxed): existing behaviour.
+					if cur.Parts == 3 && (sv.Major != cur.Major || sv.Minor != cur.Minor) {
+						continue
+					}
+					if cur.Parts == 2 && sv.Major != cur.Major {
+						continue
+					}
+					// 1-part: no scope filter (same as ScopeMajor)
 				}
 			case docker.ScopePatch:
 				if sv.Major != cur.Major || sv.Minor != cur.Minor {
