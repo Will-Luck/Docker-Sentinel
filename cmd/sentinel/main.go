@@ -401,7 +401,7 @@ func main() {
 	checker.SetCredentialStore(db)
 	checker.SetRateLimitTracker(rateTracker)
 	checker.SetDigestEquivalenceChecker(db)
-	if vs := db.VersionScope(); vs == "strict" {
+	if vs := db.VersionScope(); vs != "default" {
 		checker.SetDefaultScope(docker.ScopeStrict)
 	}
 	bus := events.New()

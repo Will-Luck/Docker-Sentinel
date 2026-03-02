@@ -65,7 +65,7 @@ const (
 
 // Version scope settings key (stored in bucketSettings).
 const (
-	SettingVersionScope = "version_scope" // "" (default/relaxed) or "strict"
+	SettingVersionScope = "version_scope" // "strict" (default) or "default" (relaxed)
 )
 
 // Webhook settings keys (stored in bucketSettings).
@@ -495,7 +495,7 @@ func (s *Store) LoadSetting(key string) (string, error) {
 	return val, err
 }
 
-// VersionScope returns the persisted version scope setting, or "" for default (relaxed).
+// VersionScope returns the persisted version scope setting, or "" for strict (default).
 func (s *Store) VersionScope() string {
 	v, _ := s.LoadSetting(SettingVersionScope)
 	return v

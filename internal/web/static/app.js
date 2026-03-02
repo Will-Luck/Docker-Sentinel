@@ -2207,7 +2207,7 @@
       }
       var scopeSelect = document.getElementById("version-scope");
       if (scopeSelect) {
-        var scope = settings["version_scope"] || "default";
+        var scope = settings["version_scope"] || "strict";
         selectOptionByValue(scopeSelect, scope);
       }
       var rbSelect = document.getElementById("rollback-policy");
