@@ -202,46 +202,70 @@ func (s *Store) DeleteUser(id string) error {
 		}
 
 		// Cascade-delete sessions for this user.
+		// Collect keys first — mutating during iteration is undefined behaviour in BoltDB.
 		sb := tx.Bucket(bucketSessions)
 		prefix := sessionUserIndexPrefix(id)
 		sc := sb.Cursor()
+
+		type sessionEntry struct {
+			token    string
+			indexKey []byte
+		}
+		var sessionEntries []sessionEntry
 		for k, _ := sc.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = sc.Next() {
-			// Extract token from key: idx::user::{userID}::{token}
 			token := string(k[len(prefix):])
 			keyCopy := make([]byte, len(k))
 			copy(keyCopy, k)
-
-			if err := sb.Delete([]byte(token)); err != nil {
+			sessionEntries = append(sessionEntries, sessionEntry{token: token, indexKey: keyCopy})
+		}
+		for _, e := range sessionEntries {
+			if err := sb.Delete([]byte(e.token)); err != nil {
 				return err
 			}
-			if err := sb.Delete(keyCopy); err != nil {
+			if err := sb.Delete(e.indexKey); err != nil {
 				return err
 			}
 		}
 
 		// Cascade-delete API tokens for this user.
+		// Collect keys first — mutating during iteration is undefined behaviour in BoltDB.
 		ab := tx.Bucket(bucketAPITokens)
 		aprefix := apiTokenUserIndexPrefix(id)
 		ac := ab.Cursor()
+
+		type apiTokenEntry struct {
+			tokenID  string
+			indexKey []byte
+			hashKey  []byte // hash index key to clean up (may be nil)
+		}
+		var apiTokenEntries []apiTokenEntry
 		for k, _ := ac.Seek(aprefix); k != nil && bytes.HasPrefix(k, aprefix); k, _ = ac.Next() {
-			// Extract token ID from key: idx::user::{userID}::{tokenID}
 			tokenID := string(k[len(aprefix):])
 			keyCopy := make([]byte, len(k))
 			copy(keyCopy, k)
+
+			entry := apiTokenEntry{tokenID: tokenID, indexKey: keyCopy}
 
 			// Get the API token to find its hash index.
 			tv := ab.Get([]byte(tokenID))
 			if tv != nil {
 				var apiToken auth.APIToken
 				if err := json.Unmarshal(tv, &apiToken); err == nil {
-					_ = ab.Delete(apiTokenHashIndexKey(apiToken.TokenHash))
+					entry.hashKey = apiTokenHashIndexKey(apiToken.TokenHash)
 				}
 			}
-
-			if err := ab.Delete([]byte(tokenID)); err != nil {
+			apiTokenEntries = append(apiTokenEntries, entry)
+		}
+		for _, e := range apiTokenEntries {
+			if e.hashKey != nil {
+				if err := ab.Delete(e.hashKey); err != nil {
+					return err
+				}
+			}
+			if err := ab.Delete([]byte(e.tokenID)); err != nil {
 				return err
 			}
-			if err := ab.Delete(keyCopy); err != nil {
+			if err := ab.Delete(e.indexKey); err != nil {
 				return err
 			}
 		}

@@ -172,7 +172,7 @@ func (a *Agent) syncJournal(stream proto.AgentService_ChannelClient) error {
 		},
 	}
 
-	if err := stream.Send(msg); err != nil {
+	if err := a.sendMsg(stream, msg); err != nil {
 		return fmt.Errorf("send offline journal: %w", err)
 	}
 

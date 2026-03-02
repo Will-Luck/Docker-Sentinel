@@ -343,25 +343,16 @@
         .catch(function(err) { showToast('Failed: ' + err, 'error'); });
     }
 
-    // SSE: listen for cluster_host events to refresh host cards in real-time.
-    if (typeof EventSource !== "undefined") {
-        var es = new EventSource("/api/events");
-        es.addEventListener("cluster_host", function() {
-            window.location.reload();
-        });
-        es.addEventListener("connected", function() {
-            var dot = document.getElementById("sse-indicator");
-            var label = document.getElementById("sse-label");
-            if (dot) { dot.className = "status-dot connected"; }
-            if (label) { label.textContent = "Connected"; }
-        });
-        es.onerror = function() {
-            var dot = document.getElementById("sse-indicator");
-            var label = document.getElementById("sse-label");
-            if (dot) { dot.className = "status-dot disconnected"; }
-            if (label) { label.textContent = "Disconnected"; }
-        };
-    }
+    // SSE connection and status indicators are managed by initSSE() in app.js.
+    // Attach page-specific listener via the shared window.sseSource reference
+    // instead of opening a duplicate EventSource connection.
+    document.addEventListener('DOMContentLoaded', function() {
+        if (window.sseSource) {
+            window.sseSource.addEventListener('cluster_host', function() {
+                window.location.reload();
+            });
+        }
+    });
     </script>
 </body>
 </html>

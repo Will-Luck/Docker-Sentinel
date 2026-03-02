@@ -513,12 +513,43 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 
 	// Prune queue entries for containers/services that no longer exist.
+	// Include local containers, Swarm services, and remote/Portainer containers
+	// so their queue entries (keyed as "hostID::name") are not incorrectly pruned.
 	liveNames := make(map[string]bool, len(containers))
 	for _, c := range containers {
 		liveNames[containerName(c)] = true
 	}
 	for _, svc := range swarmServices {
 		liveNames[svc.Spec.Name] = true
+	}
+	// Add remote cluster container keys (hostID::name format).
+	if u.cluster != nil {
+		for _, hostID := range u.cluster.ConnectedHosts() {
+			remoteContainers, err := u.cluster.ListContainers(ctx, hostID)
+			if err != nil {
+				u.log.Debug("prune: failed to list remote containers", "host", hostID, "error", err)
+				continue
+			}
+			for _, rc := range remoteContainers {
+				liveNames[store.ScopedKey(hostID, rc.Name)] = true
+			}
+		}
+	}
+	// Add Portainer container keys (portainer:<endpointID>::name format).
+	if u.portainer != nil {
+		endpoints, epErr := u.portainer.Endpoints(ctx)
+		if epErr == nil {
+			for _, ep := range endpoints {
+				epContainers, ecErr := u.portainer.EndpointContainers(ctx, ep.ID)
+				if ecErr != nil {
+					continue
+				}
+				hostID := fmt.Sprintf("portainer:%d", ep.ID)
+				for _, pc := range epContainers {
+					liveNames[store.ScopedKey(hostID, pc.Name)] = true
+				}
+			}
+		}
 	}
 	if pruned := u.queue.Prune(liveNames); pruned > 0 {
 		u.log.Info("pruned stale queue entries", "count", pruned)

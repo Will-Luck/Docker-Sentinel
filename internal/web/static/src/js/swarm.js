@@ -2,17 +2,7 @@
    7b. Swarm Service Toggle & Actions
    ============================================================ */
 
-import { showToast, apiPost } from "./utils.js";
-
-function escapeHtml(str) {
-    if (!str) return "";
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
+import { showToast, escapeHTML, apiPost } from "./utils.js";
 
 // isSafeURL validates that a URL string starts with http:// or https://.
 function isSafeURL(url) {
@@ -176,15 +166,15 @@ function refreshServiceRow(name) {
                         (svc.RunningReplicas > 0) ? "svc-replicas-degraded" : "svc-replicas-down";
                     wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
                     wrap.innerHTML = '<span class="badge svc-replicas ' + replicaClass + ' badge-default">' +
-                        escapeHtml(svc.Replicas || '') + '</span>' +
+                        escapeHTML(svc.Replicas || '') + '</span>' +
                         '<span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc(\'' +
-                        escapeHtml(name) + '\', 0, this.closest(\'.status-badge-wrap\'))">Scale to 0</span>';
+                        escapeHTML(name) + '\', 0, this.closest(\'.status-badge-wrap\'))">Scale to 0</span>';
                 } else {
                     wrap.setAttribute("data-prev-replicas", prevReplicas);
                     wrap.innerHTML = '<span class="badge svc-replicas svc-replicas-down badge-default">' +
-                        escapeHtml(svc.Replicas || '0/0') + '</span>' +
+                        escapeHTML(svc.Replicas || '0/0') + '</span>' +
                         '<span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc(\'' +
-                        escapeHtml(name) + '\', ' + (prevReplicas > 0 ? prevReplicas : 1) + ', this.closest(\'.status-badge-wrap\'))">Scale up</span>';
+                        escapeHTML(name) + '\', ' + (prevReplicas > 0 ? prevReplicas : 1) + ', this.closest(\'.status-badge-wrap\'))">Scale up</span>';
                 }
             }
 
@@ -198,21 +188,21 @@ function refreshServiceRow(name) {
                     var oldBadge = imgCell.querySelector(".registry-badge");
                     if (oldBadge) oldBadge.remove();
 
-                    var rvSpan = (svc.ResolvedVersion) ? ' <span class="resolved-ver">(' + escapeHtml(svc.ResolvedVersion) + ')</span>' : '';
+                    var rvSpan = (svc.ResolvedVersion) ? ' <span class="resolved-ver">(' + escapeHTML(svc.ResolvedVersion) + ')</span>' : '';
 
                     if (svc.NewestVersion) {
-                        var verHtml = escapeHtml(svc.NewestVersion);
+                        var verHtml = escapeHTML(svc.NewestVersion);
                         if (svc.VersionURL && isSafeURL(svc.VersionURL)) {
-                            verHtml = '<a href="' + escapeHtml(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHtml(svc.NewestVersion) + '</a>';
+                            verHtml = '<a href="' + escapeHTML(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHTML(svc.NewestVersion) + '</a>';
                         } else {
                             verHtml = '<span class="version-new">' + verHtml + '</span>';
                         }
-                        imgCell.innerHTML = '<span class="version-current">' + escapeHtml(svc.Tag) + rvSpan + '</span>' +
+                        imgCell.innerHTML = '<span class="version-current">' + escapeHTML(svc.Tag) + rvSpan + '</span>' +
                             ' <span class="version-arrow">&rarr;</span> ' + verHtml;
                     } else {
-                        var tagHtml = escapeHtml(svc.Tag) + rvSpan;
+                        var tagHtml = escapeHTML(svc.Tag) + rvSpan;
                         if (svc.ChangelogURL && isSafeURL(svc.ChangelogURL)) {
-                            imgCell.innerHTML = '<a href="' + escapeHtml(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + '</a>';
+                            imgCell.innerHTML = '<a href="' + escapeHTML(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + '</a>';
                         } else {
                             imgCell.innerHTML = tagHtml;
                         }
@@ -238,7 +228,7 @@ function refreshServiceRow(name) {
                     if (svc.HasUpdate && svc.Policy !== "pinned") {
                         btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? ' loading' : '') + '"' +
                             (isUpdating ? ' disabled' : '') +
-                            ' onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHtml(name) + '\', event)">Update</button>';
+                            ' onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHTML(name) + '\', event)">Update</button>';
                     }
                     // Rollback only available on service detail page — not on dashboard.
                     btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
@@ -283,15 +273,15 @@ function refreshServiceRow(name) {
                     } else if (task.State === "preparing") {
                         stateBadge = '<span class="badge badge-info">preparing</span>';
                     } else {
-                        stateBadge = '<span class="badge badge-error" title="' + escapeHtml(task.Error || '') + '">' + escapeHtml(task.State) + '</span>';
+                        stateBadge = '<span class="badge badge-error" title="' + escapeHTML(task.Error || '') + '">' + escapeHTML(task.State) + '</span>';
                     }
-                    var nodeDisplay = escapeHtml(task.NodeName);
+                    var nodeDisplay = escapeHTML(task.NodeName);
                     if (task.NodeAddr) {
-                        nodeDisplay += ' <span class="svc-node-addr">(' + escapeHtml(task.NodeAddr) + ')</span>';
+                        nodeDisplay += ' <span class="svc-node-addr">(' + escapeHTML(task.NodeAddr) + ')</span>';
                     }
                     tr.innerHTML = '<td></td>' +
                         '<td class="svc-node">' + nodeDisplay + '</td>' +
-                        '<td class="mono">' + escapeHtml(task.Tag || '') + '</td>' +
+                        '<td class="mono">' + escapeHTML(task.Tag || '') + '</td>' +
                         '<td></td>' +
                         '<td>' + stateBadge + '</td>' +
                         '<td></td>';
@@ -307,8 +297,8 @@ function refreshServiceRow(name) {
                         var tr = document.createElement("tr");
                         tr.className = "svc-task-row";
                         tr.innerHTML = '<td></td>' +
-                            '<td class="svc-node">' + escapeHtml(cached[t].NodeText || '') + '</td>' +
-                            '<td class="mono">' + escapeHtml(cached[t].Tag || '') + '</td>' +
+                            '<td class="svc-node">' + escapeHTML(cached[t].NodeText || '') + '</td>' +
+                            '<td class="mono">' + escapeHTML(cached[t].Tag || '') + '</td>' +
                             '<td></td>' +
                             '<td><span class="badge badge-error">shutdown</span></td>' +
                             '<td></td>';

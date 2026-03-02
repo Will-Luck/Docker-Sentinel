@@ -4,17 +4,6 @@
 
 import { showToast, escapeHTML, showConfirm, apiPost } from "./utils.js";
 
-// Local escapeHtml (lowercase h) used by loadAllTags.
-function escapeHtml(str) {
-    if (!str) return "";
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
 // Access via window to avoid circular import with sse.js.
 function _updateQueueBadge() {
     if (window.updateQueueBadge) window.updateQueueBadge();
@@ -386,7 +375,7 @@ function loadAllTags(summaryEl) {
             if (preview) preview.textContent = tags.length + " tags";
             var html = '<div class="tag-list">';
             for (var i = 0; i < tags.length; i++) {
-                html += '<span class="badge badge-muted tag-item">' + escapeHtml(tags[i]) + '</span>';
+                html += '<span class="badge badge-muted tag-item">' + escapeHTML(tags[i]) + '</span>';
             }
             html += '</div>';
             if (body) body.innerHTML = html;
@@ -404,7 +393,7 @@ function updateToVersion(name, hostId) {
     var url = "/api/containers/" + encodeURIComponent(name) + "/update-to-version";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     showConfirm("Update to Version",
-        "<p>Update <strong>" + name + "</strong> to <code>" + tag + "</code>?</p>"
+        "<p>Update <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(tag) + "</code>?</p>"
     ).then(function(confirmed) {
         if (!confirmed) return;
         fetch(url, {

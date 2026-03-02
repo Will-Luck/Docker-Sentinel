@@ -163,13 +163,18 @@ func (c *Client) do(req *http.Request, out interface{}) error {
 	}
 	defer resp.Body.Close()
 
+	// Limit response body reads to 1MB to prevent memory exhaustion from
+	// oversized or malicious responses.
+	const maxBody = 1 << 20 // 1MB
+	limited := io.LimitReader(resp.Body, maxBody)
+
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(limited)
 		return fmt.Errorf("portainer API error %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	if out != nil {
-		return json.NewDecoder(resp.Body).Decode(out)
+		return json.NewDecoder(limited).Decode(out)
 	}
 	return nil
 }

@@ -275,7 +275,7 @@ func (s *Server) apiSaveStackOrder(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiHistoryExport(w http.ResponseWriter, r *http.Request) {
 	records, err := s.deps.Store.ListAllHistory()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "failed to export history")
 		return
 	}
 

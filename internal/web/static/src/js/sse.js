@@ -200,6 +200,10 @@ function initSSE() {
     if (typeof EventSource === "undefined") return;
 
     var es = new EventSource("/api/events");
+    // Expose for page-specific inline scripts (cluster.html, portainer.html)
+    // so they can add listeners without opening a duplicate SSE connection.
+    window.sseSource = es;
+    var _sseHasConnected = false;
 
     es.addEventListener("connected", function () {
         if (localStorage.getItem("sentinel-self-updating")) {
@@ -207,6 +211,12 @@ function initSSE() {
             window.location.reload();
             return;
         }
+        // On reconnect (not first connect), reload the page to avoid stale state.
+        if (_sseHasConnected) {
+            window.location.reload();
+            return;
+        }
+        _sseHasConnected = true;
         setConnectionStatus(true);
     });
 

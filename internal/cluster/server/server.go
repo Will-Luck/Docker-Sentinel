@@ -13,6 +13,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +62,7 @@ type Server struct {
 	store    ClusterStore
 	bus      *events.Bus
 	log      *slog.Logger
+	hmacKey  []byte // 32-byte random key for HMAC-SHA256 token signing
 
 	grpcSrv *grpc.Server
 	mu      sync.RWMutex            // protects streams map
@@ -87,16 +90,55 @@ type agentStream struct {
 }
 
 // New creates a cluster server. Call Start() to begin listening.
-func New(ca *cluster.CA, store ClusterStore, bus *events.Bus, log *slog.Logger) *Server {
+//
+// The HMAC key used for enrollment token signing is loaded from
+// hmac-key.bin in the CA directory. If the file doesn't exist, a
+// fresh 32-byte random key is generated and persisted. This ensures
+// the signing key is stable across restarts but not derivable from
+// public material (unlike the previous approach of using the CA cert).
+func New(ca *cluster.CA, store ClusterStore, bus *events.Bus, log *slog.Logger) (*Server, error) {
+	key, err := loadOrGenerateHMACKey(ca.Dir())
+	if err != nil {
+		return nil, fmt.Errorf("hmac key: %w", err)
+	}
+
 	return &Server{
 		ca:       ca,
+		hmacKey:  key,
 		registry: NewRegistry(store, log.With("component", "registry")),
 		store:    store,
 		bus:      bus,
 		log:      log.With("component", "cluster-server"),
 		streams:  make(map[string]*agentStream),
 		pending:  make(map[string]chan *proto.AgentMessage),
+	}, nil
+}
+
+// hmacKeyFile is the filename for the persisted HMAC signing key.
+const hmacKeyFile = "hmac-key.bin"
+
+// loadOrGenerateHMACKey loads a 32-byte HMAC key from dir/hmac-key.bin,
+// or generates a new one if the file doesn't exist. The key is stored
+// with 0600 permissions so only the Sentinel process can read it.
+func loadOrGenerateHMACKey(dir string) ([]byte, error) {
+	path := filepath.Join(dir, hmacKeyFile)
+
+	data, err := os.ReadFile(path)
+	if err == nil && len(data) == 32 {
+		return data, nil
 	}
+
+	// Generate fresh key.
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("generate hmac key: %w", err)
+	}
+
+	if err := os.WriteFile(path, key, 0600); err != nil {
+		return nil, fmt.Errorf("persist hmac key: %w", err)
+	}
+
+	return key, nil
 }
 
 // Registry returns the server's host registry for external inspection.
@@ -747,6 +789,9 @@ func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 
 // handleCertRenewal processes a certificate renewal CSR from an agent whose
 // cert is approaching expiry. Signs the new CSR and sends back the fresh cert.
+//
+// If the serial number update fails after signing, the newly issued cert is
+// revoked immediately to prevent an untracked certificate from remaining valid.
 func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.CertRenewalCSR) {
 	certPEM, serial, err := s.ca.SignCSR(csr.Csr, hostID)
 	if err != nil {
@@ -755,7 +800,11 @@ func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.Ce
 	}
 
 	if err := s.registry.UpdateCertSerial(hostID, serial); err != nil {
-		s.log.Error("cert renewal: failed to update serial", "hostID", hostID, "error", err)
+		s.log.Error("cert renewal: failed to update serial, revoking new cert", "hostID", hostID, "serial", serial, "error", err)
+		// Revoke the newly signed cert so it can't be used without being tracked.
+		if rErr := s.store.AddRevokedCert(serial); rErr != nil {
+			s.log.Error("cert renewal: failed to revoke orphaned cert", "hostID", hostID, "serial", serial, "error", rErr)
+		}
 		return
 	}
 
@@ -1094,15 +1143,12 @@ func extractHostID(ctx context.Context) (string, error) {
 // Token helpers
 // ---------------------------------------------------------------------------
 
-// hmacToken computes HMAC-SHA256 of the plaintext token using a key derived
-// from the CA certificate. This avoids needing a separate HMAC secret -- the
-// CA cert is stable and unique per Sentinel instance.
+// hmacToken computes HMAC-SHA256 of the plaintext token using the dedicated
+// HMAC key (loaded from hmac-key.bin in the CA directory). The key is a
+// random 32-byte secret that never leaves the server, unlike the CA cert
+// which is distributed to all enrolled agents.
 func (s *Server) hmacToken(token string) []byte {
-	// Use the raw CA cert bytes as the HMAC key. The CA cert is unique to this
-	// Sentinel instance and never leaves the server, making it a good choice
-	// for key material without requiring a separate secret.
-	key := s.ca.CACertPEM()
-	mac := hmac.New(sha256.New, key)
+	mac := hmac.New(sha256.New, s.hmacKey)
 	mac.Write([]byte(token))
 	return mac.Sum(nil)
 }

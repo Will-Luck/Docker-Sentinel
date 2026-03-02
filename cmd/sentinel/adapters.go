@@ -1285,7 +1285,10 @@ func (m *clusterManager) Start() error {
 		return fmt.Errorf("initialise CA: %w", err)
 	}
 
-	m.srv = clusterserver.New(ca, m.db, m.bus, m.log)
+	m.srv, err = clusterserver.New(ca, m.db, m.bus, m.log)
+	if err != nil {
+		return fmt.Errorf("create cluster server: %w", err)
+	}
 
 	addr := net.JoinHostPort("", port)
 	if err := m.srv.Start(addr); err != nil {

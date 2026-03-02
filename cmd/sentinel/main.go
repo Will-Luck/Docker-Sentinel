@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -121,7 +122,8 @@ func main() {
 		log.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	var dbClosed sync.Once
+	defer dbClosed.Do(func() { db.Close() })
 
 	// Load Docker TLS certificate paths from BoltDB.
 	var tlsCfg *docker.TLSConfig
@@ -138,7 +140,8 @@ func main() {
 		log.Error("failed to create Docker client", "error", err)
 		os.Exit(1)
 	}
-	defer client.Close()
+	var clientClosed sync.Once
+	defer clientClosed.Do(func() { client.Close() })
 
 	// Initialise auth buckets and seed built-in roles.
 	if err := db.EnsureAuthBuckets(); err != nil {
@@ -231,10 +234,17 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Write credentials to a file instead of stdout to avoid leaking
+		// secrets in container logs (issue #43).
+		credFile := filepath.Join(filepath.Dir(cfg.DBPath), "sentinel-credentials.txt")
+		credContent := fmt.Sprintf("Agent UI login: admin / %s\nChange this password after first login.\n", randomPass)
+		if writeErr := os.WriteFile(credFile, []byte(credContent), 0600); writeErr != nil {
+			log.Error("failed to write credentials file", "error", writeErr)
+			os.Exit(1)
+		}
 		fmt.Println("=============================================")
 		fmt.Println("Auto-enrolled as agent.")
-		fmt.Printf("Agent UI login: admin / %s\n", randomPass)
-		fmt.Println("Change this password after first login.")
+		fmt.Printf("Credentials written to: %s\n", credFile)
 		fmt.Println("=============================================")
 
 		cfg.Mode = "agent"

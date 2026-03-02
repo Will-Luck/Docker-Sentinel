@@ -779,28 +779,6 @@ function setContainerNotifyPref(name, mode) {
 }
 
 /* ------------------------------------------------------------
-   14. HTML Escape Helper
-   ------------------------------------------------------------ */
-
-function escapeHtml(str) {
-    if (!str) return "";
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-// isSafeURL validates that a URL string starts with http:// or https://.
-// Used as a defence-in-depth check before inserting server-provided URLs
-// into href attributes via innerHTML.
-function isSafeURL(url) {
-    return typeof url === "string" && (url.indexOf("https://") === 0 || url.indexOf("http://") === 0);
-}
-
-
-/* ------------------------------------------------------------
    15. Notification Message Templates
    ------------------------------------------------------------ */
 
@@ -941,8 +919,6 @@ export {
     triggerDigest,
     loadContainerNotifyPrefs,
     setContainerNotifyPref,
-    escapeHtml,
-    isSafeURL,
     loadNotifyTemplates,
     loadTemplateForEvent,
     saveNotifyTemplate,

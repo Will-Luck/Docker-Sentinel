@@ -94,6 +94,11 @@ type Agent struct {
 	connected      bool
 	containerCount int
 
+	// sendMu serialises writes to the bidirectional gRPC stream.
+	// gRPC stream Send() is not safe for concurrent use — multiple
+	// goroutines (heartbeat, command handlers) call it simultaneously.
+	sendMu sync.Mutex
+
 	// offlineSince tracks when server connectivity was lost.
 	// Zero value means currently connected.
 	offlineSince time.Time
@@ -413,6 +418,16 @@ func (a *Agent) closeConn() {
 	}
 }
 
+// sendMsg serialises a message send on the bidirectional stream.
+// gRPC stream.Send is not safe for concurrent use, and we have multiple
+// goroutines (heartbeat loop, command handlers) that write to the same
+// stream. This helper ensures only one Send executes at a time.
+func (a *Agent) sendMsg(stream proto.AgentService_ChannelClient, msg *proto.AgentMessage) error {
+	a.sendMu.Lock()
+	defer a.sendMu.Unlock()
+	return stream.Send(msg)
+}
+
 // heartbeatLoop sends periodic heartbeats to the server. Returns on
 // stream error or context cancellation.
 func (a *Agent) heartbeatLoop(ctx context.Context, stream proto.AgentService_ChannelClient) error {
@@ -434,7 +449,7 @@ func (a *Agent) heartbeatLoop(ctx context.Context, stream proto.AgentService_Cha
 					},
 				},
 			}
-			if err := stream.Send(msg); err != nil {
+			if err := a.sendMsg(stream, msg); err != nil {
 				return fmt.Errorf("send heartbeat: %w", err)
 			}
 			a.log.Debug("heartbeat sent")
@@ -559,7 +574,7 @@ func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentServ
 			},
 		},
 	}
-	return stream.Send(msg)
+	return a.sendMsg(stream, msg)
 }
 
 // handleUpdateContainer executes the full update lifecycle for a container.
@@ -603,7 +618,7 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 			UpdateResult: result,
 		},
 	}
-	return stream.Send(msg)
+	return a.sendMsg(stream, msg)
 }
 
 // handleContainerAction executes a stop, start, or restart action on a
@@ -641,7 +656,7 @@ func (a *Agent) handleContainerAction(ctx context.Context, stream proto.AgentSer
 		a.log.Info("container action succeeded", "name", name, "action", action)
 	}
 
-	if err := stream.Send(&proto.AgentMessage{
+	if err := a.sendMsg(stream, &proto.AgentMessage{
 		Payload: &proto.AgentMessage_ContainerActionResult{ContainerActionResult: result},
 	}); err != nil {
 		return err
@@ -693,7 +708,7 @@ func (a *Agent) sendFetchLogsResult(stream proto.AgentService_ChannelClient, req
 			},
 		},
 	}
-	return stream.Send(msg)
+	return a.sendMsg(stream, msg)
 }
 
 // handlePullImage pulls an image on the local Docker host.
@@ -946,7 +961,7 @@ func (a *Agent) sendHookResult(stream proto.AgentService_ChannelClient, requestI
 			},
 		},
 	}
-	return stream.Send(msg)
+	return a.sendMsg(stream, msg)
 }
 
 // setConnected marks the agent as connected and clears the offline timer.
