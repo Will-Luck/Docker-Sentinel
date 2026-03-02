@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -35,7 +36,7 @@ func (s *Server) apiWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	storedSecret, _ := s.deps.SettingsStore.LoadSetting(store.SettingWebhookSecret)
-	if storedSecret == "" || secret != storedSecret {
+	if storedSecret == "" || subtle.ConstantTimeCompare([]byte(secret), []byte(storedSecret)) != 1 {
 		writeError(w, http.StatusUnauthorized, "invalid or missing webhook secret")
 		return
 	}

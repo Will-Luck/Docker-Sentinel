@@ -483,13 +483,23 @@ func (c *Config) SetRemoveVolumes(b bool) {
 	c.mu.Unlock()
 }
 
+// maxScanConcurrency is the hard upper bound for parallel registry checks.
+// Values above this are clamped to prevent resource exhaustion.
+const maxScanConcurrency = 50
+
 func (c *Config) ScanConcurrency() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	if c.scanConcurrency > maxScanConcurrency {
+		return maxScanConcurrency
+	}
 	return c.scanConcurrency
 }
 
 func (c *Config) SetScanConcurrency(n int) {
+	if n > maxScanConcurrency {
+		n = maxScanConcurrency
+	}
 	c.mu.Lock()
 	c.scanConcurrency = n
 	c.mu.Unlock()

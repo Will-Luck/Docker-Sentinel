@@ -70,7 +70,7 @@ func BuildNotifier(ch Channel) (Notifier, error) {
 		if err := json.Unmarshal(ch.Settings, &s); err != nil {
 			return nil, fmt.Errorf("unmarshal webhook settings: %w", err)
 		}
-		return NewWebhook(s.URL, s.Headers), nil
+		return NewWebhook(s.URL, s.Headers)
 
 	case ProviderSlack:
 		var s SlackSettings

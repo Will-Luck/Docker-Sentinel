@@ -290,6 +290,9 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /account", authed(s.handleAccount))
 	s.mux.Handle("POST /api/auth/change-password", authed(s.apiChangePassword))
 	s.mux.Handle("GET /api/auth/sessions", authed(s.apiListSessions))
+	// The {token} in the path is the TARGET session to revoke, not the caller's
+	// authentication. The caller is authenticated via their session cookie.
+	// Standard REST pattern: DELETE /resource/{id} removes the identified resource.
 	s.mux.Handle("DELETE /api/auth/sessions/{token}", authed(s.apiRevokeSession))
 	s.mux.Handle("DELETE /api/auth/sessions", authed(s.apiRevokeAllSessions))
 	s.mux.Handle("POST /api/auth/tokens", authed(s.apiCreateToken))

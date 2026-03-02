@@ -339,6 +339,32 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Invalidate all existing sessions for this user (security: old sessions
+	// authenticated with the previous password should no longer be valid).
+	if err := s.deps.Auth.Sessions.DeleteSessionsForUser(rc.User.ID); err != nil {
+		s.deps.Log.Warn("failed to delete sessions after password change", "error", err)
+	}
+
+	// Re-create a fresh session so the current user stays logged in.
+	newToken, err := auth.GenerateSessionToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate session token")
+		return
+	}
+	newSession := auth.Session{
+		Token:     newToken,
+		UserID:    rc.User.ID,
+		IP:        clientIP(r),
+		UserAgent: r.UserAgent(),
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Now().UTC().Add(s.deps.Auth.SessionExpiry),
+	}
+	if err := s.deps.Auth.Sessions.CreateSession(newSession); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create session")
+		return
+	}
+	auth.SetSessionCookie(w, newToken, newSession.ExpiresAt, s.deps.Auth.CookieSecure)
+
 	s.logEvent(r, "auth", "", "User "+rc.User.Username+" changed their password")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

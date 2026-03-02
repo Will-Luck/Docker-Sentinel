@@ -57,7 +57,9 @@ func (m *MQTT) Send(ctx context.Context, event Event) error {
 		SetClientID(m.clientID).
 		AddBroker(m.broker).
 		SetConnectTimeout(10 * time.Second).
-		SetWriteTimeout(10 * time.Second)
+		SetWriteTimeout(10 * time.Second).
+		SetAutoReconnect(true).
+		SetCleanSession(false)
 	if m.username != "" {
 		opts.SetUsername(m.username)
 		opts.SetPassword(m.password)

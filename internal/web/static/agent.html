@@ -255,6 +255,13 @@
 </div>
 <script>
 (function() {
+    // CSRF helper — agent.html does not load app.js so it has no automatic
+    // CSRF injection. Read the token from the sentinel_csrf cookie directly.
+    function getCSRFToken() {
+        var match = document.cookie.match(/(^|;\s*)sentinel_csrf=([^;]+)/);
+        return match ? match[2] : '';
+    }
+
     function showMsg(id, text, type) {
         var el = document.getElementById(id);
         el.textContent = text;
@@ -285,7 +292,7 @@
         var hostName = document.getElementById('inp-host-name').value.trim();
         fetch('/api/agent/settings', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCSRFToken()},
             body: JSON.stringify({server_addr: serverAddr, host_name: hostName})
         })
         .then(function(r) { return r.json(); })
@@ -305,7 +312,7 @@
     window.switchToServer = function() {
         fetch('/api/agent/settings', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCSRFToken()},
             body: JSON.stringify({instance_role: 'server'})
         })
         .then(function(r) { return r.json(); })
@@ -325,7 +332,7 @@
         var nw = document.getElementById('inp-new-pw').value;
         fetch('/api/auth/change-password', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': getCSRFToken()},
             body: JSON.stringify({current_password: cur, new_password: nw})
         })
         .then(function(r) { return r.json(); })

@@ -552,6 +552,13 @@ func (s *Server) apiSetUpdateDelay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	// Validate duration format when non-empty.
+	if req.Duration != "" {
+		if _, err := time.ParseDuration(req.Duration); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid duration format: "+req.Duration)
+			return
+		}
+	}
 	if s.deps.SettingsStore == nil {
 		writeError(w, http.StatusNotImplemented, "settings store not available")
 		return
@@ -1001,7 +1008,7 @@ func (s *Server) apiSetHADiscovery(w http.ResponseWriter, r *http.Request) {
 		label = "enabled"
 	}
 	s.logEvent(r, "settings", "", "Home Assistant discovery "+label)
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Home Assistant discovery " + label})
 }
 
 // apiSetDockerTLS saves Docker TLS certificate paths for mTLS connections.

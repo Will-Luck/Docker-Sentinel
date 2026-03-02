@@ -728,9 +728,24 @@ func (s *Store) ListClusterJournal() (map[string][]byte, error) {
 func (s *Store) ClearClusterJournal() error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketClusterJournal)
-		return b.ForEach(func(k, _ []byte) error {
-			return b.Delete(k)
-		})
+
+		// Collect keys first — mutating during iteration is undefined behaviour in BoltDB.
+		var keys [][]byte
+		if err := b.ForEach(func(k, _ []byte) error {
+			keyCopy := make([]byte, len(k))
+			copy(keyCopy, k)
+			keys = append(keys, keyCopy)
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		for _, k := range keys {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

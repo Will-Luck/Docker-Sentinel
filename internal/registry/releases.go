@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// httpClient is declared in auth.go and shared across the package.
+
 // ReleaseInfo holds a GitHub release URL and a truncated body.
 type ReleaseInfo struct {
 	URL  string
@@ -150,7 +152,7 @@ func fetchGitHubRelease(ctx context.Context, repo, version string) *ReleaseInfo 
 		}
 		req.Header.Set("Accept", "application/vnd.github.v3+json")
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			continue
 		}

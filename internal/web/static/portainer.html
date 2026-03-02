@@ -208,7 +208,8 @@
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function loadPortainer() {
@@ -248,24 +249,16 @@
 
     loadPortainer();
 
-    if (typeof EventSource !== 'undefined') {
-        var es = new EventSource('/api/events');
-        es.addEventListener('scan_complete', function() {
-            loadPortainer();
-        });
-        es.addEventListener('connected', function() {
-            var dot = document.getElementById('sse-indicator');
-            var label = document.getElementById('sse-label');
-            if (dot) dot.className = 'status-dot connected';
-            if (label) label.textContent = 'Connected';
-        });
-        es.onerror = function() {
-            var dot = document.getElementById('sse-indicator');
-            var label = document.getElementById('sse-label');
-            if (dot) dot.className = 'status-dot disconnected';
-            if (label) label.textContent = 'Disconnected';
-        };
-    }
+    // SSE connection and status indicators are managed by initSSE() in app.js.
+    // Attach page-specific listener via the shared window.sseSource reference
+    // instead of opening a duplicate EventSource connection.
+    document.addEventListener('DOMContentLoaded', function() {
+        if (window.sseSource) {
+            window.sseSource.addEventListener('scan_complete', function() {
+                loadPortainer();
+            });
+        }
+    });
     </script>
 </body>
 </html>

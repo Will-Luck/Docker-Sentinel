@@ -971,10 +971,6 @@
   }
 
   // internal/web/static/src/js/queue.js
-  function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-  }
   function _updateQueueBadge() {
     if (window.updateQueueBadge) window.updateQueueBadge();
   }
@@ -1316,7 +1312,7 @@
       if (preview) preview.textContent = tags.length + " tags";
       var html = '<div class="tag-list">';
       for (var i = 0; i < tags.length; i++) {
-        html += '<span class="badge badge-muted tag-item">' + escapeHtml(tags[i]) + "</span>";
+        html += '<span class="badge badge-muted tag-item">' + escapeHTML(tags[i]) + "</span>";
       }
       html += "</div>";
       if (body) body.innerHTML = html;
@@ -1333,7 +1329,7 @@
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     showConfirm(
       "Update to Version",
-      "<p>Update <strong>" + name + "</strong> to <code>" + tag + "</code>?</p>"
+      "<p>Update <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(tag) + "</code>?</p>"
     ).then(function(confirmed) {
       if (!confirmed) return;
       fetch(url, {
@@ -1440,10 +1436,6 @@
   }
 
   // internal/web/static/src/js/swarm.js
-  function escapeHtml2(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-  }
   function isSafeURL(url) {
     return typeof url === "string" && (url.indexOf("https://") === 0 || url.indexOf("http://") === 0);
   }
@@ -1583,10 +1575,10 @@
         if (svc.DesiredReplicas > 0) {
           var replicaClass = svc.RunningReplicas === svc.DesiredReplicas ? "svc-replicas-healthy" : svc.RunningReplicas > 0 ? "svc-replicas-degraded" : "svc-replicas-down";
           wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
-          wrap.innerHTML = '<span class="badge svc-replicas ' + replicaClass + ' badge-default">' + escapeHtml2(svc.Replicas || "") + `</span><span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc('` + escapeHtml2(name) + `', 0, this.closest('.status-badge-wrap'))">Scale to 0</span>`;
+          wrap.innerHTML = '<span class="badge svc-replicas ' + replicaClass + ' badge-default">' + escapeHTML(svc.Replicas || "") + `</span><span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc('` + escapeHTML(name) + `', 0, this.closest('.status-badge-wrap'))">Scale to 0</span>`;
         } else {
           wrap.setAttribute("data-prev-replicas", prevReplicas);
-          wrap.innerHTML = '<span class="badge svc-replicas svc-replicas-down badge-default">' + escapeHtml2(svc.Replicas || "0/0") + `</span><span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc('` + escapeHtml2(name) + "', " + (prevReplicas > 0 ? prevReplicas : 1) + `, this.closest('.status-badge-wrap'))">Scale up</span>`;
+          wrap.innerHTML = '<span class="badge svc-replicas svc-replicas-down badge-default">' + escapeHTML(svc.Replicas || "0/0") + `</span><span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc('` + escapeHTML(name) + "', " + (prevReplicas > 0 ? prevReplicas : 1) + `, this.closest('.status-badge-wrap'))">Scale up</span>`;
         }
       }
       if (header) {
@@ -1594,19 +1586,19 @@
         if (imgCell && svc.Tag) {
           var oldBadge = imgCell.querySelector(".registry-badge");
           if (oldBadge) oldBadge.remove();
-          var rvSpan = svc.ResolvedVersion ? ' <span class="resolved-ver">(' + escapeHtml2(svc.ResolvedVersion) + ")</span>" : "";
+          var rvSpan = svc.ResolvedVersion ? ' <span class="resolved-ver">(' + escapeHTML(svc.ResolvedVersion) + ")</span>" : "";
           if (svc.NewestVersion) {
-            var verHtml = escapeHtml2(svc.NewestVersion);
+            var verHtml = escapeHTML(svc.NewestVersion);
             if (svc.VersionURL && isSafeURL(svc.VersionURL)) {
-              verHtml = '<a href="' + escapeHtml2(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHtml2(svc.NewestVersion) + "</a>";
+              verHtml = '<a href="' + escapeHTML(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHTML(svc.NewestVersion) + "</a>";
             } else {
               verHtml = '<span class="version-new">' + verHtml + "</span>";
             }
-            imgCell.innerHTML = '<span class="version-current">' + escapeHtml2(svc.Tag) + rvSpan + '</span> <span class="version-arrow">&rarr;</span> ' + verHtml;
+            imgCell.innerHTML = '<span class="version-current">' + escapeHTML(svc.Tag) + rvSpan + '</span> <span class="version-arrow">&rarr;</span> ' + verHtml;
           } else {
-            var tagHtml = escapeHtml2(svc.Tag) + rvSpan;
+            var tagHtml = escapeHTML(svc.Tag) + rvSpan;
             if (svc.ChangelogURL && isSafeURL(svc.ChangelogURL)) {
-              imgCell.innerHTML = '<a href="' + escapeHtml2(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + "</a>";
+              imgCell.innerHTML = '<a href="' + escapeHTML(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + "</a>";
             } else {
               imgCell.innerHTML = tagHtml;
             }
@@ -1624,7 +1616,7 @@
           var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
           var btns = "";
           if (svc.HasUpdate && svc.Policy !== "pinned") {
-            btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? " loading" : "") + '"' + (isUpdating ? " disabled" : "") + ` onclick="event.stopPropagation(); triggerSvcUpdate('` + escapeHtml2(name) + `', event)">Update</button>`;
+            btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? " loading" : "") + '"' + (isUpdating ? " disabled" : "") + ` onclick="event.stopPropagation(); triggerSvcUpdate('` + escapeHTML(name) + `', event)">Update</button>`;
           }
           btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
           actionCell.innerHTML = btns;
@@ -1656,13 +1648,13 @@
           } else if (task.State === "preparing") {
             stateBadge = '<span class="badge badge-info">preparing</span>';
           } else {
-            stateBadge = '<span class="badge badge-error" title="' + escapeHtml2(task.Error || "") + '">' + escapeHtml2(task.State) + "</span>";
+            stateBadge = '<span class="badge badge-error" title="' + escapeHTML(task.Error || "") + '">' + escapeHTML(task.State) + "</span>";
           }
-          var nodeDisplay = escapeHtml2(task.NodeName);
+          var nodeDisplay = escapeHTML(task.NodeName);
           if (task.NodeAddr) {
-            nodeDisplay += ' <span class="svc-node-addr">(' + escapeHtml2(task.NodeAddr) + ")</span>";
+            nodeDisplay += ' <span class="svc-node-addr">(' + escapeHTML(task.NodeAddr) + ")</span>";
           }
-          tr.innerHTML = '<td></td><td class="svc-node">' + nodeDisplay + '</td><td class="mono">' + escapeHtml2(task.Tag || "") + "</td><td></td><td>" + stateBadge + "</td><td></td>";
+          tr.innerHTML = '<td></td><td class="svc-node">' + nodeDisplay + '</td><td class="mono">' + escapeHTML(task.Tag || "") + "</td><td></td><td>" + stateBadge + "</td><td></td>";
           taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
         }
       } else if (taskHeader && svc.DesiredReplicas === 0) {
@@ -1671,7 +1663,7 @@
           for (var t = cached.length - 1; t >= 0; t--) {
             var tr = document.createElement("tr");
             tr.className = "svc-task-row";
-            tr.innerHTML = '<td></td><td class="svc-node">' + escapeHtml2(cached[t].NodeText || "") + '</td><td class="mono">' + escapeHtml2(cached[t].Tag || "") + '</td><td></td><td><span class="badge badge-error">shutdown</span></td><td></td>';
+            tr.innerHTML = '<td></td><td class="svc-node">' + escapeHTML(cached[t].NodeText || "") + '</td><td class="mono">' + escapeHTML(cached[t].Tag || "") + '</td><td></td><td><span class="badge badge-error">shutdown</span></td><td></td>';
             taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
           }
         } else {
@@ -1838,12 +1830,19 @@
   function initSSE() {
     if (typeof EventSource === "undefined") return;
     var es = new EventSource("/api/events");
+    window.sseSource = es;
+    var _sseHasConnected = false;
     es.addEventListener("connected", function() {
       if (localStorage.getItem("sentinel-self-updating")) {
         localStorage.removeItem("sentinel-self-updating");
         window.location.reload();
         return;
       }
+      if (_sseHasConnected) {
+        window.location.reload();
+        return;
+      }
+      _sseHasConnected = true;
       setConnectionStatus(true);
     });
     es.addEventListener("container_update", function(e) {

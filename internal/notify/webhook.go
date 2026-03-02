@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -24,12 +25,23 @@ type Webhook struct {
 
 // NewWebhook creates a generic webhook notifier.
 // Custom headers (e.g. Authorization) are sent with every request.
-func NewWebhook(url string, headers map[string]string) *Webhook {
+// Returns an error if the URL scheme is not http or https.
+func NewWebhook(rawURL string, headers map[string]string) (*Webhook, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid webhook URL: %w", err)
+	}
+	switch u.Scheme {
+	case "http", "https":
+		// allowed
+	default:
+		return nil, fmt.Errorf("unsupported webhook URL scheme %q (must be http or https)", u.Scheme)
+	}
 	return &Webhook{
-		url:     url,
+		url:     rawURL,
 		headers: headers,
 		client:  &http.Client{Timeout: 10 * time.Second},
-	}
+	}, nil
 }
 
 // Name returns the provider name for logging.

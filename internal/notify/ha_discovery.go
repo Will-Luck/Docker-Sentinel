@@ -36,7 +36,7 @@ func NewHADiscovery(cfg HADiscoveryConfig) (*HADiscovery, error) {
 		SetClientID(cfg.ClientID + "-ha").
 		SetConnectTimeout(10 * time.Second).
 		SetAutoReconnect(true).
-		SetCleanSession(true)
+		SetCleanSession(false)
 
 	if cfg.Username != "" {
 		opts.SetUsername(cfg.Username)
@@ -44,7 +44,11 @@ func NewHADiscovery(cfg HADiscoveryConfig) (*HADiscovery, error) {
 	}
 
 	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.WaitTimeout(10*time.Second) && token.Error() != nil {
+	token := client.Connect()
+	if !token.WaitTimeout(10 * time.Second) {
+		return nil, fmt.Errorf("ha discovery mqtt connect: timeout after 10s")
+	}
+	if token.Error() != nil {
 		return nil, fmt.Errorf("ha discovery mqtt connect: %w", token.Error())
 	}
 
