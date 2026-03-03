@@ -26,7 +26,7 @@ function toggleSvc(headerRow) {
 }
 
 function triggerSvcUpdate(name, event) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") || event.target.closest(".btn") : null;
     if (btn) {
         btn.classList.add("loading");
         btn.disabled = true;

@@ -1211,7 +1211,7 @@
     bulkQueueAction("reject", "rejected", btn);
   }
   function triggerUpdate(name, event, hostId) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") : null;
     var url = "/api/update/" + encodeURIComponent(name);
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     if (btn) {
@@ -1295,7 +1295,7 @@
     });
   }
   function triggerSelfUpdate(event) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") : null;
     showConfirm("Self-Update", "<p>This will restart Sentinel to apply the update. Continue?</p>").then(function(confirmed) {
       if (!confirmed) return;
       localStorage.setItem("sentinel-self-updating", "1");
@@ -1487,7 +1487,7 @@
     group.classList.toggle("svc-collapsed");
   }
   function triggerSvcUpdate(name, event) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") || event.target.closest(".btn") : null;
     if (btn) {
       btn.classList.add("loading");
       btn.disabled = true;
@@ -1807,7 +1807,7 @@
           var sel = 'tr.container-row[data-name="' + name + '"]';
           if (hostId) sel += '[data-host="' + hostId + '"]';
           var row = document.querySelector(sel);
-          var updBtn = row ? row.querySelector(".btn-warning.loading") : null;
+          var updBtn = row ? row.querySelector(".badge-action.loading, .badge-updating") : null;
           if (updBtn) {
             window._updateLoadingBtns[updKey] = updBtn;
           } else {
