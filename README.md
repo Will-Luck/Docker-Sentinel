@@ -2,14 +2,11 @@
 
 [![CI](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml/badge.svg)](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/releases/latest)
-[![Docker Pulls](https://img.shields.io/docker/pulls/willluck/docker-sentinel)](https://hub.docker.com/r/willluck/docker-sentinel)
-[![Downloads](https://img.shields.io/github/downloads/Will-Luck/Docker-Sentinel/total)](https://github.com/Will-Luck/Docker-Sentinel/releases)
-[![Last Commit](https://img.shields.io/github/last-commit/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/commits)
-[![GHCR](https://img.shields.io/badge/ghcr.io-docker--sentinel-blue?logo=github)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
+[![Licence](https://img.shields.io/github/license/Will-Luck/Docker-Sentinel)](LICENSE)
 
 A container update orchestrator with a web dashboard, written in Go. Replaces Watchtower with per-container update policies, pre-update snapshots, automatic rollback, and real-time notifications.
 
-![Dashboard](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/02-dashboard.png)
+![Dashboard](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/dashboard.png)
 
 ## Features
 
@@ -64,9 +61,9 @@ Set per-container update behaviour with Docker labels like `sentinel.policy`, `s
 
 | | |
 |---|---|
-| ![Login](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/01-login.png) | ![Dashboard](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/02-dashboard.png) |
-| ![Queue](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/03-queue.png) | ![Container Detail](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/04-container-detail.png) |
-| ![Settings](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/07-settings.png) | ![Cluster](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/10-cluster.png) |
+| ![Dashboard](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/dashboard.png) | ![Queue](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/queue.png) |
+| ![Container Detail](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/container-detail.png) | ![Cluster](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/cluster.png) |
+| ![Settings](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/settings-general.png) | ![Images](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/images.png) |
 
 ## Documentation
 
@@ -80,8 +77,8 @@ Full documentation is available in the **[Wiki](https://github.com/Will-Luck/Doc
 - [Authentication & Security](https://github.com/Will-Luck/Docker-Sentinel/wiki/Authentication-and-Security)
 - [Notifications](https://github.com/Will-Luck/Docker-Sentinel/wiki/Notifications)
 - [Cluster Mode](https://github.com/Will-Luck/Docker-Sentinel/wiki/Cluster-Mode)
-
-The wiki is also mirrored on [Gitea](http://192.168.1.57:62400/GiteaLN/Docker-Sentinel/wiki/).
+- [Lifecycle Hooks](https://github.com/Will-Luck/Docker-Sentinel/wiki/Lifecycle-Hooks)
+- [Troubleshooting](https://github.com/Will-Luck/Docker-Sentinel/wiki/Troubleshooting)
 
 ## Building from Source
 
