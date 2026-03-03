@@ -83,6 +83,7 @@ type tabStats struct {
 type hostGroup struct {
 	ID        string       // "local" or host ID
 	Name      string       // display name
+	Address   string       // agent IP (for port links)
 	Connected bool         // always true for local
 	Stacks    []stackGroup // existing stack grouping within this host
 	Count     int          // total container count
@@ -108,6 +109,7 @@ type containerView struct {
 	Replicas        string // e.g. "3/3" for services, empty for containers
 	HostID          string // cluster host ID (empty = local)
 	HostName        string // cluster host name (empty = local)
+	HostAddress     string // agent IP for port links (empty = local)
 	Ports           []PortMapping
 }
 
@@ -467,16 +469,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// Column count: checkbox + name + actions (3 fixed) + visible configurable cols.
-	colCount := 3
-	for _, v := range columnVisible {
-		if v {
-			colCount++
-		}
-	}
+	// Column count must match the actual <td> count in container-row, which
+	// always renders all 7 cells (hidden ones use CSS display:none).
+	colCount := 7 // checkbox + name + image + policy + status + ports + actions
 
 	// JSON for the JS column config.
-	var visibleCols []string
+	visibleCols := make([]string, 0, 4)
 	for _, col := range []string{"image", "policy", "status", "ports"} {
 		if columnVisible[col] {
 			visibleCols = append(visibleCols, col)
@@ -514,6 +512,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// Remote groups from cluster.
 		hosts := s.deps.Cluster.AllHosts()
 		remoteContainers := s.deps.Cluster.AllHostContainers()
+
+		// Build a host ID -> IP address lookup for port links.
+		hostAddr := make(map[string]string, len(hosts))
+		for _, h := range hosts {
+			hostAddr[h.ID] = extractIP(h.Address)
+		}
 
 		// Group remote containers by host ID, extracting tag/registry
 		// the same way we do for local containers.
@@ -565,6 +569,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				IsSelf:        rc.Labels["sentinel.self"] == "true",
 				HostID:        rc.HostID,
 				HostName:      rc.HostName,
+				HostAddress:   hostAddr[rc.HostID],
 				Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
 				Ports:         rc.Ports,
 			}
@@ -597,6 +602,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			data.HostGroups = append(data.HostGroups, hostGroup{
 				ID:        h.ID,
 				Name:      h.Name,
+				Address:   hostAddr[h.ID],
 				Connected: h.Connected,
 				Stacks:    remoteStacks,
 				Count:     len(containers),
@@ -690,4 +696,24 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.withPortainer(&data)
 
 	s.renderTemplate(w, "index.html", data)
+}
+
+// extractIP strips the port from a "host:port" address string.
+// If the address has no port suffix, it's returned as-is.
+func extractIP(addr string) string {
+	if i := strings.LastIndex(addr, ":"); i > 0 {
+		// Only strip if it looks like a port (all digits after the colon).
+		port := addr[i+1:]
+		allDigits := len(port) > 0
+		for _, c := range port {
+			if c < '0' || c > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return addr[:i]
+		}
+	}
+	return addr
 }

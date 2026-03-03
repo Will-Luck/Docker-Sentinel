@@ -995,6 +995,16 @@
     e.stopPropagation();
     el.closest(".cell-ports").classList.toggle("expanded");
   }
+  function initPortLinks() {
+    var host = window.location.hostname;
+    var links = document.querySelectorAll(".port-chip:not([href])");
+    for (var i = 0; i < links.length; i++) {
+      var port = links[i].dataset.port;
+      if (port) {
+        links[i].href = "http://" + host + ":" + port;
+      }
+    }
+  }
 
   // internal/web/static/src/js/queue.js
   function _updateQueueBadge() {
@@ -1758,6 +1768,7 @@
         if (window.recomputeSelectionState) window.recomputeSelectionState();
       }
       if (window.applyColumnConfig) window.applyColumnConfig();
+      if (window.initPortLinks) window.initPortLinks();
       applyRegistryBadges();
       if (window.applyFiltersAndSort) window.applyFiltersAndSort();
       if (window.recalcTabStats) window.recalcTabStats();
@@ -5271,6 +5282,7 @@
   window.toggleSwarmSection = toggleSwarmSection;
   window.onRowClick = onRowClick;
   window.togglePorts = togglePorts;
+  window.initPortLinks = initPortLinks;
   window.applyBulkPolicy = applyBulkPolicy;
   window.clearSelection = clearSelection;
   window.applyTheme = applyTheme;
@@ -5394,6 +5406,7 @@
     loadDigestBanner();
     initFilters();
     applyColumnConfig();
+    initPortLinks();
     initDashboardTabs();
     refreshLastScan();
     var stackPref = localStorage.getItem("sentinel-stacks") || "collapsed";

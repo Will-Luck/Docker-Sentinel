@@ -100,6 +100,28 @@ func (r *Registry) Register(info cluster.HostInfo) error {
 	return nil
 }
 
+// UpdateAddress stores the agent's IP so the dashboard can link ports
+// to the correct host. Called on each Channel() connection.
+func (r *Registry) UpdateAddress(hostID, addr string) {
+	r.mu.Lock()
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+	hs.Info.Address = addr
+	data, err := json.Marshal(hs.Info)
+	r.mu.Unlock()
+
+	if err != nil {
+		r.log.Warn("marshal host info for address update", "error", err)
+		return
+	}
+	if err := r.store.SaveClusterHost(hostID, data); err != nil {
+		r.log.Warn("persist host address", "error", err)
+	}
+}
+
 // UpdateLastSeen updates the host's LastSeen timestamp and persists it.
 // Called on every heartbeat and on stream disconnect.
 func (r *Registry) UpdateLastSeen(hostID string, t time.Time) error {

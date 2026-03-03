@@ -1034,8 +1034,22 @@ function togglePorts(el, e) {
     el.closest('.cell-ports').classList.toggle('expanded');
 }
 
+// Fill in port links for local containers (no href from template).
+// Remote containers get their href server-side via HostAddress.
+function initPortLinks() {
+    var host = window.location.hostname;
+    var links = document.querySelectorAll('.port-chip:not([href])');
+    for (var i = 0; i < links.length; i++) {
+        var port = links[i].dataset.port;
+        if (port) {
+            links[i].href = 'http://' + host + ':' + port;
+        }
+    }
+}
+
 export {
     togglePorts,
+    initPortLinks,
     applyColumnConfig,
     initTheme,
     applyTheme,

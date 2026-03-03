@@ -136,7 +136,7 @@
                         {{if index .ColumnVisible "image"}}<col class="col-image">{{end}}
                         {{if index .ColumnVisible "policy"}}<col class="col-policy" style="width:120px">{{end}}
                         {{if index .ColumnVisible "status"}}<col class="col-status" style="width:100px">{{end}}
-                        {{if index .ColumnVisible "ports"}}<col class="col-ports" style="width:120px">{{end}}
+                        {{if index .ColumnVisible "ports"}}<col class="col-ports" style="width:140px">{{end}}
                         <col style="width:220px">
                     </colgroup>
                     <thead>
@@ -443,7 +443,7 @@
                                         </span>
                                     {{end}}
                                 </td>
-                                <td class="col-ports cell-ports">{{range $i, $p := .Ports}}<span class="port-chip{{if ge $i 2}} port-hidden{{end}}">{{$p.HostPort}}:{{$p.ContainerPort}}</span>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
+                                <td class="col-ports cell-ports">{{$hostAddr := .HostAddress}}{{range $i, $p := .Ports}}<a class="port-chip{{if ge $i 2}} port-hidden{{end}}" {{if $hostAddr}}href="http://{{$hostAddr}}:{{$p.HostPort}}"{{end}} data-port="{{$p.HostPort}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{$p.HostPort}}:{{$p.ContainerPort}}</a>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
                                 <td>
                                     <div class="btn-group">
                                         {{if .IsSelf}}
