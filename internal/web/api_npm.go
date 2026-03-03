@@ -94,9 +94,21 @@ func (s *Server) apiSetNPMCredentials(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiTestNPMConnection(w http.ResponseWriter, r *http.Request) {
+	// If NPM provider doesn't exist yet, try to create it from saved settings.
 	if s.deps.NPM == nil {
-		writeError(w, http.StatusBadRequest, "NPM not configured - save URL and credentials, then restart")
-		return
+		if s.deps.NPMInitFunc == nil {
+			writeError(w, http.StatusBadRequest, "NPM not available")
+			return
+		}
+		provider, err := s.deps.NPMInitFunc(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   err.Error(),
+			})
+			return
+		}
+		s.deps.NPM = provider
 	}
 	if err := s.deps.NPM.TestConnection(r.Context()); err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -113,7 +125,7 @@ func (s *Server) apiTestNPMConnection(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiSyncNPM(w http.ResponseWriter, r *http.Request) {
 	if s.deps.NPM == nil {
-		writeError(w, http.StatusBadRequest, "NPM not configured")
+		writeError(w, http.StatusBadRequest, "NPM not configured - test connection first")
 		return
 	}
 	if err := s.deps.NPM.Sync(r.Context()); err != nil {
