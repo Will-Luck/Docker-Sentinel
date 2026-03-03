@@ -1385,8 +1385,9 @@ details[open] > .accordion-header .accordion-chevron {
   }
 }
 #container-table .col-policy,
-#container-table .col-status {
-  text-align: left;
+#container-table .col-status,
+#container-table .col-ports {
+  text-align: center;
 }
 .cell-ports {
   font-family: var(--font-mono);
@@ -1395,11 +1396,13 @@ details[open] > .accordion-header .accordion-chevron {
   color: var(--fg-secondary);
   overflow: hidden;
   line-height: 1.8;
-  text-align: left;
+  text-align: center;
 }
 .port-chip {
   display: block;
   width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
   padding: 1px 6px;
   background: var(--bg-hover);
   border-radius: var(--radius-sm);
