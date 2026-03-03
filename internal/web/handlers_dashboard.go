@@ -111,6 +111,7 @@ type containerView struct {
 	HostName        string // cluster host name (empty = local)
 	HostAddress     string // agent IP for port links (empty = local)
 	Ports           []PortMapping
+	PortURLs        map[uint16]string // resolved URLs for port chips (key: host port)
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -239,6 +240,61 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 	return sv
 }
 
+// localHostAddr returns the IP/hostname to use for local container port links.
+// Prefers SENTINEL_HOST env var; falls back to the HTTP request's host.
+func (s *Server) localHostAddr(r *http.Request) string {
+	if s.hostAddress != "" {
+		return s.hostAddress
+	}
+	host := r.Host
+	// Strip port from host:port.
+	if i := strings.LastIndex(host, ":"); i > 0 {
+		host = host[:i]
+	}
+	return host
+}
+
+// resolvePortURLs builds a map of host port -> resolved URL for a container's port chips.
+// Priority: per-port custom config > NPM auto-discovery > SENTINEL_HOST:port fallback.
+// The fallback is handled by the template, so this only returns non-default URLs.
+func (s *Server) resolvePortURLs(name string, ports []PortMapping) map[uint16]string {
+	urls := make(map[uint16]string)
+
+	// Layer NPM auto-discovery.
+	if s.deps.NPM != nil {
+		for _, p := range ports {
+			if r := s.deps.NPM.Lookup(p.HostPort); r != nil {
+				urls[p.HostPort] = r.URL
+			}
+		}
+	}
+
+	// Layer per-port custom config (highest priority).
+	if s.deps.PortConfigs != nil {
+		pc, err := s.deps.PortConfigs.GetPortConfig(name)
+		if err == nil && pc != nil {
+			for _, p := range ports {
+				key := fmt.Sprintf("%d", p.HostPort)
+				ov, ok := pc.Ports[key]
+				if !ok {
+					continue
+				}
+				if ov.URL != "" {
+					urls[p.HostPort] = ov.URL
+				} else if ov.Path != "" {
+					base := urls[p.HostPort]
+					if base == "" {
+						base = "http://" + s.hostAddress + ":" + key
+					}
+					urls[p.HostPort] = strings.TrimRight(base, "/") + "/" + strings.TrimLeft(ov.Path, "/")
+				}
+			}
+		}
+	}
+
+	return urls
+}
+
 // handleDashboard renders the main container dashboard.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.signalScanReady()
@@ -332,7 +388,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			Stack:           c.Labels["com.docker.compose.project"],
 			Registry:        registry.RegistryHost(c.Image),
 			Ports:           c.Ports,
+			HostAddress:     s.localHostAddr(r),
 		})
+		views[len(views)-1].PortURLs = s.resolvePortURLs(name, c.Ports)
 	}
 
 	// Build Swarm Services section if available.
@@ -573,6 +631,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
 				Ports:         rc.Ports,
 			}
+			cv.PortURLs = s.resolvePortURLs(rc.Name, rc.Ports)
 			byHost[rc.HostID] = append(byHost[rc.HostID], cv)
 		}
 

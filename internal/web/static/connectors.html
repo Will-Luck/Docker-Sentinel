@@ -1,0 +1,498 @@
+{{define "connectors.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connectors — Docker-Sentinel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+</head>
+<body>
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <nav class="nav">
+        <a href="/" class="nav-brand">
+            <img src="/favicon.svg" alt="S" class="nav-logo">
+            <span class="nav-brand-text">Sentinel</span>
+        </a>
+        <div class="nav-links">
+            <a href="/" class="nav-link">Dashboard</a>
+            <a href="/queue" class="nav-link">
+                Pending Updates
+                {{if .QueueCount}}<span class="nav-badge">{{.QueueCount}}</span>{{end}}
+            </a>
+            <a href="/history" class="nav-link">History</a>
+            <a href="/logs" class="nav-link">Logs</a>
+            <a href="/images" class="nav-link">Images</a>
+            <a href="/settings" class="nav-link">Settings</a>
+            {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
+            <a href="/connectors" class="nav-link active" aria-current="page">Connectors</a>
+        </div>
+        <div class="nav-status" aria-live="polite">
+            <span id="sse-indicator" class="status-dot disconnected"></span>
+            <span id="sse-label" class="nav-status-text">Disconnected</span>
+        </div>
+        {{if .AuthEnabled}}{{if .CurrentUser}}
+        <div class="nav-user">
+            <button class="nav-user-btn" onclick="toggleUserDropdown(event)" aria-haspopup="true" aria-expanded="false">
+                <span>{{.CurrentUser.Username}}</span>
+                <span class="nav-user-role">{{.CurrentUser.RoleID}}</span>
+                <span class="nav-user-chevron">&#9662;</span>
+            </button>
+            <div class="nav-user-dropdown" id="user-dropdown">
+                <a href="/account">My Account</a>
+                <div class="dropdown-divider"></div>
+                <form method="POST" action="/logout" style="margin:0">
+                    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                    <button type="submit">Logout</button>
+                </form>
+            </div>
+        </div>
+        {{end}}{{else}}
+        <a href="/settings" class="nav-auth-off" onclick="localStorage.setItem('sentinel-settings-tab','security')">Auth: Off</a>
+        {{end}}
+    </nav>
+
+    <main class="main-content" id="main-content">
+        <div class="page-header">
+            <div>
+                <h1>Connectors</h1>
+                <p class="subtitle">External service integrations</p>
+            </div>
+        </div>
+
+        <div class="tab-nav" role="tablist">
+            <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-portainer" data-tab="portainer">Portainer</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-npm" data-tab="npm">Nginx Proxy Manager</button>
+        </div>
+
+        <!-- Portainer tab (same content as was in settings) -->
+        <div class="tab-panel active" id="tab-portainer" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Portainer Integration</h2>
+                </div>
+                <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
+                    <p class="accordion-intro">Connect to a Portainer instance to view endpoints and containers from the Portainer dashboard.</p>
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Enable Portainer</div>
+                                <div class="setting-desc">Show the Portainer dashboard and scan Portainer-managed containers. Requires a restart after changing URL or token.</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="portainer-enabled" class="channel-toggle" onchange="onPortainerToggle(this.checked)">
+                                <span id="portainer-enabled-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="portainer-fields" class="cluster-fields disabled">
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Portainer URL</div>
+                                <div class="setting-desc">Base URL of your Portainer instance, e.g. https://portainer.example.com</div>
+                            </div>
+                            <input type="text" id="portainer-url" class="setting-input" placeholder="https://portainer.example.com" onchange="savePortainerURL()">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">API Token</div>
+                                <div class="setting-desc">Portainer API access token (Settings &#8250; Users &#8250; Access tokens).</div>
+                            </div>
+                            <input type="password" id="portainer-token" class="setting-input" placeholder="ptr_..." onchange="savePortainerToken()">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Connection</div>
+                                <div class="setting-desc">Test connectivity with the current URL and token.</div>
+                            </div>
+                            <button class="btn btn-info" id="portainer-test-btn" onclick="testPortainerConnection()">Test Connection</button>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- NPM tab -->
+        <div class="tab-panel" id="tab-npm" role="tabpanel">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Nginx Proxy Manager</h2>
+                </div>
+                <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
+                    <p class="accordion-intro">Connect to NPM to auto-discover reverse proxy domains. Port chips on the dashboard will link to the proxy domain instead of the raw host:port.</p>
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Enable NPM</div>
+                                <div class="setting-desc">Auto-resolve container ports to NPM proxy domains. Requires a restart after changing credentials.</div>
+                            </div>
+                            <label class="toggle-switch-label">
+                                <input type="checkbox" id="npm-enabled" class="channel-toggle" onchange="onNPMToggle(this.checked)">
+                                <span id="npm-enabled-text" class="toggle-switch-text">Off</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div id="npm-fields" class="cluster-fields disabled">
+                    <div class="settings-rows">
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">NPM URL</div>
+                                <div class="setting-desc">Admin UI URL of your NPM instance, e.g. http://192.168.1.57:62453</div>
+                            </div>
+                            <input type="text" id="npm-url" class="setting-input" placeholder="http://npm.example.com:81" onchange="saveNPMURL()">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Email</div>
+                                <div class="setting-desc">NPM admin email address for API authentication.</div>
+                            </div>
+                            <input type="email" id="npm-email" class="setting-input" placeholder="admin@example.com">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Password</div>
+                                <div class="setting-desc">NPM admin password.</div>
+                            </div>
+                            <input type="password" id="npm-password" class="setting-input" placeholder="Password">
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Credentials</div>
+                                <div class="setting-desc">Save email and password.</div>
+                            </div>
+                            <button class="btn" onclick="saveNPMCredentials()">Save Credentials</button>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Connection</div>
+                                <div class="setting-desc">Test connectivity with the current URL and credentials.</div>
+                            </div>
+                            <button class="btn btn-info" id="npm-test-btn" onclick="testNPMConnection()">Test Connection</button>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-label">Sync</div>
+                                <div class="setting-desc">Force a re-sync of proxy host mappings from NPM.</div>
+                            </div>
+                            <div style="display:flex;gap:var(--sp-2);align-items:center">
+                                <button class="btn" id="npm-sync-btn" onclick="syncNPM()">Sync Now</button>
+                                <span class="text-muted" id="npm-last-sync" style="font-size:0.85rem"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Current mappings -->
+                    <div style="margin-top:var(--sp-4)">
+                        <h3 style="margin-bottom:var(--sp-2)">Discovered Mappings</h3>
+                        <div id="npm-mappings">
+                            <p class="text-muted">No mappings loaded yet.</p>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <footer class="app-footer">
+        <span class="footer-version" id="footer-version"></span>
+        <span class="footer-beta">
+            This is BETA software. <a href="https://github.com/Will-Luck/Docker-Sentinel/issues" target="_blank" rel="noopener">Report issues on GitHub</a>
+        </span>
+    </footer>
+
+    <script src="/static/app.js"></script>
+    <script>
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.tab-btn').forEach(function(b) {
+            b.classList.remove('active');
+            b.setAttribute('aria-selected', 'false');
+        });
+        document.querySelectorAll('.tab-panel').forEach(function(p) {
+            p.classList.remove('active');
+        });
+        this.classList.add('active');
+        this.setAttribute('aria-selected', 'true');
+        var tab = document.getElementById('tab-' + this.dataset.tab);
+        if (tab) tab.classList.add('active');
+        localStorage.setItem('sentinel-connectors-tab', this.dataset.tab);
+    });
+});
+
+// Restore last tab
+var savedTab = localStorage.getItem('sentinel-connectors-tab');
+if (savedTab) {
+    var btn = document.querySelector('.tab-btn[data-tab="' + savedTab + '"]');
+    if (btn) btn.click();
+}
+
+// --- Portainer functions ---
+function onPortainerToggle(enabled) {
+    updateToggleText('portainer-enabled-text', enabled);
+    toggleFields('portainer-fields', enabled);
+    fetch('/api/settings/portainer-enabled', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({enabled: enabled})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer ' + (enabled ? 'enabled' : 'disabled') + ' - restart to apply');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function savePortainerURL() {
+    var url = (document.getElementById('portainer-url') || {}).value || '';
+    fetch('/api/settings/portainer-url', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({url: url})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer URL saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function savePortainerToken() {
+    var token = (document.getElementById('portainer-token') || {}).value || '';
+    fetch('/api/settings/portainer-token', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({token: token})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Portainer token saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function testPortainerConnection() {
+    var btn = document.getElementById('portainer-test-btn');
+    if (btn) btn.disabled = true;
+    fetch('/api/settings/portainer-test', {
+        method: 'POST',
+        headers: {'X-CSRF-Token': csrfToken}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast('Connection failed: ' + d.error, 'error'); }
+        else { showToast('Connection successful'); }
+    })
+    .catch(function() { showToast('Connection failed', 'error'); })
+    .finally(function() { if (btn) btn.disabled = false; });
+}
+
+// --- NPM functions ---
+function onNPMToggle(enabled) {
+    updateToggleText('npm-enabled-text', enabled);
+    toggleFields('npm-fields', enabled);
+    fetch('/api/settings/npm-enabled', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({enabled: enabled})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('NPM ' + (enabled ? 'enabled' : 'disabled') + ' - restart to apply');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function saveNPMURL() {
+    var url = (document.getElementById('npm-url') || {}).value || '';
+    fetch('/api/settings/npm-url', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({url: url})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('NPM URL saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function saveNPMCredentials() {
+    var email = (document.getElementById('npm-email') || {}).value || '';
+    var password = (document.getElementById('npm-password') || {}).value || '';
+    fetch('/api/settings/npm-credentials', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        body: JSON.stringify({email: email, password: password})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('NPM credentials saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function testNPMConnection() {
+    var btn = document.getElementById('npm-test-btn');
+    if (btn) btn.disabled = true;
+    fetch('/api/settings/npm-test', {
+        method: 'POST',
+        headers: {'X-CSRF-Token': csrfToken}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) { showToast('Connection successful'); }
+        else { showToast('Connection failed: ' + (d.error || 'unknown error'), 'error'); }
+    })
+    .catch(function() { showToast('Connection failed', 'error'); })
+    .finally(function() { if (btn) btn.disabled = false; });
+}
+
+function syncNPM() {
+    var btn = document.getElementById('npm-sync-btn');
+    if (btn) btn.disabled = true;
+    fetch('/api/settings/npm-sync', {
+        method: 'POST',
+        headers: {'X-CSRF-Token': csrfToken}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            showToast('Sync complete');
+            renderNPMMappings(d.mappings);
+        } else {
+            showToast('Sync failed: ' + (d.error || 'unknown error'), 'error');
+        }
+    })
+    .catch(function() { showToast('Sync failed', 'error'); })
+    .finally(function() { if (btn) btn.disabled = false; });
+}
+
+function renderNPMMappings(mappings) {
+    var el = document.getElementById('npm-mappings');
+    if (!el) return;
+    var keys = Object.keys(mappings || {});
+    if (!keys.length) {
+        el.textContent = '';
+        var p = document.createElement('p');
+        p.className = 'text-muted';
+        p.textContent = 'No port-to-domain mappings found.';
+        el.appendChild(p);
+        return;
+    }
+    keys.sort(function(a, b) { return parseInt(a) - parseInt(b); });
+    // Build table via DOM to avoid innerHTML XSS concerns
+    el.textContent = '';
+    var table = document.createElement('table');
+    table.className = 'table';
+    table.style.margin = '0';
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    ['Port', 'Domain', 'URL'].forEach(function(label) {
+        var th = document.createElement('th');
+        th.textContent = label;
+        headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    for (var i = 0; i < keys.length; i++) {
+        var m = mappings[keys[i]];
+        var tr = document.createElement('tr');
+        var tdPort = document.createElement('td');
+        tdPort.textContent = keys[i];
+        tr.appendChild(tdPort);
+        var tdDomain = document.createElement('td');
+        tdDomain.textContent = m.Domain || '';
+        tr.appendChild(tdDomain);
+        var tdUrl = document.createElement('td');
+        var a = document.createElement('a');
+        a.href = m.URL;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = m.URL;
+        tdUrl.appendChild(a);
+        tr.appendChild(tdUrl);
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    el.appendChild(table);
+}
+
+function toggleFields(id, enabled) {
+    var fields = document.getElementById(id);
+    if (!fields) return;
+    if (enabled) { fields.classList.remove('disabled'); }
+    else { fields.classList.add('disabled'); }
+}
+
+function updateToggleText(id, enabled) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = enabled ? 'On' : 'Off';
+}
+
+// Load current values
+(function() {
+    fetch('/api/settings')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            // Portainer
+            var pUrl = document.getElementById('portainer-url');
+            if (pUrl && d['SENTINEL_PORTAINER_URL']) pUrl.value = d['SENTINEL_PORTAINER_URL'];
+            if (pUrl && d['portainer_url']) pUrl.value = d['portainer_url'];
+            var pEnabled = d['portainer_enabled'] === 'true';
+            var pToggle = document.getElementById('portainer-enabled');
+            if (pToggle) {
+                pToggle.checked = pEnabled;
+                updateToggleText('portainer-enabled-text', pEnabled);
+                toggleFields('portainer-fields', pEnabled);
+            }
+
+            // NPM
+            var nUrl = document.getElementById('npm-url');
+            if (nUrl && d['npm_url']) nUrl.value = d['npm_url'];
+            if (nUrl && d['SENTINEL_NPM_URL']) nUrl.value = d['SENTINEL_NPM_URL'];
+            var nEmail = document.getElementById('npm-email');
+            if (nEmail && d['npm_email']) nEmail.value = d['npm_email'];
+            var nEnabled = d['npm_enabled'] === 'true';
+            var nToggle = document.getElementById('npm-enabled');
+            if (nToggle) {
+                nToggle.checked = nEnabled;
+                updateToggleText('npm-enabled-text', nEnabled);
+                toggleFields('npm-fields', nEnabled);
+            }
+        });
+
+    // Load NPM mappings
+    fetch('/api/settings/npm-mappings')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            renderNPMMappings(d.mappings);
+            if (d.last_sync) {
+                var el = document.getElementById('npm-last-sync');
+                if (el) el.textContent = 'Last sync: ' + new Date(d.last_sync).toLocaleString();
+            }
+        })
+        .catch(function() {});
+})();
+    </script>
+</body>
+</html>
+{{end}}

@@ -2408,8 +2408,9 @@
       updateScanPreviews();
     }).catch(function() {
     });
-    var tabBtns = document.querySelectorAll(".tab-btn");
-    var tabPanels = document.querySelectorAll(".tab-panel");
+    var settingsTabContainer = document.getElementById("settings-tabs");
+    var tabBtns = settingsTabContainer ? settingsTabContainer.querySelectorAll(".tab-btn") : [];
+    var tabPanels = settingsTabContainer ? settingsTabContainer.parentElement.querySelectorAll(".tab-panel") : [];
     if (tabBtns.length > 0) {
       var savedTab = localStorage.getItem("sentinel-settings-tab");
       if (savedTab) {

@@ -213,6 +213,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				Stack:           c.Labels["com.docker.compose.project"],
 				Registry:        registry.RegistryHost(c.Image),
 			}
+			v.PortURLs = s.resolvePortURLs(n, c.Ports)
 			targetView = &v
 		}
 	}
@@ -260,6 +261,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					Registry:      registry.RegistryHost(rc.Image),
 					Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
 				}
+				v.PortURLs = s.resolvePortURLs(rc.Name, rc.Ports)
 				targetView = &v
 				break
 			}
@@ -401,12 +403,13 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 
 // containerDetailData holds all data for the per-container detail page.
 type containerDetailData struct {
-	Container    containerView
-	History      []UpdateRecord
-	Snapshots    []SnapshotEntry
-	Versions     []string
-	HasSnapshot  bool
-	ChangelogURL string
+	Container     containerView
+	History       []UpdateRecord
+	Snapshots     []SnapshotEntry
+	Versions      []string
+	HasSnapshot   bool
+	ChangelogURL  string
+	PortOverrides map[string]PortOverride // per-port custom URL/path overrides, keyed by port string
 
 	PortainerEnabled bool
 	ClusterEnabled   bool
@@ -544,6 +547,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			HostName:        rc.HostName,
 			Registry:        registry.RegistryHost(rc.Image),
 			Maintenance:     s.isRemoteUpdating(rc.HostID, rc.Name),
+			Ports:           rc.Ports,
 		}
 		image = rc.Image
 	} else {
@@ -644,6 +648,14 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Load per-port custom URL overrides.
+	var portOverrides map[string]PortOverride
+	if s.deps.PortConfigs != nil {
+		if pc, err := s.deps.PortConfigs.GetPortConfig(name); err == nil && pc != nil {
+			portOverrides = pc.Ports
+		}
+	}
+
 	data := containerDetailData{
 		Container:        view,
 		History:          history,
@@ -651,6 +663,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		Versions:         versions,
 		HasSnapshot:      len(snapshots) > 0,
 		ChangelogURL:     ChangelogURL(image),
+		PortOverrides:    portOverrides,
 		PortainerEnabled: s.isPortainerEnabled(),
 		ClusterEnabled:   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}

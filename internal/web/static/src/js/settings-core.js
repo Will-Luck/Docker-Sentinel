@@ -232,9 +232,10 @@ function initSettingsPage() {
         })
         .catch(function() { /* ignore -- falls back to defaults */ });
 
-    // Tab navigation.
-    var tabBtns = document.querySelectorAll(".tab-btn");
-    var tabPanels = document.querySelectorAll(".tab-panel");
+    // Tab navigation (settings page only -- other pages handle their own tabs).
+    var settingsTabContainer = document.getElementById("settings-tabs");
+    var tabBtns = settingsTabContainer ? settingsTabContainer.querySelectorAll(".tab-btn") : [];
+    var tabPanels = settingsTabContainer ? settingsTabContainer.parentElement.querySelectorAll(".tab-panel") : [];
     if (tabBtns.length > 0) {
         var savedTab = localStorage.getItem("sentinel-settings-tab");
         if (savedTab) {

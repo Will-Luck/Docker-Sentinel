@@ -1,0 +1,162 @@
+package npm
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"math"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Resolver maintains an in-memory cache of NPM proxy hosts and resolves
+// container ports to domain URLs.
+type Resolver struct {
+	client       *Client
+	sentinelHost string // SENTINEL_HOST value for matching forward_host
+	log          *slog.Logger
+
+	mu       sync.RWMutex
+	hosts    []ProxyHost
+	lastSync time.Time
+	syncErr  error
+}
+
+// NewResolver creates a resolver that matches proxy hosts against sentinelHost.
+func NewResolver(client *Client, sentinelHost string, log *slog.Logger) *Resolver {
+	return &Resolver{
+		client:       client,
+		sentinelHost: sentinelHost,
+		log:          log,
+	}
+}
+
+// Run syncs proxy hosts immediately then every 5 minutes until ctx is cancelled.
+// Errors are logged but don't stop the loop; stale cache is acceptable.
+func (r *Resolver) Run(ctx context.Context) {
+	_ = r.sync(ctx)
+
+	tick := time.NewTicker(5 * time.Minute)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			_ = r.sync(ctx)
+		}
+	}
+}
+
+// Sync fetches proxy hosts from NPM and updates the cache. Exported for
+// on-demand refresh (e.g. after settings change).
+func (r *Resolver) Sync(ctx context.Context) error {
+	return r.sync(ctx)
+}
+
+func (r *Resolver) sync(ctx context.Context) error {
+	hosts, err := r.client.ListProxyHosts(ctx)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err != nil {
+		r.syncErr = err
+		r.log.Warn("npm proxy host sync failed", "error", err)
+		return err
+	}
+
+	r.hosts = hosts
+	r.lastSync = time.Now()
+	r.syncErr = nil
+	r.log.Debug("npm proxy hosts synced", "count", len(hosts))
+	return nil
+}
+
+// Lookup resolves a host port to its NPM proxy URL. Returns nil if no match.
+func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, h := range r.hosts {
+		if h.Enabled != 1 || len(h.DomainNames) == 0 {
+			continue
+		}
+		if !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
+			continue
+		}
+		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 || uint16(h.ForwardPort) != hostPort {
+			continue
+		}
+
+		scheme := h.ForwardScheme
+		if h.CertificateID > 0 {
+			scheme = "https"
+		}
+		if scheme == "" {
+			scheme = "http"
+		}
+
+		return &ResolvedURL{
+			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
+			Domain:      h.DomainNames[0],
+			ProxyHostID: h.ID,
+		}
+	}
+	return nil
+}
+
+// AllMappings returns all matched port-to-URL mappings for the sentinel host.
+func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make(map[uint16]ResolvedURL)
+	for _, h := range r.hosts {
+		if h.Enabled != 1 || len(h.DomainNames) == 0 {
+			continue
+		}
+		if !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
+			continue
+		}
+
+		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 {
+			continue
+		}
+		port := uint16(h.ForwardPort)
+		if _, exists := out[port]; exists {
+			continue // first match wins, same as Lookup
+		}
+
+		scheme := h.ForwardScheme
+		if h.CertificateID > 0 {
+			scheme = "https"
+		}
+		if scheme == "" {
+			scheme = "http"
+		}
+
+		out[port] = ResolvedURL{
+			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
+			Domain:      h.DomainNames[0],
+			ProxyHostID: h.ID,
+		}
+	}
+	return out
+}
+
+// LastSync returns the time of the last successful sync.
+func (r *Resolver) LastSync() time.Time {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.lastSync
+}
+
+// LastError returns the error from the most recent sync attempt, or nil.
+func (r *Resolver) LastError() error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.syncErr
+}
