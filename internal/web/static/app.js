@@ -203,6 +203,7 @@
     if (!raw) return;
     try {
       var cols = JSON.parse(raw);
+      if (!Array.isArray(cols)) cols = [];
       var colSet = {};
       for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
       var allCols = ["image", "policy", "status", "ports"];
@@ -989,6 +990,10 @@
     } catch (err) {
       logsEl.textContent = "Error loading logs: " + err.message;
     }
+  }
+  function togglePorts(el, e) {
+    e.stopPropagation();
+    el.closest(".cell-ports").classList.toggle("expanded");
   }
 
   // internal/web/static/src/js/queue.js
@@ -5265,6 +5270,7 @@
   window.toggleStack = toggleStack;
   window.toggleSwarmSection = toggleSwarmSection;
   window.onRowClick = onRowClick;
+  window.togglePorts = togglePorts;
   window.applyBulkPolicy = applyBulkPolicy;
   window.clearSelection = clearSelection;
   window.applyTheme = applyTheme;

@@ -443,7 +443,7 @@
                                         </span>
                                     {{end}}
                                 </td>
-                                <td class="col-ports cell-ports">{{range .Ports}}<span class="port-chip">{{.HostPort}}:{{.ContainerPort}}</span>{{end}}</td>
+                                <td class="col-ports cell-ports">{{range $i, $p := .Ports}}<span class="port-chip{{if ge $i 2}} port-hidden{{end}}">{{$p.HostPort}}:{{$p.ContainerPort}}</span>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
                                 <td>
                                     <div class="btn-group">
                                         {{if .IsSelf}}
