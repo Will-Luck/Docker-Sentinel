@@ -562,6 +562,7 @@ details[open] > .accordion-header .accordion-chevron {
     font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--fg-secondary);
+    overflow: hidden;
 }
 
 .port-chip {
@@ -574,6 +575,13 @@ details[open] > .accordion-header .accordion-chevron {
     letter-spacing: 0.02em;
     white-space: nowrap;
     width: fit-content;
+    color: var(--fg-secondary);
+    text-decoration: none;
+}
+
+.port-chip:hover {
+    color: var(--accent);
+    text-decoration: underline;
 }
 
 .port-hidden {

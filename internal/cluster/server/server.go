@@ -381,6 +381,14 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		return status.Errorf(codes.NotFound, "host %s not registered", hostID)
 	}
 
+	// Capture the agent's IP from the gRPC peer address so the dashboard
+	// can link port chips to the correct host.
+	if p, ok := peer.FromContext(stream.Context()); ok {
+		if tcpAddr, ok := p.Addr.(*net.TCPAddr); ok {
+			s.registry.UpdateAddress(hostID, tcpAddr.IP.String())
+		}
+	}
+
 	var streamErr error
 
 	ctx, cancel := context.WithCancel(stream.Context())

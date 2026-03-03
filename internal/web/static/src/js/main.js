@@ -15,6 +15,7 @@ import {
 
 import {
     togglePorts,
+    initPortLinks,
     applyColumnConfig,
     initTheme,
     applyTheme,
@@ -230,6 +231,7 @@ window.toggleStack = toggleStack;
 window.toggleSwarmSection = toggleSwarmSection;
 window.onRowClick = onRowClick;
 window.togglePorts = togglePorts;
+window.initPortLinks = initPortLinks;
 window.applyBulkPolicy = applyBulkPolicy;
 window.clearSelection = clearSelection;
 window.applyTheme = applyTheme;
@@ -379,6 +381,7 @@ document.addEventListener("DOMContentLoaded", function () {
     loadDigestBanner();
     initFilters();
     applyColumnConfig();
+    initPortLinks();
     initDashboardTabs();
     refreshLastScan();
 
