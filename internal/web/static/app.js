@@ -1647,18 +1647,24 @@
         } else {
           header.classList.remove("has-update");
         }
-        var actionCell = header.querySelector("td:last-child .btn-group");
-        if (actionCell) {
+        var statusCell = header.querySelector(".col-status");
+        if (statusCell) {
+          var existingBadge = statusCell.querySelector(".badge-action");
           var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
-          var btns = "";
           if (svc.HasUpdate && svc.Policy !== "pinned") {
-            btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? " loading" : "") + '"' + (isUpdating ? " disabled" : "") + ` onclick="event.stopPropagation(); triggerSvcUpdate('` + escapeHTML(name) + `', event)">Update</button>`;
-          }
-          btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
-          actionCell.innerHTML = btns;
-          if (isUpdating) {
-            var newBtn = actionCell.querySelector(".btn-warning");
-            if (newBtn) window._svcLoadingBtns[name] = newBtn;
+            if (!existingBadge) {
+              var badge = document.createElement("span");
+              badge.className = "badge badge-warning badge-action" + (isUpdating ? " loading" : "");
+              badge.setAttribute("role", "button");
+              badge.setAttribute("tabindex", "0");
+              badge.style.marginBottom = "4px";
+              badge.setAttribute("onclick", "event.stopPropagation(); triggerSvcUpdate('" + escapeHTML(name) + "', event)");
+              badge.textContent = "Update";
+              statusCell.insertBefore(badge, statusCell.firstChild);
+              if (isUpdating) window._svcLoadingBtns[name] = badge;
+            }
+          } else if (existingBadge) {
+            existingBadge.remove();
           }
         }
       }

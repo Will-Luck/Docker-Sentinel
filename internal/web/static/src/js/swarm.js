@@ -218,25 +218,26 @@ function refreshServiceRow(name) {
                     header.classList.remove("has-update");
                 }
 
-                // Update action buttons (all dynamic values passed through escapeHtml).
-                // But if the update is still in progress (loading btn tracked), keep the
-                // spinner alive on the newly rendered button.
-                var actionCell = header.querySelector("td:last-child .btn-group");
-                if (actionCell) {
+                // Update the badge-action "Update" badge in the status cell.
+                // If an update is in progress (loading btn tracked), preserve the spinner.
+                var statusCell = header.querySelector(".col-status");
+                if (statusCell) {
+                    var existingBadge = statusCell.querySelector(".badge-action");
                     var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
-                    var btns = "";
                     if (svc.HasUpdate && svc.Policy !== "pinned") {
-                        btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? ' loading' : '') + '"' +
-                            (isUpdating ? ' disabled' : '') +
-                            ' onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHTML(name) + '\', event)">Update</button>';
-                    }
-                    // Rollback only available on service detail page — not on dashboard.
-                    btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
-                    actionCell.innerHTML = btns;
-
-                    if (isUpdating) {
-                        var newBtn = actionCell.querySelector(".btn-warning");
-                        if (newBtn) window._svcLoadingBtns[name] = newBtn;
+                        if (!existingBadge) {
+                            var badge = document.createElement("span");
+                            badge.className = "badge badge-warning badge-action" + (isUpdating ? " loading" : "");
+                            badge.setAttribute("role", "button");
+                            badge.setAttribute("tabindex", "0");
+                            badge.style.marginBottom = "4px";
+                            badge.setAttribute("onclick", "event.stopPropagation(); triggerSvcUpdate('" + escapeHTML(name) + "', event)");
+                            badge.textContent = "Update";
+                            statusCell.insertBefore(badge, statusCell.firstChild);
+                            if (isUpdating) window._svcLoadingBtns[name] = badge;
+                        }
+                    } else if (existingBadge) {
+                        existingBadge.remove();
                     }
                 }
             }
