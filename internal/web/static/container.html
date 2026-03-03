@@ -430,7 +430,8 @@
             deletePortOverride(port);
             return;
         }
-        fetch('/api/containers/' + encodeURIComponent(_containerName) + '/port-config/' + port, {
+        var hostParam = _containerHostId ? '?host=' + encodeURIComponent(_containerHostId) : '';
+        fetch('/api/containers/' + encodeURIComponent(_containerName) + '/port-config/' + port + hostParam, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {'Content-Type': 'application/json'},
@@ -445,7 +446,8 @@
     }
 
     function deletePortOverride(port) {
-        fetch('/api/containers/' + encodeURIComponent(_containerName) + '/port-config/' + port, {
+        var hostParam = _containerHostId ? '?host=' + encodeURIComponent(_containerHostId) : '';
+        fetch('/api/containers/' + encodeURIComponent(_containerName) + '/port-config/' + port + hostParam, {
             method: 'DELETE',
             credentials: 'same-origin'
         })

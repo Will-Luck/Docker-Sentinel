@@ -148,6 +148,84 @@ func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 	return out
 }
 
+// LookupForHost resolves a host port to its NPM proxy URL, matching against
+// the provided hostAddr instead of the resolver's sentinelHost. When hostAddr
+// is empty, all hosts match (same as empty sentinelHost behaviour).
+func (r *Resolver) LookupForHost(hostPort uint16, hostAddr string) *ResolvedURL {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, h := range r.hosts {
+		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+			continue
+		}
+		if hostAddr != "" && !strings.EqualFold(h.ForwardHost, hostAddr) {
+			continue
+		}
+		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 || uint16(h.ForwardPort) != hostPort {
+			continue
+		}
+
+		scheme := h.ForwardScheme
+		if h.CertificateID > 0 {
+			scheme = "https"
+		}
+		if scheme == "" {
+			scheme = "http"
+		}
+
+		return &ResolvedURL{
+			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
+			Domain:      h.DomainNames[0],
+			ProxyHostID: h.ID,
+		}
+	}
+	return nil
+}
+
+// AllMappingsGrouped returns all enabled proxy hosts grouped by ForwardHost.
+// Outer key is the IP/hostname, inner map is port -> ResolvedURL.
+// No sentinelHost filtering is applied -- returns mappings for all hosts.
+func (r *Resolver) AllMappingsGrouped() map[string]map[uint16]ResolvedURL {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	out := make(map[string]map[uint16]ResolvedURL)
+	for _, h := range r.hosts {
+		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+			continue
+		}
+		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 {
+			continue
+		}
+		port := uint16(h.ForwardPort)
+
+		hostMap, ok := out[h.ForwardHost]
+		if !ok {
+			hostMap = make(map[uint16]ResolvedURL)
+			out[h.ForwardHost] = hostMap
+		}
+		if _, exists := hostMap[port]; exists {
+			continue // first match wins per host
+		}
+
+		scheme := h.ForwardScheme
+		if h.CertificateID > 0 {
+			scheme = "https"
+		}
+		if scheme == "" {
+			scheme = "http"
+		}
+
+		hostMap[port] = ResolvedURL{
+			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
+			Domain:      h.DomainNames[0],
+			ProxyHostID: h.ID,
+		}
+	}
+	return out
+}
+
 // LastSync returns the time of the last successful sync.
 func (r *Resolver) LastSync() time.Time {
 	r.mu.RLock()

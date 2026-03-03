@@ -279,12 +279,17 @@ function refreshServiceRow(name) {
                     if (task.NodeAddr) {
                         nodeDisplay += ' <span class="svc-node-addr">(' + escapeHTML(task.NodeAddr) + ')</span>';
                     }
-                    tr.innerHTML = '<td></td>' +
-                        '<td class="svc-node">' + nodeDisplay + '</td>' +
-                        '<td class="mono">' + escapeHTML(task.Tag || '') + '</td>' +
-                        '<td></td>' +
-                        '<td>' + stateBadge + '</td>' +
-                        '<td></td>';
+                    // 7 cells: checkbox, node, image, policy, status, ports, actions
+                    var cells = [
+                        document.createElement('td'),
+                        (function() { var td = document.createElement('td'); td.className = 'svc-node'; td.innerHTML = nodeDisplay; return td; })(),
+                        (function() { var td = document.createElement('td'); td.className = 'mono'; td.textContent = task.Tag || ''; return td; })(),
+                        document.createElement('td'),
+                        (function() { var td = document.createElement('td'); td.innerHTML = stateBadge; return td; })(),
+                        (function() { var td = document.createElement('td'); td.className = 'col-ports'; return td; })(),
+                        document.createElement('td')
+                    ];
+                    for (var ci = 0; ci < cells.length; ci++) tr.appendChild(cells[ci]);
                     // Insert task rows after the header row.
                     taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
                 }

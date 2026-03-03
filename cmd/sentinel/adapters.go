@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/swarm"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
@@ -865,6 +867,25 @@ func (a *webHookStoreAdapter) DeleteHook(containerName, phase string) error {
 	return a.s.DeleteHook(containerName, phase)
 }
 
+// swarmPorts converts a Swarm service's published endpoint ports to web.PortMapping.
+func swarmPorts(svc swarm.Service) []web.PortMapping {
+	if len(svc.Endpoint.Ports) == 0 {
+		return nil
+	}
+	ports := make([]web.PortMapping, 0, len(svc.Endpoint.Ports))
+	for _, p := range svc.Endpoint.Ports {
+		if p.PublishedPort == 0 || p.PublishedPort > math.MaxUint16 || p.TargetPort > math.MaxUint16 {
+			continue
+		}
+		ports = append(ports, web.PortMapping{
+			HostPort:      uint16(p.PublishedPort), //nolint:gosec // bounded above
+			ContainerPort: uint16(p.TargetPort),    //nolint:gosec // bounded above
+			Protocol:      string(p.Protocol),
+		})
+	}
+	return ports
+}
+
 // swarmAdapter bridges docker.Client + engine.Updater to web.SwarmProvider.
 type swarmAdapter struct {
 	client  *docker.Client
@@ -897,6 +918,7 @@ func (a *swarmAdapter) ListServices(ctx context.Context) ([]web.ServiceSummary, 
 			Replicas:        replicas,
 			DesiredReplicas: desired,
 			RunningReplicas: running,
+			Ports:           swarmPorts(svc),
 		}
 	}
 	return result, nil
@@ -948,6 +970,7 @@ func (a *swarmAdapter) ListServiceDetail(ctx context.Context) ([]web.ServiceDeta
 			Replicas:        replicas,
 			DesiredReplicas: desired,
 			RunningReplicas: running,
+			Ports:           swarmPorts(svc),
 		}
 
 		// Fetch tasks for this service.
@@ -1518,6 +1541,18 @@ func (a *npmAdapter) Lookup(hostPort uint16) *web.NPMResolvedURL {
 	}
 }
 
+func (a *npmAdapter) LookupForHost(hostPort uint16, hostAddr string) *web.NPMResolvedURL {
+	r := a.resolver.LookupForHost(hostPort, hostAddr)
+	if r == nil {
+		return nil
+	}
+	return &web.NPMResolvedURL{
+		URL:         r.URL,
+		Domain:      r.Domain,
+		ProxyHostID: r.ProxyHostID,
+	}
+}
+
 func (a *npmAdapter) AllMappings() map[uint16]web.NPMResolvedURL {
 	raw := a.resolver.AllMappings()
 	result := make(map[uint16]web.NPMResolvedURL, len(raw))
@@ -1527,6 +1562,23 @@ func (a *npmAdapter) AllMappings() map[uint16]web.NPMResolvedURL {
 			Domain:      v.Domain,
 			ProxyHostID: v.ProxyHostID,
 		}
+	}
+	return result
+}
+
+func (a *npmAdapter) AllMappingsGrouped() map[string]map[uint16]web.NPMResolvedURL {
+	raw := a.resolver.AllMappingsGrouped()
+	result := make(map[string]map[uint16]web.NPMResolvedURL, len(raw))
+	for host, portMap := range raw {
+		inner := make(map[uint16]web.NPMResolvedURL, len(portMap))
+		for port, v := range portMap {
+			inner[port] = web.NPMResolvedURL{
+				URL:         v.URL,
+				Domain:      v.Domain,
+				ProxyHostID: v.ProxyHostID,
+			}
+		}
+		result[host] = inner
 	}
 	return result
 }

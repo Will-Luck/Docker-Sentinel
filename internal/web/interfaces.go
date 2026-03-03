@@ -247,6 +247,7 @@ type ServiceSummary struct {
 	Replicas        string // e.g. "3/3"
 	DesiredReplicas uint64
 	RunningReplicas uint64
+	Ports           []PortMapping // published ports from the service endpoint
 }
 
 // TaskInfo describes a single Swarm task (one replica on one node).
@@ -322,10 +323,22 @@ type PortainerProvider interface {
 type NPMProvider interface {
 	TestConnection(ctx context.Context) error
 	Lookup(hostPort uint16) *NPMResolvedURL
+	LookupForHost(hostPort uint16, hostAddr string) *NPMResolvedURL
 	AllMappings() map[uint16]NPMResolvedURL
+	AllMappingsGrouped() map[string]map[uint16]NPMResolvedURL
 	Sync(ctx context.Context) error
 	LastSync() time.Time
 	LastError() error
+}
+
+// portConfigKey returns the store key for per-port custom URL overrides.
+// Remote containers use "hostID::name" to avoid collisions; local containers
+// use bare "name" for backwards compatibility.
+func portConfigKey(hostID, name string) string {
+	if hostID == "" {
+		return name
+	}
+	return hostID + "::" + name
 }
 
 // NPMResolvedURL is a URL resolved from an NPM proxy host match.

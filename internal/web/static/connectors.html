@@ -400,6 +400,41 @@ function renderNPMMappings(mappings) {
     keys.sort(function(a, b) { return parseInt(a) - parseInt(b); });
     // Build table via DOM to avoid innerHTML XSS concerns
     el.textContent = '';
+    el.appendChild(buildMappingTable(mappings, keys));
+}
+
+// Renders grouped mappings (one section per ForwardHost) for cluster mode.
+function renderGroupedNPMMappings(grouped) {
+    var el = document.getElementById('npm-mappings');
+    if (!el) return;
+    var hosts = Object.keys(grouped || {});
+    if (!hosts.length) {
+        el.textContent = '';
+        var p = document.createElement('p');
+        p.className = 'text-muted';
+        p.textContent = 'No port-to-domain mappings found.';
+        el.appendChild(p);
+        return;
+    }
+    hosts.sort();
+    el.textContent = '';
+    for (var h = 0; h < hosts.length; h++) {
+        var host = hosts[h];
+        var mappings = grouped[host];
+        var keys = Object.keys(mappings || {});
+        if (!keys.length) continue;
+        keys.sort(function(a, b) { return parseInt(a) - parseInt(b); });
+
+        var header = document.createElement('h4');
+        header.style.margin = h === 0 ? '0 0 0.5rem' : '1.5rem 0 0.5rem';
+        header.textContent = 'Host: ' + host;
+        el.appendChild(header);
+        el.appendChild(buildMappingTable(mappings, keys));
+    }
+}
+
+// Shared helper: builds a mapping table from a port->URL map.
+function buildMappingTable(mappings, keys) {
     var table = document.createElement('table');
     table.className = 'table';
     table.style.margin = '0';
@@ -433,7 +468,7 @@ function renderNPMMappings(mappings) {
         tbody.appendChild(tr);
     }
     table.appendChild(tbody);
-    el.appendChild(table);
+    return table;
 }
 
 function toggleFields(id, enabled) {
@@ -480,11 +515,17 @@ function updateToggleText(id, enabled) {
             }
         });
 
-    // Load NPM mappings
-    fetch('/api/settings/npm-mappings')
+    // Load NPM mappings (grouped by host when cluster mode is active).
+    var _clusterEnabled = {{if .ClusterEnabled}}true{{else}}false{{end}};
+    var mappingsURL = '/api/settings/npm-mappings' + (_clusterEnabled ? '?grouped=true' : '');
+    fetch(mappingsURL)
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            renderNPMMappings(d.mappings);
+            if (d.grouped) {
+                renderGroupedNPMMappings(d.grouped);
+            } else {
+                renderNPMMappings(d.mappings);
+            }
             if (d.last_sync) {
                 var el = document.getElementById('npm-last-sync');
                 if (el) el.textContent = 'Last sync: ' + new Date(d.last_sync).toLocaleString();

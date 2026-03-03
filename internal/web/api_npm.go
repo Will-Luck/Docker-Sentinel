@@ -149,6 +149,14 @@ func (s *Server) apiGetNPMMappings(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Grouped response: mappings keyed by ForwardHost, one table per host.
+	if r.URL.Query().Get("grouped") == "true" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"grouped":   s.deps.NPM.AllMappingsGrouped(),
+			"last_sync": s.deps.NPM.LastSync(),
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"mappings":  s.deps.NPM.AllMappings(),
 		"last_sync": s.deps.NPM.LastSync(),
@@ -159,11 +167,13 @@ func (s *Server) apiGetNPMMappings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiGetPortConfig(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	hostID := r.URL.Query().Get("host")
+	key := portConfigKey(hostID, name)
 	if s.deps.PortConfigs == nil {
 		writeJSON(w, http.StatusOK, &PortConfig{Ports: map[string]PortOverride{}})
 		return
 	}
-	pc, err := s.deps.PortConfigs.GetPortConfig(name)
+	pc, err := s.deps.PortConfigs.GetPortConfig(key)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -177,6 +187,8 @@ func (s *Server) apiGetPortConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiSetPortOverride(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	portStr := r.PathValue("port")
+	hostID := r.URL.Query().Get("host")
+	key := portConfigKey(hostID, name)
 	port, err := strconv.ParseUint(portStr, 10, 16)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid port number")
@@ -191,7 +203,7 @@ func (s *Server) apiSetPortOverride(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "port config store not available")
 		return
 	}
-	if err := s.deps.PortConfigs.SetPortOverride(name, uint16(port), body); err != nil {
+	if err := s.deps.PortConfigs.SetPortOverride(key, uint16(port), body); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -202,6 +214,8 @@ func (s *Server) apiSetPortOverride(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiDeletePortOverride(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	portStr := r.PathValue("port")
+	hostID := r.URL.Query().Get("host")
+	key := portConfigKey(hostID, name)
 	port, err := strconv.ParseUint(portStr, 10, 16)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid port number")
@@ -211,7 +225,7 @@ func (s *Server) apiDeletePortOverride(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "port config store not available")
 		return
 	}
-	if err := s.deps.PortConfigs.DeletePortOverride(name, uint16(port)); err != nil {
+	if err := s.deps.PortConfigs.DeletePortOverride(key, uint16(port)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
