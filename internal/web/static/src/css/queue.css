@@ -97,13 +97,13 @@
     display: block;
 }
 
-/* Centre-align Policy, Status, Actions columns */
-th:nth-child(4),
-th:nth-child(5),
-th:nth-child(6),
-td:nth-child(4),
-td:nth-child(5),
-td:nth-child(6) {
+/* Centre-align Policy, Status, Actions columns (scoped to queue table). */
+.queue-table th:nth-child(4),
+.queue-table th:nth-child(5),
+.queue-table th:nth-child(6),
+.queue-table td:nth-child(4),
+.queue-table td:nth-child(5),
+.queue-table td:nth-child(6) {
     text-align: center;
 }
 
