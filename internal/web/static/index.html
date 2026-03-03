@@ -291,6 +291,7 @@
                                 </span>
                                 {{end}}
                             </td>
+                            <td class="col-ports cell-ports">{{$svcPortURLs := .PortURLs}}{{range $i, $p := .Ports}}<a class="port-chip{{if ge $i 2}} port-hidden{{end}}" {{if and $svcPortURLs (index $svcPortURLs $p.HostPort)}}href="{{index $svcPortURLs $p.HostPort}}"{{end}} data-port="{{$p.HostPort}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{$p.HostPort}}:{{$p.ContainerPort}}</a>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
                             <td>
                                 <div class="btn-group">
                                 {{if and .HasUpdate (ne .Policy "pinned")}}
@@ -320,13 +321,14 @@
                                     <span class="badge badge-error" title="{{.Error}}">{{.State}}</span>
                                 {{end}}
                             </td>
+                            <td class="col-ports"></td>
                             <td></td>
                         </tr>
                         {{end}}
                         {{else if eq .DesiredReplicas 0}}
                         <tr class="svc-task-row">
                             <td></td>
-                            <td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 &mdash; no active tasks</td>
+                            <td colspan="5" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 &mdash; no active tasks</td>
                             <td></td>
                         </tr>
                         {{end}}

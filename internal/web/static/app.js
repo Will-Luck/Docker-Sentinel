@@ -1690,7 +1690,34 @@
           if (task.NodeAddr) {
             nodeDisplay += ' <span class="svc-node-addr">(' + escapeHTML(task.NodeAddr) + ")</span>";
           }
-          tr.innerHTML = '<td></td><td class="svc-node">' + nodeDisplay + '</td><td class="mono">' + escapeHTML(task.Tag || "") + "</td><td></td><td>" + stateBadge + "</td><td></td>";
+          var cells = [
+            document.createElement("td"),
+            (function() {
+              var td = document.createElement("td");
+              td.className = "svc-node";
+              td.innerHTML = nodeDisplay;
+              return td;
+            })(),
+            (function() {
+              var td = document.createElement("td");
+              td.className = "mono";
+              td.textContent = task.Tag || "";
+              return td;
+            })(),
+            document.createElement("td"),
+            (function() {
+              var td = document.createElement("td");
+              td.innerHTML = stateBadge;
+              return td;
+            })(),
+            (function() {
+              var td = document.createElement("td");
+              td.className = "col-ports";
+              return td;
+            })(),
+            document.createElement("td")
+          ];
+          for (var ci = 0; ci < cells.length; ci++) tr.appendChild(cells[ci]);
           taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
         }
       } else if (taskHeader && svc.DesiredReplicas === 0) {
