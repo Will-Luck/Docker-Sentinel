@@ -558,10 +558,11 @@ details[open] > .accordion-header .accordion-chevron {
     }
 }
 
-/* Dashboard policy & status columns: left-align for scanability. */
+/* Dashboard policy, status & ports columns: centre-align. */
 #container-table .col-policy,
-#container-table .col-status {
-    text-align: left;
+#container-table .col-status,
+#container-table .col-ports {
+    text-align: center;
 }
 
 .cell-ports {
@@ -571,12 +572,14 @@ details[open] > .accordion-header .accordion-chevron {
     color: var(--fg-secondary);
     overflow: hidden;
     line-height: 1.8;
-    text-align: left;
+    text-align: center;
 }
 
 .port-chip {
     display: block;
     width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
     padding: 1px 6px;
     background: var(--bg-hover);
     border-radius: var(--radius-sm);
