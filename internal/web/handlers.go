@@ -213,6 +213,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				Stack:           c.Labels["com.docker.compose.project"],
 				Registry:        registry.RegistryHost(c.Image),
 			}
+			v.PortURLs = s.resolvePortURLs(n, s.localHostAddr(r), "", c.Ports)
 			targetView = &v
 		}
 	}
@@ -245,6 +246,13 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 						newestVersion = pend.NewerVersions[0]
 					}
 				}
+				// Resolve agent IP for port links and NPM lookup.
+				var rcHostAddr string
+				if s.deps.Cluster != nil {
+					if h, ok := s.deps.Cluster.GetHost(rc.HostID); ok {
+						rcHostAddr = extractIP(h.Address)
+					}
+				}
 				v := containerView{
 					Name:          rc.Name,
 					Image:         rc.Image,
@@ -257,9 +265,12 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					IsSelf:        rc.Labels["sentinel.self"] == "true",
 					HostID:        rc.HostID,
 					HostName:      rc.HostName,
+					HostAddress:   rcHostAddr,
 					Registry:      registry.RegistryHost(rc.Image),
 					Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
+					Ports:         rc.Ports,
 				}
+				v.PortURLs = s.resolvePortURLs(rc.Name, rcHostAddr, rc.HostID, rc.Ports)
 				targetView = &v
 				break
 			}
@@ -401,12 +412,13 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 
 // containerDetailData holds all data for the per-container detail page.
 type containerDetailData struct {
-	Container    containerView
-	History      []UpdateRecord
-	Snapshots    []SnapshotEntry
-	Versions     []string
-	HasSnapshot  bool
-	ChangelogURL string
+	Container     containerView
+	History       []UpdateRecord
+	Snapshots     []SnapshotEntry
+	Versions      []string
+	HasSnapshot   bool
+	ChangelogURL  string
+	PortOverrides map[string]PortOverride // per-port custom URL/path overrides, keyed by port string
 
 	PortainerEnabled bool
 	ClusterEnabled   bool
@@ -530,6 +542,13 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			newestVersion = pend.NewerVersions[0]
 		}
 
+		// Resolve agent IP for port links and NPM lookup.
+		var detailHostAddr string
+		if s.deps.Cluster != nil {
+			if h, ok := s.deps.Cluster.GetHost(rc.HostID); ok {
+				detailHostAddr = extractIP(h.Address)
+			}
+		}
 		view = containerView{
 			Name:            rc.Name,
 			Image:           rc.Image,
@@ -542,8 +561,10 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			IsSelf:          rc.Labels["sentinel.self"] == "true",
 			HostID:          rc.HostID,
 			HostName:        rc.HostName,
+			HostAddress:     detailHostAddr,
 			Registry:        registry.RegistryHost(rc.Image),
 			Maintenance:     s.isRemoteUpdating(rc.HostID, rc.Name),
+			Ports:           rc.Ports,
 		}
 		image = rc.Image
 	} else {
@@ -607,6 +628,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			Maintenance:     maintenance,
 			IsSelf:          found.Labels["sentinel.self"] == "true",
 			Registry:        registry.RegistryHost(found.Image),
+			Ports:           found.Ports,
 		}
 		image = found.Image
 	}
@@ -643,6 +665,15 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Load per-port custom URL overrides (host-aware key for remote containers).
+	var portOverrides map[string]PortOverride
+	if s.deps.PortConfigs != nil {
+		pcKey := portConfigKey(hostFilter, name)
+		if pc, err := s.deps.PortConfigs.GetPortConfig(pcKey); err == nil && pc != nil {
+			portOverrides = pc.Ports
+		}
+	}
+
 	data := containerDetailData{
 		Container:        view,
 		History:          history,
@@ -650,6 +681,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		Versions:         versions,
 		HasSnapshot:      len(snapshots) > 0,
 		ChangelogURL:     ChangelogURL(image),
+		PortOverrides:    portOverrides,
 		PortainerEnabled: s.isPortainerEnabled(),
 		ClusterEnabled:   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
@@ -722,7 +754,7 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 	for _, p := range s.deps.Queue.List() {
 		pendingNames[p.Key()] = true
 	}
-	view := s.buildServiceView(*found, pendingNames)
+	view := s.buildServiceView(*found, pendingNames, s.localHostAddr(r))
 
 	// Gather history.
 	history, err := s.deps.Store.ListHistoryByContainer(name, 50)

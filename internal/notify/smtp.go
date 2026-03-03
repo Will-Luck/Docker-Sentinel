@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+	"time"
 )
 
 // SMTPSettings holds configuration for the SMTP email provider.
@@ -55,7 +56,11 @@ func NewSMTP(host string, port int, from, to, username, password, tlsStr string)
 
 func (s *SMTP) Name() string { return "smtp" }
 
-func (s *SMTP) Send(_ context.Context, event Event) error {
+func (s *SMTP) Send(ctx context.Context, event Event) error {
+	// Enforce a 30s overall timeout for the entire SMTP transaction.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	subject := formatTitle(event.Type)
 	body := formatMessage(event)
 
@@ -68,12 +73,17 @@ func (s *SMTP) Send(_ context.Context, event Event) error {
 		body
 
 	addr := net.JoinHostPort(s.host, fmt.Sprintf("%d", s.port))
+	dialer := net.Dialer{Timeout: 10 * time.Second}
 
 	var c *smtp.Client
 	var err error
 
 	if s.useTLS {
-		conn, dialErr := tls.Dial("tcp", addr, &tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12})
+		tlsDialer := tls.Dialer{
+			NetDialer: &dialer,
+			Config:    &tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12},
+		}
+		conn, dialErr := tlsDialer.DialContext(ctx, "tcp", addr)
 		if dialErr != nil {
 			return fmt.Errorf("smtp tls dial: %w", dialErr)
 		}
@@ -83,9 +93,14 @@ func (s *SMTP) Send(_ context.Context, event Event) error {
 			return fmt.Errorf("smtp new client: %w", err)
 		}
 	} else {
-		c, err = smtp.Dial(addr)
+		conn, dialErr := dialer.DialContext(ctx, "tcp", addr)
+		if dialErr != nil {
+			return fmt.Errorf("smtp dial: %w", dialErr)
+		}
+		c, err = smtp.NewClient(conn, s.host)
 		if err != nil {
-			return fmt.Errorf("smtp dial: %w", err)
+			conn.Close()
+			return fmt.Errorf("smtp new client: %w", err)
 		}
 		if ok, _ := c.Extension("STARTTLS"); ok {
 			if err := c.StartTLS(&tls.Config{ServerName: s.host, MinVersion: tls.VersionTLS12}); err != nil {
@@ -96,11 +111,20 @@ func (s *SMTP) Send(_ context.Context, event Event) error {
 	}
 	defer c.Close()
 
+	// Check context before each step to respect the overall timeout.
+	if ctx.Err() != nil {
+		return fmt.Errorf("smtp timeout: %w", ctx.Err())
+	}
+
 	if s.username != "" {
 		auth := smtp.PlainAuth("", s.username, s.password, s.host)
 		if err := c.Auth(auth); err != nil {
 			return fmt.Errorf("smtp auth: %w", err)
 		}
+	}
+
+	if ctx.Err() != nil {
+		return fmt.Errorf("smtp timeout: %w", ctx.Err())
 	}
 
 	if err := c.Mail(s.from); err != nil {
@@ -110,6 +134,10 @@ func (s *SMTP) Send(_ context.Context, event Event) error {
 		if err := c.Rcpt(rcpt); err != nil {
 			return fmt.Errorf("smtp rcpt to: %w", err)
 		}
+	}
+
+	if ctx.Err() != nil {
+		return fmt.Errorf("smtp timeout: %w", ctx.Err())
 	}
 
 	w, err := c.Data()

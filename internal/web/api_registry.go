@@ -221,6 +221,15 @@ func (s *Server) apiTestRegistryCredential(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Validate the registry hostname to prevent SSRF against internal services.
+	if body.Registry != "docker.io" {
+		registryURL := "https://" + body.Registry + "/v2/"
+		if err := validateExternalURL(registryURL); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid registry address: "+err.Error())
+			return
+		}
+	}
+
 	// Test Docker Hub auth endpoint.
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()

@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const cleanupInterval = 1 * time.Hour
+
 const (
 	maxLoginAttempts  = 5 // per IP within the window
 	loginWindow       = 5 * time.Minute
@@ -23,12 +25,41 @@ type LoginAttempt struct {
 type RateLimiter struct {
 	mu       sync.Mutex
 	attempts map[string]*LoginAttempt
+	done     chan struct{} // closed by Stop() to halt the cleanup goroutine
 }
 
-// NewRateLimiter creates a new login rate limiter.
+// NewRateLimiter creates a new login rate limiter with a background
+// goroutine that periodically removes expired entries.
 func NewRateLimiter() *RateLimiter {
-	return &RateLimiter{
+	rl := &RateLimiter{
 		attempts: make(map[string]*LoginAttempt),
+		done:     make(chan struct{}),
+	}
+	go rl.cleanupLoop()
+	return rl
+}
+
+// Stop stops the background cleanup goroutine. Safe to call multiple times.
+func (rl *RateLimiter) Stop() {
+	select {
+	case <-rl.done:
+		// already stopped
+	default:
+		close(rl.done)
+	}
+}
+
+// cleanupLoop runs Cleanup every hour until Stop is called.
+func (rl *RateLimiter) cleanupLoop() {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			rl.Cleanup()
+		case <-rl.done:
+			return
+		}
 	}
 }
 

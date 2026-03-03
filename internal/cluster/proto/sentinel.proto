@@ -86,6 +86,13 @@ message Heartbeat {
   string host_id = 4;                 // identifies which agent
 }
 
+message PortMapping {
+  string host_ip = 1;
+  uint32 host_port = 2;
+  uint32 container_port = 3;
+  string protocol = 4;  // "tcp" or "udp"
+}
+
 message ContainerInfo {
   string id = 1;
   string name = 2;
@@ -94,6 +101,7 @@ message ContainerInfo {
   string state = 5;          // "running", "stopped", etc.
   map<string, string> labels = 6;
   google.protobuf.Timestamp created = 7;
+  repeated PortMapping ports = 8;
 }
 
 message ContainerList {

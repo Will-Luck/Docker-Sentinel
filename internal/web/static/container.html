@@ -28,7 +28,7 @@
             <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link">Cluster</a>{{end}}
-            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
+            <a href="/connectors" class="nav-link">Connectors</a>
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -171,6 +171,52 @@
                     </div>
                 </div>
             </details>
+
+            {{if .Container.Ports}}
+            <!-- Port Configuration -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Port Configuration</h2>
+                    <span class="accordion-preview">{{len .Container.Ports}} port{{if ne (len .Container.Ports) 1}}s{{end}}</span>
+                </summary>
+                <div class="accordion-body">
+                    <p class="accordion-intro">Set custom URLs or path suffixes for port chips on the dashboard. Overrides take priority over NPM auto-discovery.</p>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Port</th>
+                                    <th>Custom URL</th>
+                                    <th>Path Suffix</th>
+                                    <th style="text-align:right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="port-config-body">
+                                {{range .Container.Ports}}
+                                {{$portStr := printf "%d" .HostPort}}
+                                <tr data-port="{{.HostPort}}">
+                                    <td class="mono">{{.HostPort}}:{{.ContainerPort}}</td>
+                                    <td>
+                                        <input type="text" class="setting-input port-url-input" id="port-url-{{.HostPort}}" placeholder="https://app.example.com" style="margin:0;max-width:300px"
+                                            {{if and $.PortOverrides (index $.PortOverrides $portStr)}}value="{{(index $.PortOverrides $portStr).URL}}"{{end}}>
+                                    </td>
+                                    <td>
+                                        <input type="text" class="setting-input port-path-input" id="port-path-{{.HostPort}}" placeholder="/api/docs" style="margin:0;max-width:200px"
+                                            {{if and $.PortOverrides (index $.PortOverrides $portStr)}}value="{{(index $.PortOverrides $portStr).Path}}"{{end}}>
+                                    </td>
+                                    <td style="text-align:right;white-space:nowrap">
+                                        <button class="btn btn-sm" onclick="savePortOverride({{.HostPort}})">Save</button>
+                                        <button class="btn btn-sm btn-warning" onclick="deletePortOverride({{.HostPort}})">Clear</button>
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </details>
+            {{end}}
 
             {{if .Versions}}
             <!-- Available Versions -->
@@ -375,6 +421,46 @@
             document.body.removeChild(t);
             showToast("Container ID copied", "success");
         }
+    }
+
+    function savePortOverride(port) {
+        var url = (document.getElementById('port-url-' + port) || {}).value || '';
+        var path = (document.getElementById('port-path-' + port) || {}).value || '';
+        if (!url && !path) {
+            deletePortOverride(port);
+            return;
+        }
+        var hostParam = _containerHostId ? '?host=' + encodeURIComponent(_containerHostId) : '';
+        fetch('/api/containers/' + encodeURIComponent(_containerName) + '/port-config/' + port + hostParam, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: url, path: path})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) { showToast(d.error, 'error'); return; }
+            showToast('Port ' + port + ' override saved');
+        })
+        .catch(function() { showToast('Failed to save override', 'error'); });
+    }
+
+    function deletePortOverride(port) {
+        var hostParam = _containerHostId ? '?host=' + encodeURIComponent(_containerHostId) : '';
+        fetch('/api/containers/' + encodeURIComponent(_containerName) + '/port-config/' + port + hostParam, {
+            method: 'DELETE',
+            credentials: 'same-origin'
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) { showToast(d.error, 'error'); return; }
+            var urlInput = document.getElementById('port-url-' + port);
+            var pathInput = document.getElementById('port-path-' + port);
+            if (urlInput) urlInput.value = '';
+            if (pathInput) pathInput.value = '';
+            showToast('Port ' + port + ' override cleared');
+        })
+        .catch(function() { showToast('Failed to clear override', 'error'); });
     }
 
     (function() {

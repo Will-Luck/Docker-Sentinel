@@ -78,7 +78,9 @@ function updateContainerRow(name, hostId) {
                 if (window.recomputeSelectionState) window.recomputeSelectionState();
             }
 
-            // Reapply badges and filters after DOM patch.
+            // Reapply column config, port links, badges, and filters after DOM patch.
+            if (window.applyColumnConfig) window.applyColumnConfig();
+            if (window.initPortLinks) window.initPortLinks();
             applyRegistryBadges();
             if (window.applyFiltersAndSort) window.applyFiltersAndSort();
             if (window.recalcTabStats) window.recalcTabStats();
@@ -96,7 +98,7 @@ function updateContainerRow(name, hostId) {
                     var sel = 'tr.container-row[data-name="' + name + '"]';
                     if (hostId) sel += '[data-host="' + hostId + '"]';
                     var row = document.querySelector(sel);
-                    var updBtn = row ? row.querySelector(".btn-warning.loading") : null;
+                    var updBtn = row ? row.querySelector(".badge-action.loading, .badge-updating") : null;
                     if (updBtn) {
                         // Server says update still in-flight — keep tracking.
                         window._updateLoadingBtns[updKey] = updBtn;
@@ -200,6 +202,10 @@ function initSSE() {
     if (typeof EventSource === "undefined") return;
 
     var es = new EventSource("/api/events");
+    // Expose for page-specific inline scripts (cluster.html, portainer.html)
+    // so they can add listeners without opening a duplicate SSE connection.
+    window.sseSource = es;
+    var _sseHasConnected = false;
 
     es.addEventListener("connected", function () {
         if (localStorage.getItem("sentinel-self-updating")) {
@@ -207,6 +213,17 @@ function initSSE() {
             window.location.reload();
             return;
         }
+        // On reconnect (not first connect), reload the dashboard to avoid stale state.
+        // Skip reload on form pages (settings, connectors, container detail) to
+        // avoid wiping unsaved input fields.
+        if (_sseHasConnected) {
+            var isDashboard = !!document.getElementById("container-table");
+            if (isDashboard) {
+                window.location.reload();
+                return;
+            }
+        }
+        _sseHasConnected = true;
         setConnectionStatus(true);
     });
 

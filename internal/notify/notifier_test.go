@@ -190,9 +190,12 @@ func TestWebhookSendsBodyAndHeaders(t *testing.T) {
 	defer srv.Close()
 
 	headers := map[string]string{"Authorization": "Bearer secret123"}
-	wh := NewWebhook(srv.URL, headers)
+	wh, err := NewWebhook(srv.URL, headers)
+	if err != nil {
+		t.Fatalf("NewWebhook() error = %v", err)
+	}
 	event := testEvent(EventUpdateSucceeded)
-	err := wh.Send(context.Background(), event)
+	err = wh.Send(context.Background(), event)
 
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
@@ -217,7 +220,7 @@ func TestWebhookReturnsErrorOnBadStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	wh := NewWebhook(srv.URL, nil)
+	wh, _ := NewWebhook(srv.URL, nil)
 	err := wh.Send(context.Background(), testEvent(EventUpdateStarted))
 
 	if err == nil {

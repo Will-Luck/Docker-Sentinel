@@ -2,17 +2,7 @@
    7b. Swarm Service Toggle & Actions
    ============================================================ */
 
-import { showToast, apiPost } from "./utils.js";
-
-function escapeHtml(str) {
-    if (!str) return "";
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
+import { showToast, escapeHTML, apiPost } from "./utils.js";
 
 // isSafeURL validates that a URL string starts with http:// or https://.
 function isSafeURL(url) {
@@ -36,7 +26,7 @@ function toggleSvc(headerRow) {
 }
 
 function triggerSvcUpdate(name, event) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") || event.target.closest(".btn") : null;
     if (btn) {
         btn.classList.add("loading");
         btn.disabled = true;
@@ -176,15 +166,15 @@ function refreshServiceRow(name) {
                         (svc.RunningReplicas > 0) ? "svc-replicas-degraded" : "svc-replicas-down";
                     wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
                     wrap.innerHTML = '<span class="badge svc-replicas ' + replicaClass + ' badge-default">' +
-                        escapeHtml(svc.Replicas || '') + '</span>' +
+                        escapeHTML(svc.Replicas || '') + '</span>' +
                         '<span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc(\'' +
-                        escapeHtml(name) + '\', 0, this.closest(\'.status-badge-wrap\'))">Scale to 0</span>';
+                        escapeHTML(name) + '\', 0, this.closest(\'.status-badge-wrap\'))">Scale to 0</span>';
                 } else {
                     wrap.setAttribute("data-prev-replicas", prevReplicas);
                     wrap.innerHTML = '<span class="badge svc-replicas svc-replicas-down badge-default">' +
-                        escapeHtml(svc.Replicas || '0/0') + '</span>' +
+                        escapeHTML(svc.Replicas || '0/0') + '</span>' +
                         '<span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc(\'' +
-                        escapeHtml(name) + '\', ' + (prevReplicas > 0 ? prevReplicas : 1) + ', this.closest(\'.status-badge-wrap\'))">Scale up</span>';
+                        escapeHTML(name) + '\', ' + (prevReplicas > 0 ? prevReplicas : 1) + ', this.closest(\'.status-badge-wrap\'))">Scale up</span>';
                 }
             }
 
@@ -198,21 +188,21 @@ function refreshServiceRow(name) {
                     var oldBadge = imgCell.querySelector(".registry-badge");
                     if (oldBadge) oldBadge.remove();
 
-                    var rvSpan = (svc.ResolvedVersion) ? ' <span class="resolved-ver">(' + escapeHtml(svc.ResolvedVersion) + ')</span>' : '';
+                    var rvSpan = (svc.ResolvedVersion) ? ' <span class="resolved-ver">(' + escapeHTML(svc.ResolvedVersion) + ')</span>' : '';
 
                     if (svc.NewestVersion) {
-                        var verHtml = escapeHtml(svc.NewestVersion);
+                        var verHtml = escapeHTML(svc.NewestVersion);
                         if (svc.VersionURL && isSafeURL(svc.VersionURL)) {
-                            verHtml = '<a href="' + escapeHtml(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHtml(svc.NewestVersion) + '</a>';
+                            verHtml = '<a href="' + escapeHTML(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHTML(svc.NewestVersion) + '</a>';
                         } else {
                             verHtml = '<span class="version-new">' + verHtml + '</span>';
                         }
-                        imgCell.innerHTML = '<span class="version-current">' + escapeHtml(svc.Tag) + rvSpan + '</span>' +
+                        imgCell.innerHTML = '<span class="version-current">' + escapeHTML(svc.Tag) + rvSpan + '</span>' +
                             ' <span class="version-arrow">&rarr;</span> ' + verHtml;
                     } else {
-                        var tagHtml = escapeHtml(svc.Tag) + rvSpan;
+                        var tagHtml = escapeHTML(svc.Tag) + rvSpan;
                         if (svc.ChangelogURL && isSafeURL(svc.ChangelogURL)) {
-                            imgCell.innerHTML = '<a href="' + escapeHtml(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + '</a>';
+                            imgCell.innerHTML = '<a href="' + escapeHTML(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + '</a>';
                         } else {
                             imgCell.innerHTML = tagHtml;
                         }
@@ -228,25 +218,26 @@ function refreshServiceRow(name) {
                     header.classList.remove("has-update");
                 }
 
-                // Update action buttons (all dynamic values passed through escapeHtml).
-                // But if the update is still in progress (loading btn tracked), keep the
-                // spinner alive on the newly rendered button.
-                var actionCell = header.querySelector("td:last-child .btn-group");
-                if (actionCell) {
+                // Update the badge-action "Update" badge in the status cell.
+                // If an update is in progress (loading btn tracked), preserve the spinner.
+                var statusCell = header.querySelector(".col-status");
+                if (statusCell) {
+                    var existingBadge = statusCell.querySelector(".badge-action");
                     var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
-                    var btns = "";
                     if (svc.HasUpdate && svc.Policy !== "pinned") {
-                        btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? ' loading' : '') + '"' +
-                            (isUpdating ? ' disabled' : '') +
-                            ' onclick="event.stopPropagation(); triggerSvcUpdate(\'' + escapeHtml(name) + '\', event)">Update</button>';
-                    }
-                    // Rollback only available on service detail page — not on dashboard.
-                    btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
-                    actionCell.innerHTML = btns;
-
-                    if (isUpdating) {
-                        var newBtn = actionCell.querySelector(".btn-warning");
-                        if (newBtn) window._svcLoadingBtns[name] = newBtn;
+                        if (!existingBadge) {
+                            var badge = document.createElement("span");
+                            badge.className = "badge badge-warning badge-action" + (isUpdating ? " loading" : "");
+                            badge.setAttribute("role", "button");
+                            badge.setAttribute("tabindex", "0");
+                            badge.style.marginBottom = "4px";
+                            badge.setAttribute("onclick", "event.stopPropagation(); triggerSvcUpdate('" + escapeHTML(name) + "', event)");
+                            badge.textContent = "Update";
+                            statusCell.insertBefore(badge, statusCell.firstChild);
+                            if (isUpdating) window._svcLoadingBtns[name] = badge;
+                        }
+                    } else if (existingBadge) {
+                        existingBadge.remove();
                     }
                 }
             }
@@ -283,18 +274,23 @@ function refreshServiceRow(name) {
                     } else if (task.State === "preparing") {
                         stateBadge = '<span class="badge badge-info">preparing</span>';
                     } else {
-                        stateBadge = '<span class="badge badge-error" title="' + escapeHtml(task.Error || '') + '">' + escapeHtml(task.State) + '</span>';
+                        stateBadge = '<span class="badge badge-error" title="' + escapeHTML(task.Error || '') + '">' + escapeHTML(task.State) + '</span>';
                     }
-                    var nodeDisplay = escapeHtml(task.NodeName);
+                    var nodeDisplay = escapeHTML(task.NodeName);
                     if (task.NodeAddr) {
-                        nodeDisplay += ' <span class="svc-node-addr">(' + escapeHtml(task.NodeAddr) + ')</span>';
+                        nodeDisplay += ' <span class="svc-node-addr">(' + escapeHTML(task.NodeAddr) + ')</span>';
                     }
-                    tr.innerHTML = '<td></td>' +
-                        '<td class="svc-node">' + nodeDisplay + '</td>' +
-                        '<td class="mono">' + escapeHtml(task.Tag || '') + '</td>' +
-                        '<td></td>' +
-                        '<td>' + stateBadge + '</td>' +
-                        '<td></td>';
+                    // 7 cells: checkbox, node, image, policy, status, ports, actions
+                    var cells = [
+                        document.createElement('td'),
+                        (function() { var td = document.createElement('td'); td.className = 'svc-node'; td.innerHTML = nodeDisplay; return td; })(),
+                        (function() { var td = document.createElement('td'); td.className = 'mono'; td.textContent = task.Tag || ''; return td; })(),
+                        document.createElement('td'),
+                        (function() { var td = document.createElement('td'); td.innerHTML = stateBadge; return td; })(),
+                        (function() { var td = document.createElement('td'); td.className = 'col-ports'; return td; })(),
+                        document.createElement('td')
+                    ];
+                    for (var ci = 0; ci < cells.length; ci++) tr.appendChild(cells[ci]);
                     // Insert task rows after the header row.
                     taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
                 }
@@ -307,8 +303,8 @@ function refreshServiceRow(name) {
                         var tr = document.createElement("tr");
                         tr.className = "svc-task-row";
                         tr.innerHTML = '<td></td>' +
-                            '<td class="svc-node">' + escapeHtml(cached[t].NodeText || '') + '</td>' +
-                            '<td class="mono">' + escapeHtml(cached[t].Tag || '') + '</td>' +
+                            '<td class="svc-node">' + escapeHTML(cached[t].NodeText || '') + '</td>' +
+                            '<td class="mono">' + escapeHTML(cached[t].Tag || '') + '</td>' +
                             '<td></td>' +
                             '<td><span class="badge badge-error">shutdown</span></td>' +
                             '<td></td>';

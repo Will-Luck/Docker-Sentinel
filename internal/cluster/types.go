@@ -53,6 +53,14 @@ type EnrollToken struct {
 	Used      bool      `json:"used"`
 }
 
+// PortMapping represents a single host-bound port on a container.
+type PortMapping struct {
+	HostIP        string `json:"host_ip,omitempty"`
+	HostPort      uint16 `json:"host_port"`
+	ContainerPort uint16 `json:"container_port"`
+	Protocol      string `json:"protocol"`
+}
+
 // ContainerInfo is a simplified container representation sent over gRPC.
 // Contains only the fields the server needs for update decisions — not the
 // full Docker inspect response, which would be wasteful to serialise.
@@ -64,6 +72,7 @@ type ContainerInfo struct {
 	State       string            `json:"state"`        // running, stopped, etc.
 	Labels      map[string]string `json:"labels,omitempty"`
 	Created     time.Time         `json:"created"`
+	Ports       []PortMapping     `json:"ports,omitempty"`
 }
 
 // JournalEntry records an action taken by the agent while offline (or while

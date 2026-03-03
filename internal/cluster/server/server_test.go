@@ -54,7 +54,10 @@ func testServer(t *testing.T) (*Server, string, *store.Store, *events.Bus) {
 	bus := events.New()
 	log := slog.Default()
 
-	srv := New(ca, st, bus, log)
+	srv, err := New(ca, st, bus, log)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 
 	// Find a free port.
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

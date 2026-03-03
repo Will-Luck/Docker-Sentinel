@@ -81,29 +81,28 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 				first = false // first non-bridge is in --network flag
 				continue
 			}
-			extraNetCmds += fmt.Sprintf("\necho \"Connecting to network %s...\"\ndocker network connect \"%s\" \"%s\" || echo \"Warning: failed to connect to network %s\"\n", netName, netName, selfName, netName)
+			extraNetCmds += fmt.Sprintf("\ndocker network connect \"%s\" \"%s\" || { echo \"FATAL: failed to connect to network %s, rolling back\"; docker stop -t 10 \"%s\" 2>/dev/null; docker rm \"%s\" 2>/dev/null; exit 1; }\n", shellEscape(netName), shellEscape(selfName), shellEscape(netName), shellEscape(selfName), shellEscape(selfName))
 		}
 	}
 
 	// 4. Create the helper script with all arguments embedded.
+	// Shell-escape user-derived values to prevent injection.
+	escapedSelfName := shellEscape(selfName)
+	escapedImageRef := shellEscape(imageRef)
+
 	script := fmt.Sprintf(`#!/bin/sh
 set -e
 echo "=== Sentinel Self-Update Helper ==="
-echo "Target: %s"
-echo "Image: %s"
 
-echo "Pulling new image..."
 docker pull "%s"
 
-echo "Stopping old container..."
 docker stop -t 30 "%s" 2>/dev/null || true
 docker rm "%s" 2>/dev/null || true
 
-echo "Creating new container..."
 docker run -d --name "%s" %s "%s"
 %s
 echo "Self-update complete!"
-`, selfName, imageRef, imageRef, selfName, selfName, selfName, dockerArgs, imageRef, extraNetCmds)
+`, escapedImageRef, escapedSelfName, escapedSelfName, escapedSelfName, dockerArgs, escapedImageRef, extraNetCmds)
 
 	// 5. Pull the helper image (docker:cli) — it may not be present locally.
 	const helperImage = "docker:cli"

@@ -29,6 +29,7 @@ var (
 	bucketHooks            = []byte("hooks")
 	bucketReleaseSources   = []byte("release_sources")
 	bucketNotifyTemplates  = []byte("notification_templates")
+	bucketPortConfig       = []byte("port_config")
 
 	// Cluster / multi-host
 	bucketClusterHosts       = []byte("cluster_hosts")
@@ -53,6 +54,14 @@ const (
 	SettingPortainerEnabled = "portainer_enabled" // "true" / "false"
 	SettingPortainerURL     = "portainer_url"
 	SettingPortainerToken   = "portainer_token"
+)
+
+// NPM settings keys (stored in bucketSettings).
+const (
+	SettingNPMEnabled  = "npm_enabled"
+	SettingNPMURL      = "npm_url"
+	SettingNPMEmail    = "npm_email"
+	SettingNPMPassword = "npm_password"
 )
 
 // Docker TLS settings keys (stored in bucketSettings).
@@ -104,7 +113,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked, bucketDigestEquiv} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketPortConfig, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked, bucketDigestEquiv} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -728,9 +737,24 @@ func (s *Store) ListClusterJournal() (map[string][]byte, error) {
 func (s *Store) ClearClusterJournal() error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketClusterJournal)
-		return b.ForEach(func(k, _ []byte) error {
-			return b.Delete(k)
-		})
+
+		// Collect keys first — mutating during iteration is undefined behaviour in BoltDB.
+		var keys [][]byte
+		if err := b.ForEach(func(k, _ []byte) error {
+			keyCopy := make([]byte, len(k))
+			copy(keyCopy, k)
+			keys = append(keys, keyCopy)
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		for _, k := range keys {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"sort"
 	"strconv"
@@ -59,6 +60,11 @@ type pageData struct {
 	AuthEnabled     bool
 	CSRFToken       string
 	ShowSecurityTab bool // true when auth off OR (auth on + admin)
+
+	// Dashboard column configuration.
+	ColumnVisible map[string]bool // which configurable columns are visible
+	ColCount      int             // total column count (for colspan)
+	ColumnConfig  template.JS     // JSON array of visible column names (for JS)
 }
 
 // tabStats holds per-tab container counts for the dashboard tab navigation.
@@ -77,6 +83,7 @@ type tabStats struct {
 type hostGroup struct {
 	ID        string       // "local" or host ID
 	Name      string       // display name
+	Address   string       // agent IP (for port links)
 	Connected bool         // always true for local
 	Stacks    []stackGroup // existing stack grouping within this host
 	Count     int          // total container count
@@ -102,6 +109,9 @@ type containerView struct {
 	Replicas        string // e.g. "3/3" for services, empty for containers
 	HostID          string // cluster host ID (empty = local)
 	HostName        string // cluster host name (empty = local)
+	HostAddress     string // agent IP for port links (empty = local)
+	Ports           []PortMapping
+	PortURLs        map[uint16]string // resolved URLs for port chips (key: host port)
 }
 
 // stackGroup groups containers by their Docker Compose project name.
@@ -131,8 +141,10 @@ type serviceView struct {
 	Registry        string
 	UpdateStatus    string
 	Tasks           []taskView
-	ChangelogURL    string `json:"ChangelogURL,omitempty"` // Pre-computed changelog link for JS row updates
-	VersionURL      string `json:"VersionURL,omitempty"`   // Pre-computed version-specific link for JS row updates
+	ChangelogURL    string            `json:"ChangelogURL,omitempty"` // Pre-computed changelog link for JS row updates
+	VersionURL      string            `json:"VersionURL,omitempty"`   // Pre-computed version-specific link for JS row updates
+	Ports           []PortMapping     `json:"Ports,omitempty"`
+	PortURLs        map[uint16]string `json:"PortURLs,omitempty"`
 }
 
 // taskView is a single Swarm task (replica) row nested under a service.
@@ -147,9 +159,11 @@ type taskView struct {
 }
 
 // buildServiceView constructs a serviceView from a ServiceDetail, resolving
-// policy overrides, tag extraction, queue state, and prev-replicas. Used by
-// the dashboard, API list, API detail, and service detail page handlers.
-func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool) serviceView {
+// policy overrides, tag extraction, queue state, ports, and prev-replicas.
+// hostAddr is the Sentinel host IP used for NPM port matching and fallback
+// links (Swarm ingress ports are reachable on every node, so we match against
+// the local host). Used by the dashboard, API, and service detail handlers.
+func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool, hostAddr string) serviceView {
 	name := d.Name
 	policy := containerPolicy(d.Labels)
 	if s.deps.Policy != nil {
@@ -215,7 +229,9 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 		Tasks:           tasks,
 		ChangelogURL:    changelogLink,
 		VersionURL:      versionLink,
+		Ports:           d.Ports,
 	}
+	sv.PortURLs = s.resolvePortURLs(name, hostAddr, "", sv.Ports)
 	// For scaled-to-0 services, load previous replica count so "Scale up"
 	// can restore to the original value instead of defaulting to 1,
 	// and show "0/3" instead of "0/0" in the badge.
@@ -228,6 +244,70 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool)
 		}
 	}
 	return sv
+}
+
+// localHostAddr returns the IP/hostname to use for local container port links.
+// Prefers SENTINEL_HOST env var; falls back to the HTTP request's host.
+func (s *Server) localHostAddr(r *http.Request) string {
+	if s.hostAddress != "" {
+		return s.hostAddress
+	}
+	host := r.Host
+	// Strip port from host:port.
+	if i := strings.LastIndex(host, ":"); i > 0 {
+		host = host[:i]
+	}
+	return host
+}
+
+// resolvePortURLs builds a map of host port -> resolved URL for a container's port chips.
+// Priority: per-port custom config > NPM auto-discovery > hostAddr:port fallback.
+// The fallback is handled by the template, so this only returns non-default URLs.
+//
+// hostAddr is the IP/hostname of the Docker host running the container (for NPM
+// matching and path suffix fallback). hostID is the cluster host ID (empty for
+// local containers) and is used to namespace port config keys.
+func (s *Server) resolvePortURLs(name, hostAddr, hostID string, ports []PortMapping) map[uint16]string {
+	urls := make(map[uint16]string)
+
+	// Layer NPM auto-discovery.
+	if s.deps.NPM != nil {
+		for _, p := range ports {
+			if r := s.deps.NPM.LookupForHost(p.HostPort, hostAddr); r != nil {
+				urls[p.HostPort] = r.URL
+			}
+		}
+	}
+
+	// Layer per-port custom config (highest priority).
+	if s.deps.PortConfigs != nil {
+		key := portConfigKey(hostID, name)
+		pc, err := s.deps.PortConfigs.GetPortConfig(key)
+		if err == nil && pc != nil {
+			for _, p := range ports {
+				portStr := fmt.Sprintf("%d", p.HostPort)
+				ov, ok := pc.Ports[portStr]
+				if !ok {
+					continue
+				}
+				if ov.URL != "" {
+					urls[p.HostPort] = ov.URL
+				} else if ov.Path != "" {
+					base := urls[p.HostPort]
+					if base == "" {
+						addr := hostAddr
+						if addr == "" {
+							addr = s.hostAddress
+						}
+						base = "http://" + addr + ":" + portStr
+					}
+					urls[p.HostPort] = strings.TrimRight(base, "/") + "/" + strings.TrimLeft(ov.Path, "/")
+				}
+			}
+		}
+	}
+
+	return urls
 }
 
 // handleDashboard renders the main container dashboard.
@@ -322,7 +402,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			IsSelf:          c.Labels["sentinel.self"] == "true",
 			Stack:           c.Labels["com.docker.compose.project"],
 			Registry:        registry.RegistryHost(c.Image),
+			Ports:           c.Ports,
+			HostAddress:     s.localHostAddr(r),
 		})
+		views[len(views)-1].PortURLs = s.resolvePortURLs(name, s.localHostAddr(r), "", c.Ports)
 	}
 
 	// Build Swarm Services section if available.
@@ -333,7 +416,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Warn("failed to list service details", "error", svcErr)
 		}
 		for _, d := range details {
-			svcViews = append(svcViews, s.buildServiceView(d, pendingNames))
+			svcViews = append(svcViews, s.buildServiceView(d, pendingNames, s.localHostAddr(r)))
 		}
 	}
 
@@ -445,6 +528,33 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		stacks = append(stacks, group)
 	}
 
+	// Load dashboard column visibility config.
+	columnVisible := map[string]bool{"image": true, "policy": true, "status": true, "ports": true}
+	if s.deps.SettingsStore != nil {
+		if colJSON, err := s.deps.SettingsStore.LoadSetting("dashboard_columns"); err == nil && colJSON != "" {
+			var cols []string
+			if err := json.Unmarshal([]byte(colJSON), &cols); err == nil {
+				// Reset all to false, then enable only those in the saved list.
+				columnVisible = map[string]bool{"image": false, "policy": false, "status": false, "ports": false}
+				for _, c := range cols {
+					columnVisible[c] = true
+				}
+			}
+		}
+	}
+	// Column count must match the actual <td> count in container-row, which
+	// always renders all 6 cells (hidden ones use CSS display:none).
+	colCount := 6 // checkbox + name + image + policy + status + ports
+
+	// JSON for the JS column config.
+	visibleCols := make([]string, 0, 4)
+	for _, col := range []string{"image", "policy", "status", "ports"} {
+		if columnVisible[col] {
+			visibleCols = append(visibleCols, col)
+		}
+	}
+	colConfigJSON, _ := json.Marshal(visibleCols)
+
 	data := pageData{
 		Page:              "dashboard",
 		Containers:        views,
@@ -454,6 +564,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		RunningContainers: running,
 		PendingUpdates:    pending,
 		QueueCount:        len(s.deps.Queue.List()),
+		ColumnVisible:     columnVisible,
+		ColCount:          colCount,
+		ColumnConfig:      template.JS(colConfigJSON), //nolint:gosec // server-controlled JSON from json.Marshal
 	}
 
 	// Build host groups when cluster mode is active. Each host gets its own
@@ -472,6 +585,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// Remote groups from cluster.
 		hosts := s.deps.Cluster.AllHosts()
 		remoteContainers := s.deps.Cluster.AllHostContainers()
+
+		// Build a host ID -> IP address lookup for port links.
+		hostAddr := make(map[string]string, len(hosts))
+		for _, h := range hosts {
+			hostAddr[h.ID] = extractIP(h.Address)
+		}
 
 		// Group remote containers by host ID, extracting tag/registry
 		// the same way we do for local containers.
@@ -523,8 +642,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				IsSelf:        rc.Labels["sentinel.self"] == "true",
 				HostID:        rc.HostID,
 				HostName:      rc.HostName,
+				HostAddress:   hostAddr[rc.HostID],
 				Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
+				Ports:         rc.Ports,
 			}
+			cv.PortURLs = s.resolvePortURLs(rc.Name, hostAddr[rc.HostID], rc.HostID, rc.Ports)
 			byHost[rc.HostID] = append(byHost[rc.HostID], cv)
 		}
 
@@ -554,6 +676,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			data.HostGroups = append(data.HostGroups, hostGroup{
 				ID:        h.ID,
 				Name:      h.Name,
+				Address:   hostAddr[h.ID],
 				Connected: h.Connected,
 				Stacks:    remoteStacks,
 				Count:     len(containers),
@@ -647,4 +770,24 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.withPortainer(&data)
 
 	s.renderTemplate(w, "index.html", data)
+}
+
+// extractIP strips the port from a "host:port" address string.
+// If the address has no port suffix, it's returned as-is.
+func extractIP(addr string) string {
+	if i := strings.LastIndex(addr, ":"); i > 0 {
+		// Only strip if it looks like a port (all digits after the colon).
+		port := addr[i+1:]
+		allDigits := len(port) > 0
+		for _, c := range port {
+			if c < '0' || c > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			return addr[:i]
+		}
+	}
+	return addr
 }

@@ -87,43 +87,48 @@ func TestGenerateRecoveryCodes(t *testing.T) {
 		seen[code] = true
 	}
 
-	// Plain and stored should match (v1 — no hashing).
+	// Stored values should be SHA-256 hashes of the plain codes.
 	for i := range plain {
-		if plain[i] != stored[i] {
-			t.Errorf("plain[%d] = %q != stored[%d] = %q", i, plain[i], i, stored[i])
+		if stored[i] != hashRecoveryCode(plain[i]) {
+			t.Errorf("stored[%d] = %q, want SHA-256 of plain[%d] = %q", i, stored[i], i, plain[i])
 		}
 	}
 }
 
 func TestValidateRecoveryCode(t *testing.T) {
-	codes := []string{"aabbccdd", "11223344", "deadbeef"}
+	// Stored codes are SHA-256 hashes of the plaintext.
+	plainCodes := []string{"aabbccdd", "11223344", "deadbeef"}
+	storedHashes := make([]string, len(plainCodes))
+	for i, c := range plainCodes {
+		storedHashes[i] = hashRecoveryCode(c)
+	}
 
 	// Matching code should return its index.
-	idx := ValidateRecoveryCode("11223344", codes)
+	idx := ValidateRecoveryCode("11223344", storedHashes)
 	if idx != 1 {
 		t.Errorf("ValidateRecoveryCode match: idx = %d, want 1", idx)
 	}
 
 	// First code.
-	idx = ValidateRecoveryCode("aabbccdd", codes)
+	idx = ValidateRecoveryCode("aabbccdd", storedHashes)
 	if idx != 0 {
 		t.Errorf("ValidateRecoveryCode first: idx = %d, want 0", idx)
 	}
 
 	// Last code.
-	idx = ValidateRecoveryCode("deadbeef", codes)
+	idx = ValidateRecoveryCode("deadbeef", storedHashes)
 	if idx != 2 {
 		t.Errorf("ValidateRecoveryCode last: idx = %d, want 2", idx)
 	}
 
 	// Non-matching code should return -1.
-	idx = ValidateRecoveryCode("notacode", codes)
+	idx = ValidateRecoveryCode("notacode", storedHashes)
 	if idx != -1 {
 		t.Errorf("ValidateRecoveryCode miss: idx = %d, want -1", idx)
 	}
 
 	// Empty input should return -1.
-	idx = ValidateRecoveryCode("", codes)
+	idx = ValidateRecoveryCode("", storedHashes)
 	if idx != -1 {
 		t.Errorf("ValidateRecoveryCode empty: idx = %d, want -1", idx)
 	}

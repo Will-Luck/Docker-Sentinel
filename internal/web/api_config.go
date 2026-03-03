@@ -40,6 +40,102 @@ var sensitiveKeys = map[string]bool{
 	"webhook_secret":        true,
 	"notification_config":   true, // contains provider credentials
 	"notification_channels": true, // channel settings may contain tokens
+	"oidc_client_secret":    true,
+}
+
+// validSettingKeys is an allowlist of all setting keys that may be stored.
+// The config import handler rejects any key not in this set to prevent
+// arbitrary writes to the settings store.
+var validSettingKeys = map[string]bool{
+	// Scanning & scheduling.
+	"poll_interval":    true,
+	"schedule":         true,
+	"grace_period":     true,
+	"paused":           true,
+	"scan_concurrency": true,
+	"filters":          true,
+	"update_delay":     true,
+
+	// Update behaviour.
+	"default_policy":     true,
+	"latest_auto_update": true,
+	"image_cleanup":      true,
+	"image_backup":       true,
+	"remove_volumes":     true,
+	"dry_run":            true,
+	"pull_only":          true,
+	"rollback_policy":    true,
+	"version_scope":      true,
+	"dependency_aware":   true,
+	"compose_sync":       true,
+	"maintenance_window": true,
+	"show_stopped":       true,
+
+	// Hooks.
+	"hooks_enabled":      true,
+	"hooks_write_labels": true,
+
+	// Notifications & digest.
+	"notification_config":   true,
+	"notification_channels": true,
+	"digest_enabled":        true,
+	"digest_time":           true,
+	"digest_interval":       true,
+	"default_notify_mode":   true,
+
+	// Webhook.
+	"webhook_enabled": true,
+	"webhook_secret":  true,
+
+	// Portainer.
+	"portainer_enabled": true,
+	"portainer_url":     true,
+	"portainer_token":   true,
+
+	// Docker TLS.
+	"docker_tls_ca":   true,
+	"docker_tls_cert": true,
+	"docker_tls_key":  true,
+
+	// Cluster.
+	"cluster_enabled":            true,
+	"cluster_port":               true,
+	"cluster_grace_period":       true,
+	"cluster_remote_policy":      true,
+	"cluster_auto_update_agents": true,
+
+	// Instance.
+	"instance_role":       true,
+	"auth_setup_complete": true,
+	"auth_enabled":        true,
+
+	// OIDC.
+	"oidc_enabled":       true,
+	"oidc_issuer_url":    true,
+	"oidc_client_id":     true,
+	"oidc_client_secret": true,
+	"oidc_redirect_url":  true,
+	"oidc_auto_create":   true,
+	"oidc_default_role":  true,
+
+	// Agent/server.
+	"server_addr":  true,
+	"enroll_token": true,
+	"host_name":    true,
+
+	// HA discovery.
+	"ha_discovery_enabled": true,
+	"ha_discovery_prefix":  true,
+
+	// UI state.
+	"stack_order":             true,
+	"digest_banner_dismissed": true,
+	"dashboard_columns":       true,
+
+	// General (restart-required).
+	"web_port":   true,
+	"tls_mode":   true,
+	"log_format": true,
 }
 
 // isSensitiveSetting returns true if the key holds a secret value.
@@ -172,6 +268,10 @@ func (s *Server) apiConfigImport(w http.ResponseWriter, r *http.Request) {
 		for k, v := range imported.Settings {
 			if v == redactedPlaceholder {
 				result.Skipped++
+				continue
+			}
+			if !validSettingKeys[k] {
+				result.Warnings = append(result.Warnings, "unknown setting key rejected: "+k)
 				continue
 			}
 			if err := s.deps.SettingsStore.SaveSetting(k, v); err != nil {

@@ -1384,6 +1384,54 @@ details[open] > .accordion-header .accordion-chevron {
     text-decoration: underline;
   }
 }
+#container-table .col-policy,
+#container-table .col-status,
+#container-table .col-ports {
+  text-align: center;
+}
+.cell-ports {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: var(--fg-secondary);
+  overflow: hidden;
+  line-height: 1.8;
+  text-align: center;
+}
+.port-chip {
+  display: block;
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 1px 6px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  color: var(--fg-secondary);
+  text-decoration: none;
+}
+.port-chip:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.port-hidden {
+  display: none;
+}
+.cell-ports.expanded .port-hidden {
+  display: block;
+}
+.cell-ports.expanded .port-toggle {
+  display: none;
+}
+.port-toggle {
+  font-size: 0.65rem;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.port-toggle:hover {
+  text-decoration: underline;
+}
 .row-select,
 #select-all {
   accent-color: var(--accent);
@@ -1494,6 +1542,34 @@ table.managing .td-checkbox {
 .status-badge-wrap:hover .badge-hover {
   opacity: 1;
   pointer-events: auto;
+}
+.badge-action {
+  cursor: pointer;
+  transition: filter 150ms ease, box-shadow 150ms ease;
+}
+.badge-action:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 15%, transparent);
+}
+.badge-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.badge-action.loading {
+  pointer-events: none;
+  opacity: 0.7;
+}
+.badge-action.loading::after {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: badgeSpin 800ms linear infinite;
+  margin-left: 4px;
+  vertical-align: middle;
 }
 .status-badge-wrap[data-pending] {
   pointer-events: none;
@@ -1740,6 +1816,18 @@ table.managing .td-checkbox {
 .cell-image-size {
   white-space: nowrap;
 }
+#container-table.hide-col-image .col-image {
+  display: none;
+}
+#container-table.hide-col-policy .col-policy {
+  display: none;
+}
+#container-table.hide-col-status .col-status {
+  display: none;
+}
+#container-table.hide-col-ports .col-ports {
+  display: none;
+}
 .filter-divider {
   display: inline-block;
   width: 1px;
@@ -1832,12 +1920,10 @@ table.managing .td-checkbox {
 .policy-help:focus .policy-tooltip {
   display: block;
 }
-th:nth-child(4),
-th:nth-child(5),
-th:nth-child(6),
-td:nth-child(4),
-td:nth-child(5),
-td:nth-child(6) {
+.queue-table th:nth-child(4),
+.queue-table th:nth-child(5),
+.queue-table td:nth-child(4),
+.queue-table td:nth-child(5) {
   text-align: center;
 }
 .accordion-panel td {
@@ -3509,7 +3595,9 @@ td:nth-child(6) {
     display: none;
   }
   #container-table th:nth-child(3),
-  #container-table td:nth-child(3) {
+  #container-table td:nth-child(3),
+  #container-table .th-ports,
+  #container-table .cell-ports {
     display: none;
   }
   .queue-table th:nth-child(4),

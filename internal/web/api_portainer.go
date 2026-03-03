@@ -92,6 +92,12 @@ func (s *Server) apiSetPortainerURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.URL = strings.TrimRight(body.URL, "/")
+	if body.URL != "" {
+		if err := validateServiceURL(body.URL); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid Portainer URL: "+err.Error())
+			return
+		}
+	}
 	if s.deps.SettingsStore != nil {
 		if err := s.deps.SettingsStore.SaveSetting(store.SettingPortainerURL, body.URL); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save setting")

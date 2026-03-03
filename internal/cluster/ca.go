@@ -246,6 +246,12 @@ func (ca *CA) SignCSR(csrDER []byte, hostID string) (certPEM []byte, serial stri
 	return certPEM, serial, nil
 }
 
+// Dir returns the directory containing the CA certificate and key files.
+// Other cluster components (e.g. the HMAC key) can store files alongside them.
+func (ca *CA) Dir() string {
+	return filepath.Dir(ca.certPath)
+}
+
 // CACertPEM returns the CA certificate in PEM format. This is distributed to
 // agents so they can verify the server's identity during mTLS handshake.
 func (ca *CA) CACertPEM() []byte {

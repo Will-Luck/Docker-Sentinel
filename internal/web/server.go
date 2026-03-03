@@ -59,11 +59,14 @@ type Dependencies struct {
 	AboutStore          AboutStore
 	HookStore           HookStore
 	ReleaseSources      ReleaseSourceStore
-	ImageManager        ImageManager        // nil when not available
-	Swarm               SwarmProvider       // nil when not in Swarm mode
-	Cluster             *ClusterController  // thread-safe proxy; always non-nil, use .Enabled() to check
-	Portainer           PortainerProvider   // nil when Portainer not configured
-	VersionScope        VersionScopeUpdater // nil-safe: updates checker's default scope at runtime
+	ImageManager        ImageManager                                   // nil when not available
+	Swarm               SwarmProvider                                  // nil when not in Swarm mode
+	Cluster             *ClusterController                             // thread-safe proxy; always non-nil, use .Enabled() to check
+	Portainer           PortainerProvider                              // nil when Portainer not configured
+	NPM                 NPMProvider                                    // nil when NPM not configured; set by NPMInitFunc on first successful test
+	NPMInitFunc         func(ctx context.Context) (NPMProvider, error) // creates NPM provider from saved settings
+	PortConfigs         PortConfigStore                                // nil when store not available
+	VersionScope        VersionScopeUpdater                            // nil-safe: updates checker's default scope at runtime
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
@@ -89,6 +92,7 @@ type Server struct {
 	scanGate             chan struct{}      // closed on first dashboard load to unblock the scheduler
 	scanGateOnce         sync.Once
 	pendingRemoteUpdates sync.Map // key: "hostID::name" → struct{}
+	hostAddress          string   // SENTINEL_HOST override for port links; empty = use request host
 }
 
 func (s *Server) markRemoteUpdating(hostID, name string) {
@@ -163,10 +167,16 @@ func (s *Server) getOIDCProvider() *auth.OIDCProvider {
 
 // NewServer creates a Server with all routes registered.
 func NewServer(deps Dependencies) *Server {
+	// Read SENTINEL_HOST from config if available.
+	var hostAddr string
+	if deps.Config != nil {
+		hostAddr = deps.Config.Values()["SENTINEL_HOST"]
+	}
 	s := &Server{
-		deps:      deps,
-		mux:       http.NewServeMux(),
-		startTime: time.Now(),
+		deps:        deps,
+		mux:         http.NewServeMux(),
+		startTime:   time.Now(),
+		hostAddress: hostAddr,
 	}
 
 	s.parseTemplates()
@@ -230,6 +240,7 @@ func (s *Server) parseTemplates() {
 		"changelogURL": ChangelogURL,
 		"versionURL":   VersionURL,
 		"imageTag":     ImageTag,
+		"sub":          func(a, b int) int { return a - b },
 		"serviceOrContainer": func(kind, name string, hostID ...string) string {
 			base := "/container/" + name
 			if kind == "service" {
@@ -290,6 +301,9 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /account", authed(s.handleAccount))
 	s.mux.Handle("POST /api/auth/change-password", authed(s.apiChangePassword))
 	s.mux.Handle("GET /api/auth/sessions", authed(s.apiListSessions))
+	// The {token} in the path is the TARGET session to revoke, not the caller's
+	// authentication. The caller is authenticated via their session cookie.
+	// Standard REST pattern: DELETE /resource/{id} removes the identified resource.
 	s.mux.Handle("DELETE /api/auth/sessions/{token}", authed(s.apiRevokeSession))
 	s.mux.Handle("DELETE /api/auth/sessions", authed(s.apiRevokeAllSessions))
 	s.mux.Handle("POST /api/auth/tokens", authed(s.apiCreateToken))
@@ -395,6 +409,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/latest-auto-update", perm(auth.PermSettingsModify, s.apiSetLatestAutoUpdate))
 	s.mux.Handle("POST /api/settings/filters", perm(auth.PermSettingsModify, s.apiSetFilters))
 	s.mux.Handle("POST /api/settings/stack-order", perm(auth.PermSettingsModify, s.apiSaveStackOrder))
+	s.mux.Handle("POST /api/settings/dashboard-columns", perm(auth.PermSettingsModify, s.apiSetDashboardColumns))
 	s.mux.Handle("PUT /api/settings/notifications", perm(auth.PermSettingsModify, s.apiSaveNotifications))
 	s.mux.Handle("POST /api/settings/notifications/test", perm(auth.PermSettingsModify, s.apiTestNotification))
 	s.mux.Handle("PUT /api/settings/registries", perm(auth.PermSettingsModify, s.apiSaveRegistryCredentials))
@@ -440,6 +455,20 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/portainer-url", perm(auth.PermSettingsModify, s.apiSetPortainerURL))
 	s.mux.Handle("POST /api/settings/portainer-token", perm(auth.PermSettingsModify, s.apiSetPortainerToken))
 	s.mux.Handle("POST /api/settings/portainer-test", perm(auth.PermSettingsModify, s.apiTestPortainerConnection))
+
+	// NPM (Nginx Proxy Manager)
+	s.mux.Handle("GET /connectors", perm(auth.PermSettingsModify, s.handleConnectors))
+	s.mux.Handle("POST /api/settings/npm-enabled", perm(auth.PermSettingsModify, s.apiSetNPMEnabled))
+	s.mux.Handle("POST /api/settings/npm-url", perm(auth.PermSettingsModify, s.apiSetNPMURL))
+	s.mux.Handle("POST /api/settings/npm-credentials", perm(auth.PermSettingsModify, s.apiSetNPMCredentials))
+	s.mux.Handle("POST /api/settings/npm-test", perm(auth.PermSettingsModify, s.apiTestNPMConnection))
+	s.mux.Handle("POST /api/settings/npm-sync", perm(auth.PermSettingsModify, s.apiSyncNPM))
+	s.mux.Handle("GET /api/settings/npm-mappings", perm(auth.PermSettingsView, s.apiGetNPMMappings))
+
+	// Port config per-container
+	s.mux.Handle("GET /api/containers/{name}/port-config", perm(auth.PermContainersView, s.apiGetPortConfig))
+	s.mux.Handle("POST /api/containers/{name}/port-config/{port}", perm(auth.PermSettingsModify, s.apiSetPortOverride))
+	s.mux.Handle("DELETE /api/containers/{name}/port-config/{port}", perm(auth.PermSettingsModify, s.apiDeletePortOverride))
 
 	s.mux.Handle("POST /api/hooks/{container}", perm(auth.PermSettingsModify, s.apiSaveHook))
 	s.mux.Handle("DELETE /api/hooks/{container}/{phase}", perm(auth.PermSettingsModify, s.apiDeleteHook))
@@ -498,6 +527,7 @@ func (s *Server) serveCSS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(data)
 }
 
@@ -508,6 +538,7 @@ func (s *Server) serveJS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write(data)
 }
 
