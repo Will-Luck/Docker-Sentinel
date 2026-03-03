@@ -81,10 +81,10 @@ func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
 	defer r.mu.RUnlock()
 
 	for _, h := range r.hosts {
-		if h.Enabled != 1 || len(h.DomainNames) == 0 {
+		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
 			continue
 		}
-		if !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
+		if r.sentinelHost != "" && !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
 			continue
 		}
 		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 || uint16(h.ForwardPort) != hostPort {
@@ -109,16 +109,17 @@ func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
 }
 
 // AllMappings returns all matched port-to-URL mappings for the sentinel host.
+// When sentinelHost is empty, all enabled proxy hosts are returned.
 func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	out := make(map[uint16]ResolvedURL)
 	for _, h := range r.hosts {
-		if h.Enabled != 1 || len(h.DomainNames) == 0 {
+		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
 			continue
 		}
-		if !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
+		if r.sentinelHost != "" && !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
 			continue
 		}
 

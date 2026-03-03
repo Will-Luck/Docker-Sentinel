@@ -631,6 +631,23 @@ func main() {
 		if npmProvider != nil {
 			webDeps.NPM = npmProvider
 		}
+		// Factory to create NPM provider on demand (e.g. after first-time UI config).
+		webDeps.NPMInitFunc = func(initCtx context.Context) (web.NPMProvider, error) {
+			u, _ := db.LoadSetting(store.SettingNPMURL)
+			e, _ := db.LoadSetting(store.SettingNPMEmail)
+			p, _ := db.LoadSetting(store.SettingNPMPassword)
+			if u == "" || e == "" || p == "" {
+				return nil, fmt.Errorf("save NPM URL, email, and password first")
+			}
+			c := npm.NewClient(u, e, p)
+			if err := c.TestConnection(initCtx); err != nil {
+				return nil, err
+			}
+			r := npm.NewResolver(c, cfg.HostAddress, log.Logger)
+			go r.Run(ctx) // use the app-level context, not the request context
+			log.Info("npm integration enabled (hot)", "url", u)
+			return &npmAdapter{resolver: r}, nil
+		}
 		webDeps.PortConfigs = &portConfigStoreAdapter{s: db}
 		srv := web.NewServer(webDeps)
 		srv.SetClusterLifecycle(cm)
