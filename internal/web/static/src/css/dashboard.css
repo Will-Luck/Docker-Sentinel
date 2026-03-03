@@ -558,23 +558,29 @@ details[open] > .accordion-header .accordion-chevron {
     }
 }
 
+/* Dashboard policy & status columns: left-align for scanability. */
+#container-table .col-policy,
+#container-table .col-status {
+    text-align: left;
+}
+
 .cell-ports {
     font-family: var(--font-mono);
-    font-size: 0.75rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
     color: var(--fg-secondary);
     overflow: hidden;
+    line-height: 1.8;
+    text-align: left;
 }
 
 .port-chip {
     display: block;
-    padding: 1px 6px 1px 0;
-    margin: 1px 0;
-    border-radius: var(--radius-sm);
-    background: var(--bg-hover);
-    font-size: 0.7rem;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
     width: fit-content;
+    padding: 1px 6px;
+    background: var(--bg-hover);
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
     color: var(--fg-secondary);
     text-decoration: none;
 }
@@ -597,14 +603,10 @@ details[open] > .accordion-header .accordion-chevron {
 }
 
 .port-toggle {
-    display: block;
-    padding: 1px 6px 1px 0;
-    margin: 1px 0;
     font-size: 0.65rem;
     color: var(--accent);
     cursor: pointer;
     white-space: nowrap;
-    width: fit-content;
 }
 
 .port-toggle:hover {
@@ -740,6 +742,40 @@ table.managing .td-checkbox {
 .status-badge-wrap:hover .badge-hover {
     opacity: 1;
     pointer-events: auto;
+}
+
+/* Clickable update/action badges — cursor, hover glow, keyboard focus. */
+.badge-action {
+    cursor: pointer;
+    transition: filter 150ms ease, box-shadow 150ms ease;
+}
+
+.badge-action:hover {
+    filter: brightness(1.15);
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.badge-action:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.badge-action.loading {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+.badge-action.loading::after {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: badgeSpin 800ms linear infinite;
+    margin-left: 4px;
+    vertical-align: middle;
 }
 
 /* Pending action state — CSS-driven spinner, immune to JS DOM manipulation */

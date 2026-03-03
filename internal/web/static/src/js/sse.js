@@ -98,7 +98,7 @@ function updateContainerRow(name, hostId) {
                     var sel = 'tr.container-row[data-name="' + name + '"]';
                     if (hostId) sel += '[data-host="' + hostId + '"]';
                     var row = document.querySelector(sel);
-                    var updBtn = row ? row.querySelector(".btn-warning.loading") : null;
+                    var updBtn = row ? row.querySelector(".badge-action.loading, .badge-updating") : null;
                     if (updBtn) {
                         // Server says update still in-flight — keep tracking.
                         window._updateLoadingBtns[updKey] = updBtn;

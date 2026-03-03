@@ -228,7 +228,7 @@ function rejectAll(event) {
 }
 
 function triggerUpdate(name, event, hostId) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") : null;
     var url = "/api/update/" + encodeURIComponent(name);
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     // Same pattern as triggerSvcUpdate: manage loading state ourselves,
@@ -315,7 +315,7 @@ function triggerScan(event) {
 }
 
 function triggerSelfUpdate(event) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") : null;
     showConfirm("Self-Update", "<p>This will restart Sentinel to apply the update. Continue?</p>").then(function(confirmed) {
         if (!confirmed) return;
         localStorage.setItem("sentinel-self-updating", "1");
