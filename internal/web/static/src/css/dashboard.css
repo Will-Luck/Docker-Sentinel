@@ -563,12 +563,11 @@ details[open] > .accordion-header .accordion-chevron {
     font-size: 0.75rem;
     color: var(--fg-secondary);
     overflow: hidden;
-    padding-left: 10px; /* 16px default - 6px chip padding = aligns chip text with header */
 }
 
 .port-chip {
     display: block;
-    padding: 1px 6px;
+    padding: 1px 6px 1px 0;
     margin: 1px 0;
     border-radius: var(--radius-sm);
     background: var(--bg-hover);
@@ -599,7 +598,7 @@ details[open] > .accordion-header .accordion-chevron {
 
 .port-toggle {
     display: block;
-    padding: 1px 6px;
+    padding: 1px 6px 1px 0;
     margin: 1px 0;
     font-size: 0.65rem;
     color: var(--accent);
