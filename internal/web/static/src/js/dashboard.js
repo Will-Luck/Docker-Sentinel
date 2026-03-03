@@ -20,6 +20,7 @@ function applyColumnConfig() {
     if (!raw) return;
     try {
         var cols = JSON.parse(raw);
+        if (!Array.isArray(cols)) cols = [];
         var colSet = {};
         for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
 
@@ -1028,7 +1029,13 @@ async function fetchContainerLogs(name, hostId) {
     }
 }
 
+function togglePorts(el, e) {
+    e.stopPropagation();
+    el.closest('.cell-ports').classList.toggle('expanded');
+}
+
 export {
+    togglePorts,
     applyColumnConfig,
     initTheme,
     applyTheme,

@@ -14,6 +14,7 @@ import {
 } from "./utils.js";
 
 import {
+    togglePorts,
     applyColumnConfig,
     initTheme,
     applyTheme,
@@ -228,6 +229,7 @@ window.toggleHostGroup = toggleHostGroup;
 window.toggleStack = toggleStack;
 window.toggleSwarmSection = toggleSwarmSection;
 window.onRowClick = onRowClick;
+window.togglePorts = togglePorts;
 window.applyBulkPolicy = applyBulkPolicy;
 window.clearSelection = clearSelection;
 window.applyTheme = applyTheme;

@@ -559,20 +559,48 @@ details[open] > .accordion-header .accordion-chevron {
 }
 
 .cell-ports {
-    white-space: nowrap;
     font-family: var(--font-mono);
     font-size: 0.75rem;
     color: var(--fg-secondary);
 }
 
 .port-chip {
-    display: inline-block;
+    display: block;
     padding: 1px 6px;
-    margin: 1px 2px;
+    margin: 1px 0;
     border-radius: var(--radius-sm);
     background: var(--bg-hover);
     font-size: 0.7rem;
     letter-spacing: 0.02em;
+    white-space: nowrap;
+    width: fit-content;
+}
+
+.port-hidden {
+    display: none;
+}
+
+.cell-ports.expanded .port-hidden {
+    display: block;
+}
+
+.cell-ports.expanded .port-toggle {
+    display: none;
+}
+
+.port-toggle {
+    display: block;
+    padding: 1px 6px;
+    margin: 1px 0;
+    font-size: 0.65rem;
+    color: var(--accent);
+    cursor: pointer;
+    white-space: nowrap;
+    width: fit-content;
+}
+
+.port-toggle:hover {
+    text-decoration: underline;
 }
 
 
