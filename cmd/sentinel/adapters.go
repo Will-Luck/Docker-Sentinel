@@ -20,6 +20,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
 	"github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -1493,4 +1494,93 @@ func (a *portainerScannerAdapter) findEndpoint(ctx context.Context, endpointID i
 		}
 	}
 	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
+}
+
+// --- NPM adapter ---
+
+type npmAdapter struct {
+	resolver *npm.Resolver
+}
+
+func (a *npmAdapter) TestConnection(ctx context.Context) error {
+	return a.resolver.Sync(ctx)
+}
+
+func (a *npmAdapter) Lookup(hostPort uint16) *web.NPMResolvedURL {
+	r := a.resolver.Lookup(hostPort)
+	if r == nil {
+		return nil
+	}
+	return &web.NPMResolvedURL{
+		URL:         r.URL,
+		Domain:      r.Domain,
+		ProxyHostID: r.ProxyHostID,
+	}
+}
+
+func (a *npmAdapter) AllMappings() map[uint16]web.NPMResolvedURL {
+	raw := a.resolver.AllMappings()
+	result := make(map[uint16]web.NPMResolvedURL, len(raw))
+	for k, v := range raw {
+		result[k] = web.NPMResolvedURL{
+			URL:         v.URL,
+			Domain:      v.Domain,
+			ProxyHostID: v.ProxyHostID,
+		}
+	}
+	return result
+}
+
+func (a *npmAdapter) Sync(ctx context.Context) error {
+	return a.resolver.Sync(ctx)
+}
+
+func (a *npmAdapter) LastSync() time.Time {
+	return a.resolver.LastSync()
+}
+
+func (a *npmAdapter) LastError() error {
+	return a.resolver.LastError()
+}
+
+// --- PortConfig store adapter ---
+
+type portConfigStoreAdapter struct {
+	s *store.Store
+}
+
+func (a *portConfigStoreAdapter) GetPortConfig(name string) (*web.PortConfig, error) {
+	pc, err := a.s.GetPortConfig(name)
+	if err != nil || pc == nil {
+		return nil, err
+	}
+	result := &web.PortConfig{Ports: make(map[string]web.PortOverride, len(pc.Ports))}
+	for k, v := range pc.Ports {
+		result.Ports[k] = web.PortOverride{URL: v.URL, Path: v.Path}
+	}
+	return result, nil
+}
+
+func (a *portConfigStoreAdapter) SetPortOverride(name string, hostPort uint16, override web.PortOverride) error {
+	return a.s.SetPortOverride(name, hostPort, store.PortOverride{URL: override.URL, Path: override.Path})
+}
+
+func (a *portConfigStoreAdapter) DeletePortOverride(name string, hostPort uint16) error {
+	return a.s.DeletePortOverride(name, hostPort)
+}
+
+func (a *portConfigStoreAdapter) AllPortConfigs() (map[string]*web.PortConfig, error) {
+	raw, err := a.s.AllPortConfigs()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*web.PortConfig, len(raw))
+	for name, pc := range raw {
+		wpc := &web.PortConfig{Ports: make(map[string]web.PortOverride, len(pc.Ports))}
+		for k, v := range pc.Ports {
+			wpc.Ports[k] = web.PortOverride{URL: v.URL, Path: v.Path}
+		}
+		result[name] = wpc
+	}
+	return result, nil
 }

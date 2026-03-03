@@ -317,6 +317,43 @@ type PortainerProvider interface {
 	EndpointContainers(ctx context.Context, endpointID int) ([]PortainerContainerInfo, error)
 }
 
+// NPMProvider provides NPM (Nginx Proxy Manager) proxy host resolution.
+// Nil when NPM is not configured.
+type NPMProvider interface {
+	TestConnection(ctx context.Context) error
+	Lookup(hostPort uint16) *NPMResolvedURL
+	AllMappings() map[uint16]NPMResolvedURL
+	Sync(ctx context.Context) error
+	LastSync() time.Time
+	LastError() error
+}
+
+// NPMResolvedURL is a URL resolved from an NPM proxy host match.
+type NPMResolvedURL struct {
+	URL         string
+	Domain      string
+	ProxyHostID int
+}
+
+// PortConfigStore reads and writes per-port custom URL overrides.
+type PortConfigStore interface {
+	GetPortConfig(name string) (*PortConfig, error)
+	SetPortOverride(name string, hostPort uint16, override PortOverride) error
+	DeletePortOverride(name string, hostPort uint16) error
+	AllPortConfigs() (map[string]*PortConfig, error)
+}
+
+// PortConfig holds per-port URL overrides for a container.
+type PortConfig struct {
+	Ports map[string]PortOverride `json:"ports"`
+}
+
+// PortOverride configures a custom URL or path suffix for a single port.
+type PortOverride struct {
+	URL  string `json:"url,omitempty"`
+	Path string `json:"path,omitempty"`
+}
+
 // PortainerEndpoint represents a Portainer-managed Docker environment.
 type PortainerEndpoint struct {
 	ID     int    `json:"id"`

@@ -31,7 +31,7 @@
             <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
-            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
+            <a href="/connectors" class="nav-link{{if eq .Page "connectors"}} active{{end}}">Connectors</a>
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -443,7 +443,7 @@
                                         </span>
                                     {{end}}
                                 </td>
-                                <td class="col-ports cell-ports">{{$hostAddr := .HostAddress}}{{range $i, $p := .Ports}}<a class="port-chip{{if ge $i 2}} port-hidden{{end}}" {{if $hostAddr}}href="http://{{$hostAddr}}:{{$p.HostPort}}"{{end}} data-port="{{$p.HostPort}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{$p.HostPort}}:{{$p.ContainerPort}}</a>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
+                                <td class="col-ports cell-ports">{{$hostAddr := .HostAddress}}{{$portURLs := .PortURLs}}{{range $i, $p := .Ports}}<a class="port-chip{{if ge $i 2}} port-hidden{{end}}" {{if and $portURLs (index $portURLs $p.HostPort)}}href="{{index $portURLs $p.HostPort}}"{{else if $hostAddr}}href="http://{{$hostAddr}}:{{$p.HostPort}}"{{end}} data-port="{{$p.HostPort}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{$p.HostPort}}:{{$p.ContainerPort}}</a>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
                                 <td>
                                     <div class="btn-group">
                                         {{if .IsSelf}}

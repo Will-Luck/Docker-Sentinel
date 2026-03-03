@@ -63,6 +63,8 @@ type Dependencies struct {
 	Swarm               SwarmProvider       // nil when not in Swarm mode
 	Cluster             *ClusterController  // thread-safe proxy; always non-nil, use .Enabled() to check
 	Portainer           PortainerProvider   // nil when Portainer not configured
+	NPM                 NPMProvider         // nil when NPM not configured
+	PortConfigs         PortConfigStore     // nil when store not available
 	VersionScope        VersionScopeUpdater // nil-safe: updates checker's default scope at runtime
 	MetricsEnabled      bool
 	Auth                *auth.Service
@@ -89,6 +91,7 @@ type Server struct {
 	scanGate             chan struct{}      // closed on first dashboard load to unblock the scheduler
 	scanGateOnce         sync.Once
 	pendingRemoteUpdates sync.Map // key: "hostID::name" → struct{}
+	hostAddress          string   // SENTINEL_HOST override for port links; empty = use request host
 }
 
 func (s *Server) markRemoteUpdating(hostID, name string) {
@@ -163,10 +166,16 @@ func (s *Server) getOIDCProvider() *auth.OIDCProvider {
 
 // NewServer creates a Server with all routes registered.
 func NewServer(deps Dependencies) *Server {
+	// Read SENTINEL_HOST from config if available.
+	var hostAddr string
+	if deps.Config != nil {
+		hostAddr = deps.Config.Values()["SENTINEL_HOST"]
+	}
 	s := &Server{
-		deps:      deps,
-		mux:       http.NewServeMux(),
-		startTime: time.Now(),
+		deps:        deps,
+		mux:         http.NewServeMux(),
+		startTime:   time.Now(),
+		hostAddress: hostAddr,
 	}
 
 	s.parseTemplates()
@@ -445,6 +454,20 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/portainer-url", perm(auth.PermSettingsModify, s.apiSetPortainerURL))
 	s.mux.Handle("POST /api/settings/portainer-token", perm(auth.PermSettingsModify, s.apiSetPortainerToken))
 	s.mux.Handle("POST /api/settings/portainer-test", perm(auth.PermSettingsModify, s.apiTestPortainerConnection))
+
+	// NPM (Nginx Proxy Manager)
+	s.mux.Handle("GET /connectors", perm(auth.PermSettingsModify, s.handleConnectors))
+	s.mux.Handle("POST /api/settings/npm-enabled", perm(auth.PermSettingsModify, s.apiSetNPMEnabled))
+	s.mux.Handle("POST /api/settings/npm-url", perm(auth.PermSettingsModify, s.apiSetNPMURL))
+	s.mux.Handle("POST /api/settings/npm-credentials", perm(auth.PermSettingsModify, s.apiSetNPMCredentials))
+	s.mux.Handle("POST /api/settings/npm-test", perm(auth.PermSettingsModify, s.apiTestNPMConnection))
+	s.mux.Handle("POST /api/settings/npm-sync", perm(auth.PermSettingsModify, s.apiSyncNPM))
+	s.mux.Handle("GET /api/settings/npm-mappings", perm(auth.PermSettingsView, s.apiGetNPMMappings))
+
+	// Port config per-container
+	s.mux.Handle("GET /api/containers/{name}/port-config", perm(auth.PermContainersView, s.apiGetPortConfig))
+	s.mux.Handle("POST /api/containers/{name}/port-config/{port}", perm(auth.PermSettingsModify, s.apiSetPortOverride))
+	s.mux.Handle("DELETE /api/containers/{name}/port-config/{port}", perm(auth.PermSettingsModify, s.apiDeletePortOverride))
 
 	s.mux.Handle("POST /api/hooks/{container}", perm(auth.PermSettingsModify, s.apiSaveHook))
 	s.mux.Handle("DELETE /api/hooks/{container}/{phase}", perm(auth.PermSettingsModify, s.apiDeleteHook))

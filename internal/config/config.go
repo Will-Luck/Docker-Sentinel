@@ -31,8 +31,9 @@ type Config struct {
 	WebhookHeaders string // comma-separated "Key:Value" pairs
 
 	// Web dashboard
-	WebPort    string
-	WebEnabled bool
+	WebPort     string
+	WebEnabled  bool
+	HostAddress string // SENTINEL_HOST — Docker host IP/hostname for port links (auto-detected if empty)
 
 	// Authentication
 	AuthEnabled   *bool // nil = use DB default (true); non-nil = env override
@@ -64,6 +65,11 @@ type Config struct {
 	// Portainer integration
 	PortainerURL   string
 	PortainerToken string
+
+	// NPM (Nginx Proxy Manager) integration
+	NPMURL      string
+	NPMEmail    string
+	NPMPassword string
 
 	// mu protects the mutable runtime fields below.
 	mu                sync.RWMutex
@@ -113,6 +119,7 @@ func Load() *Config {
 		WebhookHeaders:      envStr("SENTINEL_WEBHOOK_HEADERS", ""),
 		WebPort:             envStr("SENTINEL_WEB_PORT", "8080"),
 		WebEnabled:          envBool("SENTINEL_WEB_ENABLED", true),
+		HostAddress:         envStr("SENTINEL_HOST", ""),
 		AuthEnabled:         envBoolPtr("SENTINEL_AUTH_ENABLED"),
 		SessionExpiry:       envDuration("SENTINEL_SESSION_EXPIRY", 720*time.Hour),
 		CookieSecure:        envBool("SENTINEL_COOKIE_SECURE", true),
@@ -149,6 +156,11 @@ func Load() *Config {
 		// Portainer integration
 		PortainerURL:   envStr("SENTINEL_PORTAINER_URL", ""),
 		PortainerToken: envStr("SENTINEL_PORTAINER_TOKEN", ""),
+
+		// NPM integration
+		NPMURL:      envStr("SENTINEL_NPM_URL", ""),
+		NPMEmail:    envStr("SENTINEL_NPM_EMAIL", ""),
+		NPMPassword: envStr("SENTINEL_NPM_PASSWORD", ""),
 	}
 }
 
@@ -228,6 +240,7 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_WEBHOOK_URL":           c.WebhookURL,
 		"SENTINEL_WEB_PORT":              c.WebPort,
 		"SENTINEL_WEB_ENABLED":           fmt.Sprintf("%t", c.WebEnabled),
+		"SENTINEL_HOST":                  c.HostAddress,
 		"SENTINEL_SESSION_EXPIRY":        c.SessionExpiry.String(),
 		"SENTINEL_COOKIE_SECURE":         fmt.Sprintf("%t", c.CookieSecure),
 		"SENTINEL_TLS_CERT":              c.TLSCert,
@@ -260,6 +273,9 @@ func (c *Config) Values() map[string]string {
 
 		// Portainer
 		"SENTINEL_PORTAINER_URL": c.PortainerURL,
+
+		// NPM
+		"SENTINEL_NPM_URL": c.NPMURL,
 	}
 }
 
