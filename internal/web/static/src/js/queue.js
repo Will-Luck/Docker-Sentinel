@@ -4,17 +4,6 @@
 
 import { showToast, escapeHTML, showConfirm, apiPost } from "./utils.js";
 
-// Local escapeHtml (lowercase h) used by loadAllTags.
-function escapeHtml(str) {
-    if (!str) return "";
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
 // Access via window to avoid circular import with sse.js.
 function _updateQueueBadge() {
     if (window.updateQueueBadge) window.updateQueueBadge();
@@ -239,7 +228,7 @@ function rejectAll(event) {
 }
 
 function triggerUpdate(name, event, hostId) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") : null;
     var url = "/api/update/" + encodeURIComponent(name);
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     // Same pattern as triggerSvcUpdate: manage loading state ourselves,
@@ -326,7 +315,7 @@ function triggerScan(event) {
 }
 
 function triggerSelfUpdate(event) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") : null;
     showConfirm("Self-Update", "<p>This will restart Sentinel to apply the update. Continue?</p>").then(function(confirmed) {
         if (!confirmed) return;
         localStorage.setItem("sentinel-self-updating", "1");
@@ -386,7 +375,7 @@ function loadAllTags(summaryEl) {
             if (preview) preview.textContent = tags.length + " tags";
             var html = '<div class="tag-list">';
             for (var i = 0; i < tags.length; i++) {
-                html += '<span class="badge badge-muted tag-item">' + escapeHtml(tags[i]) + '</span>';
+                html += '<span class="badge badge-muted tag-item">' + escapeHTML(tags[i]) + '</span>';
             }
             html += '</div>';
             if (body) body.innerHTML = html;
@@ -404,7 +393,7 @@ function updateToVersion(name, hostId) {
     var url = "/api/containers/" + encodeURIComponent(name) + "/update-to-version";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     showConfirm("Update to Version",
-        "<p>Update <strong>" + name + "</strong> to <code>" + tag + "</code>?</p>"
+        "<p>Update <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(tag) + "</code>?</p>"
     ).then(function(confirmed) {
         if (!confirmed) return;
         fetch(url, {

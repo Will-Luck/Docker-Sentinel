@@ -552,6 +552,13 @@ func (s *Server) apiSetUpdateDelay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	// Validate duration format when non-empty.
+	if req.Duration != "" {
+		if _, err := time.ParseDuration(req.Duration); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid duration format: "+req.Duration)
+			return
+		}
+	}
 	if s.deps.SettingsStore == nil {
 		writeError(w, http.StatusNotImplemented, "settings store not available")
 		return
@@ -1001,7 +1008,7 @@ func (s *Server) apiSetHADiscovery(w http.ResponseWriter, r *http.Request) {
 		label = "enabled"
 	}
 	s.logEvent(r, "settings", "", "Home Assistant discovery "+label)
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Home Assistant discovery " + label})
 }
 
 // apiSetDockerTLS saves Docker TLS certificate paths for mTLS connections.
@@ -1204,6 +1211,39 @@ func (s *Server) apiGetOIDCSettings(w http.ResponseWriter, _ *http.Request) {
 		"auto_create":   load("oidc_auto_create") == "true",
 		"default_role":  load("oidc_default_role"),
 	})
+}
+
+// apiSetDashboardColumns saves the user's preferred dashboard column visibility and order.
+func (s *Server) apiSetDashboardColumns(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Columns []string `json:"columns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	allowed := map[string]bool{"image": true, "policy": true, "status": true, "ports": true}
+	for _, col := range body.Columns {
+		if !allowed[col] {
+			writeError(w, http.StatusBadRequest, "unknown column: "+col)
+			return
+		}
+	}
+
+	data, err := json.Marshal(body.Columns)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode columns")
+		return
+	}
+
+	if err := s.deps.SettingsStore.SaveSetting("dashboard_columns", string(data)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save column config")
+		return
+	}
+
+	s.logEvent(r, "settings-change", "", "Dashboard columns updated")
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // apiSaveOIDCSettings saves OIDC configuration and reinitialises the provider.

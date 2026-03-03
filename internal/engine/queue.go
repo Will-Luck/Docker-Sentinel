@@ -82,13 +82,13 @@ func (u PendingUpdate) Key() string {
 }
 
 // Remove removes a pending update by container name.
+// Persist happens under lock to prevent a concurrent Add/Remove from
+// overwriting the snapshot with stale data.
 func (q *Queue) Remove(name string) {
-	var data []byte
 	q.mu.Lock()
 	delete(q.pending, name)
-	data = q.snapshotLocked()
+	q.persist()
 	q.mu.Unlock()
-	q.persistData(data)
 	q.publishEvent(name, "removed")
 }
 

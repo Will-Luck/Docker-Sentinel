@@ -232,9 +232,10 @@ function initSettingsPage() {
         })
         .catch(function() { /* ignore -- falls back to defaults */ });
 
-    // Tab navigation.
-    var tabBtns = document.querySelectorAll(".tab-btn");
-    var tabPanels = document.querySelectorAll(".tab-panel");
+    // Tab navigation (settings page only -- other pages handle their own tabs).
+    var settingsTabContainer = document.getElementById("settings-tabs");
+    var tabBtns = settingsTabContainer ? settingsTabContainer.querySelectorAll(".tab-btn") : [];
+    var tabPanels = settingsTabContainer ? settingsTabContainer.parentElement.querySelectorAll(".tab-panel") : [];
     if (tabBtns.length > 0) {
         var savedTab = localStorage.getItem("sentinel-settings-tab");
         if (savedTab) {
@@ -304,6 +305,9 @@ function initSettingsPage() {
 
     // Load webhook settings.
     loadWebhookSettings();
+
+    // Load dashboard column preferences.
+    loadDashboardColumns();
 }
 
 // Local helper — clearAccordionState is also in dashboard.js but duplicated
@@ -1092,6 +1096,65 @@ function importConfig() {
     reader.readAsText(file);
 }
 
+// --- Dashboard Column Config ---
+
+function loadDashboardColumns() {
+    fetch("/api/settings")
+        .then(function(r) { return r.json(); })
+        .then(function(settings) {
+            var raw = settings["dashboard_columns"];
+            if (!raw) return;
+            try {
+                var cols = JSON.parse(raw);
+                var allCols = ["image", "policy", "status", "ports"];
+                var colSet = {};
+                for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
+
+                var checkboxes = document.querySelectorAll("#dashboard-columns-list input[data-column]");
+                for (var j = 0; j < checkboxes.length; j++) {
+                    checkboxes[j].checked = !!colSet[checkboxes[j].getAttribute("data-column")];
+                }
+                updateDashboardColumnsPreview(cols);
+            } catch(e) { /* ignore parse errors */ }
+        });
+}
+
+function saveDashboardColumns() {
+    var checkboxes = document.querySelectorAll("#dashboard-columns-list input[data-column]");
+    var cols = [];
+    for (var i = 0; i < checkboxes.length; i++) {
+        if (checkboxes[i].checked) {
+            cols.push(checkboxes[i].getAttribute("data-column"));
+        }
+    }
+
+    fetch("/api/settings/dashboard-columns", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({columns: cols})
+    }).then(function(r) {
+        if (r.ok) {
+            showToast("Dashboard columns saved", "success");
+            updateDashboardColumnsPreview(cols);
+        } else {
+            showToast("Failed to save columns", "error");
+        }
+    });
+}
+
+function updateDashboardColumnsPreview(cols) {
+    var preview = document.getElementById("dashboard-columns-preview");
+    if (!preview) return;
+    var allCols = ["image", "policy", "status", "ports"];
+    if (cols.length === allCols.length) {
+        preview.textContent = "All visible";
+    } else if (cols.length === 0) {
+        preview.textContent = "Name + Actions only";
+    } else {
+        preview.textContent = cols.length + " of " + allCols.length + " columns";
+    }
+}
+
 export {
     initSettingsPage,
     onPollIntervalChange,
@@ -1131,5 +1194,7 @@ export {
     saveMaintenanceWindow,
     updateScanPreviews,
     exportConfig,
-    importConfig
+    importConfig,
+    loadDashboardColumns,
+    saveDashboardColumns
 };

@@ -31,7 +31,7 @@
             <a href="/images" class="nav-link">Images</a>
             <a href="/settings" class="nav-link active" aria-current="page">Settings</a>
             {{if .ClusterEnabled}}<a href="/cluster" class="nav-link{{if eq .Page "cluster"}} active{{end}}">Cluster</a>{{end}}
-            {{if .PortainerEnabled}}<a href="/portainer" class="nav-link">Portainer</a>{{end}}
+            <a href="/connectors" class="nav-link{{if eq .Page "connectors"}} active{{end}}">Connectors</a>
         </div>
         <div class="nav-status" aria-live="polite">
             <span id="sse-indicator" class="status-dot disconnected"></span>
@@ -66,7 +66,7 @@
             </div>
         </div>
 
-        <div class="tab-nav" role="tablist">
+        <div class="tab-nav" role="tablist" id="settings-tabs">
             <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-scanning" data-tab="scanning">Scanning</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-notifications" data-tab="notifications">Notifications</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-registries" data-tab="registries">Registries</button>
@@ -940,6 +940,35 @@
                                     <option value="expanded">Always expanded</option>
                                 </select>
                             </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Dashboard Columns</h2>
+                        <span class="accordion-preview" id="dashboard-columns-preview">All visible</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="setting-description">Choose which columns appear on the main dashboard table. Name is always shown.</p>
+                        <div class="settings-rows" id="dashboard-columns-list">
+                            <label class="setting-row" style="cursor:pointer">
+                                <span class="setting-label">Image</span>
+                                <input type="checkbox" class="toggle-switch" data-column="image" checked onchange="saveDashboardColumns()">
+                            </label>
+                            <label class="setting-row" style="cursor:pointer">
+                                <span class="setting-label">Policy</span>
+                                <input type="checkbox" class="toggle-switch" data-column="policy" checked onchange="saveDashboardColumns()">
+                            </label>
+                            <label class="setting-row" style="cursor:pointer">
+                                <span class="setting-label">Status</span>
+                                <input type="checkbox" class="toggle-switch" data-column="status" checked onchange="saveDashboardColumns()">
+                            </label>
+                            <label class="setting-row" style="cursor:pointer">
+                                <span class="setting-label">Ports</span>
+                                <input type="checkbox" class="toggle-switch" data-column="ports" checked onchange="saveDashboardColumns()">
+                            </label>
                         </div>
                     </div>
                 </details>

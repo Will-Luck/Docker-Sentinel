@@ -3,6 +3,10 @@
    ES5-compatible (no let/const/arrow functions)
    ============================================================ */
 
+// Standalone script for the login/setup page. This page does not load the
+// esbuild bundle (app.js), so CSRF helpers are duplicated here intentionally.
+// Do not import from src/js/ modules — this must remain a self-contained ES5 file.
+
 /* ------------------------------------------------------------
    1. CSRF Helper
    ------------------------------------------------------------ */

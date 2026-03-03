@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
 	portainerpkg "github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -121,7 +123,8 @@ func main() {
 		log.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	var dbClosed sync.Once
+	defer dbClosed.Do(func() { db.Close() })
 
 	// Load Docker TLS certificate paths from BoltDB.
 	var tlsCfg *docker.TLSConfig
@@ -138,7 +141,8 @@ func main() {
 		log.Error("failed to create Docker client", "error", err)
 		os.Exit(1)
 	}
-	defer client.Close()
+	var clientClosed sync.Once
+	defer clientClosed.Do(func() { client.Close() })
 
 	// Initialise auth buckets and seed built-in roles.
 	if err := db.EnsureAuthBuckets(); err != nil {
@@ -231,10 +235,17 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Write credentials to a file instead of stdout to avoid leaking
+		// secrets in container logs (issue #43).
+		credFile := filepath.Join(filepath.Dir(cfg.DBPath), "sentinel-credentials.txt")
+		credContent := fmt.Sprintf("Agent UI login: admin / %s\nChange this password after first login.\n", randomPass)
+		if writeErr := os.WriteFile(credFile, []byte(credContent), 0600); writeErr != nil {
+			log.Error("failed to write credentials file", "error", writeErr)
+			os.Exit(1)
+		}
 		fmt.Println("=============================================")
 		fmt.Println("Auto-enrolled as agent.")
-		fmt.Printf("Agent UI login: admin / %s\n", randomPass)
-		fmt.Println("Change this password after first login.")
+		fmt.Printf("Credentials written to: %s\n", credFile)
 		fmt.Println("=============================================")
 
 		cfg.Mode = "agent"
@@ -537,6 +548,35 @@ func main() {
 		log.Info("portainer integration enabled", "url", portainerURL)
 	}
 
+	// NPM integration.
+	npmURL := cfg.NPMURL
+	npmEmail := cfg.NPMEmail
+	npmPassword := cfg.NPMPassword
+	if npmURL == "" {
+		if v, err := db.LoadSetting(store.SettingNPMURL); err == nil && v != "" {
+			npmURL = v
+		}
+	}
+	if npmEmail == "" {
+		if v, err := db.LoadSetting(store.SettingNPMEmail); err == nil && v != "" {
+			npmEmail = v
+		}
+	}
+	if npmPassword == "" {
+		if v, err := db.LoadSetting(store.SettingNPMPassword); err == nil && v != "" {
+			npmPassword = v
+		}
+	}
+	npmEnabled, _ := db.LoadSetting(store.SettingNPMEnabled)
+	var npmProvider *npmAdapter
+	if npmURL != "" && npmEmail != "" && npmPassword != "" && npmEnabled == "true" {
+		npmClient := npm.NewClient(npmURL, npmEmail, npmPassword)
+		npmResolver := npm.NewResolver(npmClient, cfg.HostAddress, log.Logger)
+		go npmResolver.Run(ctx)
+		npmProvider = &npmAdapter{resolver: npmResolver}
+		log.Info("npm integration enabled", "url", npmURL)
+	}
+
 	if cfg.WebEnabled {
 		webDeps := web.Dependencies{
 			Store:               &storeAdapter{db},
@@ -588,6 +628,27 @@ func main() {
 		if portainerProvider != nil {
 			webDeps.Portainer = portainerProvider
 		}
+		if npmProvider != nil {
+			webDeps.NPM = npmProvider
+		}
+		// Factory to create NPM provider on demand (e.g. after first-time UI config).
+		webDeps.NPMInitFunc = func(initCtx context.Context) (web.NPMProvider, error) {
+			u, _ := db.LoadSetting(store.SettingNPMURL)
+			e, _ := db.LoadSetting(store.SettingNPMEmail)
+			p, _ := db.LoadSetting(store.SettingNPMPassword)
+			if u == "" || e == "" || p == "" {
+				return nil, fmt.Errorf("save NPM URL, email, and password first")
+			}
+			c := npm.NewClient(u, e, p)
+			if err := c.TestConnection(initCtx); err != nil {
+				return nil, err
+			}
+			r := npm.NewResolver(c, cfg.HostAddress, log.Logger)
+			go r.Run(ctx) // use the app-level context, not the request context
+			log.Info("npm integration enabled (hot)", "url", u)
+			return &npmAdapter{resolver: r}, nil
+		}
+		webDeps.PortConfigs = &portConfigStoreAdapter{s: db}
 		srv := web.NewServer(webDeps)
 		srv.SetClusterLifecycle(cm)
 		if freshSetup {

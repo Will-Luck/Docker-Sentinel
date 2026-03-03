@@ -7,6 +7,36 @@
 import { showToast, escapeHTML } from "./utils.js";
 
 /* ------------------------------------------------------------
+   0. Column Visibility
+   ------------------------------------------------------------ */
+
+// Apply column visibility CSS classes to the container table.
+// Called on init and after SSE row updates to ensure dynamically-added
+// rows respect the column configuration.
+function applyColumnConfig() {
+    var table = document.getElementById("container-table");
+    if (!table) return;
+    var raw = table.getAttribute("data-column-config");
+    if (!raw) return;
+    try {
+        var cols = JSON.parse(raw);
+        if (!Array.isArray(cols)) cols = [];
+        var colSet = {};
+        for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
+
+        var allCols = ["image", "policy", "status", "ports"];
+        for (var j = 0; j < allCols.length; j++) {
+            var cls = "hide-col-" + allCols[j];
+            if (colSet[allCols[j]]) {
+                table.classList.remove(cls);
+            } else {
+                table.classList.add(cls);
+            }
+        }
+    } catch(e) { /* ignore */ }
+}
+
+/* ------------------------------------------------------------
    1. Theme System
    ------------------------------------------------------------ */
 
@@ -999,7 +1029,28 @@ async function fetchContainerLogs(name, hostId) {
     }
 }
 
+function togglePorts(el, e) {
+    e.stopPropagation();
+    el.closest('.cell-ports').classList.toggle('expanded');
+}
+
+// Fill in port links for local containers (no href from template).
+// Remote containers get their href server-side via HostAddress.
+function initPortLinks() {
+    var host = window.location.hostname;
+    var links = document.querySelectorAll('.port-chip:not([href])');
+    for (var i = 0; i < links.length; i++) {
+        var port = links[i].dataset.port;
+        if (port) {
+            links[i].href = 'http://' + host + ':' + port;
+        }
+    }
+}
+
 export {
+    togglePorts,
+    initPortLinks,
+    applyColumnConfig,
     initTheme,
     applyTheme,
     initAccordionPersistence,

@@ -196,6 +196,28 @@
   }
 
   // internal/web/static/src/js/dashboard.js
+  function applyColumnConfig() {
+    var table = document.getElementById("container-table");
+    if (!table) return;
+    var raw = table.getAttribute("data-column-config");
+    if (!raw) return;
+    try {
+      var cols = JSON.parse(raw);
+      if (!Array.isArray(cols)) cols = [];
+      var colSet = {};
+      for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
+      var allCols = ["image", "policy", "status", "ports"];
+      for (var j = 0; j < allCols.length; j++) {
+        var cls = "hide-col-" + allCols[j];
+        if (colSet[allCols[j]]) {
+          table.classList.remove(cls);
+        } else {
+          table.classList.add(cls);
+        }
+      }
+    } catch (e) {
+    }
+  }
   function initTheme() {
     var saved = localStorage.getItem("sentinel-theme") || "auto";
     applyTheme(saved);
@@ -969,12 +991,22 @@
       logsEl.textContent = "Error loading logs: " + err.message;
     }
   }
+  function togglePorts(el, e) {
+    e.stopPropagation();
+    el.closest(".cell-ports").classList.toggle("expanded");
+  }
+  function initPortLinks() {
+    var host = window.location.hostname;
+    var links = document.querySelectorAll(".port-chip:not([href])");
+    for (var i = 0; i < links.length; i++) {
+      var port = links[i].dataset.port;
+      if (port) {
+        links[i].href = "http://" + host + ":" + port;
+      }
+    }
+  }
 
   // internal/web/static/src/js/queue.js
-  function escapeHtml(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-  }
   function _updateQueueBadge() {
     if (window.updateQueueBadge) window.updateQueueBadge();
   }
@@ -1179,7 +1211,7 @@
     bulkQueueAction("reject", "rejected", btn);
   }
   function triggerUpdate(name, event, hostId) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") : null;
     var url = "/api/update/" + encodeURIComponent(name);
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     if (btn) {
@@ -1263,7 +1295,7 @@
     });
   }
   function triggerSelfUpdate(event) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") : null;
     showConfirm("Self-Update", "<p>This will restart Sentinel to apply the update. Continue?</p>").then(function(confirmed) {
       if (!confirmed) return;
       localStorage.setItem("sentinel-self-updating", "1");
@@ -1316,7 +1348,7 @@
       if (preview) preview.textContent = tags.length + " tags";
       var html = '<div class="tag-list">';
       for (var i = 0; i < tags.length; i++) {
-        html += '<span class="badge badge-muted tag-item">' + escapeHtml(tags[i]) + "</span>";
+        html += '<span class="badge badge-muted tag-item">' + escapeHTML(tags[i]) + "</span>";
       }
       html += "</div>";
       if (body) body.innerHTML = html;
@@ -1333,7 +1365,7 @@
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     showConfirm(
       "Update to Version",
-      "<p>Update <strong>" + name + "</strong> to <code>" + tag + "</code>?</p>"
+      "<p>Update <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(tag) + "</code>?</p>"
     ).then(function(confirmed) {
       if (!confirmed) return;
       fetch(url, {
@@ -1440,10 +1472,6 @@
   }
 
   // internal/web/static/src/js/swarm.js
-  function escapeHtml2(str) {
-    if (!str) return "";
-    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-  }
   function isSafeURL(url) {
     return typeof url === "string" && (url.indexOf("https://") === 0 || url.indexOf("http://") === 0);
   }
@@ -1459,7 +1487,7 @@
     group.classList.toggle("svc-collapsed");
   }
   function triggerSvcUpdate(name, event) {
-    var btn = event && event.target ? event.target.closest(".btn") : null;
+    var btn = event && event.target ? event.target.closest(".badge-action") || event.target.closest(".btn") : null;
     if (btn) {
       btn.classList.add("loading");
       btn.disabled = true;
@@ -1583,10 +1611,10 @@
         if (svc.DesiredReplicas > 0) {
           var replicaClass = svc.RunningReplicas === svc.DesiredReplicas ? "svc-replicas-healthy" : svc.RunningReplicas > 0 ? "svc-replicas-degraded" : "svc-replicas-down";
           wrap.setAttribute("data-prev-replicas", svc.DesiredReplicas);
-          wrap.innerHTML = '<span class="badge svc-replicas ' + replicaClass + ' badge-default">' + escapeHtml2(svc.Replicas || "") + `</span><span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc('` + escapeHtml2(name) + `', 0, this.closest('.status-badge-wrap'))">Scale to 0</span>`;
+          wrap.innerHTML = '<span class="badge svc-replicas ' + replicaClass + ' badge-default">' + escapeHTML(svc.Replicas || "") + `</span><span class="badge badge-error badge-hover" onclick="event.stopPropagation(); scaleSvc('` + escapeHTML(name) + `', 0, this.closest('.status-badge-wrap'))">Scale to 0</span>`;
         } else {
           wrap.setAttribute("data-prev-replicas", prevReplicas);
-          wrap.innerHTML = '<span class="badge svc-replicas svc-replicas-down badge-default">' + escapeHtml2(svc.Replicas || "0/0") + `</span><span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc('` + escapeHtml2(name) + "', " + (prevReplicas > 0 ? prevReplicas : 1) + `, this.closest('.status-badge-wrap'))">Scale up</span>`;
+          wrap.innerHTML = '<span class="badge svc-replicas svc-replicas-down badge-default">' + escapeHTML(svc.Replicas || "0/0") + `</span><span class="badge badge-success badge-hover" onclick="event.stopPropagation(); scaleSvc('` + escapeHTML(name) + "', " + (prevReplicas > 0 ? prevReplicas : 1) + `, this.closest('.status-badge-wrap'))">Scale up</span>`;
         }
       }
       if (header) {
@@ -1594,19 +1622,19 @@
         if (imgCell && svc.Tag) {
           var oldBadge = imgCell.querySelector(".registry-badge");
           if (oldBadge) oldBadge.remove();
-          var rvSpan = svc.ResolvedVersion ? ' <span class="resolved-ver">(' + escapeHtml2(svc.ResolvedVersion) + ")</span>" : "";
+          var rvSpan = svc.ResolvedVersion ? ' <span class="resolved-ver">(' + escapeHTML(svc.ResolvedVersion) + ")</span>" : "";
           if (svc.NewestVersion) {
-            var verHtml = escapeHtml2(svc.NewestVersion);
+            var verHtml = escapeHTML(svc.NewestVersion);
             if (svc.VersionURL && isSafeURL(svc.VersionURL)) {
-              verHtml = '<a href="' + escapeHtml2(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHtml2(svc.NewestVersion) + "</a>";
+              verHtml = '<a href="' + escapeHTML(svc.VersionURL) + '" target="_blank" rel="noopener" class="version-new version-link">' + escapeHTML(svc.NewestVersion) + "</a>";
             } else {
               verHtml = '<span class="version-new">' + verHtml + "</span>";
             }
-            imgCell.innerHTML = '<span class="version-current">' + escapeHtml2(svc.Tag) + rvSpan + '</span> <span class="version-arrow">&rarr;</span> ' + verHtml;
+            imgCell.innerHTML = '<span class="version-current">' + escapeHTML(svc.Tag) + rvSpan + '</span> <span class="version-arrow">&rarr;</span> ' + verHtml;
           } else {
-            var tagHtml = escapeHtml2(svc.Tag) + rvSpan;
+            var tagHtml = escapeHTML(svc.Tag) + rvSpan;
             if (svc.ChangelogURL && isSafeURL(svc.ChangelogURL)) {
-              imgCell.innerHTML = '<a href="' + escapeHtml2(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + "</a>";
+              imgCell.innerHTML = '<a href="' + escapeHTML(svc.ChangelogURL) + '" target="_blank" rel="noopener" class="version-link">' + tagHtml + "</a>";
             } else {
               imgCell.innerHTML = tagHtml;
             }
@@ -1619,18 +1647,24 @@
         } else {
           header.classList.remove("has-update");
         }
-        var actionCell = header.querySelector("td:last-child .btn-group");
-        if (actionCell) {
+        var statusCell = header.querySelector(".col-status");
+        if (statusCell) {
+          var existingBadge = statusCell.querySelector(".badge-action");
           var isUpdating = window._svcLoadingBtns && window._svcLoadingBtns[name];
-          var btns = "";
           if (svc.HasUpdate && svc.Policy !== "pinned") {
-            btns += '<button class="btn btn-warning btn-sm' + (isUpdating ? " loading" : "") + '"' + (isUpdating ? " disabled" : "") + ` onclick="event.stopPropagation(); triggerSvcUpdate('` + escapeHtml2(name) + `', event)">Update</button>`;
-          }
-          btns += '<a href="/service/' + encodeURIComponent(name) + '" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>';
-          actionCell.innerHTML = btns;
-          if (isUpdating) {
-            var newBtn = actionCell.querySelector(".btn-warning");
-            if (newBtn) window._svcLoadingBtns[name] = newBtn;
+            if (!existingBadge) {
+              var badge = document.createElement("span");
+              badge.className = "badge badge-warning badge-action" + (isUpdating ? " loading" : "");
+              badge.setAttribute("role", "button");
+              badge.setAttribute("tabindex", "0");
+              badge.style.marginBottom = "4px";
+              badge.setAttribute("onclick", "event.stopPropagation(); triggerSvcUpdate('" + escapeHTML(name) + "', event)");
+              badge.textContent = "Update";
+              statusCell.insertBefore(badge, statusCell.firstChild);
+              if (isUpdating) window._svcLoadingBtns[name] = badge;
+            }
+          } else if (existingBadge) {
+            existingBadge.remove();
           }
         }
       }
@@ -1656,13 +1690,40 @@
           } else if (task.State === "preparing") {
             stateBadge = '<span class="badge badge-info">preparing</span>';
           } else {
-            stateBadge = '<span class="badge badge-error" title="' + escapeHtml2(task.Error || "") + '">' + escapeHtml2(task.State) + "</span>";
+            stateBadge = '<span class="badge badge-error" title="' + escapeHTML(task.Error || "") + '">' + escapeHTML(task.State) + "</span>";
           }
-          var nodeDisplay = escapeHtml2(task.NodeName);
+          var nodeDisplay = escapeHTML(task.NodeName);
           if (task.NodeAddr) {
-            nodeDisplay += ' <span class="svc-node-addr">(' + escapeHtml2(task.NodeAddr) + ")</span>";
+            nodeDisplay += ' <span class="svc-node-addr">(' + escapeHTML(task.NodeAddr) + ")</span>";
           }
-          tr.innerHTML = '<td></td><td class="svc-node">' + nodeDisplay + '</td><td class="mono">' + escapeHtml2(task.Tag || "") + "</td><td></td><td>" + stateBadge + "</td><td></td>";
+          var cells = [
+            document.createElement("td"),
+            (function() {
+              var td = document.createElement("td");
+              td.className = "svc-node";
+              td.innerHTML = nodeDisplay;
+              return td;
+            })(),
+            (function() {
+              var td = document.createElement("td");
+              td.className = "mono";
+              td.textContent = task.Tag || "";
+              return td;
+            })(),
+            document.createElement("td"),
+            (function() {
+              var td = document.createElement("td");
+              td.innerHTML = stateBadge;
+              return td;
+            })(),
+            (function() {
+              var td = document.createElement("td");
+              td.className = "col-ports";
+              return td;
+            })(),
+            document.createElement("td")
+          ];
+          for (var ci = 0; ci < cells.length; ci++) tr.appendChild(cells[ci]);
           taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
         }
       } else if (taskHeader && svc.DesiredReplicas === 0) {
@@ -1671,7 +1732,7 @@
           for (var t = cached.length - 1; t >= 0; t--) {
             var tr = document.createElement("tr");
             tr.className = "svc-task-row";
-            tr.innerHTML = '<td></td><td class="svc-node">' + escapeHtml2(cached[t].NodeText || "") + '</td><td class="mono">' + escapeHtml2(cached[t].Tag || "") + '</td><td></td><td><span class="badge badge-error">shutdown</span></td><td></td>';
+            tr.innerHTML = '<td></td><td class="svc-node">' + escapeHTML(cached[t].NodeText || "") + '</td><td class="mono">' + escapeHTML(cached[t].Tag || "") + '</td><td></td><td><span class="badge badge-error">shutdown</span></td><td></td>';
             taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
           }
         } else {
@@ -1739,6 +1800,8 @@
         }
         if (window.recomputeSelectionState) window.recomputeSelectionState();
       }
+      if (window.applyColumnConfig) window.applyColumnConfig();
+      if (window.initPortLinks) window.initPortLinks();
       applyRegistryBadges();
       if (window.applyFiltersAndSort) window.applyFiltersAndSort();
       if (window.recalcTabStats) window.recalcTabStats();
@@ -1750,7 +1813,7 @@
           var sel = 'tr.container-row[data-name="' + name + '"]';
           if (hostId) sel += '[data-host="' + hostId + '"]';
           var row = document.querySelector(sel);
-          var updBtn = row ? row.querySelector(".btn-warning.loading") : null;
+          var updBtn = row ? row.querySelector(".badge-action.loading, .badge-updating") : null;
           if (updBtn) {
             window._updateLoadingBtns[updKey] = updBtn;
           } else {
@@ -1838,12 +1901,22 @@
   function initSSE() {
     if (typeof EventSource === "undefined") return;
     var es = new EventSource("/api/events");
+    window.sseSource = es;
+    var _sseHasConnected = false;
     es.addEventListener("connected", function() {
       if (localStorage.getItem("sentinel-self-updating")) {
         localStorage.removeItem("sentinel-self-updating");
         window.location.reload();
         return;
       }
+      if (_sseHasConnected) {
+        var isDashboard = !!document.getElementById("container-table");
+        if (isDashboard) {
+          window.location.reload();
+          return;
+        }
+      }
+      _sseHasConnected = true;
       setConnectionStatus(true);
     });
     es.addEventListener("container_update", function(e) {
@@ -2371,8 +2444,9 @@
       updateScanPreviews();
     }).catch(function() {
     });
-    var tabBtns = document.querySelectorAll(".tab-btn");
-    var tabPanels = document.querySelectorAll(".tab-panel");
+    var settingsTabContainer = document.getElementById("settings-tabs");
+    var tabBtns = settingsTabContainer ? settingsTabContainer.querySelectorAll(".tab-btn") : [];
+    var tabPanels = settingsTabContainer ? settingsTabContainer.parentElement.querySelectorAll(".tab-panel") : [];
     if (tabBtns.length > 0) {
       var savedTab = localStorage.getItem("sentinel-settings-tab");
       if (savedTab) {
@@ -2422,6 +2496,7 @@
     if (window.loadAboutInfo) window.loadAboutInfo();
     if (window.loadClusterSettings) window.loadClusterSettings();
     loadWebhookSettings();
+    loadDashboardColumns();
   }
   function clearAccordionState() {
     var keys = [];
@@ -3138,6 +3213,59 @@
       });
     };
     reader.readAsText(file);
+  }
+  function loadDashboardColumns() {
+    fetch("/api/settings").then(function(r) {
+      return r.json();
+    }).then(function(settings) {
+      var raw = settings["dashboard_columns"];
+      if (!raw) return;
+      try {
+        var cols = JSON.parse(raw);
+        var allCols = ["image", "policy", "status", "ports"];
+        var colSet = {};
+        for (var i = 0; i < cols.length; i++) colSet[cols[i]] = true;
+        var checkboxes = document.querySelectorAll("#dashboard-columns-list input[data-column]");
+        for (var j = 0; j < checkboxes.length; j++) {
+          checkboxes[j].checked = !!colSet[checkboxes[j].getAttribute("data-column")];
+        }
+        updateDashboardColumnsPreview(cols);
+      } catch (e) {
+      }
+    });
+  }
+  function saveDashboardColumns() {
+    var checkboxes = document.querySelectorAll("#dashboard-columns-list input[data-column]");
+    var cols = [];
+    for (var i = 0; i < checkboxes.length; i++) {
+      if (checkboxes[i].checked) {
+        cols.push(checkboxes[i].getAttribute("data-column"));
+      }
+    }
+    fetch("/api/settings/dashboard-columns", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ columns: cols })
+    }).then(function(r) {
+      if (r.ok) {
+        showToast("Dashboard columns saved", "success");
+        updateDashboardColumnsPreview(cols);
+      } else {
+        showToast("Failed to save columns", "error");
+      }
+    });
+  }
+  function updateDashboardColumnsPreview(cols) {
+    var preview = document.getElementById("dashboard-columns-preview");
+    if (!preview) return;
+    var allCols = ["image", "policy", "status", "ports"];
+    if (cols.length === allCols.length) {
+      preview.textContent = "All visible";
+    } else if (cols.length === 0) {
+      preview.textContent = "Name + Actions only";
+    } else {
+      preview.textContent = cols.length + " of " + allCols.length + " columns";
+    }
   }
 
   // internal/web/static/src/js/settings-cluster.js
@@ -5190,9 +5318,12 @@
   window.toggleStack = toggleStack;
   window.toggleSwarmSection = toggleSwarmSection;
   window.onRowClick = onRowClick;
+  window.togglePorts = togglePorts;
+  window.initPortLinks = initPortLinks;
   window.applyBulkPolicy = applyBulkPolicy;
   window.clearSelection = clearSelection;
   window.applyTheme = applyTheme;
+  window.applyColumnConfig = applyColumnConfig;
   window.applyFiltersAndSort = applyFiltersAndSort;
   window.recalcTabStats = recalcTabStats;
   window.recomputeSelectionState = recomputeSelectionState;
@@ -5262,6 +5393,8 @@
   window.saveMaintenanceWindow = saveMaintenanceWindow;
   window.exportConfig = exportConfig;
   window.importConfig = importConfig;
+  window.saveDashboardColumns = saveDashboardColumns;
+  window.loadDashboardColumns = loadDashboardColumns;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;
   window.loadClusterSettings = loadClusterSettings;
@@ -5309,6 +5442,8 @@
     loadFooterVersion();
     loadDigestBanner();
     initFilters();
+    applyColumnConfig();
+    initPortLinks();
     initDashboardTabs();
     refreshLastScan();
     var stackPref = localStorage.getItem("sentinel-stacks") || "collapsed";

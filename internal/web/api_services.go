@@ -224,7 +224,7 @@ func (s *Server) apiServicesList(w http.ResponseWriter, r *http.Request) {
 
 	views := make([]serviceView, 0, len(details))
 	for _, d := range details {
-		views = append(views, s.buildServiceView(d, pendingNames))
+		views = append(views, s.buildServiceView(d, pendingNames, s.localHostAddr(r)))
 	}
 	writeJSON(w, http.StatusOK, views)
 }
@@ -256,7 +256,7 @@ func (s *Server) apiServiceDetail(w http.ResponseWriter, r *http.Request) {
 		if d.Name != name {
 			continue
 		}
-		writeJSON(w, http.StatusOK, s.buildServiceView(d, pendingNames))
+		writeJSON(w, http.StatusOK, s.buildServiceView(d, pendingNames, s.localHostAddr(r)))
 		return
 	}
 

@@ -208,6 +208,7 @@ type RemoteContainer struct {
 	HostID   string            `json:"host_id"`
 	HostName string            `json:"host_name"`
 	Labels   map[string]string `json:"labels,omitempty"`
+	Ports    []PortMapping     `json:"ports,omitempty"`
 }
 
 // ClusterHost represents a remote agent host for the web layer.
@@ -246,6 +247,7 @@ type ServiceSummary struct {
 	Replicas        string // e.g. "3/3"
 	DesiredReplicas uint64
 	RunningReplicas uint64
+	Ports           []PortMapping // published ports from the service endpoint
 }
 
 // TaskInfo describes a single Swarm task (one replica on one node).
@@ -314,6 +316,55 @@ type PortainerProvider interface {
 	Endpoints(ctx context.Context) ([]PortainerEndpoint, error)
 	AllEndpoints(ctx context.Context) ([]PortainerEndpoint, error)
 	EndpointContainers(ctx context.Context, endpointID int) ([]PortainerContainerInfo, error)
+}
+
+// NPMProvider provides NPM (Nginx Proxy Manager) proxy host resolution.
+// Nil when NPM is not configured.
+type NPMProvider interface {
+	TestConnection(ctx context.Context) error
+	Lookup(hostPort uint16) *NPMResolvedURL
+	LookupForHost(hostPort uint16, hostAddr string) *NPMResolvedURL
+	AllMappings() map[uint16]NPMResolvedURL
+	AllMappingsGrouped() map[string]map[uint16]NPMResolvedURL
+	Sync(ctx context.Context) error
+	LastSync() time.Time
+	LastError() error
+}
+
+// portConfigKey returns the store key for per-port custom URL overrides.
+// Remote containers use "hostID::name" to avoid collisions; local containers
+// use bare "name" for backwards compatibility.
+func portConfigKey(hostID, name string) string {
+	if hostID == "" {
+		return name
+	}
+	return hostID + "::" + name
+}
+
+// NPMResolvedURL is a URL resolved from an NPM proxy host match.
+type NPMResolvedURL struct {
+	URL         string
+	Domain      string
+	ProxyHostID int
+}
+
+// PortConfigStore reads and writes per-port custom URL overrides.
+type PortConfigStore interface {
+	GetPortConfig(name string) (*PortConfig, error)
+	SetPortOverride(name string, hostPort uint16, override PortOverride) error
+	DeletePortOverride(name string, hostPort uint16) error
+	AllPortConfigs() (map[string]*PortConfig, error)
+}
+
+// PortConfig holds per-port URL overrides for a container.
+type PortConfig struct {
+	Ports map[string]PortOverride `json:"ports"`
+}
+
+// PortOverride configures a custom URL or path suffix for a single port.
+type PortOverride struct {
+	URL  string `json:"url,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 // PortainerEndpoint represents a Portainer-managed Docker environment.
@@ -427,6 +478,14 @@ type ContainerLister interface {
 	InspectContainer(ctx context.Context, id string) (ContainerInspect, error)
 }
 
+// PortMapping describes a single host→container port binding.
+type PortMapping struct {
+	HostIP        string `json:"host_ip,omitempty"`
+	HostPort      uint16 `json:"host_port"`
+	ContainerPort uint16 `json:"container_port"`
+	Protocol      string `json:"protocol"`
+}
+
 // ContainerSummary is a minimal container info struct.
 type ContainerSummary struct {
 	ID     string
@@ -434,6 +493,7 @@ type ContainerSummary struct {
 	Image  string
 	Labels map[string]string
 	State  string
+	Ports  []PortMapping
 }
 
 // ContainerInspect has just what the dashboard needs.

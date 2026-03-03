@@ -100,6 +100,28 @@ func (r *Registry) Register(info cluster.HostInfo) error {
 	return nil
 }
 
+// UpdateAddress stores the agent's IP so the dashboard can link ports
+// to the correct host. Called on each Channel() connection.
+func (r *Registry) UpdateAddress(hostID, addr string) {
+	r.mu.Lock()
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		r.mu.Unlock()
+		return
+	}
+	hs.Info.Address = addr
+	data, err := json.Marshal(hs.Info)
+	r.mu.Unlock()
+
+	if err != nil {
+		r.log.Warn("marshal host info for address update", "error", err)
+		return
+	}
+	if err := r.store.SaveClusterHost(hostID, data); err != nil {
+		r.log.Warn("persist host address", "error", err)
+	}
+}
+
 // UpdateLastSeen updates the host's LastSeen timestamp and persists it.
 // Called on every heartbeat and on stream disconnect.
 func (r *Registry) UpdateLastSeen(hostID string, t time.Time) error {
@@ -213,13 +235,24 @@ func (r *Registry) UpdateContainerState(hostID, containerName, newState string) 
 	}
 }
 
-// Get returns the host state for the given ID, or nil if not found.
+// Get returns a deep copy of the host state for the given ID, or nil if not found.
+// The returned value is safe to read without holding the registry lock.
 func (r *Registry) Get(hostID string) (*HostState, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	hs, ok := r.hosts[hostID]
-	return hs, ok
+	if !ok {
+		return nil, false
+	}
+
+	// Deep copy to avoid callers mutating live state.
+	cp := *hs
+	if hs.Containers != nil {
+		cp.Containers = make([]cluster.ContainerInfo, len(hs.Containers))
+		copy(cp.Containers, hs.Containers)
+	}
+	return &cp, true
 }
 
 // UpdateCertSerial atomically updates the stored cert serial for a host,

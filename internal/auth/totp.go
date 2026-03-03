@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
@@ -30,10 +31,16 @@ func ValidateTOTPCode(secret, code string) bool {
 	return totp.Validate(code, secret)
 }
 
+// hashRecoveryCode returns the hex-encoded SHA-256 hash of a recovery code.
+func hashRecoveryCode(code string) string {
+	h := sha256.Sum256([]byte(code))
+	return hex.EncodeToString(h[:])
+}
+
 // GenerateRecoveryCodes creates a set of one-time recovery codes.
 // Returns the plain-text codes (show to user once) and their stored
-// representations. Currently stored as plain hex; a future version
-// could bcrypt them.
+// representations. Stored codes are SHA-256 hashed so they cannot
+// be recovered from the database.
 func GenerateRecoveryCodes() (plain []string, stored []string, err error) {
 	plain = make([]string, recoveryCodeCount)
 	stored = make([]string, recoveryCodeCount)
@@ -44,17 +51,19 @@ func GenerateRecoveryCodes() (plain []string, stored []string, err error) {
 		}
 		code := hex.EncodeToString(b)
 		plain[i] = code
-		stored[i] = code
+		stored[i] = hashRecoveryCode(code)
 	}
 	return plain, stored, nil
 }
 
-// ValidateRecoveryCode checks a recovery code against the stored codes.
+// ValidateRecoveryCode checks a recovery code against the stored hashes.
 // Returns the index of the matched code, or -1 if no match.
-// Uses constant-time comparison to avoid timing attacks.
+// Hashes the input with SHA-256 and uses constant-time comparison to
+// avoid timing attacks.
 func ValidateRecoveryCode(input string, stored []string) int {
-	for i, code := range stored {
-		if subtle.ConstantTimeCompare([]byte(input), []byte(code)) == 1 {
+	inputHash := hashRecoveryCode(input)
+	for i, storedHash := range stored {
+		if subtle.ConstantTimeCompare([]byte(inputHash), []byte(storedHash)) == 1 {
 			return i
 		}
 	}
