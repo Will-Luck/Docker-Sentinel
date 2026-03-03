@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// validateExternalURL checks that rawURL is a well-formed http(s) URL pointing
-// to a non-private, non-loopback address. This prevents SSRF via user-supplied
-// URLs for Portainer, registries, webhooks, etc.
-func validateExternalURL(rawURL string) error {
+// validateServiceURL checks that rawURL is a well-formed http(s) URL.
+// Private/LAN addresses are allowed since services like NPM and Portainer
+// typically run on the same network. Only loopback and unspecified are blocked.
+func validateServiceURL(rawURL string) error {
 	if rawURL == "" {
 		return fmt.Errorf("URL must not be empty")
 	}
@@ -32,7 +32,6 @@ func validateExternalURL(rawURL string) error {
 		return fmt.Errorf("URL must contain a hostname")
 	}
 
-	// Resolve to IP and check for private/loopback ranges.
 	ips, err := net.LookupHost(host)
 	if err != nil {
 		return fmt.Errorf("cannot resolve host %q: %w", host, err)
@@ -46,14 +45,36 @@ func validateExternalURL(rawURL string) error {
 		if ip.IsLoopback() {
 			return fmt.Errorf("loopback addresses are not allowed")
 		}
+		if ip.IsUnspecified() {
+			return fmt.Errorf("unspecified addresses (0.0.0.0) are not allowed")
+		}
+	}
+
+	return nil
+}
+
+// validateExternalURL checks that rawURL is a well-formed http(s) URL pointing
+// to a non-private, non-loopback address. This prevents SSRF via user-supplied
+// URLs for webhooks and registries that should point to public endpoints.
+func validateExternalURL(rawURL string) error {
+	if err := validateServiceURL(rawURL); err != nil {
+		return err
+	}
+
+	u, _ := url.Parse(rawURL)
+	host := u.Hostname()
+	ips, _ := net.LookupHost(host)
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
 		if ip.IsPrivate() {
 			return fmt.Errorf("private network addresses are not allowed")
 		}
 		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 			return fmt.Errorf("link-local addresses are not allowed")
-		}
-		if ip.IsUnspecified() {
-			return fmt.Errorf("unspecified addresses (0.0.0.0) are not allowed")
 		}
 	}
 
