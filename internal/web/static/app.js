@@ -1877,8 +1877,11 @@
         return;
       }
       if (_sseHasConnected) {
-        window.location.reload();
-        return;
+        var isDashboard = !!document.getElementById("container-table");
+        if (isDashboard) {
+          window.location.reload();
+          return;
+        }
       }
       _sseHasConnected = true;
       setConnectionStatus(true);

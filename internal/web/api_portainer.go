@@ -93,7 +93,7 @@ func (s *Server) apiSetPortainerURL(w http.ResponseWriter, r *http.Request) {
 	}
 	body.URL = strings.TrimRight(body.URL, "/")
 	if body.URL != "" {
-		if err := validateExternalURL(body.URL); err != nil {
+		if err := validateServiceURL(body.URL); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid Portainer URL: "+err.Error())
 			return
 		}

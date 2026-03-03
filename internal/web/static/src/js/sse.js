@@ -213,10 +213,15 @@ function initSSE() {
             window.location.reload();
             return;
         }
-        // On reconnect (not first connect), reload the page to avoid stale state.
+        // On reconnect (not first connect), reload the dashboard to avoid stale state.
+        // Skip reload on form pages (settings, connectors, container detail) to
+        // avoid wiping unsaved input fields.
         if (_sseHasConnected) {
-            window.location.reload();
-            return;
+            var isDashboard = !!document.getElementById("container-table");
+            if (isDashboard) {
+                window.location.reload();
+                return;
+            }
         }
         _sseHasConnected = true;
         setConnectionStatus(true);
