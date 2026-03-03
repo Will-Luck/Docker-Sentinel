@@ -132,12 +132,11 @@
                 <table id="container-table" data-column-config='{{.ColumnConfig}}'>
                     <colgroup>
                         <col style="width:40px">
-                        <col style="width:22%">
+                        <col style="width:20%">
                         {{if index .ColumnVisible "image"}}<col class="col-image">{{end}}
-                        {{if index .ColumnVisible "policy"}}<col class="col-policy" style="width:120px">{{end}}
-                        {{if index .ColumnVisible "status"}}<col class="col-status" style="width:140px">{{end}}
-                        {{if index .ColumnVisible "ports"}}<col class="col-ports" style="width:140px">{{end}}
-                        <col style="width:220px">
+                        {{if index .ColumnVisible "policy"}}<col class="col-policy" style="width:110px">{{end}}
+                        {{if index .ColumnVisible "status"}}<col class="col-status" style="width:150px">{{end}}
+                        {{if index .ColumnVisible "ports"}}<col class="col-ports" style="width:160px">{{end}}
                     </colgroup>
                     <thead>
                         <tr>
@@ -157,7 +156,6 @@
                             </th>{{end}}
                             {{if index .ColumnVisible "status"}}<th class="col-status">Status</th>{{end}}
                             {{if index .ColumnVisible "ports"}}<th class="col-ports th-ports">Ports</th>{{end}}
-                            <th>Actions</th>
                         </tr>
                     </thead>
                     {{if .HostGroups}}
@@ -279,6 +277,9 @@
                                 </select>
                             </td>
                             <td class="col-status">
+                                {{if and .HasUpdate (ne .Policy "pinned")}}
+                                    <span class="badge badge-warning badge-action" onclick="event.stopPropagation(); triggerSvcUpdate('{{.Name}}', event)" role="button" tabindex="0" style="margin-bottom:4px">Update</span>
+                                {{end}}
                                 {{if gt .DesiredReplicas 0}}
                                 <span class="status-badge-wrap" data-service="{{.Name}}" data-prev-replicas="{{.DesiredReplicas}}">
                                     <span class="badge svc-replicas {{if eq .RunningReplicas .DesiredReplicas}}svc-replicas-healthy{{else if gt .RunningReplicas 0}}svc-replicas-degraded{{else}}svc-replicas-down{{end}} badge-default">{{.Replicas}}</span>
@@ -292,17 +293,6 @@
                                 {{end}}
                             </td>
                             <td class="col-ports cell-ports">{{$svcPortURLs := .PortURLs}}{{range $i, $p := .Ports}}<a class="port-chip{{if ge $i 2}} port-hidden{{end}}" {{if and $svcPortURLs (index $svcPortURLs $p.HostPort)}}href="{{index $svcPortURLs $p.HostPort}}"{{end}} data-port="{{$p.HostPort}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{$p.HostPort}}:{{$p.ContainerPort}}</a>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
-                            <td>
-                                <div class="btn-group">
-                                {{if and .HasUpdate (ne .Policy "pinned")}}
-                                    <button class="btn btn-warning btn-sm"
-                                            onclick="event.stopPropagation(); triggerSvcUpdate('{{.Name}}', event)">
-                                        Update
-                                    </button>
-                                {{end}}
-                                    <a href="/service/{{.Name}}" class="btn btn-sm" onclick="event.stopPropagation()">Details</a>
-                                </div>
-                            </td>
                         </tr>
 
                         {{if .Tasks}}
@@ -322,14 +312,12 @@
                                 {{end}}
                             </td>
                             <td class="col-ports"></td>
-                            <td></td>
                         </tr>
                         {{end}}
                         {{else if eq .DesiredReplicas 0}}
                         <tr class="svc-task-row">
                             <td></td>
                             <td colspan="5" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 &mdash; no active tasks</td>
-                            <td></td>
                         </tr>
                         {{end}}
                     </tbody>
@@ -422,22 +410,20 @@
                                 </td>
                                 <td class="col-status">
                                     {{if .Maintenance}}
-                                        <span class="badge badge-warning">Updating</span>
-                                    {{else if and .HasUpdate (not .IsSelf)}}
-                                        <span class="badge badge-warning">Update Available</span>
-                                    {{else if eq .State "running"}}
-                                        {{if .IsSelf}}
-                                            {{if .HasUpdate}}
-                                            <span class="badge badge-info">Update Ready</span>
-                                            {{else}}
-                                            <span class="badge badge-success">Running</span>
-                                            {{end}}
+                                        <span class="badge badge-warning badge-updating">Updating</span>
+                                    {{else if and .HasUpdate (not .IsSelf) (ne .Policy "pinned")}}
+                                        <span class="badge badge-warning badge-action" onclick="event.stopPropagation(); triggerUpdate('{{.Name}}', event, '{{.HostID}}')" role="button" tabindex="0">Update</span>
+                                    {{else if .IsSelf}}
+                                        {{if and .HasUpdate (eq .HostID "")}}
+                                        <span class="badge badge-info badge-action" onclick="event.stopPropagation(); triggerSelfUpdate(event)" role="button" tabindex="0">Update Sentinel</span>
                                         {{else}}
-                                            <span class="status-badge-wrap" data-name="{{.Name}}" data-action="stop" data-host-id="{{.HostID}}">
-                                                <span class="badge badge-success badge-default">Running</span>
-                                                <span class="badge badge-error badge-hover">Stop</span>
-                                            </span>
+                                        <span class="badge badge-success">Running</span>
                                         {{end}}
+                                    {{else if eq .State "running"}}
+                                        <span class="status-badge-wrap" data-name="{{.Name}}" data-action="stop" data-host-id="{{.HostID}}">
+                                            <span class="badge badge-success badge-default">Running</span>
+                                            <span class="badge badge-error badge-hover">Stop</span>
+                                        </span>
                                     {{else}}
                                         <span class="status-badge-wrap" data-name="{{.Name}}" data-action="start" data-host-id="{{.HostID}}">
                                             <span class="badge badge-error badge-default">{{.State}}</span>
@@ -446,28 +432,5 @@
                                     {{end}}
                                 </td>
                                 <td class="col-ports cell-ports">{{$hostAddr := .HostAddress}}{{$portURLs := .PortURLs}}{{range $i, $p := .Ports}}<a class="port-chip{{if ge $i 2}} port-hidden{{end}}" {{if and $portURLs (index $portURLs $p.HostPort)}}href="{{index $portURLs $p.HostPort}}"{{else if $hostAddr}}href="http://{{$hostAddr}}:{{$p.HostPort}}"{{end}} data-port="{{$p.HostPort}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{$p.HostPort}}:{{$p.ContainerPort}}</a>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
-                                <td>
-                                    <div class="btn-group">
-                                        {{if .IsSelf}}
-                                            {{if and .HasUpdate (eq .HostID "")}}
-                                            <button class="btn btn-info"
-                                                    onclick="triggerSelfUpdate(event)">
-                                                Update Sentinel
-                                            </button>
-                                            {{else}}
-                                            <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="btn" onclick="event.stopPropagation()">Details</a>
-                                            {{end}}
-                                        {{else if .Maintenance}}
-                                        <button class="btn btn-warning loading" disabled>Updating</button>
-                                        {{else if and .HasUpdate (ne .Policy "pinned")}}
-                                        <button class="btn btn-warning"
-                                                onclick="triggerUpdate('{{.Name}}', event, '{{.HostID}}')">
-                                            Update
-                                        </button>
-                                        {{else}}
-                                        <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="btn" onclick="event.stopPropagation()">Details</a>
-                                        {{end}}
-                                    </div>
-                                </td>
                             </tr>
 {{end}}

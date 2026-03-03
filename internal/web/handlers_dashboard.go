@@ -543,8 +543,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Column count must match the actual <td> count in container-row, which
-	// always renders all 7 cells (hidden ones use CSS display:none).
-	colCount := 7 // checkbox + name + image + policy + status + ports + actions
+	// always renders all 6 cells (hidden ones use CSS display:none).
+	colCount := 6 // checkbox + name + image + policy + status + ports
 
 	// JSON for the JS column config.
 	visibleCols := make([]string, 0, 4)
