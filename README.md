@@ -61,9 +61,10 @@ Set per-container update behaviour with Docker labels like `sentinel.policy`, `s
 
 | | |
 |---|---|
-| ![Dashboard](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/dashboard.png) | ![Queue](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/queue.png) |
-| ![Container Detail](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/container-detail.png) | ![Cluster](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/cluster.png) |
-| ![Settings](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/settings-general.png) | ![Images](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/images.png) |
+| ![Dashboard](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/dashboard.png) | ![Manage Mode](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/dashboard-manage.png) |
+| ![Container Detail](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/container-detail.png) | ![Queue](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/queue.png) |
+| ![Cluster](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/cluster.png) | ![Connectors](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/connectors.png) |
+| ![Images](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/images.png) | ![Settings](https://raw.githubusercontent.com/wiki/Will-Luck/Docker-Sentinel/images/settings-scanning.png) |
 
 ## Documentation
 
