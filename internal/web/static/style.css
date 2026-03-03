@@ -1919,10 +1919,8 @@ table.managing .td-checkbox {
 }
 .queue-table th:nth-child(4),
 .queue-table th:nth-child(5),
-.queue-table th:nth-child(6),
 .queue-table td:nth-child(4),
-.queue-table td:nth-child(5),
-.queue-table td:nth-child(6) {
+.queue-table td:nth-child(5) {
   text-align: center;
 }
 .accordion-panel td {
