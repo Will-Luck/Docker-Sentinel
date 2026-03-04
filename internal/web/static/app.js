@@ -992,15 +992,22 @@
     }
   }
   var logStreamSource = null;
+  var _streamReconnecting = false;
+  function _resetFollowBtn() {
+    var btn = document.getElementById("follow-btn");
+    if (btn) {
+      btn.textContent = "Follow";
+      btn.classList.remove("btn-danger");
+      btn.classList.add("btn-outline");
+    }
+  }
   function toggleLogStream(name, hostId) {
     var btn = document.getElementById("follow-btn");
     if (!btn) return;
     if (logStreamSource) {
       logStreamSource.close();
       logStreamSource = null;
-      btn.textContent = "Follow";
-      btn.classList.remove("btn-danger");
-      btn.classList.add("btn-outline");
+      _resetFollowBtn();
       return;
     }
     if (hostId) {
@@ -1034,17 +1041,16 @@
     es.addEventListener("eof", function() {
       es.close();
       logStreamSource = null;
-      btn.textContent = "Follow";
-      btn.classList.remove("btn-danger");
-      btn.classList.add("btn-outline");
+      if (_streamReconnecting) return;
+      _resetFollowBtn();
       logsEl.textContent += "\n--- container stopped ---\n";
     });
     es.onerror = function() {
+      console.warn("[sentinel] log stream error, readyState=" + es.readyState);
       es.close();
       logStreamSource = null;
-      btn.textContent = "Follow";
-      btn.classList.remove("btn-danger");
-      btn.classList.add("btn-outline");
+      if (_streamReconnecting) return;
+      _resetFollowBtn();
     };
   }
   function containerAction(action, btn) {
@@ -1054,6 +1060,18 @@
     var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
     if (hostId) endpoint += "?host=" + encodeURIComponent(hostId);
     var wasFollowing = !!logStreamSource;
+    if (wasFollowing && action === "restart") {
+      _streamReconnecting = true;
+    }
+    if (wasFollowing && action === "stop") {
+      if (logStreamSource) {
+        logStreamSource.close();
+        logStreamSource = null;
+      }
+      _resetFollowBtn();
+      var logsEl = document.getElementById("container-logs");
+      if (logsEl) logsEl.textContent += "\n--- stopping container ---\n";
+    }
     apiPost(
       endpoint,
       null,
@@ -1066,15 +1084,11 @@
             logStreamSource.close();
             logStreamSource = null;
           }
-          var logsEl = document.getElementById("container-logs");
-          if (logsEl) logsEl.textContent += "\n--- restarting container ---\n";
-          var followBtn = document.getElementById("follow-btn");
-          if (followBtn) {
-            followBtn.textContent = "Follow";
-            followBtn.classList.remove("btn-danger");
-            followBtn.classList.add("btn-outline");
-          }
+          var logsEl2 = document.getElementById("container-logs");
+          if (logsEl2) logsEl2.textContent += "\n--- restarting container ---\n";
+          _resetFollowBtn();
           setTimeout(function() {
+            _streamReconnecting = false;
             toggleLogStream(name, hostId);
           }, 3e3);
         }
