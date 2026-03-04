@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -263,6 +265,10 @@ func (m *mockDocker) ExecContainer(_ context.Context, id string, cmd []string, _
 
 func (m *mockDocker) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
 	return "", nil
+}
+
+func (m *mockDocker) ContainerLogStream(_ context.Context, _ string, _ int) (io.ReadCloser, bool, error) {
+	return io.NopCloser(strings.NewReader("")), false, nil
 }
 
 func (m *mockDocker) IsSwarmManager(_ context.Context) bool {

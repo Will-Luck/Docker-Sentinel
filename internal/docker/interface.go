@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"io"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -31,6 +32,7 @@ type API interface {
 	RemoveContainerWithVolumes(ctx context.Context, id string) error
 	ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error)
 	ContainerLogs(ctx context.Context, id string, lines int) (string, error)
+	ContainerLogStream(ctx context.Context, id string, tail int) (io.ReadCloser, bool, error)
 
 	// Swarm operations — only functional when the daemon is a Swarm manager.
 	IsSwarmManager(ctx context.Context) bool

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/moby/moby/api/pkg/stdcopy"
@@ -210,4 +211,26 @@ func (c *Client) ContainerLogs(ctx context.Context, id string, lines int) (strin
 		stdout.WriteString(stderr.String())
 	}
 	return stdout.String(), nil
+}
+
+// ContainerLogStream returns a streaming log reader for the given container.
+// The caller must close the returned reader. The bool indicates whether the
+// container uses TTY mode (raw stream) or multiplexed mode (8-byte framed).
+func (c *Client) ContainerLogStream(ctx context.Context, id string, tail int) (io.ReadCloser, bool, error) {
+	info, err := c.InspectContainer(ctx, id)
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect for log stream: %w", err)
+	}
+	tty := info.Config != nil && info.Config.Tty
+
+	reader, err := c.api.ContainerLogs(ctx, id, client.ContainerLogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Tail:       strconv.Itoa(tail),
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("container log stream: %w", err)
+	}
+	return reader, tty, nil
 }

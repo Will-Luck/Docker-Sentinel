@@ -1029,6 +1029,77 @@ async function fetchContainerLogs(name, hostId) {
     }
 }
 
+// Active log stream state.
+var logStreamSource = null;
+
+function toggleLogStream(name, hostId) {
+    var btn = document.getElementById('follow-btn');
+    if (!btn) return;
+
+    // If already streaming, stop.
+    if (logStreamSource) {
+        logStreamSource.close();
+        logStreamSource = null;
+        btn.textContent = 'Follow';
+        btn.classList.remove('btn-danger');
+        btn.classList.add('btn-outline');
+        return;
+    }
+
+    // Remote containers don't support streaming.
+    if (hostId) {
+        if (window.showToast) {
+            window.showToast('Log streaming is not available for remote containers', 'warning');
+        }
+        return;
+    }
+
+    var linesEl = document.getElementById('log-lines');
+    var lines = linesEl ? linesEl.value : '50';
+    var logsEl = document.getElementById('container-logs');
+    if (!logsEl) return;
+
+    logsEl.textContent = '';
+    btn.textContent = 'Stop';
+    btn.classList.remove('btn-outline');
+    btn.classList.add('btn-danger');
+
+    var url = '/api/containers/' + encodeURIComponent(name) + '/logs/stream?lines=' + lines;
+    var es = new EventSource(url);
+    logStreamSource = es;
+
+    // Track whether the user has scrolled up to avoid forcing them to the bottom.
+    var userScrolled = false;
+    logsEl.addEventListener('scroll', function () {
+        var atBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
+        userScrolled = !atBottom;
+    });
+
+    es.onmessage = function (e) {
+        logsEl.textContent += e.data + '\n';
+        if (!userScrolled) {
+            logsEl.scrollTop = logsEl.scrollHeight;
+        }
+    };
+
+    es.addEventListener('eof', function () {
+        es.close();
+        logStreamSource = null;
+        btn.textContent = 'Follow';
+        btn.classList.remove('btn-danger');
+        btn.classList.add('btn-outline');
+        logsEl.textContent += '\n--- container stopped ---\n';
+    });
+
+    es.onerror = function () {
+        es.close();
+        logStreamSource = null;
+        btn.textContent = 'Follow';
+        btn.classList.remove('btn-danger');
+        btn.classList.add('btn-outline');
+    };
+}
+
 function togglePorts(el, e) {
     e.stopPropagation();
     el.closest('.cell-ports').classList.toggle('expanded');
@@ -1076,5 +1147,6 @@ export {
     recalcTabStats,
     setUpdateStatsFn,
     toggleManageMode,
-    fetchContainerLogs
+    fetchContainerLogs,
+    toggleLogStream
 };
