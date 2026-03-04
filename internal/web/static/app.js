@@ -161,7 +161,7 @@
       });
     });
   }
-  function apiPost(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
+  function apiPost2(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
     var opts = { method: "POST" };
     if (body) {
       opts.headers = { "Content-Type": "application/json" };
@@ -1047,6 +1047,40 @@
       btn.classList.add("btn-outline");
     };
   }
+  function containerAction(action, btn) {
+    var name = window._containerName || (typeof _containerName !== "undefined" ? _containerName : "");
+    var hostId = window._containerHostId || (typeof _containerHostId !== "undefined" ? _containerHostId : "");
+    if (!name) return;
+    var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
+    if (hostId) endpoint += "?host=" + encodeURIComponent(hostId);
+    var wasFollowing = !!logStreamSource;
+    apiPost(
+      endpoint,
+      null,
+      action.charAt(0).toUpperCase() + action.slice(1) + " initiated",
+      "Failed to " + action + " " + name,
+      btn,
+      function() {
+        if (wasFollowing && action === "restart") {
+          if (logStreamSource) {
+            logStreamSource.close();
+            logStreamSource = null;
+          }
+          var logsEl = document.getElementById("container-logs");
+          if (logsEl) logsEl.textContent += "\n--- restarting container ---\n";
+          var followBtn = document.getElementById("follow-btn");
+          if (followBtn) {
+            followBtn.textContent = "Follow";
+            followBtn.classList.remove("btn-danger");
+            followBtn.classList.add("btn-outline");
+          }
+          setTimeout(function() {
+            toggleLogStream(name, hostId);
+          }, 3e3);
+        }
+      }
+    );
+  }
   function togglePorts(el, e) {
     e.stopPropagation();
     el.closest(".cell-ports").classList.toggle("expanded");
@@ -1127,7 +1161,7 @@
   }
   function approveUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
+    apiPost2(
       "/api/approve/" + encodeURIComponent(key),
       null,
       "Approved update for " + key,
@@ -1140,7 +1174,7 @@
   }
   function ignoreUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
+    apiPost2(
       "/api/ignore/" + encodeURIComponent(key),
       null,
       "Version ignored for " + key,
@@ -1153,7 +1187,7 @@
   }
   function rejectUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
+    apiPost2(
       "/api/reject/" + encodeURIComponent(key),
       null,
       "Rejected update for " + key,
@@ -1284,7 +1318,7 @@
         }
       }, 12e4);
     }
-    apiPost(
+    apiPost2(
       url,
       null,
       "Update started for " + name,
@@ -1295,7 +1329,7 @@
     var btn = event && event.target ? event.target.closest(".btn") : null;
     var url = "/api/check/" + encodeURIComponent(name);
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
-    apiPost(
+    apiPost2(
       url,
       null,
       "Checking for updates on " + name,
@@ -1305,7 +1339,7 @@
   }
   function triggerRollback(name, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
+    apiPost2(
       "/api/containers/" + encodeURIComponent(name) + "/rollback",
       null,
       "Rollback started for " + name,
@@ -1316,7 +1350,7 @@
   function changePolicy(name, newPolicy, hostId) {
     var url = "/api/containers/" + encodeURIComponent(name) + "/policy";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
-    apiPost(
+    apiPost2(
       url,
       { policy: newPolicy },
       "Policy changed to " + newPolicy + " for " + name,
@@ -1355,7 +1389,7 @@
     showConfirm("Self-Update", "<p>This will restart Sentinel to apply the update. Continue?</p>").then(function(confirmed) {
       if (!confirmed) return;
       localStorage.setItem("sentinel-self-updating", "1");
-      apiPost(
+      apiPost2(
         "/api/self-update",
         null,
         "Self-update initiated \u2014 Sentinel will restart shortly",
@@ -1557,7 +1591,7 @@
         }
       }, 6e4);
     }
-    apiPost(
+    apiPost2(
       "/api/services/" + encodeURIComponent(name) + "/update",
       null,
       "Service update started for " + name,
@@ -1573,7 +1607,7 @@
     }
   }
   function changeSvcPolicy(name, newPolicy) {
-    apiPost(
+    apiPost2(
       "/api/containers/" + encodeURIComponent(name) + "/policy",
       { policy: newPolicy },
       "Policy changed to " + newPolicy + " for " + name,
@@ -1595,7 +1629,7 @@
         }
       }, 6e4);
     }
-    apiPost(
+    apiPost2(
       "/api/services/" + encodeURIComponent(name) + "/rollback",
       null,
       "Rollback started for " + name,
@@ -1637,7 +1671,7 @@
     } else {
       delete _svcTaskCache[name];
     }
-    apiPost(
+    apiPost2(
       "/api/services/" + encodeURIComponent(name) + "/scale",
       { replicas },
       "Scaled " + name + " to " + replicas + " replicas",
@@ -3762,7 +3796,7 @@
     var ch = notificationChannels[index];
     if (!ch) return;
     var btn = document.querySelectorAll('.channel-card[data-index="' + index + '"] .btn')[0];
-    apiPost(
+    apiPost2(
       "/api/settings/notifications/test",
       { id: ch.id },
       "Test sent to " + (ch.name || ch.type),
@@ -3772,7 +3806,7 @@
   }
   function testNotification() {
     var btn = document.getElementById("notify-test-btn");
-    apiPost(
+    apiPost2(
       "/api/settings/notifications/test",
       null,
       "Test notification sent to all channels",
@@ -5360,7 +5394,7 @@
   window.csrfToken = getCSRFToken;
   window.escapeHTML = escapeHTML;
   window.showConfirm = showConfirm;
-  window.apiPost = apiPost;
+  window.apiPost = apiPost2;
   window.activateFilter = activateFilter;
   window.resumeScanning = resumeScanning;
   window.expandAllStacks = expandAllStacks;
@@ -5387,6 +5421,7 @@
   window.refreshLastScan = refreshLastScan;
   window.fetchContainerLogs = fetchContainerLogs;
   window.toggleLogStream = toggleLogStream;
+  window.containerAction = containerAction;
   window.toggleQueueAccordion = toggleQueueAccordion;
   window.approveUpdate = approveUpdate;
   window.ignoreUpdate = ignoreUpdate;
@@ -5606,7 +5641,7 @@
       var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
       if (hostId) endpoint += "?host=" + encodeURIComponent(hostId);
       var label = action.charAt(0).toUpperCase() + action.slice(1);
-      apiPost(
+      apiPost2(
         endpoint,
         null,
         label + " initiated for " + name,

@@ -43,7 +43,8 @@ import {
     setUpdateStatsFn,
     toggleManageMode,
     fetchContainerLogs,
-    toggleLogStream
+    toggleLogStream,
+    containerAction
 } from "./dashboard.js";
 
 import {
@@ -244,6 +245,7 @@ window.checkPauseState = checkPauseState;
 window.refreshLastScan = refreshLastScan;
 window.fetchContainerLogs = fetchContainerLogs;
 window.toggleLogStream = toggleLogStream;
+window.containerAction = containerAction;
 
 // Queue
 window.toggleQueueAccordion = toggleQueueAccordion;

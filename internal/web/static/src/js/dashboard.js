@@ -1100,6 +1100,37 @@ function toggleLogStream(name, hostId) {
     };
 }
 
+function containerAction(action, btn) {
+    var name = window._containerName || (typeof _containerName !== 'undefined' ? _containerName : '');
+    var hostId = window._containerHostId || (typeof _containerHostId !== 'undefined' ? _containerHostId : '');
+    if (!name) return;
+
+    var endpoint = '/api/containers/' + encodeURIComponent(name) + '/' + action;
+    if (hostId) endpoint += '?host=' + encodeURIComponent(hostId);
+
+    var wasFollowing = !!logStreamSource;
+
+    apiPost(endpoint, null,
+        action.charAt(0).toUpperCase() + action.slice(1) + ' initiated',
+        'Failed to ' + action + ' ' + name,
+        btn,
+        function() {
+            if (wasFollowing && action === 'restart') {
+                if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
+                var logsEl = document.getElementById('container-logs');
+                if (logsEl) logsEl.textContent += '\n--- restarting container ---\n';
+                var followBtn = document.getElementById('follow-btn');
+                if (followBtn) {
+                    followBtn.textContent = 'Follow';
+                    followBtn.classList.remove('btn-danger');
+                    followBtn.classList.add('btn-outline');
+                }
+                setTimeout(function() { toggleLogStream(name, hostId); }, 3000);
+            }
+        }
+    );
+}
+
 function togglePorts(el, e) {
     e.stopPropagation();
     el.closest('.cell-ports').classList.toggle('expanded');
@@ -1148,5 +1179,6 @@ export {
     setUpdateStatsFn,
     toggleManageMode,
     fetchContainerLogs,
-    toggleLogStream
+    toggleLogStream,
+    containerAction
 };

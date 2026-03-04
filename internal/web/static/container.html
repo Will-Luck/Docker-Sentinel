@@ -354,6 +354,10 @@
                             onclick="toggleLogStream('{{.Container.Name}}', '{{.Container.HostID}}')">
                             Follow
                         </button>
+                        <span style="border-left: 1px solid var(--border); height: 1.5rem;"></span>
+                        <button class="btn btn-sm" onclick="containerAction('restart', this)">Restart</button>
+                        <button class="btn btn-sm" onclick="containerAction('stop', this)">Stop</button>
+                        <button class="btn btn-sm" onclick="containerAction('start', this)">Start</button>
                     </div>
                     <pre id="container-logs" style="background: var(--bg-secondary); padding: 1rem; border-radius: 6px; overflow-x: auto; max-height: 400px; overflow-y: auto; font-size: 0.8rem; line-height: 1.4; white-space: pre-wrap; word-break: break-all;">Click "Load Logs" to fetch container output.</pre>
                 </div>
