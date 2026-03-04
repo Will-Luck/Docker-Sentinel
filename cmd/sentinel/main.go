@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
+	"github.com/Will-Luck/Docker-Sentinel/internal/backup"
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/agent"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
@@ -391,6 +393,14 @@ func main() {
 	}
 	notifier := notify.NewMulti(log, notifiers...)
 
+	// Load notification batch window from settings (default: 0 = disabled).
+	if bw := loadSettingStr(db, "notification_batch_window"); bw != "" && bw != "0" {
+		if d, err := time.ParseDuration(bw); err == nil && d > 0 {
+			notifier.SetBatchWindow(d)
+			log.Info("notification batching enabled", "window", d.String())
+		}
+	}
+
 	clk := clock.Real{}
 	checker := registry.NewChecker(client, log)
 	rateTracker := registry.NewRateLimitTracker()
@@ -577,6 +587,49 @@ func main() {
 		log.Info("npm integration enabled", "url", npmURL)
 	}
 
+	// Initialise backup manager.
+	backupDir := filepath.Join(filepath.Dir(cfg.DBPath), "backups")
+	if v := loadSettingStr(db, "backup_dir"); v != "" {
+		backupDir = v
+	}
+	backupMgr, backupErr := backup.NewManager(db.DB(), backupDir, log)
+	if backupErr != nil {
+		log.Warn("backup manager init failed", "error", backupErr)
+	}
+
+	// Configure S3 upload if settings exist.
+	if backupMgr != nil {
+		if raw := loadSettingStr(db, "backup_s3_config"); raw != "" {
+			var s3cfg backup.S3Config
+			if json.Unmarshal([]byte(raw), &s3cfg) == nil && s3cfg.Endpoint != "" {
+				uploader, s3Err := backup.NewS3Uploader(s3cfg)
+				if s3Err != nil {
+					log.Warn("S3 uploader init failed", "error", s3Err)
+				} else {
+					backupMgr.SetUploader(uploader)
+					log.Info("backup S3 upload enabled", "endpoint", s3cfg.Endpoint, "bucket", s3cfg.Bucket)
+				}
+			}
+		}
+		if ret := loadSettingStr(db, "backup_retention"); ret != "" {
+			if n, err := strconv.Atoi(ret); err == nil && n > 0 {
+				backupMgr.SetRetention(n)
+			}
+		}
+	}
+
+	// Start backup scheduler if configured.
+	var backupSched *backup.Scheduler
+	if backupMgr != nil {
+		backupSched = backup.NewScheduler(backupMgr, log)
+		if sched := loadSettingStr(db, "backup_schedule"); sched != "" {
+			if err := backupSched.SetSchedule(sched); err != nil {
+				log.Warn("backup schedule invalid", "cron", sched, "error", err)
+			}
+		}
+		backupSched.Start()
+	}
+
 	if cfg.WebEnabled {
 		webDeps := web.Dependencies{
 			Store:               &storeAdapter{db},
@@ -601,6 +654,7 @@ func main() {
 			Stopper:             &stopAdapter{client},
 			Starter:             &startAdapter{client},
 			LogViewer:           &dockerAdapter{client},
+			LogStreamer:         &dockerAdapter{client},
 			SelfUpdater:         &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
 			NotifyConfig:        &notifyConfigAdapter{db},
 			NotifyReconfigurer:  notifier,
@@ -614,13 +668,14 @@ func main() {
 			ReleaseSources:      &releaseSourceAdapter{db},
 			ImageManager:        &imageAdapter{client: client},
 			Cluster:             clusterCtrl,
-			MetricsEnabled:      cfg.MetricsEnabled,
-			Digest:              digestSched,
-			Auth:                authSvc,
-			Version:             versionString(),
-			ClusterPort:         cfg.ClusterPort,
-			Commit:              commit,
-			Log:                 log.Logger,
+			// Backup is set below if backupMgr is available.
+			MetricsEnabled: cfg.MetricsEnabled,
+			Digest:         digestSched,
+			Auth:           authSvc,
+			Version:        versionString(),
+			ClusterPort:    cfg.ClusterPort,
+			Commit:         commit,
+			Log:            log.Logger,
 		}
 		if isSwarm {
 			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
@@ -630,6 +685,9 @@ func main() {
 		}
 		if npmProvider != nil {
 			webDeps.NPM = npmProvider
+		}
+		if backupMgr != nil {
+			webDeps.Backup = &backupAdapter{backupMgr}
 		}
 		// Factory to create NPM provider on demand (e.g. after first-time UI config).
 		webDeps.NPMInitFunc = func(initCtx context.Context) (web.NPMProvider, error) {
@@ -671,14 +729,26 @@ func main() {
 		}
 
 		// Configure OIDC provider if settings are present.
+		// Load OIDC group mapping configuration.
+		oidcGroupClaim := loadSettingStr(db, "oidc_group_claim")
+		if oidcGroupClaim == "" {
+			oidcGroupClaim = "groups"
+		}
+		var oidcGroupMappings map[string]string
+		if raw := loadSettingStr(db, "oidc_group_mappings"); raw != "" {
+			_ = json.Unmarshal([]byte(raw), &oidcGroupMappings)
+		}
+
 		oidcCfg := auth.OIDCConfig{
-			Enabled:      loadSettingBool(db, "oidc_enabled"),
-			IssuerURL:    loadSettingStr(db, "oidc_issuer_url"),
-			ClientID:     loadSettingStr(db, "oidc_client_id"),
-			ClientSecret: loadSettingStr(db, "oidc_client_secret"),
-			RedirectURL:  loadSettingStr(db, "oidc_redirect_url"),
-			AutoCreate:   loadSettingBool(db, "oidc_auto_create"),
-			DefaultRole:  loadSettingStr(db, "oidc_default_role"),
+			Enabled:       loadSettingBool(db, "oidc_enabled"),
+			IssuerURL:     loadSettingStr(db, "oidc_issuer_url"),
+			ClientID:      loadSettingStr(db, "oidc_client_id"),
+			ClientSecret:  loadSettingStr(db, "oidc_client_secret"),
+			RedirectURL:   loadSettingStr(db, "oidc_redirect_url"),
+			AutoCreate:    loadSettingBool(db, "oidc_auto_create"),
+			DefaultRole:   loadSettingStr(db, "oidc_default_role"),
+			GroupClaim:    oidcGroupClaim,
+			GroupMappings: oidcGroupMappings,
 		}
 		oidcProvider, oidcErr := auth.NewOIDCProvider(context.Background(), oidcCfg)
 		if oidcErr != nil {
@@ -764,6 +834,14 @@ func main() {
 	if err := scheduler.Run(ctx); err != nil {
 		log.Error("sentinel exited with error", "error", err)
 		os.Exit(1)
+	}
+
+	// Flush any buffered notifications before exit.
+	notifier.Stop()
+
+	// Stop backup scheduler.
+	if backupSched != nil {
+		backupSched.Stop()
 	}
 
 	log.Info("sentinel shutdown complete")

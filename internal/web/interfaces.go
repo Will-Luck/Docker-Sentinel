@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -69,6 +70,21 @@ type NotificationConfigStore interface {
 // NotifierReconfigurer allows runtime reconfiguration of the notification chain.
 type NotifierReconfigurer interface {
 	Reconfigure(notifiers ...notify.Notifier)
+	SetBatchWindow(d time.Duration)
+}
+
+// BackupManager provides backup creation, listing, and download.
+type BackupManager interface {
+	CreateBackup(ctx context.Context) (*BackupInfo, error)
+	List() ([]BackupInfo, error)
+	FilePath(filename string) (string, error)
+}
+
+// BackupInfo describes a backup file.
+type BackupInfo struct {
+	Filename  string    `json:"filename"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // NotifyTemplateStore reads and writes custom notification templates.
@@ -469,6 +485,11 @@ func (u PendingUpdate) Key() string {
 // ContainerLogViewer provides access to container log output.
 type ContainerLogViewer interface {
 	ContainerLogs(ctx context.Context, containerID string, lines int) (string, error)
+}
+
+// ContainerLogStreamer provides streaming (follow) access to container logs.
+type ContainerLogStreamer interface {
+	ContainerLogStream(ctx context.Context, containerID string, tail int) (io.ReadCloser, bool, error)
 }
 
 // ContainerLister lists containers.

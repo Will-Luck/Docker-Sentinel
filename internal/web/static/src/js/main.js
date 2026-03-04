@@ -42,7 +42,8 @@ import {
     recalcTabStats,
     setUpdateStatsFn,
     toggleManageMode,
-    fetchContainerLogs
+    fetchContainerLogs,
+    toggleLogStream
 } from "./dashboard.js";
 
 import {
@@ -242,6 +243,7 @@ window.recomputeSelectionState = recomputeSelectionState;
 window.checkPauseState = checkPauseState;
 window.refreshLastScan = refreshLastScan;
 window.fetchContainerLogs = fetchContainerLogs;
+window.toggleLogStream = toggleLogStream;
 
 // Queue
 window.toggleQueueAccordion = toggleQueueAccordion;
