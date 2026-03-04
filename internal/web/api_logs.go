@@ -156,54 +156,87 @@ func (s *Server) apiContainerLogStream(w http.ResponseWriter, r *http.Request) {
 
 // streamTTYLogs reads raw line-by-line output from a TTY container.
 func (s *Server) streamTTYLogs(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, reader io.Reader) {
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
+	lines := make(chan string)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(reader)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+	}()
+
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case line, ok := <-lines:
+			if !ok {
+				return
+			}
+			fmt.Fprintf(w, "data: %s\n\n", line)
+			flusher.Flush()
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": heartbeat\n\n")
+			flusher.Flush()
 		}
-		line := scanner.Text()
-		fmt.Fprintf(w, "data: %s\n\n", line)
-		flusher.Flush()
 	}
 }
 
 // streamMuxLogs reads Docker's multiplexed stream format (8-byte header per frame).
 // Header: byte 0 = stream type (1=stdout, 2=stderr), bytes 4-7 = payload size (big-endian).
 func (s *Server) streamMuxLogs(w http.ResponseWriter, flusher http.Flusher, ctx context.Context, reader io.Reader) {
-	hdr := make([]byte, 8)
+	type frame struct {
+		lines []string
+		err   error
+	}
+	frames := make(chan frame)
+	go func() {
+		defer close(frames)
+		hdr := make([]byte, 8)
+		for {
+			if _, err := io.ReadFull(reader, hdr); err != nil {
+				frames <- frame{err: err}
+				return
+			}
+			size := binary.BigEndian.Uint32(hdr[4:8])
+			if size == 0 {
+				continue
+			}
+			if size > 65536 {
+				size = 65536
+			}
+			payload := make([]byte, size)
+			if _, err := io.ReadFull(reader, payload); err != nil {
+				frames <- frame{err: err}
+				return
+			}
+			text := strings.TrimRight(string(payload), "\n")
+			frames <- frame{lines: strings.Split(text, "\n")}
+		}
+	}()
+
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case f, ok := <-frames:
+			if !ok || f.err != nil {
+				return
+			}
+			for _, line := range f.lines {
+				fmt.Fprintf(w, "data: %s\n\n", line)
+			}
+			flusher.Flush()
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": heartbeat\n\n")
+			flusher.Flush()
 		}
-
-		if _, err := io.ReadFull(reader, hdr); err != nil {
-			return // EOF or error — container stopped or client disconnected
-		}
-
-		size := binary.BigEndian.Uint32(hdr[4:8])
-		if size == 0 {
-			continue
-		}
-		// Cap frame size to 64 KiB as a safety measure.
-		if size > 65536 {
-			size = 65536
-		}
-
-		payload := make([]byte, size)
-		if _, err := io.ReadFull(reader, payload); err != nil {
-			return
-		}
-
-		// Split payload into lines and emit each as an SSE data frame.
-		text := strings.TrimRight(string(payload), "\n")
-		for _, line := range strings.Split(text, "\n") {
-			fmt.Fprintf(w, "data: %s\n\n", line)
-		}
-		flusher.Flush()
 	}
 }
 
