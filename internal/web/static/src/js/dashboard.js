@@ -1031,6 +1031,17 @@ async function fetchContainerLogs(name, hostId) {
 
 // Active log stream state.
 var logStreamSource = null;
+// When true, eof/onerror handlers skip resetting the button (a reconnect is pending).
+var _streamReconnecting = false;
+
+function _resetFollowBtn() {
+    var btn = document.getElementById('follow-btn');
+    if (btn) {
+        btn.textContent = 'Follow';
+        btn.classList.remove('btn-danger');
+        btn.classList.add('btn-outline');
+    }
+}
 
 function toggleLogStream(name, hostId) {
     var btn = document.getElementById('follow-btn');
@@ -1040,9 +1051,7 @@ function toggleLogStream(name, hostId) {
     if (logStreamSource) {
         logStreamSource.close();
         logStreamSource = null;
-        btn.textContent = 'Follow';
-        btn.classList.remove('btn-danger');
-        btn.classList.add('btn-outline');
+        _resetFollowBtn();
         return;
     }
 
@@ -1085,18 +1094,17 @@ function toggleLogStream(name, hostId) {
     es.addEventListener('eof', function () {
         es.close();
         logStreamSource = null;
-        btn.textContent = 'Follow';
-        btn.classList.remove('btn-danger');
-        btn.classList.add('btn-outline');
+        if (_streamReconnecting) return;
+        _resetFollowBtn();
         logsEl.textContent += '\n--- container stopped ---\n';
     });
 
     es.onerror = function () {
+        console.warn('[sentinel] log stream error, readyState=' + es.readyState);
         es.close();
         logStreamSource = null;
-        btn.textContent = 'Follow';
-        btn.classList.remove('btn-danger');
-        btn.classList.add('btn-outline');
+        if (_streamReconnecting) return;
+        _resetFollowBtn();
     };
 }
 
@@ -1110,6 +1118,19 @@ function containerAction(action, btn) {
 
     var wasFollowing = !!logStreamSource;
 
+    // For restart: suppress eof/onerror reset so the reconnect can take over.
+    if (wasFollowing && action === 'restart') {
+        _streamReconnecting = true;
+    }
+
+    // For stop: close the stream immediately (don't wait for eof race).
+    if (wasFollowing && action === 'stop') {
+        if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
+        _resetFollowBtn();
+        var logsEl = document.getElementById('container-logs');
+        if (logsEl) logsEl.textContent += '\n--- stopping container ---\n';
+    }
+
     apiPost(endpoint, null,
         action.charAt(0).toUpperCase() + action.slice(1) + ' initiated',
         'Failed to ' + action + ' ' + name,
@@ -1119,13 +1140,11 @@ function containerAction(action, btn) {
                 if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
                 var logsEl = document.getElementById('container-logs');
                 if (logsEl) logsEl.textContent += '\n--- restarting container ---\n';
-                var followBtn = document.getElementById('follow-btn');
-                if (followBtn) {
-                    followBtn.textContent = 'Follow';
-                    followBtn.classList.remove('btn-danger');
-                    followBtn.classList.add('btn-outline');
-                }
-                setTimeout(function() { toggleLogStream(name, hostId); }, 3000);
+                _resetFollowBtn();
+                setTimeout(function() {
+                    _streamReconnecting = false;
+                    toggleLogStream(name, hostId);
+                }, 3000);
             }
         }
     );
