@@ -1029,55 +1029,28 @@ async function fetchContainerLogs(name, hostId) {
     }
 }
 
-// Active log stream state.
+// Follow mode: sticky user preference, survives stream disconnects.
+// logStreamSource: the current EventSource connection (transient).
 var logStreamSource = null;
-// When true, eof/onerror handlers skip resetting the button (a reconnect is pending).
-var _streamReconnecting = false;
+var _followMode = false;
+var _followName = '';
+var _followHostId = '';
+var _reconnectTimer = null;
 
-function _resetFollowBtn() {
-    var btn = document.getElementById('follow-btn');
-    if (btn) {
-        btn.textContent = 'Follow';
-        btn.classList.remove('btn-danger');
-        btn.classList.add('btn-outline');
-    }
-}
+// Open (or reopen) the SSE log stream. Does not touch _followMode.
+function _connectLogStream() {
+    if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
 
-function toggleLogStream(name, hostId) {
-    var btn = document.getElementById('follow-btn');
-    if (!btn) return;
-
-    // If already streaming, stop.
-    if (logStreamSource) {
-        logStreamSource.close();
-        logStreamSource = null;
-        _resetFollowBtn();
-        return;
-    }
-
-    // Remote containers don't support streaming.
-    if (hostId) {
-        if (window.showToast) {
-            window.showToast('Log streaming is not available for remote containers', 'warning');
-        }
-        return;
-    }
-
-    var linesEl = document.getElementById('log-lines');
-    var lines = linesEl ? linesEl.value : '50';
     var logsEl = document.getElementById('container-logs');
     if (!logsEl) return;
 
-    logsEl.textContent = '';
-    btn.textContent = 'Stop';
-    btn.classList.remove('btn-outline');
-    btn.classList.add('btn-danger');
-
-    var url = '/api/containers/' + encodeURIComponent(name) + '/logs/stream?lines=' + lines;
+    var linesEl = document.getElementById('log-lines');
+    var lines = linesEl ? linesEl.value : '50';
+    var url = '/api/containers/' + encodeURIComponent(_followName) + '/logs/stream?lines=' + lines;
     var es = new EventSource(url);
     logStreamSource = es;
 
-    // Track whether the user has scrolled up to avoid forcing them to the bottom.
     var userScrolled = false;
     logsEl.addEventListener('scroll', function () {
         var atBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
@@ -1094,18 +1067,71 @@ function toggleLogStream(name, hostId) {
     es.addEventListener('eof', function () {
         es.close();
         logStreamSource = null;
-        if (_streamReconnecting) return;
-        _resetFollowBtn();
-        logsEl.textContent += '\n--- container stopped ---\n';
+        if (!_followMode) return;
+        logsEl.textContent += '\n--- stream ended, reconnecting... ---\n';
+        _scheduleReconnect();
     });
 
     es.onerror = function () {
         console.warn('[sentinel] log stream error, readyState=' + es.readyState);
         es.close();
         logStreamSource = null;
-        if (_streamReconnecting) return;
-        _resetFollowBtn();
+        if (!_followMode) return;
+        _scheduleReconnect();
     };
+}
+
+function _scheduleReconnect() {
+    if (_reconnectTimer) return;
+    _reconnectTimer = setTimeout(function () {
+        _reconnectTimer = null;
+        if (_followMode) _connectLogStream();
+    }, 3000);
+}
+
+function _stopFollowMode() {
+    _followMode = false;
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
+    var btn = document.getElementById('follow-btn');
+    if (btn) {
+        btn.textContent = 'Follow';
+        btn.classList.remove('btn-danger');
+        btn.classList.add('btn-outline');
+    }
+}
+
+function toggleLogStream(name, hostId) {
+    // Toggle off.
+    if (_followMode) {
+        _stopFollowMode();
+        return;
+    }
+
+    // Remote containers don't support streaming.
+    if (hostId) {
+        if (window.showToast) {
+            window.showToast('Log streaming is not available for remote containers', 'warning');
+        }
+        return;
+    }
+
+    // Toggle on.
+    _followMode = true;
+    _followName = name;
+    _followHostId = hostId;
+
+    var btn = document.getElementById('follow-btn');
+    if (btn) {
+        btn.textContent = 'Stop';
+        btn.classList.remove('btn-outline');
+        btn.classList.add('btn-danger');
+    }
+
+    var logsEl = document.getElementById('container-logs');
+    if (logsEl) logsEl.textContent = '';
+
+    _connectLogStream();
 }
 
 function containerAction(action, btn) {
@@ -1116,37 +1142,10 @@ function containerAction(action, btn) {
     var endpoint = '/api/containers/' + encodeURIComponent(name) + '/' + action;
     if (hostId) endpoint += '?host=' + encodeURIComponent(hostId);
 
-    var wasFollowing = !!logStreamSource;
-
-    // For restart: suppress eof/onerror reset so the reconnect can take over.
-    if (wasFollowing && action === 'restart') {
-        _streamReconnecting = true;
-    }
-
-    // For stop: close the stream immediately (don't wait for eof race).
-    if (wasFollowing && action === 'stop') {
-        if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
-        _resetFollowBtn();
-        var logsEl = document.getElementById('container-logs');
-        if (logsEl) logsEl.textContent += '\n--- stopping container ---\n';
-    }
-
     apiPost(endpoint, null,
         action.charAt(0).toUpperCase() + action.slice(1) + ' initiated',
         'Failed to ' + action + ' ' + name,
-        btn,
-        function() {
-            if (wasFollowing && action === 'restart') {
-                if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
-                var logsEl = document.getElementById('container-logs');
-                if (logsEl) logsEl.textContent += '\n--- restarting container ---\n';
-                _resetFollowBtn();
-                setTimeout(function() {
-                    _streamReconnecting = false;
-                    toggleLogStream(name, hostId);
-                }, 3000);
-            }
-        }
+        btn
     );
 }
 

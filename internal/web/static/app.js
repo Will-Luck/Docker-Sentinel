@@ -992,39 +992,24 @@
     }
   }
   var logStreamSource = null;
-  var _streamReconnecting = false;
-  function _resetFollowBtn() {
-    var btn = document.getElementById("follow-btn");
-    if (btn) {
-      btn.textContent = "Follow";
-      btn.classList.remove("btn-danger");
-      btn.classList.add("btn-outline");
-    }
-  }
-  function toggleLogStream(name, hostId) {
-    var btn = document.getElementById("follow-btn");
-    if (!btn) return;
+  var _followMode = false;
+  var _followName = "";
+  var _followHostId = "";
+  var _reconnectTimer = null;
+  function _connectLogStream() {
     if (logStreamSource) {
       logStreamSource.close();
       logStreamSource = null;
-      _resetFollowBtn();
-      return;
     }
-    if (hostId) {
-      if (window.showToast) {
-        window.showToast("Log streaming is not available for remote containers", "warning");
-      }
-      return;
+    if (_reconnectTimer) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
     }
-    var linesEl = document.getElementById("log-lines");
-    var lines = linesEl ? linesEl.value : "50";
     var logsEl = document.getElementById("container-logs");
     if (!logsEl) return;
-    logsEl.textContent = "";
-    btn.textContent = "Stop";
-    btn.classList.remove("btn-outline");
-    btn.classList.add("btn-danger");
-    var url = "/api/containers/" + encodeURIComponent(name) + "/logs/stream?lines=" + lines;
+    var linesEl = document.getElementById("log-lines");
+    var lines = linesEl ? linesEl.value : "50";
+    var url = "/api/containers/" + encodeURIComponent(_followName) + "/logs/stream?lines=" + lines;
     var es = new EventSource(url);
     logStreamSource = es;
     var userScrolled = false;
@@ -1041,17 +1026,65 @@
     es.addEventListener("eof", function() {
       es.close();
       logStreamSource = null;
-      if (_streamReconnecting) return;
-      _resetFollowBtn();
-      logsEl.textContent += "\n--- container stopped ---\n";
+      if (!_followMode) return;
+      logsEl.textContent += "\n--- stream ended, reconnecting... ---\n";
+      _scheduleReconnect();
     });
     es.onerror = function() {
       console.warn("[sentinel] log stream error, readyState=" + es.readyState);
       es.close();
       logStreamSource = null;
-      if (_streamReconnecting) return;
-      _resetFollowBtn();
+      if (!_followMode) return;
+      _scheduleReconnect();
     };
+  }
+  function _scheduleReconnect() {
+    if (_reconnectTimer) return;
+    _reconnectTimer = setTimeout(function() {
+      _reconnectTimer = null;
+      if (_followMode) _connectLogStream();
+    }, 3e3);
+  }
+  function _stopFollowMode() {
+    _followMode = false;
+    if (_reconnectTimer) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
+    }
+    if (logStreamSource) {
+      logStreamSource.close();
+      logStreamSource = null;
+    }
+    var btn = document.getElementById("follow-btn");
+    if (btn) {
+      btn.textContent = "Follow";
+      btn.classList.remove("btn-danger");
+      btn.classList.add("btn-outline");
+    }
+  }
+  function toggleLogStream(name, hostId) {
+    if (_followMode) {
+      _stopFollowMode();
+      return;
+    }
+    if (hostId) {
+      if (window.showToast) {
+        window.showToast("Log streaming is not available for remote containers", "warning");
+      }
+      return;
+    }
+    _followMode = true;
+    _followName = name;
+    _followHostId = hostId;
+    var btn = document.getElementById("follow-btn");
+    if (btn) {
+      btn.textContent = "Stop";
+      btn.classList.remove("btn-outline");
+      btn.classList.add("btn-danger");
+    }
+    var logsEl = document.getElementById("container-logs");
+    if (logsEl) logsEl.textContent = "";
+    _connectLogStream();
   }
   function containerAction(action, btn) {
     var name = window._containerName || (typeof _containerName !== "undefined" ? _containerName : "");
@@ -1059,40 +1092,12 @@
     if (!name) return;
     var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
     if (hostId) endpoint += "?host=" + encodeURIComponent(hostId);
-    var wasFollowing = !!logStreamSource;
-    if (wasFollowing && action === "restart") {
-      _streamReconnecting = true;
-    }
-    if (wasFollowing && action === "stop") {
-      if (logStreamSource) {
-        logStreamSource.close();
-        logStreamSource = null;
-      }
-      _resetFollowBtn();
-      var logsEl = document.getElementById("container-logs");
-      if (logsEl) logsEl.textContent += "\n--- stopping container ---\n";
-    }
     apiPost(
       endpoint,
       null,
       action.charAt(0).toUpperCase() + action.slice(1) + " initiated",
       "Failed to " + action + " " + name,
-      btn,
-      function() {
-        if (wasFollowing && action === "restart") {
-          if (logStreamSource) {
-            logStreamSource.close();
-            logStreamSource = null;
-          }
-          var logsEl2 = document.getElementById("container-logs");
-          if (logsEl2) logsEl2.textContent += "\n--- restarting container ---\n";
-          _resetFollowBtn();
-          setTimeout(function() {
-            _streamReconnecting = false;
-            toggleLogStream(name, hostId);
-          }, 3e3);
-        }
-      }
+      btn
     );
   }
   function togglePorts(el, e) {
