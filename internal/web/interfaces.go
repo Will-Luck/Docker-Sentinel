@@ -582,6 +582,7 @@ type VersionScopeUpdater interface {
 // ConfigReader provides settings for display.
 type ConfigReader interface {
 	Values() map[string]string
+	DefaultPolicy() string
 }
 
 // ConfigWriter updates mutable runtime settings in memory.

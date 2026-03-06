@@ -438,3 +438,10 @@ all settings, all auth
 ```bash
 make dev-deploy
 ```
+
+## Test Cluster Gotchas
+
+- **Setup wizard:** Fresh DB triggers wizard. Complete via `POST /api/setup` with `{"role":"server","username":"...","password":"..."}` (requires `role` field)
+- **Agent needs `SENTINEL_DB_PATH`:** Even in agent mode, the binary opens `/data/sentinel.db` by default. Always set `SENTINEL_DB_PATH=/tmp/sentinel-data/sentinel.db` for test deploys.
+- **Stale agent enrollment:** If the server is re-deployed fresh, agents with cached cluster data get x509 TLS errors. Wipe agent cluster dir (`rm -rf /tmp/sentinel-data/cluster`) before re-enrolling.
+- **SSH + nohup env vars:** Use heredoc (`ssh user@host bash << EOF`) not `bash -c` for multiple env var exports before nohup. Complex quoting in `bash -c` silently fails.

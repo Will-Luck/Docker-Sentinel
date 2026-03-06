@@ -616,3 +616,108 @@ func TestBulkPolicy_RemoteContainersScopedKeys(t *testing.T) {
 		t.Errorf("h1::postgres policy = (%q, %v), want (\"pinned\", true)", p, ok)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Mock: ConfigReader
+// ---------------------------------------------------------------------------
+
+type mockConfigReader struct {
+	values        map[string]string
+	defaultPolicy string
+}
+
+func (m *mockConfigReader) Values() map[string]string { return m.values }
+func (m *mockConfigReader) DefaultPolicy() string     { return m.defaultPolicy }
+
+// ---------------------------------------------------------------------------
+// containerPolicy tests (unit)
+// ---------------------------------------------------------------------------
+
+func TestContainerPolicy_LabelPresent(t *testing.T) {
+	labels := map[string]string{"sentinel.policy": "pinned"}
+	if got := containerPolicy(labels, "auto"); got != "pinned" {
+		t.Errorf("containerPolicy = %q, want %q", got, "pinned")
+	}
+}
+
+func TestContainerPolicy_NoLabel_UsesDefault(t *testing.T) {
+	if got := containerPolicy(nil, "auto"); got != "auto" {
+		t.Errorf("containerPolicy = %q, want %q", got, "auto")
+	}
+}
+
+func TestContainerPolicy_NoLabel_EmptyDefault(t *testing.T) {
+	if got := containerPolicy(nil, ""); got != "manual" {
+		t.Errorf("containerPolicy = %q, want %q (empty default → manual)", got, "manual")
+	}
+}
+
+func TestContainerPolicy_InvalidLabel_UsesDefault(t *testing.T) {
+	labels := map[string]string{"sentinel.policy": "yolo"}
+	if got := containerPolicy(labels, "auto"); got != "auto" {
+		t.Errorf("containerPolicy = %q, want %q (invalid label → default)", got, "auto")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolvedPolicy tests (integration with Config)
+// ---------------------------------------------------------------------------
+
+func TestResolvedPolicy_GlobalDefault(t *testing.T) {
+	// No label, no DB override, global default = "auto" → should return "auto".
+	srv := &Server{
+		deps: Dependencies{
+			Config: &mockConfigReader{defaultPolicy: "auto"},
+			Log:    slog.Default(),
+		},
+	}
+	got := srv.resolvedPolicy(nil, "nginx")
+	if got != "auto" {
+		t.Errorf("resolvedPolicy = %q, want %q", got, "auto")
+	}
+}
+
+func TestResolvedPolicy_LabelOverridesDefault(t *testing.T) {
+	srv := &Server{
+		deps: Dependencies{
+			Config: &mockConfigReader{defaultPolicy: "auto"},
+			Log:    slog.Default(),
+		},
+	}
+	labels := map[string]string{"sentinel.policy": "manual"}
+	got := srv.resolvedPolicy(labels, "nginx")
+	if got != "manual" {
+		t.Errorf("resolvedPolicy = %q, want %q", got, "manual")
+	}
+}
+
+func TestResolvedPolicy_DBOverridesLabel(t *testing.T) {
+	policy := newMockPolicyStore()
+	policy.overrides["nginx"] = "pinned"
+
+	srv := &Server{
+		deps: Dependencies{
+			Config: &mockConfigReader{defaultPolicy: "auto"},
+			Policy: policy,
+			Log:    slog.Default(),
+		},
+	}
+	labels := map[string]string{"sentinel.policy": "manual"}
+	got := srv.resolvedPolicy(labels, "nginx")
+	if got != "pinned" {
+		t.Errorf("resolvedPolicy = %q, want %q", got, "pinned")
+	}
+}
+
+func TestResolvedPolicy_NilConfig_FallsBackToManual(t *testing.T) {
+	// Backwards compat: no Config set → falls back to "manual".
+	srv := &Server{
+		deps: Dependencies{
+			Log: slog.Default(),
+		},
+	}
+	got := srv.resolvedPolicy(nil, "nginx")
+	if got != "manual" {
+		t.Errorf("resolvedPolicy = %q, want %q", got, "manual")
+	}
+}
