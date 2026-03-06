@@ -189,10 +189,7 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 			policyKey = hid + "::" + name
 		}
 
-		current := containerPolicy(labels)
-		if p, ok := s.deps.Policy.GetPolicyOverride(policyKey); ok {
-			current = p
-		}
+		current := s.resolvedPolicy(labels, policyKey)
 
 		if current == body.Policy {
 			unchanged = append(unchanged, unchangedEntry{Name: name, Reason: "already " + body.Policy})

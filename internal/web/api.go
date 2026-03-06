@@ -25,13 +25,17 @@ func containerName(c ContainerSummary) string {
 	return c.ID
 }
 
-// containerPolicy reads the sentinel.policy label, defaulting to "manual".
-func containerPolicy(labels map[string]string) string {
+// containerPolicy reads the sentinel.policy label, falling back to defaultPolicy.
+// If defaultPolicy is empty, falls back to "manual" for safety.
+func containerPolicy(labels map[string]string, defaultPolicy string) string {
 	if v, ok := labels["sentinel.policy"]; ok {
 		switch v {
 		case "auto", "manual", "pinned":
 			return v
 		}
+	}
+	if defaultPolicy != "" {
+		return defaultPolicy
 	}
 	return "manual"
 }
@@ -42,14 +46,18 @@ func (s *Server) isProtectedContainer(ctx context.Context, name string) bool {
 	return labels["sentinel.self"] == "true"
 }
 
-// resolvedPolicy returns the effective policy: DB override → label fallback.
+// resolvedPolicy returns the effective policy: DB override → label → global default.
 func (s *Server) resolvedPolicy(labels map[string]string, name string) string {
 	if s.deps.Policy != nil {
 		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
 			return p
 		}
 	}
-	return containerPolicy(labels)
+	var defaultPolicy string
+	if s.deps.Config != nil {
+		defaultPolicy = s.deps.Config.DefaultPolicy()
+	}
+	return containerPolicy(labels, defaultPolicy)
 }
 
 // getContainerLabels fetches labels for a named container, checking local

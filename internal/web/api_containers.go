@@ -37,12 +37,7 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		name := containerName(c)
-		policy := containerPolicy(c.Labels)
-		if s.deps.Policy != nil {
-			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-				policy = p
-			}
-		}
+		policy := s.resolvedPolicy(c.Labels, name)
 
 		maintenance, err := s.deps.Store.GetMaintenance(name)
 		if err != nil {
