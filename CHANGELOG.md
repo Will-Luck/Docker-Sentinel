@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Real-time container log streaming:** Live log tailing via SSE with Follow
+  mode that survives container restarts and stream disconnects. Includes 30s
+  heartbeat to survive nginx proxy timeouts.
+- **Container control actions:** Stop, start, and restart buttons in the
+  container detail logs toolbar.
+- **Auto self-update mode:** New setting that triggers Sentinel self-update
+  automatically after each scan when no other updates are in progress.
+  Configurable as a global persistent setting in the UI.
 - **OIDC group/role mapping:** Map IdP group claims to Sentinel roles so admins
   don't manually assign roles to OIDC users. Configurable group claim name,
   priority-based role resolution (admin > operator > viewer), and settings UI.
@@ -31,6 +39,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that exceed the threshold.
 
 ### Fixed
+- **IsIdle() race condition:** Replaced racy TryLock-based idle check with an
+  atomic counter that tracks in-progress updates
+- **SSE log stream injection:** Escape newlines and carriage returns in log data
+  before writing to SSE frames to prevent event injection
+- **Self-update concurrent guard:** Prevent multiple simultaneous self-update
+  goroutines with an atomic bool gate; re-queue on failure
+- **Notification dispatch ignores context:** `dispatch()` now passes the caller's
+  context to notifier `Send()` calls instead of always using `context.Background()`
+- **EventSource leak on navigation:** Clean up SSE log stream connection when
+  user navigates away from the page
+- **Scroll listener accumulation:** Deduplicate scroll handler on log stream
+  reconnect to prevent listener pile-up
+- **Reconfigure() timer race:** Flush pending batch events and stop timer before
+  swapping notifier chain to prevent dispatching to stale notifiers
+- **Inconsistent ContainerNames in single events:** Single-event batch
+  pass-through now populates `ContainerNames` for consumer consistency
+- Queue page self-update button not working (#58)
 - Throttle `UpdateLastSeen` BoltDB writes to every 5 minutes per agent instead
   of every 30-second heartbeat, reducing disk I/O ~10x at scale (#50)
 

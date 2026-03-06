@@ -157,6 +157,7 @@ type Updater struct {
 	ghcrCache        *registry.GHCRCache        // optional: GHCR alternative detection cache
 	ghcrSaver        func([]byte) error         // optional: persist GHCR cache after checks
 	updating         sync.Map                   // map[string]*sync.Mutex — per-container update locks
+	activeUpdates    atomic.Int32               // tracks number of in-progress updates for IsIdle()
 	hooks            *hooks.Runner              // optional: lifecycle hook runner
 	deps             *deps.Graph                // optional: dependency graph (rebuilt each scan)
 	cluster          ClusterScanner             // optional: nil = single-host mode
@@ -244,7 +245,11 @@ func (u *Updater) Close() {
 func (u *Updater) tryLock(name string) bool {
 	mu := &sync.Mutex{}
 	actual, _ := u.updating.LoadOrStore(name, mu)
-	return actual.(*sync.Mutex).TryLock()
+	if actual.(*sync.Mutex).TryLock() {
+		u.activeUpdates.Add(1)
+		return true
+	}
+	return false
 }
 
 // unlock releases the per-container update lock and removes the entry
@@ -254,6 +259,7 @@ func (u *Updater) tryLock(name string) bool {
 func (u *Updater) unlock(name string) {
 	if val, ok := u.updating.LoadAndDelete(name); ok {
 		val.(*sync.Mutex).Unlock()
+		u.activeUpdates.Add(-1)
 	}
 }
 
@@ -273,17 +279,7 @@ func (u *Updater) IsUpdating(name string) bool {
 
 // IsIdle returns true when no container updates are in progress.
 func (u *Updater) IsIdle() bool {
-	idle := true
-	u.updating.Range(func(key, val any) bool {
-		mu := val.(*sync.Mutex)
-		if mu.TryLock() {
-			mu.Unlock()
-		} else {
-			idle = false
-		}
-		return idle // stop early if we find a locked mutex
-	})
-	return idle
+	return u.activeUpdates.Load() == 0
 }
 
 // SelfUpdateQueued reports whether the last scan found a Sentinel self-update.

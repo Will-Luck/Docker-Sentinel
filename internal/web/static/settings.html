@@ -477,7 +477,7 @@
                             <div class="setting-row">
                                 <div class="setting-info">
                                     <div class="setting-label">Self-Update Mode</div>
-                                    <div class="setting-desc">How Sentinel handles its own updates when a new version is detected</div>
+                                    <div class="setting-desc">How Sentinel handles its own updates when a new version is detected. Auto mode triggers a self-update after each scan completes and no other updates are in progress. This is a global persistent setting, not per-update.</div>
                                 </div>
                                 <select id="self-update-mode" class="setting-select" onchange="saveGeneralSetting('self_update_mode', this.value); document.getElementById('self-update-preview').textContent = this.options[this.selectedIndex].text;">
                                     <option value="manual">Manual (queue for approval)</option>
