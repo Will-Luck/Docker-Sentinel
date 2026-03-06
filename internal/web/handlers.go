@@ -179,12 +179,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				s.deps.Log.Debug("failed to load maintenance state", "name", n, "error", err)
 			}
-			policy := containerPolicy(c.Labels)
-			if s.deps.Policy != nil {
-				if p, ok := s.deps.Policy.GetPolicyOverride(n); ok {
-					policy = p
-				}
-			}
+			policy := s.resolvedPolicy(c.Labels, n)
 			tag := registry.ExtractTag(c.Image)
 			if tag == "" {
 				if idx := strings.LastIndex(c.Image, "/"); idx >= 0 {
@@ -228,13 +223,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 	if targetView == nil && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		for _, rc := range s.deps.Cluster.AllHostContainers() {
 			if rc.Name == name && (hostFilter == "" || rc.HostID == hostFilter) {
-				policy := containerPolicy(rc.Labels)
-				if s.deps.Policy != nil {
-					policyKey := rc.HostID + "::" + rc.Name
-					if p, ok := s.deps.Policy.GetPolicyOverride(policyKey); ok {
-						policy = p
-					}
-				}
+				policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
 				tag := registry.ExtractTag(rc.Image)
 				if tag == "" {
 					if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {
@@ -521,13 +510,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		policy := containerPolicy(rc.Labels)
-		if s.deps.Policy != nil {
-			policyKey := rc.HostID + "::" + rc.Name
-			if p, ok := s.deps.Policy.GetPolicyOverride(policyKey); ok {
-				policy = p
-			}
-		}
+		policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
 		tag := registry.ExtractTag(rc.Image)
 		if tag == "" {
 			if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {
@@ -600,12 +583,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
 		}
 
-		detailPolicy := containerPolicy(found.Labels)
-		if s.deps.Policy != nil {
-			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-				detailPolicy = p
-			}
-		}
+		detailPolicy := s.resolvedPolicy(found.Labels, name)
 
 		detailTag := registry.ExtractTag(found.Image)
 		if detailTag == "" {
