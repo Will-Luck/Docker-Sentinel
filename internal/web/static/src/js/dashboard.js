@@ -1029,6 +1029,138 @@ async function fetchContainerLogs(name, hostId) {
     }
 }
 
+// Follow mode: sticky user preference, survives stream disconnects.
+// logStreamSource: the current EventSource connection (transient).
+var logStreamSource = null;
+var _followMode = false;
+var _followName = '';
+var _followHostId = '';
+var _reconnectTimer = null;
+var _logScrollHandler = null;
+
+// Open (or reopen) the SSE log stream. Does not touch _followMode.
+function _connectLogStream() {
+    if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+
+    var logsEl = document.getElementById('container-logs');
+    if (!logsEl) return;
+
+    var linesEl = document.getElementById('log-lines');
+    var lines = linesEl ? linesEl.value : '50';
+    var url = '/api/containers/' + encodeURIComponent(_followName) + '/logs/stream?lines=' + lines;
+    var es = new EventSource(url);
+    logStreamSource = es;
+
+    var userScrolled = false;
+    if (_logScrollHandler) {
+        logsEl.removeEventListener('scroll', _logScrollHandler);
+    }
+    _logScrollHandler = function () {
+        var atBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
+        userScrolled = !atBottom;
+    };
+    logsEl.addEventListener('scroll', _logScrollHandler);
+
+    es.onmessage = function (e) {
+        logsEl.textContent += e.data + '\n';
+        if (!userScrolled) {
+            logsEl.scrollTop = logsEl.scrollHeight;
+        }
+    };
+
+    es.addEventListener('eof', function () {
+        es.close();
+        logStreamSource = null;
+        if (!_followMode) return;
+        logsEl.textContent += '\n--- stream ended, reconnecting... ---\n';
+        _scheduleReconnect();
+    });
+
+    es.onerror = function () {
+        console.warn('[sentinel] log stream error, readyState=' + es.readyState);
+        es.close();
+        logStreamSource = null;
+        if (!_followMode) return;
+        _scheduleReconnect();
+    };
+}
+
+function _scheduleReconnect() {
+    if (_reconnectTimer) return;
+    _reconnectTimer = setTimeout(function () {
+        _reconnectTimer = null;
+        if (_followMode) _connectLogStream();
+    }, 3000);
+}
+
+function _stopFollowMode() {
+    _followMode = false;
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    if (logStreamSource) { logStreamSource.close(); logStreamSource = null; }
+    var btn = document.getElementById('follow-btn');
+    if (btn) {
+        btn.textContent = 'Follow';
+        btn.classList.remove('btn-danger');
+        btn.classList.add('btn-outline');
+    }
+}
+
+function toggleLogStream(name, hostId) {
+    // Toggle off.
+    if (_followMode) {
+        _stopFollowMode();
+        return;
+    }
+
+    // Remote containers don't support streaming.
+    if (hostId) {
+        if (window.showToast) {
+            window.showToast('Log streaming is not available for remote containers', 'warning');
+        }
+        return;
+    }
+
+    // Toggle on.
+    _followMode = true;
+    _followName = name;
+    _followHostId = hostId;
+
+    var btn = document.getElementById('follow-btn');
+    if (btn) {
+        btn.textContent = 'Stop';
+        btn.classList.remove('btn-outline');
+        btn.classList.add('btn-danger');
+    }
+
+    var logsEl = document.getElementById('container-logs');
+    if (logsEl) logsEl.textContent = '';
+
+    _connectLogStream();
+}
+
+// Clean up log stream on page navigation to prevent lingering SSE connections.
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', function () {
+        _stopFollowMode();
+    });
+}
+
+function containerAction(action, btn) {
+    var name = window._containerName || (typeof _containerName !== 'undefined' ? _containerName : '');
+    var hostId = window._containerHostId || (typeof _containerHostId !== 'undefined' ? _containerHostId : '');
+    if (!name) return;
+
+    var endpoint = '/api/containers/' + encodeURIComponent(name) + '/' + action;
+    if (hostId) endpoint += '?host=' + encodeURIComponent(hostId);
+
+    apiPost(endpoint, null,
+        action.charAt(0).toUpperCase() + action.slice(1) + ' initiated',
+        'Failed to ' + action + ' ' + name,
+        btn
+    );
+}
+
 function togglePorts(el, e) {
     e.stopPropagation();
     el.closest('.cell-ports').classList.toggle('expanded');
@@ -1076,5 +1208,7 @@ export {
     recalcTabStats,
     setUpdateStatsFn,
     toggleManageMode,
-    fetchContainerLogs
+    fetchContainerLogs,
+    toggleLogStream,
+    containerAction
 };

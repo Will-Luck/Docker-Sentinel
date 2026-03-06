@@ -161,7 +161,7 @@
       });
     });
   }
-  function apiPost(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
+  function apiPost2(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
     var opts = { method: "POST" };
     if (body) {
       opts.headers = { "Content-Type": "application/json" };
@@ -991,6 +991,125 @@
       logsEl.textContent = "Error loading logs: " + err.message;
     }
   }
+  var logStreamSource = null;
+  var _followMode = false;
+  var _followName = "";
+  var _followHostId = "";
+  var _reconnectTimer = null;
+  var _logScrollHandler = null;
+  function _connectLogStream() {
+    if (logStreamSource) {
+      logStreamSource.close();
+      logStreamSource = null;
+    }
+    if (_reconnectTimer) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
+    }
+    var logsEl = document.getElementById("container-logs");
+    if (!logsEl) return;
+    var linesEl = document.getElementById("log-lines");
+    var lines = linesEl ? linesEl.value : "50";
+    var url = "/api/containers/" + encodeURIComponent(_followName) + "/logs/stream?lines=" + lines;
+    var es = new EventSource(url);
+    logStreamSource = es;
+    var userScrolled = false;
+    if (_logScrollHandler) {
+      logsEl.removeEventListener("scroll", _logScrollHandler);
+    }
+    _logScrollHandler = function() {
+      var atBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
+      userScrolled = !atBottom;
+    };
+    logsEl.addEventListener("scroll", _logScrollHandler);
+    es.onmessage = function(e) {
+      logsEl.textContent += e.data + "\n";
+      if (!userScrolled) {
+        logsEl.scrollTop = logsEl.scrollHeight;
+      }
+    };
+    es.addEventListener("eof", function() {
+      es.close();
+      logStreamSource = null;
+      if (!_followMode) return;
+      logsEl.textContent += "\n--- stream ended, reconnecting... ---\n";
+      _scheduleReconnect();
+    });
+    es.onerror = function() {
+      console.warn("[sentinel] log stream error, readyState=" + es.readyState);
+      es.close();
+      logStreamSource = null;
+      if (!_followMode) return;
+      _scheduleReconnect();
+    };
+  }
+  function _scheduleReconnect() {
+    if (_reconnectTimer) return;
+    _reconnectTimer = setTimeout(function() {
+      _reconnectTimer = null;
+      if (_followMode) _connectLogStream();
+    }, 3e3);
+  }
+  function _stopFollowMode() {
+    _followMode = false;
+    if (_reconnectTimer) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
+    }
+    if (logStreamSource) {
+      logStreamSource.close();
+      logStreamSource = null;
+    }
+    var btn = document.getElementById("follow-btn");
+    if (btn) {
+      btn.textContent = "Follow";
+      btn.classList.remove("btn-danger");
+      btn.classList.add("btn-outline");
+    }
+  }
+  function toggleLogStream(name, hostId) {
+    if (_followMode) {
+      _stopFollowMode();
+      return;
+    }
+    if (hostId) {
+      if (window.showToast) {
+        window.showToast("Log streaming is not available for remote containers", "warning");
+      }
+      return;
+    }
+    _followMode = true;
+    _followName = name;
+    _followHostId = hostId;
+    var btn = document.getElementById("follow-btn");
+    if (btn) {
+      btn.textContent = "Stop";
+      btn.classList.remove("btn-outline");
+      btn.classList.add("btn-danger");
+    }
+    var logsEl = document.getElementById("container-logs");
+    if (logsEl) logsEl.textContent = "";
+    _connectLogStream();
+  }
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", function() {
+      _stopFollowMode();
+    });
+  }
+  function containerAction(action, btn) {
+    var name = window._containerName || (typeof _containerName !== "undefined" ? _containerName : "");
+    var hostId = window._containerHostId || (typeof _containerHostId !== "undefined" ? _containerHostId : "");
+    if (!name) return;
+    var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
+    if (hostId) endpoint += "?host=" + encodeURIComponent(hostId);
+    apiPost(
+      endpoint,
+      null,
+      action.charAt(0).toUpperCase() + action.slice(1) + " initiated",
+      "Failed to " + action + " " + name,
+      btn
+    );
+  }
   function togglePorts(el, e) {
     e.stopPropagation();
     el.closest(".cell-ports").classList.toggle("expanded");
@@ -1071,7 +1190,7 @@
   }
   function approveUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
+    apiPost2(
       "/api/approve/" + encodeURIComponent(key),
       null,
       "Approved update for " + key,
@@ -1084,7 +1203,7 @@
   }
   function ignoreUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
+    apiPost2(
       "/api/ignore/" + encodeURIComponent(key),
       null,
       "Version ignored for " + key,
@@ -1097,7 +1216,7 @@
   }
   function rejectUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
+    apiPost2(
       "/api/reject/" + encodeURIComponent(key),
       null,
       "Rejected update for " + key,
@@ -1109,9 +1228,18 @@
     );
   }
   var _bulkInProgress = false;
-  function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
-    var rows = document.querySelectorAll(".table-wrap tbody tr.container-row[data-queue-key]");
-    if (!rows.length) return;
+  function bulkQueueAction(apiPath, actionLabel, triggerBtn, skipSelf) {
+    var allRows = document.querySelectorAll(".table-wrap tbody tr.container-row[data-queue-key]");
+    if (!allRows.length) return;
+    var rows = [];
+    for (var s = 0; s < allRows.length; s++) {
+      if (skipSelf && allRows[s].getAttribute("data-self") === "true") continue;
+      rows.push(allRows[s]);
+    }
+    if (!rows.length) {
+      showToast("No eligible containers for " + actionLabel + " (Sentinel skipped)", "info");
+      return;
+    }
     _bulkInProgress = true;
     var headerBtns = document.querySelectorAll(".queue-header .btn");
     for (var i = 0; i < headerBtns.length; i++) headerBtns[i].disabled = true;
@@ -1200,7 +1328,7 @@
   }
   function approveAll(event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    bulkQueueAction("approve", "approved", btn);
+    bulkQueueAction("approve", "approved", btn, true);
   }
   function ignoreAll(event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
@@ -1228,7 +1356,7 @@
         }
       }, 12e4);
     }
-    apiPost(
+    apiPost2(
       url,
       null,
       "Update started for " + name,
@@ -1239,7 +1367,7 @@
     var btn = event && event.target ? event.target.closest(".btn") : null;
     var url = "/api/check/" + encodeURIComponent(name);
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
-    apiPost(
+    apiPost2(
       url,
       null,
       "Checking for updates on " + name,
@@ -1249,7 +1377,7 @@
   }
   function triggerRollback(name, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    apiPost(
+    apiPost2(
       "/api/containers/" + encodeURIComponent(name) + "/rollback",
       null,
       "Rollback started for " + name,
@@ -1260,7 +1388,7 @@
   function changePolicy(name, newPolicy, hostId) {
     var url = "/api/containers/" + encodeURIComponent(name) + "/policy";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
-    apiPost(
+    apiPost2(
       url,
       { policy: newPolicy },
       "Policy changed to " + newPolicy + " for " + name,
@@ -1299,7 +1427,7 @@
     showConfirm("Self-Update", "<p>This will restart Sentinel to apply the update. Continue?</p>").then(function(confirmed) {
       if (!confirmed) return;
       localStorage.setItem("sentinel-self-updating", "1");
-      apiPost(
+      apiPost2(
         "/api/self-update",
         null,
         "Self-update initiated \u2014 Sentinel will restart shortly",
@@ -1501,7 +1629,7 @@
         }
       }, 6e4);
     }
-    apiPost(
+    apiPost2(
       "/api/services/" + encodeURIComponent(name) + "/update",
       null,
       "Service update started for " + name,
@@ -1517,7 +1645,7 @@
     }
   }
   function changeSvcPolicy(name, newPolicy) {
-    apiPost(
+    apiPost2(
       "/api/containers/" + encodeURIComponent(name) + "/policy",
       { policy: newPolicy },
       "Policy changed to " + newPolicy + " for " + name,
@@ -1539,7 +1667,7 @@
         }
       }, 6e4);
     }
-    apiPost(
+    apiPost2(
       "/api/services/" + encodeURIComponent(name) + "/rollback",
       null,
       "Rollback started for " + name,
@@ -1581,7 +1709,7 @@
     } else {
       delete _svcTaskCache[name];
     }
-    apiPost(
+    apiPost2(
       "/api/services/" + encodeURIComponent(name) + "/scale",
       { replicas },
       "Scaled " + name + " to " + replicas + " replicas",
@@ -3706,7 +3834,7 @@
     var ch = notificationChannels[index];
     if (!ch) return;
     var btn = document.querySelectorAll('.channel-card[data-index="' + index + '"] .btn')[0];
-    apiPost(
+    apiPost2(
       "/api/settings/notifications/test",
       { id: ch.id },
       "Test sent to " + (ch.name || ch.type),
@@ -3716,7 +3844,7 @@
   }
   function testNotification() {
     var btn = document.getElementById("notify-test-btn");
-    apiPost(
+    apiPost2(
       "/api/settings/notifications/test",
       null,
       "Test notification sent to all channels",
@@ -5304,7 +5432,7 @@
   window.csrfToken = getCSRFToken;
   window.escapeHTML = escapeHTML;
   window.showConfirm = showConfirm;
-  window.apiPost = apiPost;
+  window.apiPost = apiPost2;
   window.activateFilter = activateFilter;
   window.resumeScanning = resumeScanning;
   window.expandAllStacks = expandAllStacks;
@@ -5330,6 +5458,8 @@
   window.checkPauseState = checkPauseState;
   window.refreshLastScan = refreshLastScan;
   window.fetchContainerLogs = fetchContainerLogs;
+  window.toggleLogStream = toggleLogStream;
+  window.containerAction = containerAction;
   window.toggleQueueAccordion = toggleQueueAccordion;
   window.approveUpdate = approveUpdate;
   window.ignoreUpdate = ignoreUpdate;
@@ -5549,7 +5679,7 @@
       var endpoint = "/api/containers/" + encodeURIComponent(name) + "/" + action;
       if (hostId) endpoint += "?host=" + encodeURIComponent(hostId);
       var label = action.charAt(0).toUpperCase() + action.slice(1);
-      apiPost(
+      apiPost2(
         endpoint,
         null,
         label + " initiated for " + name,

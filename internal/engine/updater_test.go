@@ -66,6 +66,56 @@ func TestScanChecksSentinelButNeverAutoUpdates(t *testing.T) {
 	if result.Updated != 0 {
 		t.Errorf("Updated = %d, want 0 (sentinel must never be auto-updated)", result.Updated)
 	}
+
+	// selfUpdateQueued flag and key should be set.
+	if !u.SelfUpdateQueued() {
+		t.Error("SelfUpdateQueued() = false, want true after sentinel update detected")
+	}
+	if key := u.SelfUpdateKey(); key != "sentinel" {
+		t.Errorf("SelfUpdateKey() = %q, want %q", key, "sentinel")
+	}
+}
+
+func TestSelfUpdateQueuedClearedAtScanStart(t *testing.T) {
+	mock := newMockDocker()
+	// No containers — scan will find nothing and the flag should remain cleared.
+	mock.containers = []container.Summary{}
+
+	u, _ := newTestUpdater(t, mock)
+
+	// Pre-set the flag as if a previous scan found an update.
+	u.selfUpdateQueued.Store(true)
+	u.selfUpdateKey.Store("old-sentinel")
+
+	u.Scan(context.Background(), ScanScheduled)
+
+	if u.SelfUpdateQueued() {
+		t.Error("SelfUpdateQueued() should be false after scan with no sentinel container")
+	}
+}
+
+func TestIsIdle(t *testing.T) {
+	mock := newMockDocker()
+	u, _ := newTestUpdater(t, mock)
+
+	// Initially idle (no updates in progress).
+	if !u.IsIdle() {
+		t.Error("IsIdle() = false, want true when no updates running")
+	}
+
+	// Simulate an update in progress by acquiring a lock.
+	if !u.tryLock("test-container") {
+		t.Fatal("failed to acquire lock for test-container")
+	}
+	if u.IsIdle() {
+		t.Error("IsIdle() = true, want false when update in progress")
+	}
+
+	// Release the lock.
+	u.unlock("test-container")
+	if !u.IsIdle() {
+		t.Error("IsIdle() = false, want true after unlock")
+	}
 }
 
 func TestScanSkipsUnresolvableImage(t *testing.T) {

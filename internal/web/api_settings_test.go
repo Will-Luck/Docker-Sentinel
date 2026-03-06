@@ -425,3 +425,41 @@ func TestApiClusterSettingsSave_ValidPolicies(t *testing.T) {
 		}
 	}
 }
+
+func TestApiSaveGeneralSetting_SelfUpdateMode(t *testing.T) {
+	ms := newMockSettingsStore()
+	srv := newTestServer(ms)
+
+	// Valid: "manual"
+	body := `{"key":"self_update_mode","value":"manual"}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/settings/general", strings.NewReader(body))
+	srv.apiSaveGeneralSetting(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("manual: status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if ms.data["self_update_mode"] != "manual" {
+		t.Errorf("stored = %q, want %q", ms.data["self_update_mode"], "manual")
+	}
+
+	// Valid: "auto"
+	body = `{"key":"self_update_mode","value":"auto"}`
+	w = httptest.NewRecorder()
+	r = httptest.NewRequest(http.MethodPost, "/api/settings/general", strings.NewReader(body))
+	srv.apiSaveGeneralSetting(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("auto: status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if ms.data["self_update_mode"] != "auto" {
+		t.Errorf("stored = %q, want %q", ms.data["self_update_mode"], "auto")
+	}
+
+	// Invalid: "bogus"
+	body = `{"key":"self_update_mode","value":"bogus"}`
+	w = httptest.NewRecorder()
+	r = httptest.NewRequest(http.MethodPost, "/api/settings/general", strings.NewReader(body))
+	srv.apiSaveGeneralSetting(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("bogus: status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/swarm"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/backup"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
@@ -329,6 +331,10 @@ func (a *dockerAdapter) InspectContainer(ctx context.Context, id string) (web.Co
 
 func (a *dockerAdapter) ContainerLogs(ctx context.Context, containerID string, lines int) (string, error) {
 	return a.c.ContainerLogs(ctx, containerID, lines)
+}
+
+func (a *dockerAdapter) ContainerLogStream(ctx context.Context, containerID string, tail int) (io.ReadCloser, bool, error) {
+	return a.c.ContainerLogStream(ctx, containerID, tail)
 }
 
 // restartAdapter bridges docker.Client to web.ContainerRestarter.
@@ -1635,4 +1641,42 @@ func (a *portConfigStoreAdapter) AllPortConfigs() (map[string]*web.PortConfig, e
 		result[name] = wpc
 	}
 	return result, nil
+}
+
+// --- Backup adapter ---
+
+type backupAdapter struct {
+	m *backup.Manager
+}
+
+func (a *backupAdapter) CreateBackup(ctx context.Context) (*web.BackupInfo, error) {
+	info, err := a.m.CreateBackup(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &web.BackupInfo{
+		Filename:  info.Filename,
+		Size:      info.Size,
+		CreatedAt: info.CreatedAt,
+	}, nil
+}
+
+func (a *backupAdapter) List() ([]web.BackupInfo, error) {
+	list, err := a.m.List()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]web.BackupInfo, len(list))
+	for i, info := range list {
+		result[i] = web.BackupInfo{
+			Filename:  info.Filename,
+			Size:      info.Size,
+			CreatedAt: info.CreatedAt,
+		}
+	}
+	return result, nil
+}
+
+func (a *backupAdapter) FilePath(filename string) (string, error) {
+	return a.m.FilePath(filename)
 }

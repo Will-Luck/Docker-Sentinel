@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -14,23 +15,27 @@ import (
 
 // OIDCConfig holds the OIDC provider configuration.
 type OIDCConfig struct {
-	Enabled      bool
-	IssuerURL    string
-	ClientID     string
-	ClientSecret string
-	RedirectURL  string
-	AutoCreate   bool   // auto-create users from OIDC claims
-	DefaultRole  string // role for auto-created users (default "viewer")
+	Enabled       bool
+	IssuerURL     string
+	ClientID      string
+	ClientSecret  string
+	RedirectURL   string
+	AutoCreate    bool              // auto-create users from OIDC claims
+	DefaultRole   string            // role for auto-created users (default "viewer")
+	GroupClaim    string            // claim name in ID token (default "groups")
+	GroupMappings map[string]string // IdP group name -> Sentinel role ID
 }
 
 // OIDCProvider wraps the OIDC discovery and OAuth2 flow.
 type OIDCProvider struct {
-	mu          sync.RWMutex
-	provider    *oidc.Provider
-	verifier    *oidc.IDTokenVerifier
-	oauth2Cfg   oauth2.Config
-	autoCreate  bool
-	defaultRole string
+	mu            sync.RWMutex
+	provider      *oidc.Provider
+	verifier      *oidc.IDTokenVerifier
+	oauth2Cfg     oauth2.Config
+	autoCreate    bool
+	defaultRole   string
+	groupClaim    string            // ID token claim containing group list
+	groupMappings map[string]string // IdP group -> Sentinel role ID
 }
 
 // OIDCUserInfo represents the user info extracted from OIDC claims.
@@ -39,6 +44,7 @@ type OIDCUserInfo struct {
 	Email    string
 	Name     string
 	Username string
+	Groups   []string // groups from the ID token group claim
 }
 
 // NewOIDCProvider initialises the OIDC provider via discovery.
@@ -66,12 +72,19 @@ func NewOIDCProvider(ctx context.Context, cfg OIDCConfig) (*OIDCProvider, error)
 		defaultRole = RoleViewerID
 	}
 
+	groupClaim := cfg.GroupClaim
+	if groupClaim == "" {
+		groupClaim = "groups"
+	}
+
 	return &OIDCProvider{
-		provider:    provider,
-		verifier:    provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
-		oauth2Cfg:   oauth2Cfg,
-		autoCreate:  cfg.AutoCreate,
-		defaultRole: defaultRole,
+		provider:      provider,
+		verifier:      provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		oauth2Cfg:     oauth2Cfg,
+		autoCreate:    cfg.AutoCreate,
+		defaultRole:   defaultRole,
+		groupClaim:    groupClaim,
+		groupMappings: cfg.GroupMappings,
 	}, nil
 }
 
@@ -121,11 +134,38 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code string) (*OIDCUserInfo
 		username = idToken.Subject
 	}
 
+	// Extract group claim. The claim name is configurable (e.g. "groups",
+	// "roles", "memberOf") and the value may be []string or []interface{}.
+	p.mu.RLock()
+	groupClaim := p.groupClaim
+	p.mu.RUnlock()
+
+	var groups []string
+	if groupClaim != "" {
+		var rawClaims map[string]json.RawMessage
+		if err := idToken.Claims(&rawClaims); err == nil {
+			if raw, ok := rawClaims[groupClaim]; ok {
+				// Try []string first, then []interface{} with string conversion.
+				if json.Unmarshal(raw, &groups) != nil {
+					var iface []interface{}
+					if json.Unmarshal(raw, &iface) == nil {
+						for _, v := range iface {
+							if s, ok := v.(string); ok {
+								groups = append(groups, s)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return &OIDCUserInfo{
 		Subject:  idToken.Subject,
 		Email:    claims.Email,
 		Name:     claims.Name,
 		Username: username,
+		Groups:   groups,
 	}, nil
 }
 
@@ -143,6 +183,48 @@ func (p *OIDCProvider) DefaultRole() string {
 	return p.defaultRole
 }
 
+// GroupClaim returns the configured group claim name.
+func (p *OIDCProvider) GroupClaim() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.groupClaim
+}
+
+// GroupMappings returns the group-to-role mapping configuration.
+func (p *OIDCProvider) GroupMappings() map[string]string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.groupMappings
+}
+
+// ResolveRoleFromGroups determines the highest-privilege Sentinel role from
+// a user's IdP groups. Returns defaultRole if no mappings match.
+// Priority order: admin > operator > viewer.
+func ResolveRoleFromGroups(groups []string, mappings map[string]string, defaultRole string) string {
+	if len(groups) == 0 || len(mappings) == 0 {
+		return defaultRole
+	}
+
+	rolePriority := map[string]int{
+		RoleAdminID:    3,
+		RoleOperatorID: 2,
+		RoleViewerID:   1,
+	}
+
+	bestRole := defaultRole
+	bestPri := rolePriority[defaultRole]
+
+	for _, g := range groups {
+		if roleID, ok := mappings[g]; ok {
+			if pri, ok := rolePriority[roleID]; ok && pri > bestPri {
+				bestRole = roleID
+				bestPri = pri
+			}
+		}
+	}
+	return bestRole
+}
+
 // GenerateOIDCState creates a random 16-byte hex-encoded state parameter.
 func GenerateOIDCState() (string, error) {
 	b := make([]byte, 16)
@@ -153,7 +235,13 @@ func GenerateOIDCState() (string, error) {
 }
 
 // LoginWithOIDC finds or creates a user from OIDC claims and creates a session.
-func (s *Service) LoginWithOIDC(ctx context.Context, info *OIDCUserInfo, autoCreate bool, defaultRole, ip, userAgent string) (*Session, error) {
+// When groupMappings is non-empty, the user's role is resolved from their IdP
+// groups on every login (both new and existing users), keeping Sentinel roles
+// in sync with the identity provider.
+func (s *Service) LoginWithOIDC(ctx context.Context, info *OIDCUserInfo, autoCreate bool, defaultRole string, groupMappings map[string]string, ip, userAgent string) (*Session, error) {
+	// Resolve the target role from groups (falls back to defaultRole).
+	targetRole := ResolveRoleFromGroups(info.Groups, groupMappings, defaultRole)
+
 	// Try to find existing user by username.
 	user, err := s.Users.GetUserByUsername(info.Username)
 	if err != nil {
@@ -167,12 +255,12 @@ func (s *Service) LoginWithOIDC(ctx context.Context, info *OIDCUserInfo, autoCre
 			return nil, fmt.Errorf("user %q not found and auto-create is disabled", info.Username)
 		}
 
-		// Validate the default role.
-		switch defaultRole {
+		// Validate the resolved role.
+		switch targetRole {
 		case RoleAdminID, RoleOperatorID, RoleViewerID:
 			// valid
 		default:
-			defaultRole = RoleViewerID
+			targetRole = RoleViewerID
 		}
 
 		// Create with a random password (user authenticates via OIDC, not password).
@@ -194,13 +282,18 @@ func (s *Service) LoginWithOIDC(ctx context.Context, info *OIDCUserInfo, autoCre
 			ID:           userID,
 			Username:     info.Username,
 			PasswordHash: hash,
-			RoleID:       defaultRole,
+			RoleID:       targetRole,
 			CreatedAt:    time.Now().UTC(),
 			UpdatedAt:    time.Now().UTC(),
 		}
 		if err := s.Users.CreateUser(*user); err != nil {
 			return nil, fmt.Errorf("create OIDC user: %w", err)
 		}
+	} else if len(groupMappings) > 0 && user.RoleID != targetRole {
+		// Existing user with group mappings: sync role from IdP.
+		user.RoleID = targetRole
+		user.UpdatedAt = time.Now().UTC()
+		_ = s.Users.UpdateUser(*user)
 	}
 
 	// Create session (same pattern as LoginWithWebAuthn).

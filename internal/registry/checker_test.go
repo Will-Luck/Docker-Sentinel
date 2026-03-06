@@ -3,6 +3,8 @@ package registry
 import (
 	"context"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
@@ -60,6 +62,9 @@ func (m *mockDockerForRegistry) ExecContainer(_ context.Context, _ string, _ []s
 }
 func (m *mockDockerForRegistry) ContainerLogs(_ context.Context, _ string, _ int) (string, error) {
 	return "", nil
+}
+func (m *mockDockerForRegistry) ContainerLogStream(_ context.Context, _ string, _ int) (io.ReadCloser, bool, error) {
+	return io.NopCloser(strings.NewReader("")), false, nil
 }
 func (m *mockDockerForRegistry) IsSwarmManager(_ context.Context) bool { return false }
 func (m *mockDockerForRegistry) ListServices(_ context.Context) ([]swarm.Service, error) {

@@ -142,29 +142,32 @@ type RemoteUpdateResult struct {
 
 // Updater performs container scanning and update operations.
 type Updater struct {
-	docker      docker.API
-	checker     *registry.Checker
-	store       *store.Store
-	queue       *Queue
-	cfg         *config.Config
-	log         *logging.Logger
-	clock       clock.Clock
-	notifier    *notify.Multi
-	events      *events.Bus
-	settings    SettingsReader
-	rateTracker *registry.RateLimitTracker // optional: rate limit awareness
-	rateSaver   func([]byte) error         // optional: persist rate limits after scan
-	ghcrCache   *registry.GHCRCache        // optional: GHCR alternative detection cache
-	ghcrSaver   func([]byte) error         // optional: persist GHCR cache after checks
-	updating    sync.Map                   // map[string]*sync.Mutex — per-container update locks
-	hooks       *hooks.Runner              // optional: lifecycle hook runner
-	deps        *deps.Graph                // optional: dependency graph (rebuilt each scan)
-	cluster     ClusterScanner             // optional: nil = single-host mode
-	haDiscovery *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
-	portainer   PortainerScanner           // optional: nil = no Portainer integration
-	ghcrWg      sync.WaitGroup             // tracks background GHCR alternative checks
-	ghcrRunning atomic.Bool                // prevents concurrent GHCR checks
-	ghcrCancel  context.CancelFunc         // cancels the running GHCR check on shutdown
+	docker           docker.API
+	checker          *registry.Checker
+	store            *store.Store
+	queue            *Queue
+	cfg              *config.Config
+	log              *logging.Logger
+	clock            clock.Clock
+	notifier         *notify.Multi
+	events           *events.Bus
+	settings         SettingsReader
+	rateTracker      *registry.RateLimitTracker // optional: rate limit awareness
+	rateSaver        func([]byte) error         // optional: persist rate limits after scan
+	ghcrCache        *registry.GHCRCache        // optional: GHCR alternative detection cache
+	ghcrSaver        func([]byte) error         // optional: persist GHCR cache after checks
+	updating         sync.Map                   // map[string]*sync.Mutex — per-container update locks
+	activeUpdates    atomic.Int32               // tracks number of in-progress updates for IsIdle()
+	hooks            *hooks.Runner              // optional: lifecycle hook runner
+	deps             *deps.Graph                // optional: dependency graph (rebuilt each scan)
+	cluster          ClusterScanner             // optional: nil = single-host mode
+	haDiscovery      *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
+	portainer        PortainerScanner           // optional: nil = no Portainer integration
+	ghcrWg           sync.WaitGroup             // tracks background GHCR alternative checks
+	ghcrRunning      atomic.Bool                // prevents concurrent GHCR checks
+	ghcrCancel       context.CancelFunc         // cancels the running GHCR check on shutdown
+	selfUpdateQueued atomic.Bool                // set when a self-update is queued during scan
+	selfUpdateKey    atomic.Value               // stores queue key (string) of the self-update entry
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -242,7 +245,11 @@ func (u *Updater) Close() {
 func (u *Updater) tryLock(name string) bool {
 	mu := &sync.Mutex{}
 	actual, _ := u.updating.LoadOrStore(name, mu)
-	return actual.(*sync.Mutex).TryLock()
+	if actual.(*sync.Mutex).TryLock() {
+		u.activeUpdates.Add(1)
+		return true
+	}
+	return false
 }
 
 // unlock releases the per-container update lock and removes the entry
@@ -252,6 +259,7 @@ func (u *Updater) tryLock(name string) bool {
 func (u *Updater) unlock(name string) {
 	if val, ok := u.updating.LoadAndDelete(name); ok {
 		val.(*sync.Mutex).Unlock()
+		u.activeUpdates.Add(-1)
 	}
 }
 
@@ -267,6 +275,25 @@ func (u *Updater) IsUpdating(name string) bool {
 		return false
 	}
 	return true
+}
+
+// IsIdle returns true when no container updates are in progress.
+func (u *Updater) IsIdle() bool {
+	return u.activeUpdates.Load() == 0
+}
+
+// SelfUpdateQueued reports whether the last scan found a Sentinel self-update.
+func (u *Updater) SelfUpdateQueued() bool {
+	return u.selfUpdateQueued.Load()
+}
+
+// SelfUpdateKey returns the queue key of the queued self-update, if any.
+func (u *Updater) SelfUpdateKey() string {
+	v := u.selfUpdateKey.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
 }
 
 // loadFilters reads filter patterns from the settings store.
@@ -437,6 +464,7 @@ func (u *Updater) maintenanceWindow() string {
 func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	scanStart := time.Now()
 	result := ScanResult{}
+	u.selfUpdateQueued.Store(false)
 
 	if c := u.scanConcurrency(); c > 1 {
 		u.log.Info("scan concurrency enabled (experimental)", "concurrency", c)
@@ -793,6 +821,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
 				ResolvedTargetVersion:  check.ResolvedTargetVersion,
 			})
+			u.selfUpdateQueued.Store(true)
+			u.selfUpdateKey.Store(name) // queue key for local self-container is just the name
 			u.log.Info("sentinel update detected, queued for manual action", "name", name)
 			result.Queued++
 			continue
