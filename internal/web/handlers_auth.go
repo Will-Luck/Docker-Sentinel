@@ -943,6 +943,7 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	session, err := s.deps.Auth.LoginWithOIDC(
 		r.Context(), userInfo,
 		provider.AutoCreate(), provider.DefaultRole(),
+		provider.GroupMappings(),
 		ip, r.UserAgent(),
 	)
 	if err != nil {

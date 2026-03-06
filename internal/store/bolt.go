@@ -133,6 +133,12 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB returns the underlying BoltDB instance.
+// Used by the backup package for hot backups via Tx.WriteTo().
+func (s *Store) DB() *bolt.DB {
+	return s.db
+}
+
 // SaveSnapshot stores a container inspect JSON snapshot.
 // Key format: "{name}::{RFC3339Nano}" for chronological ordering.
 func (s *Store) SaveSnapshot(name string, data []byte) error {
