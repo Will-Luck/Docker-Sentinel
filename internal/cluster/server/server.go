@@ -440,8 +440,9 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		s.pendingMu.Unlock()
 
 		s.registry.SetDisconnected(hostID, streamErr)
-		if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
-			s.log.Warn("failed to update last seen on disconnect", "hostID", hostID, "error", err)
+		// Force-persist LastSeen on disconnect so it survives server restart.
+		if err := s.registry.PersistLastSeen(hostID); err != nil {
+			s.log.Warn("failed to persist last seen on disconnect", "hostID", hostID, "error", err)
 		}
 
 		cat, _ := classifyDisconnect(streamErr)

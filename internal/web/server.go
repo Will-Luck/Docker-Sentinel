@@ -39,6 +39,7 @@ type Dependencies struct {
 	Stopper             ContainerStopper
 	Starter             ContainerStarter
 	LogViewer           ContainerLogViewer
+	LogStreamer         ContainerLogStreamer
 	Registry            RegistryVersionChecker
 	RegistryChecker     RegistryChecker
 	TagLister           RegistryTagLister
@@ -65,6 +66,7 @@ type Dependencies struct {
 	Portainer           PortainerProvider                              // nil when Portainer not configured
 	NPM                 NPMProvider                                    // nil when NPM not configured; set by NPMInitFunc on first successful test
 	NPMInitFunc         func(ctx context.Context) (NPMProvider, error) // creates NPM provider from saved settings
+	Backup              BackupManager                                  // nil when backup not configured
 	PortConfigs         PortConfigStore                                // nil when store not available
 	VersionScope        VersionScopeUpdater                            // nil-safe: updates checker's default scope at runtime
 	MetricsEnabled      bool
@@ -330,6 +332,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/containers/{name}/tags", perm(auth.PermContainersView, s.apiContainerAllTags))
 	s.mux.Handle("GET /api/containers/{name}/row", perm(auth.PermContainersView, s.handleContainerRow))
 	s.mux.Handle("GET /api/containers/{name}/logs", perm(auth.PermContainersView, s.apiContainerLogs))
+	s.mux.Handle("GET /api/containers/{name}/logs/stream", perm(auth.PermContainersView, s.apiContainerLogStream))
 	s.mux.Handle("GET /api/stats", perm(auth.PermContainersView, s.handleDashboardStats))
 	s.mux.Handle("GET /api/events", perm(auth.PermContainersView, s.apiSSE))
 	s.mux.Handle("GET /api/queue", perm(auth.PermContainersView, s.apiQueue))
@@ -435,9 +438,13 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/show-stopped", perm(auth.PermSettingsModify, s.apiSetShowStopped))
 	s.mux.Handle("POST /api/settings/remove-volumes", perm(auth.PermSettingsModify, s.apiSetRemoveVolumes))
 	s.mux.Handle("POST /api/settings/scan-concurrency", perm(auth.PermSettingsModify, s.apiSetScanConcurrency))
+	s.mux.Handle("POST /api/settings/notify-batch-window", perm(auth.PermSettingsModify, s.apiSetNotifyBatchWindow))
 	s.mux.Handle("POST /api/settings/maintenance-window", perm(auth.PermSettingsModify, s.apiSetMaintenanceWindow))
 	s.mux.Handle("POST /api/settings/docker-tls", perm(auth.PermSettingsModify, s.apiSetDockerTLS))
 	s.mux.Handle("POST /api/settings/docker-tls-test", perm(auth.PermSettingsModify, s.apiTestDockerTLS))
+	s.mux.Handle("POST /api/backup/trigger", perm(auth.PermSettingsModify, s.apiBackupTrigger))
+	s.mux.Handle("GET /api/backup/list", perm(auth.PermSettingsModify, s.apiBackupList))
+	s.mux.Handle("GET /api/backup/download/{filename}", perm(auth.PermSettingsModify, s.apiBackupDownload))
 	s.mux.Handle("GET /api/config/export", perm(auth.PermSettingsModify, s.apiConfigExport))
 	s.mux.Handle("POST /api/config/import", perm(auth.PermSettingsModify, s.apiConfigImport))
 	s.mux.Handle("GET /api/grafana-dashboard", perm(auth.PermSettingsModify, s.apiGrafanaDashboard))

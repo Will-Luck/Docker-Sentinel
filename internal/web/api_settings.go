@@ -761,7 +761,7 @@ func (s *Server) apiSaveGeneralSetting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allowed := map[string]bool{
-		"web_port": true, "tls_mode": true, "log_format": true,
+		"web_port": true, "tls_mode": true, "log_format": true, "self_update_mode": true,
 	}
 	if !allowed[body.Key] {
 		writeError(w, http.StatusBadRequest, "unknown setting: "+body.Key)
@@ -787,6 +787,13 @@ func (s *Server) apiSaveGeneralSetting(w http.ResponseWriter, r *http.Request) {
 		case "json", "text":
 		default:
 			writeError(w, http.StatusBadRequest, "log_format must be json or text")
+			return
+		}
+	case "self_update_mode":
+		switch body.Value {
+		case "manual", "auto":
+		default:
+			writeError(w, http.StatusBadRequest, "self_update_mode must be manual or auto")
 			return
 		}
 	}
@@ -973,6 +980,62 @@ func (s *Server) apiSetScanConcurrency(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logEvent(r, "settings", "", "Scan concurrency set to "+val)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "scan concurrency set to " + val})
+}
+
+// apiSetNotifyBatchWindow configures the notification batching window.
+// When set to a non-zero duration, rapid-fire notifications during bulk updates
+// are buffered and sent as a single summary instead of N individual alerts.
+func (s *Server) apiSetNotifyBatchWindow(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Window string `json:"window"` // duration string e.g. "30s", "2m", "0" to disable
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	// Parse and validate. Empty or "0" means disabled.
+	var d time.Duration
+	if body.Window != "" && body.Window != "0" {
+		var err error
+		d, err = time.ParseDuration(body.Window)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid duration: "+err.Error())
+			return
+		}
+		if d < 0 {
+			writeError(w, http.StatusBadRequest, "batch window must be non-negative")
+			return
+		}
+		if d > 10*time.Minute {
+			writeError(w, http.StatusBadRequest, "batch window must not exceed 10 minutes")
+			return
+		}
+	}
+
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	val := d.String()
+	if d == 0 {
+		val = "0"
+	}
+	if err := s.deps.SettingsStore.SaveSetting("notification_batch_window", val); err != nil {
+		s.deps.Log.Error("failed to save notification_batch_window", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	if s.deps.NotifyReconfigurer != nil {
+		s.deps.NotifyReconfigurer.SetBatchWindow(d)
+	}
+
+	label := "disabled"
+	if d > 0 {
+		label = val
+	}
+	s.logEvent(r, "settings", "", "Notification batch window set to "+label)
+	writeJSON(w, http.StatusOK, map[string]string{"message": "notification batch window set to " + label})
 }
 
 // apiSetHADiscovery enables or disables Home Assistant MQTT auto-discovery.
@@ -1202,14 +1265,26 @@ func (s *Server) apiGetOIDCSettings(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	// Load group mapping configuration.
+	groupClaim := load("oidc_group_claim")
+	if groupClaim == "" {
+		groupClaim = "groups"
+	}
+	var groupMappings map[string]string
+	if raw := load("oidc_group_mappings"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &groupMappings)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":       load("oidc_enabled") == "true",
-		"issuer_url":    load("oidc_issuer_url"),
-		"client_id":     load("oidc_client_id"),
-		"client_secret": maskedSecret,
-		"redirect_url":  load("oidc_redirect_url"),
-		"auto_create":   load("oidc_auto_create") == "true",
-		"default_role":  load("oidc_default_role"),
+		"enabled":        load("oidc_enabled") == "true",
+		"issuer_url":     load("oidc_issuer_url"),
+		"client_id":      load("oidc_client_id"),
+		"client_secret":  maskedSecret,
+		"redirect_url":   load("oidc_redirect_url"),
+		"auto_create":    load("oidc_auto_create") == "true",
+		"default_role":   load("oidc_default_role"),
+		"group_claim":    groupClaim,
+		"group_mappings": groupMappings,
 	})
 }
 
@@ -1254,13 +1329,15 @@ func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Enabled      bool   `json:"enabled"`
-		IssuerURL    string `json:"issuer_url"`
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
-		RedirectURL  string `json:"redirect_url"`
-		AutoCreate   bool   `json:"auto_create"`
-		DefaultRole  string `json:"default_role"`
+		Enabled       bool              `json:"enabled"`
+		IssuerURL     string            `json:"issuer_url"`
+		ClientID      string            `json:"client_id"`
+		ClientSecret  string            `json:"client_secret"`
+		RedirectURL   string            `json:"redirect_url"`
+		AutoCreate    bool              `json:"auto_create"`
+		DefaultRole   string            `json:"default_role"`
+		GroupClaim    string            `json:"group_claim"`
+		GroupMappings map[string]string `json:"group_mappings"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -1293,6 +1370,18 @@ func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
 		req.ClientSecret = existing
 	}
 
+	// Serialise group mappings for storage.
+	groupMappingsJSON := ""
+	if len(req.GroupMappings) > 0 {
+		if data, err := json.Marshal(req.GroupMappings); err == nil {
+			groupMappingsJSON = string(data)
+		}
+	}
+	groupClaim := req.GroupClaim
+	if groupClaim == "" {
+		groupClaim = "groups"
+	}
+
 	pairs := []struct{ key, val string }{
 		{"oidc_enabled", enabledVal},
 		{"oidc_issuer_url", req.IssuerURL},
@@ -1301,6 +1390,8 @@ func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
 		{"oidc_redirect_url", req.RedirectURL},
 		{"oidc_auto_create", autoCreateVal},
 		{"oidc_default_role", req.DefaultRole},
+		{"oidc_group_claim", groupClaim},
+		{"oidc_group_mappings", groupMappingsJSON},
 	}
 
 	for _, p := range pairs {
@@ -1313,13 +1404,15 @@ func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
 	// Reinitialise the OIDC provider with the new settings.
 	if req.Enabled && req.IssuerURL != "" && req.ClientID != "" {
 		oidcCfg := auth.OIDCConfig{
-			Enabled:      true,
-			IssuerURL:    req.IssuerURL,
-			ClientID:     req.ClientID,
-			ClientSecret: req.ClientSecret,
-			RedirectURL:  req.RedirectURL,
-			AutoCreate:   req.AutoCreate,
-			DefaultRole:  req.DefaultRole,
+			Enabled:       true,
+			IssuerURL:     req.IssuerURL,
+			ClientID:      req.ClientID,
+			ClientSecret:  req.ClientSecret,
+			RedirectURL:   req.RedirectURL,
+			AutoCreate:    req.AutoCreate,
+			DefaultRole:   req.DefaultRole,
+			GroupClaim:    groupClaim,
+			GroupMappings: req.GroupMappings,
 		}
 		provider, err := auth.NewOIDCProvider(r.Context(), oidcCfg)
 		if err != nil {

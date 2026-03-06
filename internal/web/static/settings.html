@@ -465,6 +465,29 @@
                     </div>
                 </details>
 
+                <!-- Self-Update -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Self-Update</h2>
+                        <span class="accordion-preview" id="self-update-preview">Manual</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Self-Update Mode</div>
+                                    <div class="setting-desc">How Sentinel handles its own updates when a new version is detected. Auto mode triggers a self-update after each scan completes and no other updates are in progress. This is a global persistent setting, not per-update.</div>
+                                </div>
+                                <select id="self-update-mode" class="setting-select" onchange="saveGeneralSetting('self_update_mode', this.value); document.getElementById('self-update-preview').textContent = this.options[this.selectedIndex].text;">
+                                    <option value="manual">Manual (queue for approval)</option>
+                                    <option value="auto">Auto (update when idle)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- Docker Connection -->
                 <details class="accordion card">
                     <summary class="accordion-header">
@@ -1429,6 +1452,14 @@ function testPortainerConnection() {
             if (roleBtn) {
                 roleBtn.textContent = currentRole === 'agent' ? 'Switch to Server' : 'Switch to Agent';
             }
+            // Self-update mode.
+            var selfMode = document.getElementById('self-update-mode');
+            if (selfMode) {
+                selfMode.value = d['self_update_mode'] || 'manual';
+                var preview = document.getElementById('self-update-preview');
+                if (preview) preview.textContent = selfMode.options[selfMode.selectedIndex].text;
+            }
+
             // Docker TLS cert paths.
             var tlsCaEl = document.getElementById('docker-tls-ca');
             var tlsCertEl = document.getElementById('docker-tls-cert');

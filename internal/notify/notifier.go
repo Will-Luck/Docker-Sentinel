@@ -64,10 +64,19 @@ type Logger interface {
 
 // Multi fans out events to multiple notifiers.
 // It never returns errors — failures are logged but don't block updates.
+//
+// When batchWindow is set (> 0), batchable events are buffered and flushed
+// as aggregated summaries after the window elapses. Non-batchable events
+// (e.g. update_started, rollback) are always sent immediately.
 type Multi struct {
 	mu        sync.RWMutex
 	notifiers []Notifier
 	log       Logger
+
+	batchMu     sync.Mutex
+	batchWindow time.Duration // 0 = disabled (immediate send)
+	pending     []Event       // buffered events
+	flushTimer  *time.Timer   // fires after batchWindow
 }
 
 // NewMulti creates a dispatcher from the given notifiers.
@@ -78,7 +87,62 @@ func NewMulti(log Logger, notifiers ...Notifier) *Multi {
 // Notify sends an event to all registered notifiers.
 // Returns true if at least one notifier succeeded (or none are configured).
 // Errors are logged but never propagated — notifications must not block updates.
+//
+// When batching is enabled, batchable events are buffered and sent as
+// aggregated summaries after the batch window elapses. Non-batchable events
+// are always dispatched immediately.
 func (m *Multi) Notify(ctx context.Context, event Event) bool {
+	m.batchMu.Lock()
+	window := m.batchWindow
+	m.batchMu.Unlock()
+
+	// No batching or non-batchable event: send immediately.
+	if window <= 0 || !isBatchable(event.Type) {
+		return m.dispatch(ctx, event)
+	}
+
+	// Buffer the event and start/reset the flush timer.
+	m.batchMu.Lock()
+	m.pending = append(m.pending, event)
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+	}
+	m.flushTimer = time.AfterFunc(m.batchWindow, m.flush)
+	m.batchMu.Unlock()
+
+	return true
+}
+
+// SetBatchWindow configures the batching window at runtime.
+// A duration of 0 disables batching (events are sent immediately).
+func (m *Multi) SetBatchWindow(d time.Duration) {
+	m.batchMu.Lock()
+	m.batchWindow = d
+	m.batchMu.Unlock()
+}
+
+// Stop flushes any remaining pending events and stops the flush timer.
+// Call this on shutdown to ensure no buffered events are lost.
+func (m *Multi) Stop() {
+	m.batchMu.Lock()
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+		m.flushTimer = nil
+	}
+	pending := m.pending
+	m.pending = nil
+	m.batchMu.Unlock()
+
+	if len(pending) > 0 {
+		for _, event := range aggregateEvents(pending) {
+			m.dispatch(context.Background(), event)
+		}
+	}
+}
+
+// dispatch sends an event to all registered notifiers. This is the core
+// fan-out logic used by both immediate sends and batch flushes.
+func (m *Multi) dispatch(ctx context.Context, event Event) bool {
 	m.mu.RLock()
 	notifiers := m.notifiers
 	m.mu.RUnlock()
@@ -103,8 +167,44 @@ func (m *Multi) Notify(ctx context.Context, event Event) bool {
 	return anyOK
 }
 
+// flush aggregates pending events and dispatches the summaries.
+// Called by the flush timer after the batch window elapses.
+func (m *Multi) flush() {
+	m.batchMu.Lock()
+	pending := m.pending
+	m.pending = nil
+	m.flushTimer = nil
+	m.batchMu.Unlock()
+
+	if len(pending) == 0 {
+		return
+	}
+
+	for _, event := range aggregateEvents(pending) {
+		m.dispatch(context.Background(), event)
+	}
+}
+
 // Reconfigure replaces the notifier chain at runtime.
 func (m *Multi) Reconfigure(notifiers ...Notifier) {
+	// Flush pending events with the old notifier list before swapping.
+	m.batchMu.Lock()
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+		m.flushTimer = nil
+	}
+	pending := m.pending
+	m.pending = nil
+	m.batchMu.Unlock()
+
+	// Dispatch any buffered events with the old notifiers.
+	if len(pending) > 0 {
+		for _, event := range aggregateEvents(pending) {
+			m.dispatch(context.Background(), event)
+		}
+	}
+
+	// Now swap the notifier chain.
 	m.mu.Lock()
 	m.notifiers = notifiers
 	m.mu.Unlock()

@@ -116,9 +116,20 @@ function rejectUpdate(key, event) {
 // Staggered per-row API calls — rows fade out on success, re-enable on failure.
 var _bulkInProgress = false;
 
-function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
-    var rows = document.querySelectorAll(".table-wrap tbody tr.container-row[data-queue-key]");
-    if (!rows.length) return;
+function bulkQueueAction(apiPath, actionLabel, triggerBtn, skipSelf) {
+    var allRows = document.querySelectorAll(".table-wrap tbody tr.container-row[data-queue-key]");
+    if (!allRows.length) return;
+
+    // When skipSelf is true (e.g. "Approve All"), exclude self-protected rows.
+    var rows = [];
+    for (var s = 0; s < allRows.length; s++) {
+        if (skipSelf && allRows[s].getAttribute("data-self") === "true") continue;
+        rows.push(allRows[s]);
+    }
+    if (!rows.length) {
+        showToast("No eligible containers for " + actionLabel + " (Sentinel skipped)", "info");
+        return;
+    }
 
     _bulkInProgress = true;
 
@@ -214,7 +225,7 @@ function bulkQueueAction(apiPath, actionLabel, triggerBtn) {
 
 function approveAll(event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
-    bulkQueueAction("approve", "approved", btn);
+    bulkQueueAction("approve", "approved", btn, true);
 }
 
 function ignoreAll(event) {
