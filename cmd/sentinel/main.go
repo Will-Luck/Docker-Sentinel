@@ -477,8 +477,10 @@ func main() {
 		log.Info("swarm mode detected — service monitoring enabled")
 	}
 
+	selfUpdater := engine.NewSelfUpdater(client, log)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
+	scheduler.SetSelfUpdater(selfUpdater)
 	scheduler.SetReadyGate(scanGate)
 	digestSched := engine.NewDigestScheduler(db, queue, notifier, bus, log, clk)
 	digestSched.SetSettingsReader(db)
@@ -655,7 +657,7 @@ func main() {
 			Starter:             &startAdapter{client},
 			LogViewer:           &dockerAdapter{client},
 			LogStreamer:         &dockerAdapter{client},
-			SelfUpdater:         &selfUpdateAdapter{updater: engine.NewSelfUpdater(client, log)},
+			SelfUpdater:         &selfUpdateAdapter{updater: selfUpdater},
 			NotifyConfig:        &notifyConfigAdapter{db},
 			NotifyReconfigurer:  notifier,
 			NotifyState:         &notifyStateAdapter{db},
