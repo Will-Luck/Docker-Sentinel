@@ -17,6 +17,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// persistInterval controls how often UpdateLastSeen writes to BoltDB.
+// In-memory LastSeen is always current; disk is only updated when this
+// interval has elapsed since the last persist (or on disconnect).
+const persistInterval = 5 * time.Minute
+
 // HostState is the server-side view of a connected agent.
 // It pairs the persisted HostInfo with ephemeral runtime state (container list,
 // connectivity status) that only exists while the server is running.
@@ -27,7 +32,8 @@ type HostState struct {
 	LastReport    time.Time               // when the last container list was received
 	DisconnectAt  time.Time
 	DisconnectErr string
-	DisconnectCat string // "network", "cert", "server", ""
+	DisconnectCat string    // "network", "cert", "server", ""
+	lastPersist   time.Time // when LastSeen was last written to BoltDB
 }
 
 // Registry tracks connected agent hosts and their container state.
@@ -122,8 +128,9 @@ func (r *Registry) UpdateAddress(hostID, addr string) {
 	}
 }
 
-// UpdateLastSeen updates the host's LastSeen timestamp and persists it.
-// Called on every heartbeat and on stream disconnect.
+// UpdateLastSeen updates the host's LastSeen timestamp in memory on every
+// heartbeat, but only persists to BoltDB when persistInterval has elapsed
+// since the last write. Use PersistLastSeen for forced writes (e.g. on disconnect).
 func (r *Registry) UpdateLastSeen(hostID string, t time.Time) error {
 	r.mu.Lock()
 	hs, ok := r.hosts[hostID]
@@ -132,6 +139,32 @@ func (r *Registry) UpdateLastSeen(hostID string, t time.Time) error {
 		return fmt.Errorf("host %s not found", hostID)
 	}
 	hs.Info.LastSeen = t
+
+	if time.Since(hs.lastPersist) < persistInterval {
+		r.mu.Unlock()
+		return nil
+	}
+
+	hs.lastPersist = t
+	data, err := json.Marshal(hs.Info)
+	r.mu.Unlock()
+
+	if err != nil {
+		return fmt.Errorf("marshal host info: %w", err)
+	}
+	return r.store.SaveClusterHost(hostID, data)
+}
+
+// PersistLastSeen forces a BoltDB write of the host's current LastSeen.
+// Called on disconnect so the timestamp survives a server restart.
+func (r *Registry) PersistLastSeen(hostID string) error {
+	r.mu.Lock()
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("host %s not found", hostID)
+	}
+	hs.lastPersist = hs.Info.LastSeen
 	data, err := json.Marshal(hs.Info)
 	r.mu.Unlock()
 

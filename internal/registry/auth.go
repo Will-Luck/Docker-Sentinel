@@ -31,6 +31,8 @@ func FetchToken(ctx context.Context, repo string, cred *RegistryCredential, host
 	if host == "ghcr.io" {
 		return FetchGHCRToken(ctx, repo, cred)
 	}
+	// Cloud registry auth is handled by the caller via RegistryCredential.
+	// The cloudauth package provides credentials that are passed in as cred.
 	// Non-Hub, non-GHCR registries use Basic auth directly on v2 API calls.
 	if host != "" && host != "docker.io" {
 		return "", nil
