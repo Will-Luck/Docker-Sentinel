@@ -166,12 +166,7 @@ type taskView struct {
 // the local host). Used by the dashboard, API, and service detail handlers.
 func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool, hostAddr string) serviceView {
 	name := d.Name
-	policy := containerPolicy(d.Labels)
-	if s.deps.Policy != nil {
-		if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-			policy = p
-		}
-	}
+	policy := s.resolvedPolicy(d.Labels, name)
 	tag := registry.ExtractTag(d.Image)
 	if tag == "" {
 		if idx := strings.LastIndex(d.Image, "/"); idx >= 0 {
@@ -355,12 +350,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Debug("failed to load maintenance state", "name", name, "error", err)
 		}
 
-		policy := containerPolicy(c.Labels)
-		if s.deps.Policy != nil {
-			if p, ok := s.deps.Policy.GetPolicyOverride(name); ok {
-				policy = p
-			}
-		}
+		policy := s.resolvedPolicy(c.Labels, name)
 
 		// Extract tag for compact display; fall back to last path segment.
 		tag := registry.ExtractTag(c.Image)
@@ -612,13 +602,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 			// Resolve policy the same way we do for local containers:
 			// label first, then DB override (keyed by hostID::name for remote).
-			policy := containerPolicy(rc.Labels)
-			if s.deps.Policy != nil {
-				policyKey := rc.HostID + "::" + rc.Name
-				if p, ok := s.deps.Policy.GetPolicyOverride(policyKey); ok {
-					policy = p
-				}
-			}
+			policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
 
 			var newestVersion string
 			var hasUpdate bool
