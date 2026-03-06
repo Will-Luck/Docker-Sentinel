@@ -25,6 +25,7 @@ type Scheduler struct {
 	log          *logging.Logger
 	clock        clock.Clock
 	settings     SettingsReader
+	selfUpdater  *SelfUpdater // optional: for auto self-update when idle
 	resetCh      chan struct{}
 	mu           sync.Mutex
 	lastScan     time.Time
@@ -51,6 +52,11 @@ func (s *Scheduler) SetSettingsReader(sr SettingsReader) {
 // SetScanCallback registers a function called after each scan completes.
 func (s *Scheduler) SetScanCallback(fn func()) {
 	s.scanCallback = fn
+}
+
+// SetSelfUpdater attaches a self-updater for optional auto self-update when idle.
+func (s *Scheduler) SetSelfUpdater(su *SelfUpdater) {
+	s.selfUpdater = su
 }
 
 // SetReadyGate sets a channel the scheduler waits on before running the initial
@@ -120,6 +126,58 @@ func (s *Scheduler) logResult(r ScanResult) {
 	if s.scanCallback != nil {
 		s.scanCallback()
 	}
+	s.maybeSelfUpdate()
+}
+
+// maybeSelfUpdate triggers a self-update if:
+// 1. self_update_mode is "auto"
+// 2. a self-update was queued during this scan
+// 3. no other container updates are in progress
+func (s *Scheduler) maybeSelfUpdate() {
+	if s.selfUpdater == nil || s.settings == nil {
+		return
+	}
+	if !s.updater.SelfUpdateQueued() {
+		return
+	}
+	mode, err := s.settings.LoadSetting("self_update_mode")
+	if err != nil {
+		s.log.Warn("failed to read self_update_mode", "error", err)
+		return
+	}
+	if mode != "auto" {
+		return
+	}
+	if !s.updater.IsIdle() {
+		s.log.Info("self-update deferred: other updates in progress")
+		return
+	}
+
+	// Look up the queued self-update entry by key stored during scan.
+	key := s.updater.SelfUpdateKey()
+	if key == "" {
+		return
+	}
+	item, ok := s.updater.queue.Get(key)
+	if !ok {
+		return
+	}
+
+	// Build target image from the newest version.
+	var targetImage string
+	if len(item.NewerVersions) > 0 {
+		targetImage = replaceTag(item.CurrentImage, item.NewerVersions[0])
+	}
+
+	// Remove from queue before triggering so it doesn't re-fire.
+	s.updater.queue.Remove(key)
+
+	s.log.Info("auto self-update triggered (idle, mode=auto)", "target", targetImage)
+	go func() {
+		if err := s.selfUpdater.Update(context.Background(), targetImage); err != nil {
+			s.log.Error("auto self-update failed", "error", err)
+		}
+	}()
 }
 
 // SetPollInterval updates the poll interval at runtime and signals the scheduler to reset its timer.

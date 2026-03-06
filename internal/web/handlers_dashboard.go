@@ -20,6 +20,7 @@ type pageData struct {
 	Stacks            []stackGroup
 	Queue             []PendingUpdate
 	QueueReleaseNotes map[string]string // keyed by queue key -> GitHub release URL
+	QueueSelfKeys     map[string]bool   // queue keys that are self-protected (sentinel.self=true)
 	History           []UpdateRecord
 	Settings          map[string]string
 	Logs              []LogEntry

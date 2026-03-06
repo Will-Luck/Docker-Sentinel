@@ -533,6 +533,8 @@ type ContainerInspect struct {
 type ContainerUpdater interface {
 	UpdateContainer(ctx context.Context, id, name, targetImage string) error
 	IsUpdating(name string) bool
+	IsIdle() bool
+	SelfUpdateQueued() bool
 }
 
 // ContainerRestarter restarts a container by ID.

@@ -98,7 +98,7 @@
                     <tbody>
                         {{if .Queue}}
                             {{range $i, $q := .Queue}}
-                            <tr class="container-row" data-queue-key="{{$q.Key}}" data-href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" onclick="onRowClick(event, '{{$q.ContainerName}}')">
+                            <tr class="container-row" data-queue-key="{{$q.Key}}"{{if index $.QueueSelfKeys $q.Key}} data-self="true"{{end}} data-href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" onclick="onRowClick(event, '{{$q.ContainerName}}')">
                                 <td class="queue-expand" onclick="toggleQueueAccordion({{$i}}); event.stopPropagation();">&#9656;</td>
                                 <td><a href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" class="container-link">{{$q.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td class="cell-image mono" title="{{$q.CurrentImage}}">
@@ -120,6 +120,18 @@
                                 </td>
                                 <td title="{{fmtTime $q.DetectedAt}}">{{fmtTimeAgo $q.DetectedAt}}</td>
                                 <td>
+                                    {{if index $.QueueSelfKeys $q.Key}}
+                                    <div class="btn-group">
+                                        <button class="btn btn-primary"
+                                                onclick="triggerSelfUpdate(event)">
+                                            Update Sentinel
+                                        </button>
+                                        <button class="btn btn-error"
+                                                onclick="rejectUpdate('{{$q.Key}}', event)">
+                                            Reject
+                                        </button>
+                                    </div>
+                                    {{else}}
                                     <div class="btn-group">
                                         <button class="btn btn-success"
                                                 onclick="approveUpdate('{{$q.Key}}', event)">
@@ -137,6 +149,7 @@
                                             Reject
                                         </button>
                                     </div>
+                                    {{end}}
                                 </td>
                             </tr>
                             <tr class="accordion-panel" id="accordion-queue-{{$i}}" style="display:none">

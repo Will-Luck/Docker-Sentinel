@@ -22,6 +22,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 
 	sources := s.loadReleaseSources()
 	releaseNotes := make(map[string]string)
+	selfKeys := make(map[string]bool)
 	for _, item := range items {
 		if len(item.NewerVersions) > 0 {
 			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -31,12 +32,17 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 				releaseNotes[item.Key()] = info.URL
 			}
 		}
+		// Check if this queue item is the Sentinel container itself.
+		if s.isProtectedContainer(r.Context(), item.ContainerName) {
+			selfKeys[item.Key()] = true
+		}
 	}
 
 	data := pageData{
 		Page:              "queue",
 		Queue:             items,
 		QueueReleaseNotes: releaseNotes,
+		QueueSelfKeys:     selfKeys,
 		QueueCount:        len(items),
 	}
 	s.withAuth(r, &data)
