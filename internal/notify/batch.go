@@ -41,7 +41,11 @@ func aggregateEvents(events []Event) []Event {
 			continue
 		}
 		if len(evts) == 1 {
-			result = append(result, evts[0])
+			e := evts[0]
+			if len(e.ContainerNames) == 0 {
+				e.ContainerNames = []string{e.ContainerName}
+			}
+			result = append(result, e)
 			continue
 		}
 		names := make([]string, len(evts))
@@ -65,11 +69,16 @@ func aggregateEvents(events []Event) []Event {
 
 		// If only one event total, pass through as-is.
 		if total == 1 {
+			var e Event
 			if len(succeeded) == 1 {
-				result = append(result, succeeded[0])
+				e = succeeded[0]
 			} else {
-				result = append(result, failed[0])
+				e = failed[0]
 			}
+			if len(e.ContainerNames) == 0 {
+				e.ContainerNames = []string{e.ContainerName}
+			}
+			result = append(result, e)
 		} else {
 			// Multiple events: produce separate summaries for succeeded and failed.
 			if len(succeeded) > 0 {

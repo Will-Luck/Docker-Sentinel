@@ -142,7 +142,7 @@ func (m *Multi) Stop() {
 
 // dispatch sends an event to all registered notifiers. This is the core
 // fan-out logic used by both immediate sends and batch flushes.
-func (m *Multi) dispatch(_ context.Context, event Event) bool {
+func (m *Multi) dispatch(ctx context.Context, event Event) bool {
 	m.mu.RLock()
 	notifiers := m.notifiers
 	m.mu.RUnlock()
@@ -153,7 +153,7 @@ func (m *Multi) dispatch(_ context.Context, event Event) bool {
 
 	anyOK := false
 	for _, n := range notifiers {
-		if err := n.Send(context.Background(), event); err != nil {
+		if err := n.Send(ctx, event); err != nil {
 			m.log.Error("notification failed",
 				"provider", n.Name(),
 				"event", string(event.Type),
@@ -187,6 +187,24 @@ func (m *Multi) flush() {
 
 // Reconfigure replaces the notifier chain at runtime.
 func (m *Multi) Reconfigure(notifiers ...Notifier) {
+	// Flush pending events with the old notifier list before swapping.
+	m.batchMu.Lock()
+	if m.flushTimer != nil {
+		m.flushTimer.Stop()
+		m.flushTimer = nil
+	}
+	pending := m.pending
+	m.pending = nil
+	m.batchMu.Unlock()
+
+	// Dispatch any buffered events with the old notifiers.
+	if len(pending) > 0 {
+		for _, event := range aggregateEvents(pending) {
+			m.dispatch(context.Background(), event)
+		}
+	}
+
+	// Now swap the notifier chain.
 	m.mu.Lock()
 	m.notifiers = notifiers
 	m.mu.Unlock()

@@ -92,6 +92,10 @@ func TestAggregateEvents_SingleEvent(t *testing.T) {
 	if result[0].Type != EventUpdateAvailable {
 		t.Errorf("Type = %q, want update_available", result[0].Type)
 	}
+	// M3: single events should also populate ContainerNames for consumer consistency.
+	if len(result[0].ContainerNames) != 1 || result[0].ContainerNames[0] != "nginx" {
+		t.Errorf("ContainerNames = %v, want [nginx]", result[0].ContainerNames)
+	}
 }
 
 func TestAggregateEvents_MultipleAvailable(t *testing.T) {
@@ -220,6 +224,10 @@ func TestAggregateEvents_SingleSucceeded(t *testing.T) {
 	}
 	if result[0].OldImage != "nginx:1.25" {
 		t.Errorf("OldImage = %q, want nginx:1.25 (preserved)", result[0].OldImage)
+	}
+	// M3: single events should populate ContainerNames.
+	if len(result[0].ContainerNames) != 1 || result[0].ContainerNames[0] != "nginx" {
+		t.Errorf("ContainerNames = %v, want [nginx]", result[0].ContainerNames)
 	}
 }
 

@@ -176,7 +176,7 @@ func (s *Server) streamTTYLogs(w http.ResponseWriter, flusher http.Flusher, ctx 
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "data: %s\n\n", line)
+			fmt.Fprintf(w, "data: %s\n\n", sseEscapeLine(line))
 			flusher.Flush()
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": heartbeat\n\n")
@@ -230,7 +230,7 @@ func (s *Server) streamMuxLogs(w http.ResponseWriter, flusher http.Flusher, ctx 
 				return
 			}
 			for _, line := range f.lines {
-				fmt.Fprintf(w, "data: %s\n\n", line)
+				fmt.Fprintf(w, "data: %s\n\n", sseEscapeLine(line))
 			}
 			flusher.Flush()
 		case <-heartbeat.C:
@@ -238,6 +238,15 @@ func (s *Server) streamMuxLogs(w http.ResponseWriter, flusher http.Flusher, ctx 
 			flusher.Flush()
 		}
 	}
+}
+
+// sseEscapeLine escapes characters that would break SSE framing.
+// Newlines in log data could inject fake SSE events; carriage returns
+// can also disrupt frame parsing in some clients.
+func sseEscapeLine(s string) string {
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	return s
 }
 
 // resolveContainerID looks up a container ID by name.

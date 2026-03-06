@@ -4,6 +4,7 @@ import (
 	"context"
 	"path"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -31,6 +32,7 @@ type Scheduler struct {
 	lastScan     time.Time
 	readyGate    <-chan struct{} // if set, wait for close before initial scan
 	scanCallback func()          // called after each scan completes (optional)
+	selfUpdating atomic.Bool     // prevents concurrent self-updates
 }
 
 // NewScheduler creates a Scheduler.
@@ -171,11 +173,21 @@ func (s *Scheduler) maybeSelfUpdate() {
 
 	// Remove from queue before triggering so it doesn't re-fire.
 	s.updater.queue.Remove(key)
+	s.updater.selfUpdateQueued.Store(false)
 
 	s.log.Info("auto self-update triggered (idle, mode=auto)", "target", targetImage)
+	if !s.selfUpdating.CompareAndSwap(false, true) {
+		s.log.Info("self-update already in progress, skipping")
+		// Re-add to queue since we already removed it.
+		s.updater.queue.Add(item)
+		return
+	}
 	go func() {
+		defer s.selfUpdating.Store(false)
 		if err := s.selfUpdater.Update(context.Background(), targetImage); err != nil {
 			s.log.Error("auto self-update failed", "error", err)
+			// Re-queue so the next scan can retry.
+			s.updater.queue.Add(item)
 		}
 	}()
 }

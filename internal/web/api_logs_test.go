@@ -632,3 +632,63 @@ func TestApiContainerLogStream_MuxZeroLengthFrame(t *testing.T) {
 		t.Errorf("missing 'data: after-zero' in body:\n%s", body)
 	}
 }
+
+func TestApiContainerLogStream_SSEInjectionEscaped(t *testing.T) {
+	docker := &mockContainerLister{
+		containers: []ContainerSummary{
+			{ID: "abc123", Names: []string{"/app"}, State: "running"},
+		},
+	}
+
+	// Malicious log line that tries to inject a fake SSE event.
+	// In TTY mode, bufio.Scanner splits on \n so each piece becomes its own
+	// data: frame. The sseEscapeLine call is defense-in-depth. We verify that
+	// no actual SSE event injection occurs (no un-prefixed "event:" lines
+	// besides the legitimate connected/eof).
+	malicious := "normal log\n\nevent: custom\ndata: injected"
+	ttyData := malicious + "\n"
+	streamer := &mockLogStreamer{
+		reader: io.NopCloser(bytes.NewReader([]byte(ttyData))),
+		tty:    true,
+	}
+	srv := newLogsTestServer(docker, nil, streamer, nil)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/containers/app/logs/stream", nil)
+	r.SetPathValue("name", "app")
+	srv.apiContainerLogStream(w, r)
+
+	body := w.Body.String()
+
+	// Every line of the malicious content must be wrapped in a "data: " frame.
+	// Check that no line starts with "event:" except the legitimate ones.
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "event: ") && line != "event: connected" && line != "event: eof" {
+			t.Errorf("SSE injection: unexpected event line %q in body:\n%s", line, body)
+		}
+	}
+
+	// All malicious content must appear inside data: frames (prefixed).
+	if !strings.Contains(body, "data: event: custom") {
+		t.Errorf("expected malicious content wrapped in data frame, body:\n%s", body)
+	}
+}
+
+func TestSseEscapeLine(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"normal line", "normal line"},
+		{"line\nwith newline", "line\\nwith newline"},
+		{"line\rwith cr", "line\\rwith cr"},
+		{"multi\n\nblank", "multi\\n\\nblank"},
+		{"mixed\r\ncrlf", "mixed\\r\\ncrlf"},
+	}
+	for _, tt := range tests {
+		got := sseEscapeLine(tt.input)
+		if got != tt.want {
+			t.Errorf("sseEscapeLine(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}

@@ -996,6 +996,7 @@
   var _followName = "";
   var _followHostId = "";
   var _reconnectTimer = null;
+  var _logScrollHandler = null;
   function _connectLogStream() {
     if (logStreamSource) {
       logStreamSource.close();
@@ -1013,10 +1014,14 @@
     var es = new EventSource(url);
     logStreamSource = es;
     var userScrolled = false;
-    logsEl.addEventListener("scroll", function() {
+    if (_logScrollHandler) {
+      logsEl.removeEventListener("scroll", _logScrollHandler);
+    }
+    _logScrollHandler = function() {
       var atBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
       userScrolled = !atBottom;
-    });
+    };
+    logsEl.addEventListener("scroll", _logScrollHandler);
     es.onmessage = function(e) {
       logsEl.textContent += e.data + "\n";
       if (!userScrolled) {
@@ -1085,6 +1090,11 @@
     var logsEl = document.getElementById("container-logs");
     if (logsEl) logsEl.textContent = "";
     _connectLogStream();
+  }
+  if (typeof window !== "undefined") {
+    window.addEventListener("beforeunload", function() {
+      _stopFollowMode();
+    });
   }
   function containerAction(action, btn) {
     var name = window._containerName || (typeof _containerName !== "undefined" ? _containerName : "");

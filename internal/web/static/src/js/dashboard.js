@@ -1036,6 +1036,7 @@ var _followMode = false;
 var _followName = '';
 var _followHostId = '';
 var _reconnectTimer = null;
+var _logScrollHandler = null;
 
 // Open (or reopen) the SSE log stream. Does not touch _followMode.
 function _connectLogStream() {
@@ -1052,10 +1053,14 @@ function _connectLogStream() {
     logStreamSource = es;
 
     var userScrolled = false;
-    logsEl.addEventListener('scroll', function () {
+    if (_logScrollHandler) {
+        logsEl.removeEventListener('scroll', _logScrollHandler);
+    }
+    _logScrollHandler = function () {
         var atBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
         userScrolled = !atBottom;
-    });
+    };
+    logsEl.addEventListener('scroll', _logScrollHandler);
 
     es.onmessage = function (e) {
         logsEl.textContent += e.data + '\n';
@@ -1132,6 +1137,13 @@ function toggleLogStream(name, hostId) {
     if (logsEl) logsEl.textContent = '';
 
     _connectLogStream();
+}
+
+// Clean up log stream on page navigation to prevent lingering SSE connections.
+if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', function () {
+        _stopFollowMode();
+    });
 }
 
 function containerAction(action, btn) {
