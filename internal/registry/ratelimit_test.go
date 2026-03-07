@@ -293,6 +293,101 @@ func TestSetAuth(t *testing.T) {
 	}
 }
 
+func TestExportImportRoundTrip(t *testing.T) {
+	// Set up a tracker with known state.
+	tracker := NewRateLimitTracker()
+	tracker.Discover("ghcr.io", 3)
+	tracker.SetAuth("ghcr.io", true)
+
+	h := make(http.Header)
+	h.Set("RateLimit-Limit", "100;w=21600")
+	h.Set("RateLimit-Remaining", "42;w=21600")
+	tracker.Record("docker.io", h)
+
+	originalStatuses := tracker.Status()
+
+	// Export.
+	data, err := tracker.Export()
+	if err != nil {
+		t.Fatalf("Export failed: %v", err)
+	}
+
+	// Import into a fresh tracker.
+	fresh := NewRateLimitTracker()
+	if err := fresh.Import(data); err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+
+	importedStatuses := fresh.Status()
+
+	if len(importedStatuses) != len(originalStatuses) {
+		t.Fatalf("expected %d registries after import, got %d", len(originalStatuses), len(importedStatuses))
+	}
+
+	// Build a lookup map for easy comparison.
+	byRegistry := make(map[string]RegistryStatus, len(importedStatuses))
+	for _, s := range importedStatuses {
+		byRegistry[s.Registry] = s
+	}
+
+	for _, orig := range originalStatuses {
+		imp, ok := byRegistry[orig.Registry]
+		if !ok {
+			t.Errorf("registry %q missing after import", orig.Registry)
+			continue
+		}
+		if imp.Limit != orig.Limit {
+			t.Errorf("%s: Limit = %d, want %d", orig.Registry, imp.Limit, orig.Limit)
+		}
+		if imp.Remaining != orig.Remaining {
+			t.Errorf("%s: Remaining = %d, want %d", orig.Registry, imp.Remaining, orig.Remaining)
+		}
+		if imp.IsAuth != orig.IsAuth {
+			t.Errorf("%s: IsAuth = %v, want %v", orig.Registry, imp.IsAuth, orig.IsAuth)
+		}
+		if imp.HasLimits != orig.HasLimits {
+			t.Errorf("%s: HasLimits = %v, want %v", orig.Registry, imp.HasLimits, orig.HasLimits)
+		}
+		if imp.ContainerCount != orig.ContainerCount {
+			t.Errorf("%s: ContainerCount = %d, want %d", orig.Registry, imp.ContainerCount, orig.ContainerCount)
+		}
+		if imp.ResetAt.Unix() != orig.ResetAt.Unix() {
+			t.Errorf("%s: ResetAt = %v, want %v", orig.Registry, imp.ResetAt, orig.ResetAt)
+		}
+	}
+}
+
+func TestExportImportPreservesExisting(t *testing.T) {
+	// Import should merge, not replace: existing entries not in the
+	// imported data should survive.
+	tracker := NewRateLimitTracker()
+	tracker.Discover("ghcr.io", 2)
+
+	// Import data that only contains docker.io.
+	data := []byte(`{"docker.io":{"limit":100,"remaining":50,"has_limits":true,"container_count":1}}`)
+	if err := tracker.Import(data); err != nil {
+		t.Fatalf("Import failed: %v", err)
+	}
+
+	statuses := tracker.Status()
+	if len(statuses) != 2 {
+		t.Fatalf("expected 2 registries (ghcr.io preserved + docker.io imported), got %d", len(statuses))
+	}
+
+	byRegistry := make(map[string]RegistryStatus, len(statuses))
+	for _, s := range statuses {
+		byRegistry[s.Registry] = s
+	}
+	if _, ok := byRegistry["ghcr.io"]; !ok {
+		t.Error("ghcr.io should be preserved after importing data without it")
+	}
+	if s, ok := byRegistry["docker.io"]; !ok {
+		t.Error("docker.io should be present after import")
+	} else if s.Remaining != 50 {
+		t.Errorf("docker.io Remaining = %d, want 50", s.Remaining)
+	}
+}
+
 func TestNormaliseRegistryHost(t *testing.T) {
 	tests := []struct {
 		input string

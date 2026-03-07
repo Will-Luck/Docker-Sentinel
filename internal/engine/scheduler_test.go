@@ -198,6 +198,127 @@ func TestMaybeSelfUpdate_AutoModeWhenIdle(t *testing.T) {
 	// but we verified the queue was drained which proves the logic triggered.
 }
 
+func TestMatchesFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		patterns []string
+		want     bool
+	}{
+		{"exact match", "nginx", []string{"nginx"}, true},
+		{"second pattern matches", "nginx", []string{"redis", "nginx"}, true},
+		{"no match", "nginx", []string{"redis"}, false},
+		{"empty patterns", "nginx", []string{}, false},
+		{"wildcard suffix", "nginx-prod", []string{"nginx*"}, true},
+		{"wildcard prefix", "my-nginx", []string{"*nginx"}, true},
+		{"wildcard suffix with dash", "web-app", []string{"web-*"}, true},
+		{"question mark wildcard", "web-app", []string{"???-app"}, true},
+		{"none match multiple", "nginx", []string{"redis", "postgres"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MatchesFilter(tt.input, tt.patterns)
+			if got != tt.want {
+				t.Errorf("MatchesFilter(%q, %v) = %v, want %v", tt.input, tt.patterns, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLastScanTimeZeroBeforeScan(t *testing.T) {
+	mock := newMockDocker()
+	s := testStore(t)
+	q := NewQueue(s, nil, nil)
+	log := logging.New(false)
+	clk := newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	checker := registry.NewChecker(mock, log)
+	cfg := config.NewTestConfig()
+	cfg.SetDefaultPolicy("manual")
+	cfg.SetPollInterval(1 * time.Hour)
+	notifier := notify.NewMulti(log)
+	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	sched := NewScheduler(u, cfg, log, clk)
+
+	if !sched.LastScanTime().IsZero() {
+		t.Errorf("LastScanTime() = %v before any scan, want zero time", sched.LastScanTime())
+	}
+}
+
+func TestSetPollInterval(t *testing.T) {
+	mock := newMockDocker()
+	s := testStore(t)
+	q := NewQueue(s, nil, nil)
+	log := logging.New(false)
+	clk := newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	checker := registry.NewChecker(mock, log)
+	cfg := config.NewTestConfig()
+	cfg.SetDefaultPolicy("manual")
+	cfg.SetPollInterval(1 * time.Hour)
+	notifier := notify.NewMulti(log)
+	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	sched := NewScheduler(u, cfg, log, clk)
+
+	sched.SetPollInterval(30 * time.Minute)
+	if cfg.PollInterval() != 30*time.Minute {
+		t.Errorf("PollInterval() = %v after SetPollInterval, want 30m", cfg.PollInterval())
+	}
+}
+
+func TestSetScanCallback(t *testing.T) {
+	mock := newMockDocker()
+	s := testStore(t)
+	q := NewQueue(s, nil, nil)
+	log := logging.New(false)
+	clk := newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	checker := registry.NewChecker(mock, log)
+	cfg := config.NewTestConfig()
+	cfg.SetDefaultPolicy("manual")
+	cfg.SetPollInterval(1 * time.Hour)
+	notifier := notify.NewMulti(log)
+	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	sched := NewScheduler(u, cfg, log, clk)
+
+	called := false
+	sched.SetScanCallback(func() { called = true })
+
+	// Run a manual scan which triggers logResult -> scanCallback.
+	ctx := context.Background()
+	sched.TriggerScan(ctx)
+
+	if !called {
+		t.Error("scan callback was not called after TriggerScan")
+	}
+}
+
+func TestTriggerScanUpdatesLastScanTime(t *testing.T) {
+	mock := newMockDocker()
+	s := testStore(t)
+	q := NewQueue(s, nil, nil)
+	log := logging.New(false)
+	clk := newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	checker := registry.NewChecker(mock, log)
+	cfg := config.NewTestConfig()
+	cfg.SetDefaultPolicy("manual")
+	cfg.SetPollInterval(1 * time.Hour)
+	notifier := notify.NewMulti(log)
+	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	sched := NewScheduler(u, cfg, log, clk)
+
+	if !sched.LastScanTime().IsZero() {
+		t.Fatal("LastScanTime() should be zero before scan")
+	}
+
+	sched.TriggerScan(context.Background())
+
+	if sched.LastScanTime().IsZero() {
+		t.Error("LastScanTime() is still zero after TriggerScan")
+	}
+	if !sched.LastScanTime().Equal(clk.Now()) {
+		t.Errorf("LastScanTime() = %v, want %v", sched.LastScanTime(), clk.Now())
+	}
+}
+
 func TestMaybeSelfUpdate_ConcurrentGuard(t *testing.T) {
 	mock := newMockDocker()
 	mock.containers = []container.Summary{
