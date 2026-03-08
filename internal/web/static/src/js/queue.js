@@ -2,7 +2,7 @@
    5. API Actions — Queue operations, container actions, bulk
    ============================================================ */
 
-import { showToast, escapeHTML, showConfirm, apiPost } from "./utils.js";
+import { showToast, escapeHTML, showConfirm, apiPost, apiFetch } from "./utils.js";
 
 // Access via window to avoid circular import with sse.js.
 function _updateQueueBadge() {
@@ -341,25 +341,20 @@ function triggerSelfUpdate(event) {
 }
 
 function switchToGHCR(name, ghcrImage) {
-    if (!confirm("Switch " + name + " to " + ghcrImage + "?\n\nThis will recreate the container with the GHCR image. A snapshot will be taken first for rollback.")) {
-        return;
-    }
-    var enc = encodeURIComponent(name);
-    fetch("/api/containers/" + enc + "/switch-ghcr", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_image: ghcrImage })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        if (data.error) {
-            showToast(data.error, "error");
-        } else {
-            showToast("Switching " + name + " to GHCR image...", "success");
-        }
-    })
-    .catch(function() {
-        showToast("Failed to switch to GHCR", "error");
+    showConfirm(
+        "Switch to GHCR",
+        "<p>Switch <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(ghcrImage) + "</code>?</p>" +
+        "<p>This will recreate the container with the GHCR image. A snapshot will be taken first for rollback.</p>",
+        { danger: true, confirmLabel: "Switch" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
+        var enc = encodeURIComponent(name);
+        apiFetch("/api/containers/" + enc + "/switch-ghcr", {
+            method: "POST",
+            body: { target_image: ghcrImage },
+            successMsg: "Switching " + name + " to GHCR image...",
+            errorMsg: "Failed to switch to GHCR"
+        });
     });
 }
 

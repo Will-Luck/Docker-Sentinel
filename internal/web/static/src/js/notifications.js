@@ -4,7 +4,7 @@
    14b. HTML Escape Helper (local version)
    ============================================================ */
 
-import { showToast, apiPost } from "./utils.js";
+import { showToast, showConfirm, apiPost } from "./utils.js";
 
 var EVENT_TYPES = [
     { key: "update_available", label: "Update Available" },
@@ -738,27 +738,32 @@ function applyPrefsToSelected(forceMode) {
 
     var label = NOTIFY_MODE_LABELS[mode] || mode;
     var action = forceMode ? "Reset" : "Set";
-    if (!confirm(action + " " + cbs.length + " container" + (cbs.length > 1 ? "s" : "") + " to \"" + label + "\"?")) return;
+    showConfirm(
+        action + " Notification Preference",
+        "<p>" + action + " " + cbs.length + " container" + (cbs.length > 1 ? "s" : "") + ' to "' + label + '"?</p>'
+    ).then(function(confirmed) {
+        if (!confirmed) return;
 
-    var pending = cbs.length;
-    for (var i = 0; i < cbs.length; i++) {
-        (function(name) {
-            fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
-                method: "POST",
-                credentials: "same-origin",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({mode: mode})
-            })
-            .then(function() {
-                pending--;
-                if (pending === 0) {
-                    showToast(action + " " + cbs.length + " containers to " + label, "success");
-                    loadContainerNotifyPrefs();
-                }
-            })
-            .catch(function() { pending--; });
-        })(cbs[i].value);
-    }
+        var pending = cbs.length;
+        for (var i = 0; i < cbs.length; i++) {
+            (function(name) {
+                fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({mode: mode})
+                })
+                .then(function() {
+                    pending--;
+                    if (pending === 0) {
+                        showToast(action + " " + cbs.length + " containers to " + label, "success");
+                        loadContainerNotifyPrefs();
+                    }
+                })
+                .catch(function() { pending--; });
+            })(cbs[i].value);
+        }
+    });
 }
 
 function setContainerNotifyPref(name, mode) {

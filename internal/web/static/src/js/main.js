@@ -10,7 +10,8 @@ import {
     showToast,
     escapeHTML,
     showConfirm,
-    apiPost
+    apiPost,
+    apiFetch
 } from "./utils.js";
 
 import {
@@ -217,6 +218,7 @@ window.csrfToken = getCSRFToken;
 window.escapeHTML = escapeHTML;
 window.showConfirm = showConfirm;
 window.apiPost = apiPost;
+window.apiFetch = apiFetch;
 
 // Dashboard
 window.activateFilter = activateFilter;
@@ -368,6 +370,45 @@ window.removeSelectedImages = removeSelectedImages;
 window.loadActivityLogs = loadActivityLogs;
 window.filterLogs = filterLogs;
 window.exportLogs = exportLogs;
+
+/* ------------------------------------------------------------
+   Hamburger menu toggle
+   ------------------------------------------------------------ */
+
+(function initHamburger() {
+    var btn = document.querySelector('.nav-hamburger');
+    var links = document.querySelector('.nav-links');
+    if (!btn || !links) return;
+
+    btn.addEventListener('click', function () {
+        var open = links.classList.toggle('nav-open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+
+    // Close on Escape
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && links.classList.contains('nav-open')) {
+            links.classList.remove('nav-open');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    // Close on outside click
+    document.addEventListener('click', function (e) {
+        if (!btn.contains(e.target) && !links.contains(e.target) && links.classList.contains('nav-open')) {
+            links.classList.remove('nav-open');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    // Close when a link is clicked
+    links.addEventListener('click', function (e) {
+        if (e.target.closest('.nav-link')) {
+            links.classList.remove('nav-open');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
+})();
 
 /* ------------------------------------------------------------
    12. Initialisation

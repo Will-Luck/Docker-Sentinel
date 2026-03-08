@@ -87,9 +87,12 @@ function escapeHTML(str) {
    4a. Styled Confirmation Modal
    ------------------------------------------------------------ */
 
-function showConfirm(title, bodyHTML) {
+function showConfirm(title, bodyHTML, opts) {
     // bodyHTML is always application-generated markup (never user input),
     // constructed from escapeHTML-sanitised values in calling code.
+    // opts.confirmLabel — custom label for the confirm button (default: "Apply")
+    // opts.danger       — when true, use confirm-btn-danger instead of confirm-btn-apply
+    if (!opts) opts = {};
     return new Promise(function(resolve) {
         var triggerEl = document.activeElement;
 
@@ -126,8 +129,8 @@ function showConfirm(title, bodyHTML) {
         buttons.appendChild(cancelBtn);
 
         var applyBtn = document.createElement("button");
-        applyBtn.className = "confirm-btn-apply";
-        applyBtn.textContent = "Apply";
+        applyBtn.className = opts.danger ? "confirm-btn-danger" : "confirm-btn-apply";
+        applyBtn.textContent = opts.confirmLabel || "Apply";
         applyBtn.type = "button";
         buttons.appendChild(applyBtn);
 
@@ -211,10 +214,65 @@ function apiPost(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
         });
 }
 
+/* ------------------------------------------------------------
+   5a. apiFetch helper (generalised fetch wrapper)
+   ------------------------------------------------------------ */
+
+function apiFetch(url, opts) {
+    opts = opts || {};
+    var method = opts.method || "GET";
+    var triggerEl = opts.triggerEl || null;
+
+    if (triggerEl) {
+        triggerEl.classList.add("loading");
+        triggerEl.disabled = true;
+    }
+
+    var fetchOpts = { method: method, headers: {} };
+    if (opts.body) {
+        fetchOpts.headers["Content-Type"] = "application/json";
+        fetchOpts.body = typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body);
+    }
+
+    function clearLoading() {
+        if (triggerEl) {
+            triggerEl.classList.remove("loading");
+            triggerEl.disabled = false;
+        }
+    }
+
+    return fetch(url, fetchOpts)
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { ok: resp.ok, data: data };
+            });
+        })
+        .then(function (result) {
+            clearLoading();
+            if (result.ok) {
+                if (opts.successMsg) showToast(result.data.message || opts.successMsg, "success");
+                if (opts.onSuccess) opts.onSuccess(result.data);
+            } else {
+                var msg = result.data.error || (opts.errorMsg || "Error");
+                showToast(msg, "error");
+                if (opts.onError) opts.onError(new Error(msg));
+            }
+            return result.data;
+        })
+        .catch(function (err) {
+            clearLoading();
+            var msg = (opts.errorMsg || "Error") + ": " + err.message;
+            showToast(msg, "error");
+            if (opts.onError) opts.onError(err);
+            throw err;
+        });
+}
+
 export {
     showToast,
     queueBatchToast,
     escapeHTML,
     showConfirm,
-    apiPost
+    apiPost,
+    apiFetch
 };

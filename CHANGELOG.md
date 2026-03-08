@@ -37,6 +37,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security scanning (Trivy):** Scan images for vulnerabilities before or after
   updates with configurable severity thresholds. Pre-update mode blocks deploys
   that exceed the threshold.
+- **Styled confirmation dialogs:** All 8 bare `confirm()` calls replaced with
+  `showConfirm()` modal, including a red danger variant for destructive actions.
+- **Enhanced empty states:** Contextual SVG icons and call-to-action buttons on
+  all empty-data pages (queue, history, cluster, images, portainer, logs).
+- **`apiFetch()` utility:** Generalised fetch wrapper with automatic button
+  loading spinners, JSON handling, and toast notifications. Replaces raw `fetch()`
+  in images and queue modules.
+- **Responsive hamburger navigation:** Collapsible mobile nav at 768px with
+  hamburger toggle, Escape/outside-click dismiss, and aria-expanded support.
+  Added to all 13 page templates.
+- **Scan progress bar:** Real-time 3px accent bar below stat cards shows scan
+  progress via new `scan_start` and `scan_progress` SSE events from the engine.
+- **Container log viewer redesign:** Line-by-line rendering with level-based
+  colouring (error/warn/info/debug), timestamp extraction, filter input, and
+  auto-scroll toggle. Replaces raw `<pre>` block.
 
 ### Changed
 - **BoltDB nil-bucket safety:** All `tx.Bucket()` calls across the persistence
