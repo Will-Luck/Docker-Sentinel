@@ -15,8 +15,8 @@ import (
 // apiServiceUpdate triggers an update for a Swarm service.
 func (s *Server) apiServiceUpdate(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -113,8 +113,8 @@ func (s *Server) apiServiceUpdate(w http.ResponseWriter, r *http.Request) {
 // apiServiceRollback triggers a Swarm native rollback.
 func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -232,8 +232,8 @@ func (s *Server) apiServicesList(w http.ResponseWriter, r *http.Request) {
 // apiServiceDetail returns a single Swarm service with tasks as JSON.
 func (s *Server) apiServiceDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -266,8 +266,8 @@ func (s *Server) apiServiceDetail(w http.ResponseWriter, r *http.Request) {
 // apiServiceScale scales a Swarm service to the requested replica count.
 func (s *Server) apiServiceScale(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 

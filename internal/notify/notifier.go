@@ -134,8 +134,10 @@ func (m *Multi) Stop() {
 	m.batchMu.Unlock()
 
 	if len(pending) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		for _, event := range aggregateEvents(pending) {
-			m.dispatch(context.Background(), event)
+			m.dispatch(ctx, event)
 		}
 	}
 }
@@ -180,8 +182,10 @@ func (m *Multi) flush() {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	for _, event := range aggregateEvents(pending) {
-		m.dispatch(context.Background(), event)
+		m.dispatch(ctx, event)
 	}
 }
 
@@ -199,8 +203,10 @@ func (m *Multi) Reconfigure(notifiers ...Notifier) {
 
 	// Dispatch any buffered events with the old notifiers.
 	if len(pending) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		for _, event := range aggregateEvents(pending) {
-			m.dispatch(context.Background(), event)
+			m.dispatch(ctx, event)
 		}
 	}
 

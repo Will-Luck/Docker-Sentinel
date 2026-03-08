@@ -146,8 +146,8 @@ func (s *Server) apiLogs(w http.ResponseWriter, r *http.Request) {
 // Used by the frontend to do targeted row replacement instead of full page reloads.
 func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 	hostFilter := r.URL.Query().Get("host")
@@ -486,7 +486,7 @@ func (s *Server) withAuthDetail(r *http.Request, data *containerDetailData) {
 // handleContainerDetail renders the per-container detail page.
 func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
+	if !isValidContainerName(name) {
 		s.renderError(w, http.StatusBadRequest, "Bad Request", "Container name is required.")
 		return
 	}
@@ -705,7 +705,7 @@ func (s *Server) withAuthServiceDetail(r *http.Request, data *serviceDetailData)
 // handleServiceDetail renders the per-service detail page.
 func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
+	if !isValidContainerName(name) {
 		s.renderError(w, http.StatusBadRequest, "Bad Request", "Service name is required.")
 		return
 	}

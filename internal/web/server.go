@@ -95,6 +95,7 @@ type Server struct {
 	scanGateOnce         sync.Once
 	pendingRemoteUpdates sync.Map // key: "hostID::name" → struct{}
 	hostAddress          string   // SENTINEL_HOST override for port links; empty = use request host
+	authLimiter          *rateLimiter
 }
 
 func (s *Server) markRemoteUpdating(hostID, name string) {
@@ -179,7 +180,17 @@ func NewServer(deps Dependencies) *Server {
 		mux:         http.NewServeMux(),
 		startTime:   time.Now(),
 		hostAddress: hostAddr,
+		authLimiter: newRateLimiter(10, time.Minute),
 	}
+
+	// Periodically clean up stale rate-limiter entries to prevent memory growth.
+	go func() {
+		tick := time.NewTicker(5 * time.Minute)
+		defer tick.Stop()
+		for range tick.C {
+			s.authLimiter.cleanup()
+		}
+	}()
 
 	s.parseTemplates()
 	s.registerRoutes()
@@ -193,6 +204,7 @@ func (s *Server) ListenAndServe(addr string) error {
 	if s.deps.Auth != nil {
 		handler = s.setupRedirectHandler(s.mux)
 	}
+	handler = securityHeaders(handler)
 	s.server = &http.Server{
 		Addr:         addr,
 		Handler:      handler,
@@ -286,15 +298,15 @@ func (s *Server) registerRoutes() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	s.mux.HandleFunc("GET /login", s.handleLogin)
-	s.mux.HandleFunc("POST /login", s.apiLogin)
+	s.mux.HandleFunc("POST /login", rateLimit(s.authLimiter, s.apiLogin))
 	s.mux.HandleFunc("GET /setup", s.handleSetup)
-	s.mux.HandleFunc("POST /setup", s.apiSetup)
+	s.mux.HandleFunc("POST /setup", rateLimit(s.authLimiter, s.apiSetup))
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
 	s.mux.HandleFunc("GET /logout", s.handleLogout)
-	s.mux.HandleFunc("POST /api/auth/passkeys/login/begin", s.apiPasskeyLoginBegin)
-	s.mux.HandleFunc("POST /api/auth/passkeys/login/finish", s.apiPasskeyLoginFinish)
+	s.mux.HandleFunc("POST /api/auth/passkeys/login/begin", rateLimit(s.authLimiter, s.apiPasskeyLoginBegin))
+	s.mux.HandleFunc("POST /api/auth/passkeys/login/finish", rateLimit(s.authLimiter, s.apiPasskeyLoginFinish))
 	s.mux.HandleFunc("GET /api/auth/passkeys/available", s.apiPasskeysAvailable)
-	s.mux.HandleFunc("POST /api/auth/totp/verify", s.apiLoginTOTP)
+	s.mux.HandleFunc("POST /api/auth/totp/verify", rateLimit(s.authLimiter, s.apiLoginTOTP))
 	s.mux.HandleFunc("GET /api/auth/oidc/login", s.apiOIDCLogin)
 	s.mux.HandleFunc("GET /api/auth/oidc/callback", s.apiOIDCCallback)
 	s.mux.HandleFunc("GET /api/auth/oidc/available", s.apiOIDCAvailable)

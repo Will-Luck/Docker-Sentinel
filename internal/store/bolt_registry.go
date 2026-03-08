@@ -13,7 +13,10 @@ import (
 // The value stored under each container name is a JSON array of version strings.
 func (s *Store) AddIgnoredVersion(containerName, version string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketIgnoredVersions)
+		b, err := bucket(tx, bucketIgnoredVersions)
+		if err != nil {
+			return err
+		}
 
 		existing := b.Get([]byte(containerName))
 		var versions []string
@@ -44,7 +47,10 @@ func (s *Store) AddIgnoredVersion(containerName, version string) error {
 func (s *Store) GetIgnoredVersions(containerName string) ([]string, error) {
 	var versions []string
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketIgnoredVersions)
+		b, err := bucket(tx, bucketIgnoredVersions)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(containerName))
 		if v == nil {
 			return nil
@@ -60,7 +66,10 @@ func (s *Store) GetIgnoredVersions(containerName string) ([]string, error) {
 // ClearIgnoredVersions removes all ignored versions for a container.
 func (s *Store) ClearIgnoredVersions(containerName string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketIgnoredVersions)
+		b, err := bucket(tx, bucketIgnoredVersions)
+		if err != nil {
+			return err
+		}
 		return b.Delete([]byte(containerName))
 	})
 }
@@ -69,7 +78,10 @@ func (s *Store) ClearIgnoredVersions(containerName string) error {
 func (s *Store) GetRegistryCredentials() ([]registry.RegistryCredential, error) {
 	var creds []registry.RegistryCredential
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketRegistryCreds)
+		b, err := bucket(tx, bucketRegistryCreds)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte("credentials"))
 		if v == nil {
 			return nil
@@ -86,7 +98,10 @@ func (s *Store) SetRegistryCredentials(creds []registry.RegistryCredential) erro
 		return fmt.Errorf("marshal registry credentials: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketRegistryCreds)
+		b, err := bucket(tx, bucketRegistryCreds)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte("credentials"), data)
 	})
 }
@@ -94,7 +109,10 @@ func (s *Store) SetRegistryCredentials(creds []registry.RegistryCredential) erro
 // SaveRateLimits persists rate limit state for all registries.
 func (s *Store) SaveRateLimits(data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketRateLimits)
+		b, err := bucket(tx, bucketRateLimits)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte("state"), data)
 	})
 }
@@ -104,7 +122,10 @@ func (s *Store) SaveRateLimits(data []byte) error {
 func (s *Store) LoadRateLimits() ([]byte, error) {
 	var data []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketRateLimits)
+		b, err := bucket(tx, bucketRateLimits)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte("state"))
 		if v != nil {
 			data = make([]byte, len(v))
@@ -125,7 +146,11 @@ var keyReleaseSources = []byte("sources")
 func (s *Store) GetReleaseSources() ([]registry.ReleaseSource, error) {
 	var sources []registry.ReleaseSource
 	err := s.db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket(bucketReleaseSources).Get(keyReleaseSources)
+		b, err := bucket(tx, bucketReleaseSources)
+		if err != nil {
+			return err
+		}
+		v := b.Get(keyReleaseSources)
 		if v == nil {
 			return nil
 		}
@@ -144,14 +169,21 @@ func (s *Store) SetReleaseSources(sources []registry.ReleaseSource) error {
 		return fmt.Errorf("marshal release sources: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketReleaseSources).Put(keyReleaseSources, data)
+		b, err := bucket(tx, bucketReleaseSources)
+		if err != nil {
+			return err
+		}
+		return b.Put(keyReleaseSources, data)
 	})
 }
 
 // SaveGHCRCache persists GHCR alternative detection cache.
 func (s *Store) SaveGHCRCache(data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketGHCRAlternatives)
+		b, err := bucket(tx, bucketGHCRAlternatives)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte("cache"), data)
 	})
 }
@@ -161,7 +193,10 @@ func (s *Store) SaveGHCRCache(data []byte) error {
 func (s *Store) LoadGHCRCache() ([]byte, error) {
 	var data []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketGHCRAlternatives)
+		b, err := bucket(tx, bucketGHCRAlternatives)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte("cache"))
 		if v != nil {
 			data = make([]byte, len(v))

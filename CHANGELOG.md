@@ -38,6 +38,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updates with configurable severity thresholds. Pre-update mode blocks deploys
   that exceed the threshold.
 
+### Changed
+- **BoltDB nil-bucket safety:** All `tx.Bucket()` calls across the persistence
+  layer (bolt.go, bolt_auth.go, bolt_hooks.go, bolt_registry.go, bolt_webauthn.go,
+  custom_urls.go, notify.go) now check for nil before use, returning descriptive
+  errors instead of panicking on missing or corrupted buckets.
+- **Docker daemon startup validation:** `NewClient()` now pings the Docker daemon
+  on init and returns a clear error if unreachable, instead of deferring failures
+  to the first API call.
+- **Notification dispatch timeouts:** `Stop()`, `flush()`, and `Reconfigure()`
+  on `notify.Multi` now use a 30-second context timeout instead of
+  `context.Background()`, preventing goroutines from hanging indefinitely during
+  shutdown.
+
+### Security
+- **HTTP security headers:** Added middleware setting `X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, and
+  `Content-Security-Policy` on all responses.
+- **Auth endpoint rate limiting:** Per-IP sliding window rate limiter (10 req/min)
+  on login, setup, passkey, and TOTP verification endpoints.
+- **Container name input validation:** All 28 API handlers that accept a container
+  name from URL path parameters now validate the input against a strict allowlist
+  (alphanumeric, underscore, dot, hyphen) before processing.
+
 ### Fixed
 - **IsIdle() race condition:** Replaced racy TryLock-based idle check with an
   atomic counter that tracks in-progress updates

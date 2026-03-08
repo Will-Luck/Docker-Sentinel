@@ -12,8 +12,8 @@ import (
 // No container restart — instant DB write.
 func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -78,8 +78,8 @@ func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {
 // apiDeletePolicy removes the policy override, falling back to Docker label.
 func (s *Server) apiDeletePolicy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 

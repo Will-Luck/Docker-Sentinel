@@ -99,8 +99,8 @@ func (s *Server) apiHistory(w http.ResponseWriter, r *http.Request) {
 // apiContainerDetail returns per-container detail as JSON.
 func (s *Server) apiContainerDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -178,8 +178,8 @@ func (s *Server) apiContainerDetail(w http.ResponseWriter, r *http.Request) {
 // apiContainerVersions returns available image versions from the registry.
 func (s *Server) apiContainerVersions(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -310,8 +310,8 @@ func (s *Server) apiHistoryExport(w http.ResponseWriter, r *http.Request) {
 // apiContainerAllTags returns all available tags for a container's image from the registry.
 func (s *Server) apiContainerAllTags(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
