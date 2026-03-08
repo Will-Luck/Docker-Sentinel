@@ -400,6 +400,9 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.log.Info("pruned stale queue entries", "count", pruned)
 	}
 
+	// Publish scan start event so the UI can show a progress bar.
+	u.publishEvent(events.EventScanStart, "", fmt.Sprintf("total=%d", len(containers)))
+
 	// Load filter patterns once per scan.
 	filters := u.loadFilters()
 
@@ -409,12 +412,13 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		reserve = 2
 	}
 
-	for _, c := range containers {
+	for i, c := range containers {
 		if ctx.Err() != nil {
 			return result
 		}
 
 		name := containerName(c)
+		u.publishEvent(events.EventScanProgress, name, fmt.Sprintf("checked=%d total=%d", i+1, len(containers)))
 		labels := c.Labels
 		tag := registry.ExtractTag(c.Image)
 		resolved := ResolvePolicy(u.store, labels, name, tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())

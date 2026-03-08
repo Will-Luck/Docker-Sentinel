@@ -2,7 +2,7 @@
    2b. Cluster Settings Tab
    ============================================================ */
 
-import { showToast } from "./utils.js";
+import { showToast, showConfirm } from "./utils.js";
 
 // Import updateToggleText from settings-core via window to avoid bundler issues.
 function _updateToggleText(textId, enabled) {
@@ -39,10 +39,20 @@ function loadClusterSettings() {
 
 function onClusterToggle(enabled) {
     if (!enabled) {
-        if (!confirm("Disabling cluster mode will disconnect all agents. Continue?")) {
-            document.getElementById("cluster-enabled").checked = true;
-            return;
-        }
+        showConfirm(
+            "Disable Cluster Mode",
+            "<p>Disabling cluster mode will disconnect all agents. Continue?</p>",
+            { danger: true, confirmLabel: "Disable" }
+        ).then(function(confirmed) {
+            if (!confirmed) {
+                document.getElementById("cluster-enabled").checked = true;
+                return;
+            }
+            _updateToggleText("cluster-enabled-text", enabled);
+            toggleClusterFields(enabled);
+            saveClusterSettings();
+        });
+        return;
     }
     _updateToggleText("cluster-enabled-text", enabled);
     toggleClusterFields(enabled);

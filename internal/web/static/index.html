@@ -20,6 +20,9 @@
             <img src="/favicon.svg" alt="S" class="nav-logo">
             <span class="nav-brand-text">Sentinel</span>
         </a>
+                <button class="nav-hamburger" aria-label="Menu" aria-expanded="false">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
         <div class="nav-links">
             <a href="/" class="nav-link active" aria-current="page">Dashboard</a>
             <a href="/queue" class="nav-link">
@@ -100,6 +103,10 @@
                 <dd class="stat-value" id="rate-limit-status">Healthy</dd>
             </a>
         </dl>
+
+        <div id="scan-progress" class="scan-progress" hidden>
+            <div class="scan-progress-bar"></div>
+        </div>
 
         <div id="pause-banner" class="pause-banner" style="display:none">
             <span>Scanning is paused</span>
@@ -222,8 +229,14 @@
                             <tr>
                                 <td colspan="{{$.ColCount}}">
                                     <div class="empty-state">
+                                        <div class="empty-state-icon">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9"/></svg>
+                                        </div>
                                         <h3>No containers found</h3>
                                         <p>Sentinel is not monitoring any containers yet.</p>
+                                        <div class="empty-state-cta">
+                                            <button class="btn btn-sm" onclick="triggerScan(event)">Run a Scan</button>
+                                        </div>
                                     </div>
                                 </td>
                             </tr>

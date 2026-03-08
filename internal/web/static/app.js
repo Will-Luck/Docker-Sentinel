@@ -87,7 +87,8 @@
     div.appendChild(document.createTextNode(str));
     return div.innerHTML;
   }
-  function showConfirm(title, bodyHTML) {
+  function showConfirm(title, bodyHTML, opts) {
+    if (!opts) opts = {};
     return new Promise(function(resolve) {
       var triggerEl = document.activeElement;
       var overlay = document.createElement("div");
@@ -115,8 +116,8 @@
       cancelBtn.type = "button";
       buttons.appendChild(cancelBtn);
       var applyBtn = document.createElement("button");
-      applyBtn.className = "confirm-btn-apply";
-      applyBtn.textContent = "Apply";
+      applyBtn.className = opts.danger ? "confirm-btn-danger" : "confirm-btn-apply";
+      applyBtn.textContent = opts.confirmLabel || "Apply";
       applyBtn.type = "button";
       buttons.appendChild(applyBtn);
       modal.appendChild(buttons);
@@ -192,6 +193,48 @@
     }).catch(function() {
       clearLoading();
       showToast("Network error \u2014 " + errorMsg.toLowerCase(), "error");
+    });
+  }
+  function apiFetch(url, opts) {
+    opts = opts || {};
+    var method = opts.method || "GET";
+    var triggerEl = opts.triggerEl || null;
+    if (triggerEl) {
+      triggerEl.classList.add("loading");
+      triggerEl.disabled = true;
+    }
+    var fetchOpts = { method, headers: {} };
+    if (opts.body) {
+      fetchOpts.headers["Content-Type"] = "application/json";
+      fetchOpts.body = typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body);
+    }
+    function clearLoading() {
+      if (triggerEl) {
+        triggerEl.classList.remove("loading");
+        triggerEl.disabled = false;
+      }
+    }
+    return fetch(url, fetchOpts).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      clearLoading();
+      if (result.ok) {
+        if (opts.successMsg) showToast(result.data.message || opts.successMsg, "success");
+        if (opts.onSuccess) opts.onSuccess(result.data);
+      } else {
+        var msg = result.data.error || (opts.errorMsg || "Error");
+        showToast(msg, "error");
+        if (opts.onError) opts.onError(new Error(msg));
+      }
+      return result.data;
+    }).catch(function(err) {
+      clearLoading();
+      var msg = (opts.errorMsg || "Error") + ": " + err.message;
+      showToast(msg, "error");
+      if (opts.onError) opts.onError(err);
+      throw err;
     });
   }
 
@@ -1550,24 +1593,19 @@
     });
   }
   function switchToGHCR(name, ghcrImage) {
-    if (!confirm("Switch " + name + " to " + ghcrImage + "?\n\nThis will recreate the container with the GHCR image. A snapshot will be taken first for rollback.")) {
-      return;
-    }
-    var enc = encodeURIComponent(name);
-    fetch("/api/containers/" + enc + "/switch-ghcr", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_image: ghcrImage })
-    }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      if (data.error) {
-        showToast(data.error, "error");
-      } else {
-        showToast("Switching " + name + " to GHCR image...", "success");
-      }
-    }).catch(function() {
-      showToast("Failed to switch to GHCR", "error");
+    showConfirm(
+      "Switch to GHCR",
+      "<p>Switch <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(ghcrImage) + "</code>?</p><p>This will recreate the container with the GHCR image. A snapshot will be taken first for rollback.</p>",
+      { danger: true, confirmLabel: "Switch" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      var enc = encodeURIComponent(name);
+      apiFetch("/api/containers/" + enc + "/switch-ghcr", {
+        method: "POST",
+        body: { target_image: ghcrImage },
+        successMsg: "Switching " + name + " to GHCR image...",
+        errorMsg: "Failed to switch to GHCR"
+      });
     });
   }
   function loadAllTags(summaryEl) {
@@ -1993,6 +2031,14 @@
 
   // internal/web/static/src/js/sse.js
   var ghcrAlternatives = {};
+  var _scanProgressEl = null;
+  var _scanProgressBar = null;
+  var _scanTotal = 0;
+  function getScanProgressEls() {
+    if (!_scanProgressEl) _scanProgressEl = document.getElementById("scan-progress");
+    if (!_scanProgressBar) _scanProgressBar = _scanProgressEl ? _scanProgressEl.querySelector(".scan-progress-bar") : null;
+    return { wrap: _scanProgressEl, bar: _scanProgressBar };
+  }
   var sseReloadTimer = null;
   function scheduleReload() {
     if (!document.getElementById("container-table")) return;
@@ -2216,7 +2262,46 @@
         updateQueueBadge();
       }
     });
+    es.addEventListener("scan_start", function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        var m = (data.message || "").match(/total=(\d+)/);
+        _scanTotal = m ? parseInt(m[1], 10) : 0;
+      } catch (_) {
+        _scanTotal = 0;
+      }
+      var els = getScanProgressEls();
+      if (!els.wrap || !els.bar) return;
+      els.bar.style.width = "0%";
+      els.bar.classList.remove("indeterminate");
+      els.wrap.removeAttribute("hidden");
+    });
+    es.addEventListener("scan_progress", function(e) {
+      var els = getScanProgressEls();
+      if (!els.wrap || !els.bar) return;
+      try {
+        var data = JSON.parse(e.data);
+        var m = (data.message || "").match(/checked=(\d+)\s+total=(\d+)/);
+        if (m) {
+          var checked = parseInt(m[1], 10);
+          var total = parseInt(m[2], 10);
+          if (total > 0) {
+            var pct = Math.round(checked / total * 100);
+            els.bar.style.width = pct + "%";
+          }
+        }
+      } catch (_) {
+      }
+    });
     es.addEventListener("scan_complete", function(e) {
+      var els = getScanProgressEls();
+      if (els.wrap && els.bar) {
+        els.bar.style.width = "100%";
+        setTimeout(function() {
+          els.wrap.setAttribute("hidden", "");
+          els.bar.style.width = "0%";
+        }, 800);
+      }
       var scanBtn = document.getElementById("scan-btn");
       if (scanBtn) {
         scanBtn.classList.remove("loading");
@@ -3341,26 +3426,32 @@
     });
   }
   function regenerateWebhookSecret() {
-    if (!confirm("This will invalidate all existing webhook integrations. Continue?")) return;
-    fetch("/api/settings/webhook-secret", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" }
-    }).then(function(resp) {
-      return resp.json().then(function(data) {
-        return { ok: resp.ok, data };
+    showConfirm(
+      "Regenerate Webhook Secret",
+      "<p>This will invalidate all existing webhook integrations. Continue?</p>",
+      { danger: true, confirmLabel: "Regenerate" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      fetch("/api/settings/webhook-secret", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      }).then(function(resp) {
+        return resp.json().then(function(data) {
+          return { ok: resp.ok, data };
+        });
+      }).then(function(result) {
+        if (result.ok) {
+          var secretInput = document.getElementById("webhook-secret");
+          if (secretInput) secretInput.value = result.data.secret || "";
+          var hint = document.getElementById("webhook-secret-hint");
+          if (hint) hint.style.display = "none";
+          showToast("Webhook secret regenerated \u2014 copy it now, it won't be shown again", "success");
+        } else {
+          showToast(result.data.error || "Failed to regenerate secret", "error");
+        }
+      }).catch(function() {
+        showToast("Network error -- could not regenerate secret", "error");
       });
-    }).then(function(result) {
-      if (result.ok) {
-        var secretInput = document.getElementById("webhook-secret");
-        if (secretInput) secretInput.value = result.data.secret || "";
-        var hint = document.getElementById("webhook-secret-hint");
-        if (hint) hint.style.display = "none";
-        showToast("Webhook secret regenerated \u2014 copy it now, it won't be shown again", "success");
-      } else {
-        showToast(result.data.error || "Failed to regenerate secret", "error");
-      }
-    }).catch(function() {
-      showToast("Network error -- could not regenerate secret", "error");
     });
   }
   function copyWebhookURL() {
@@ -3430,30 +3521,36 @@
       showToast("Select a file first", "error");
       return;
     }
-    if (!confirm("Import will overwrite matching settings. Continue?")) return;
-    var file = fileInput.files[0];
-    var reader = new FileReader();
-    reader.onload = function(e) {
-      fetch("/api/config/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: e.target.result
-      }).then(function(r) {
-        return r.json();
-      }).then(function(data) {
-        if (data.error) {
-          showToast(data.error, "error");
-        } else {
-          showToast(data.message || "Configuration imported", "success");
-          setTimeout(function() {
-            location.reload();
-          }, 1e3);
-        }
-      }).catch(function() {
-        showToast("Import failed", "error");
-      });
-    };
-    reader.readAsText(file);
+    showConfirm(
+      "Import Configuration",
+      "<p>Import will overwrite matching settings. Continue?</p>",
+      { confirmLabel: "Import" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      var file = fileInput.files[0];
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        fetch("/api/config/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: e.target.result
+        }).then(function(r) {
+          return r.json();
+        }).then(function(data) {
+          if (data.error) {
+            showToast(data.error, "error");
+          } else {
+            showToast(data.message || "Configuration imported", "success");
+            setTimeout(function() {
+              location.reload();
+            }, 1e3);
+          }
+        }).catch(function() {
+          showToast("Import failed", "error");
+        });
+      };
+      reader.readAsText(file);
+    });
   }
   function loadDashboardColumns() {
     fetch("/api/settings").then(function(r) {
@@ -3539,10 +3636,20 @@
   }
   function onClusterToggle(enabled) {
     if (!enabled) {
-      if (!confirm("Disabling cluster mode will disconnect all agents. Continue?")) {
-        document.getElementById("cluster-enabled").checked = true;
-        return;
-      }
+      showConfirm(
+        "Disable Cluster Mode",
+        "<p>Disabling cluster mode will disconnect all agents. Continue?</p>",
+        { danger: true, confirmLabel: "Disable" }
+      ).then(function(confirmed) {
+        if (!confirmed) {
+          document.getElementById("cluster-enabled").checked = true;
+          return;
+        }
+        _updateToggleText("cluster-enabled-text", enabled);
+        toggleClusterFields(enabled);
+        saveClusterSettings();
+      });
+      return;
     }
     _updateToggleText("cluster-enabled-text", enabled);
     toggleClusterFields(enabled);
@@ -4230,26 +4337,31 @@
     if (cbs.length === 0) return;
     var label = NOTIFY_MODE_LABELS[mode] || mode;
     var action = forceMode ? "Reset" : "Set";
-    if (!confirm(action + " " + cbs.length + " container" + (cbs.length > 1 ? "s" : "") + ' to "' + label + '"?')) return;
-    var pending = cbs.length;
-    for (var i = 0; i < cbs.length; i++) {
-      (function(name) {
-        fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode })
-        }).then(function() {
-          pending--;
-          if (pending === 0) {
-            showToast(action + " " + cbs.length + " containers to " + label, "success");
-            loadContainerNotifyPrefs();
-          }
-        }).catch(function() {
-          pending--;
-        });
-      })(cbs[i].value);
-    }
+    showConfirm(
+      action + " Notification Preference",
+      "<p>" + action + " " + cbs.length + " container" + (cbs.length > 1 ? "s" : "") + ' to "' + label + '"?</p>'
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      var pending = cbs.length;
+      for (var i = 0; i < cbs.length; i++) {
+        (function(name) {
+          fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode })
+          }).then(function() {
+            pending--;
+            if (pending === 0) {
+              showToast(action + " " + cbs.length + " containers to " + label, "success");
+              loadContainerNotifyPrefs();
+            }
+          }).catch(function() {
+            pending--;
+          });
+        })(cbs[i].value);
+      }
+    });
   }
   function setContainerNotifyPref(name, mode) {
     fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
@@ -5145,43 +5257,51 @@
     updateBulkBar();
   }
   var _deleting = false;
-  async function removeSelectedImages() {
+  function removeSelectedImages() {
     var count = _selectedIds.size;
     if (count === 0 || _deleting) return;
-    if (!confirm("Remove " + count + " selected image" + (count > 1 ? "s" : "") + "? This cannot be undone.")) return;
-    _deleting = true;
-    var removeBtn = document.querySelector("#images-bulk-bar .btn-danger");
-    if (removeBtn) removeBtn.disabled = true;
-    var ids = Array.from(_selectedIds);
-    var removed = 0;
-    var failed = 0;
-    for (var i = 0; i < ids.length; i++) {
-      try {
-        var resp = await fetch("/api/images/" + encodeURIComponent(ids[i]), { method: "DELETE" });
-        if (resp.ok) {
+    showConfirm(
+      "Remove Images",
+      "<p>Remove " + count + " selected image" + (count > 1 ? "s" : "") + "? This cannot be undone.</p>",
+      { danger: true, confirmLabel: "Remove" }
+    ).then(async function(confirmed) {
+      if (!confirmed) return;
+      _deleting = true;
+      var removeBtn = document.querySelector("#images-bulk-bar .btn-danger");
+      if (removeBtn) {
+        removeBtn.classList.add("loading");
+        removeBtn.disabled = true;
+      }
+      var ids = Array.from(_selectedIds);
+      var removed = 0;
+      var failed = 0;
+      for (var i = 0; i < ids.length; i++) {
+        try {
+          await apiFetch("/api/images/" + encodeURIComponent(ids[i]), {
+            method: "DELETE"
+          });
           removed++;
-        } else {
+        } catch (_) {
           failed++;
         }
-      } catch (_) {
-        failed++;
       }
-    }
-    _deleting = false;
-    if (removeBtn) removeBtn.disabled = false;
-    if (window.showToast) {
+      _deleting = false;
+      if (removeBtn) {
+        removeBtn.classList.remove("loading");
+        removeBtn.disabled = false;
+      }
       if (failed > 0) {
-        window.showToast("Removed " + removed + ", failed " + failed, "warning");
+        showToast("Removed " + removed + ", failed " + failed, "warning");
       } else {
-        window.showToast("Removed " + removed + " image" + (removed > 1 ? "s" : ""));
+        showToast("Removed " + removed + " image" + (removed > 1 ? "s" : ""), "success");
       }
-    }
-    _selectedIds.clear();
-    _manageMode = false;
-    var btn = document.getElementById("manage-btn");
-    if (btn) btn.textContent = "Manage";
-    updateBulkBar();
-    loadImages();
+      _selectedIds.clear();
+      _manageMode = false;
+      var btn = document.getElementById("manage-btn");
+      if (btn) btn.textContent = "Manage";
+      updateBulkBar();
+      loadImages();
+    });
   }
   function renderImagesTable() {
     var tbody = document.getElementById("images-tbody");
@@ -5192,10 +5312,16 @@
       var emptyRow = document.createElement("tr");
       var emptyCell = document.createElement("td");
       emptyCell.colSpan = _manageMode ? 7 : 6;
-      emptyCell.style.textAlign = "center";
-      emptyCell.style.padding = "2rem";
-      emptyCell.style.color = "var(--text-secondary)";
-      emptyCell.textContent = _currentFilter !== "all" ? "No " + _currentFilter + " images" : "No images found";
+      var emptyDiv = document.createElement("div");
+      emptyDiv.className = "empty-state";
+      var iconDiv = document.createElement("div");
+      iconDiv.className = "empty-state-icon";
+      iconDiv.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z"/></svg>';
+      emptyDiv.appendChild(iconDiv);
+      var msg = document.createElement("p");
+      msg.textContent = _currentFilter !== "all" ? "No " + _currentFilter + " images" : "No images found";
+      emptyDiv.appendChild(msg);
+      emptyCell.appendChild(emptyDiv);
       emptyRow.appendChild(emptyCell);
       tbody.appendChild(emptyRow);
       return;
@@ -5326,30 +5452,43 @@
     if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
     return Math.floor(diff / 86400) + "d ago";
   }
-  async function pruneImages() {
-    if (!confirm("Remove all dangling (unused, untagged) images?")) return;
-    try {
-      var resp = await fetch("/api/images/prune", { method: "POST" });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      var data = await resp.json();
-      if (window.showToast) {
-        window.showToast("Pruned " + data.images_deleted + " images, reclaimed " + formatBytes(data.space_reclaimed));
-      }
-      loadImages();
-    } catch (err) {
-      if (window.showToast) window.showToast("Prune failed: " + err.message, "error");
-    }
+  function pruneImages(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    showConfirm(
+      "Prune Images",
+      "<p>Remove all dangling (unused, untagged) images?</p>",
+      { danger: true, confirmLabel: "Prune" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      apiFetch("/api/images/prune", {
+        method: "POST",
+        triggerEl: btn,
+        errorMsg: "Prune failed",
+        onSuccess: function(data) {
+          showToast("Pruned " + data.images_deleted + " images, reclaimed " + formatBytes(data.space_reclaimed), "success");
+          loadImages();
+        }
+      });
+    });
   }
-  async function removeImage(id) {
-    if (!confirm("Remove this image? This cannot be undone.")) return;
-    try {
-      var resp = await fetch("/api/images/" + encodeURIComponent(id), { method: "DELETE" });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      if (window.showToast) window.showToast("Image removed");
-      loadImages();
-    } catch (err) {
-      if (window.showToast) window.showToast("Remove failed: " + err.message, "error");
-    }
+  function removeImage(id) {
+    showConfirm(
+      "Remove Image",
+      "<p>Remove this image? This cannot be undone.</p>",
+      { danger: true, confirmLabel: "Remove" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      var btn = document.querySelector('button[data-image-id="' + CSS.escape(id) + '"]');
+      apiFetch("/api/images/" + encodeURIComponent(id), {
+        method: "DELETE",
+        triggerEl: btn,
+        successMsg: "Image removed",
+        errorMsg: "Remove failed",
+        onSuccess: function() {
+          loadImages();
+        }
+      });
+    });
   }
 
   // internal/web/static/src/js/logs.js
@@ -5435,10 +5574,16 @@
       var tr = document.createElement("tr");
       var td = document.createElement("td");
       td.colSpan = 5;
-      td.style.textAlign = "center";
-      td.style.padding = "2rem";
-      td.style.color = "var(--text-secondary)";
-      td.textContent = _currentType !== "all" ? "No " + _currentType + " entries" : "No activity logged yet.";
+      var emptyDiv = document.createElement("div");
+      emptyDiv.className = "empty-state";
+      var iconDiv = document.createElement("div");
+      iconDiv.className = "empty-state-icon";
+      iconDiv.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>';
+      emptyDiv.appendChild(iconDiv);
+      var msg = document.createElement("p");
+      msg.textContent = _currentType !== "all" ? "No " + _currentType + " entries" : "No activity logged yet.";
+      emptyDiv.appendChild(msg);
+      td.appendChild(emptyDiv);
       tr.appendChild(td);
       tbody.appendChild(tr);
       return;
@@ -5546,6 +5691,7 @@
   window.escapeHTML = escapeHTML;
   window.showConfirm = showConfirm;
   window.apiPost = apiPost2;
+  window.apiFetch = apiFetch;
   window.activateFilter = activateFilter;
   window.resumeScanning = resumeScanning;
   window.expandAllStacks = expandAllStacks;
@@ -5675,6 +5821,33 @@
   window.loadActivityLogs = loadActivityLogs;
   window.filterLogs = filterLogs;
   window.exportLogs = exportLogs;
+  (function initHamburger() {
+    var btn = document.querySelector(".nav-hamburger");
+    var links = document.querySelector(".nav-links");
+    if (!btn || !links) return;
+    btn.addEventListener("click", function() {
+      var open = links.classList.toggle("nav-open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape" && links.classList.contains("nav-open")) {
+        links.classList.remove("nav-open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    });
+    document.addEventListener("click", function(e) {
+      if (!btn.contains(e.target) && !links.contains(e.target) && links.classList.contains("nav-open")) {
+        links.classList.remove("nav-open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    });
+    links.addEventListener("click", function(e) {
+      if (e.target.closest(".nav-link")) {
+        links.classList.remove("nav-open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    });
+  })();
   document.addEventListener("DOMContentLoaded", function() {
     initTheme();
     var path = window.location.pathname;

@@ -3,7 +3,7 @@
    2a. Settings Helpers
    ============================================================ */
 
-import { showToast } from "./utils.js";
+import { showToast, showConfirm } from "./utils.js";
 
 /* ------------------------------------------------------------
    2. Settings Page — initSettingsPage
@@ -956,32 +956,38 @@ function setWebhookEnabled(enabled) {
 }
 
 function regenerateWebhookSecret() {
-    if (!confirm("This will invalidate all existing webhook integrations. Continue?")) return;
+    showConfirm(
+        "Regenerate Webhook Secret",
+        "<p>This will invalidate all existing webhook integrations. Continue?</p>",
+        { danger: true, confirmLabel: "Regenerate" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
 
-    fetch("/api/settings/webhook-secret", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-    })
-        .then(function(resp) {
-            return resp.json().then(function(data) {
-                return { ok: resp.ok, data: data };
+        fetch("/api/settings/webhook-secret", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+        })
+            .then(function(resp) {
+                return resp.json().then(function(data) {
+                    return { ok: resp.ok, data: data };
+                });
+            })
+            .then(function(result) {
+                if (result.ok) {
+                    var secretInput = document.getElementById("webhook-secret");
+                    if (secretInput) secretInput.value = result.data.secret || "";
+                    // Hide the masked hint — the full secret is now visible.
+                    var hint = document.getElementById("webhook-secret-hint");
+                    if (hint) hint.style.display = "none";
+                    showToast("Webhook secret regenerated — copy it now, it won't be shown again", "success");
+                } else {
+                    showToast(result.data.error || "Failed to regenerate secret", "error");
+                }
+            })
+            .catch(function() {
+                showToast("Network error -- could not regenerate secret", "error");
             });
-        })
-        .then(function(result) {
-            if (result.ok) {
-                var secretInput = document.getElementById("webhook-secret");
-                if (secretInput) secretInput.value = result.data.secret || "";
-                // Hide the masked hint — the full secret is now visible.
-                var hint = document.getElementById("webhook-secret-hint");
-                if (hint) hint.style.display = "none";
-                showToast("Webhook secret regenerated — copy it now, it won't be shown again", "success");
-            } else {
-                showToast(result.data.error || "Failed to regenerate secret", "error");
-            }
-        })
-        .catch(function() {
-            showToast("Network error -- could not regenerate secret", "error");
-        });
+    });
 }
 
 function copyWebhookURL() {
@@ -1070,30 +1076,36 @@ function importConfig() {
         return;
     }
 
-    if (!confirm("Import will overwrite matching settings. Continue?")) return;
+    showConfirm(
+        "Import Configuration",
+        "<p>Import will overwrite matching settings. Continue?</p>",
+        { confirmLabel: "Import" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
 
-    var file = fileInput.files[0];
-    var reader = new FileReader();
-    reader.onload = function(e) {
-        fetch("/api/config/import", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: e.target.result
-        })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.error) {
-                    showToast(data.error, "error");
-                } else {
-                    showToast(data.message || "Configuration imported", "success");
-                    setTimeout(function() { location.reload(); }, 1000);
-                }
+        var file = fileInput.files[0];
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            fetch("/api/config/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: e.target.result
             })
-            .catch(function() {
-                showToast("Import failed", "error");
-            });
-    };
-    reader.readAsText(file);
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) {
+                        showToast(data.error, "error");
+                    } else {
+                        showToast(data.message || "Configuration imported", "success");
+                        setTimeout(function() { location.reload(); }, 1000);
+                    }
+                })
+                .catch(function() {
+                    showToast("Import failed", "error");
+                });
+        };
+        reader.readAsText(file);
+    });
 }
 
 // --- Dashboard Column Config ---

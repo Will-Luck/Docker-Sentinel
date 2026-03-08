@@ -2,6 +2,8 @@
    Docker-Sentinel — Images management page
    ============================================================ */
 
+import { showToast, showConfirm, apiFetch } from "./utils.js";
+
 // Module state: cached image data and current filter/sort.
 var _allImages = [];
 var _currentFilter = 'all'; // all | in-use | unused
@@ -129,41 +131,54 @@ export function toggleSelectAll() {
 
 var _deleting = false;
 
-export async function removeSelectedImages() {
+export function removeSelectedImages() {
     var count = _selectedIds.size;
     if (count === 0 || _deleting) return;
-    if (!confirm('Remove ' + count + ' selected image' + (count > 1 ? 's' : '') + '? This cannot be undone.')) return;
 
-    _deleting = true;
-    var removeBtn = document.querySelector('#images-bulk-bar .btn-danger');
-    if (removeBtn) removeBtn.disabled = true;
+    showConfirm(
+        "Remove Images",
+        "<p>Remove " + count + " selected image" + (count > 1 ? "s" : "") + "? This cannot be undone.</p>",
+        { danger: true, confirmLabel: "Remove" }
+    ).then(async function(confirmed) {
+        if (!confirmed) return;
 
-    var ids = Array.from(_selectedIds);
-    var removed = 0;
-    var failed = 0;
-    for (var i = 0; i < ids.length; i++) {
-        try {
-            var resp = await fetch('/api/images/' + encodeURIComponent(ids[i]), { method: 'DELETE' });
-            if (resp.ok) { removed++; } else { failed++; }
-        } catch (_) { failed++; }
-    }
-
-    _deleting = false;
-    if (removeBtn) removeBtn.disabled = false;
-
-    if (window.showToast) {
-        if (failed > 0) {
-            window.showToast('Removed ' + removed + ', failed ' + failed, 'warning');
-        } else {
-            window.showToast('Removed ' + removed + ' image' + (removed > 1 ? 's' : ''));
+        _deleting = true;
+        var removeBtn = document.querySelector('#images-bulk-bar .btn-danger');
+        if (removeBtn) {
+            removeBtn.classList.add('loading');
+            removeBtn.disabled = true;
         }
-    }
-    _selectedIds.clear();
-    _manageMode = false;
-    var btn = document.getElementById('manage-btn');
-    if (btn) btn.textContent = 'Manage';
-    updateBulkBar();
-    loadImages();
+
+        var ids = Array.from(_selectedIds);
+        var removed = 0;
+        var failed = 0;
+        for (var i = 0; i < ids.length; i++) {
+            try {
+                await apiFetch('/api/images/' + encodeURIComponent(ids[i]), {
+                    method: 'DELETE'
+                });
+                removed++;
+            } catch (_) { failed++; }
+        }
+
+        _deleting = false;
+        if (removeBtn) {
+            removeBtn.classList.remove('loading');
+            removeBtn.disabled = false;
+        }
+
+        if (failed > 0) {
+            showToast('Removed ' + removed + ', failed ' + failed, 'warning');
+        } else {
+            showToast('Removed ' + removed + ' image' + (removed > 1 ? 's' : ''), 'success');
+        }
+        _selectedIds.clear();
+        _manageMode = false;
+        var btn = document.getElementById('manage-btn');
+        if (btn) btn.textContent = 'Manage';
+        updateBulkBar();
+        loadImages();
+    });
 }
 
 // ---- Rendering ----
@@ -180,10 +195,16 @@ function renderImagesTable() {
         var emptyRow = document.createElement('tr');
         var emptyCell = document.createElement('td');
         emptyCell.colSpan = _manageMode ? 7 : 6;
-        emptyCell.style.textAlign = 'center';
-        emptyCell.style.padding = '2rem';
-        emptyCell.style.color = 'var(--text-secondary)';
-        emptyCell.textContent = _currentFilter !== 'all' ? 'No ' + _currentFilter + ' images' : 'No images found';
+        var emptyDiv = document.createElement('div');
+        emptyDiv.className = 'empty-state';
+        var iconDiv = document.createElement('div');
+        iconDiv.className = 'empty-state-icon';
+        iconDiv.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z"/></svg>';
+        emptyDiv.appendChild(iconDiv);
+        var msg = document.createElement('p');
+        msg.textContent = _currentFilter !== 'all' ? 'No ' + _currentFilter + ' images' : 'No images found';
+        emptyDiv.appendChild(msg);
+        emptyCell.appendChild(emptyDiv);
         emptyRow.appendChild(emptyCell);
         tbody.appendChild(emptyRow);
         return;
@@ -327,29 +348,40 @@ function formatRelativeTime(unixSeconds) {
     return Math.floor(diff / 86400) + 'd ago';
 }
 
-export async function pruneImages() {
-    if (!confirm('Remove all dangling (unused, untagged) images?')) return;
-    try {
-        var resp = await fetch('/api/images/prune', { method: 'POST' });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        var data = await resp.json();
-        if (window.showToast) {
-            window.showToast('Pruned ' + data.images_deleted + ' images, reclaimed ' + formatBytes(data.space_reclaimed));
-        }
-        loadImages();
-    } catch (err) {
-        if (window.showToast) window.showToast('Prune failed: ' + err.message, 'error');
-    }
+export function pruneImages(event) {
+    var btn = event && event.target ? event.target.closest('.btn') : null;
+    showConfirm(
+        "Prune Images",
+        "<p>Remove all dangling (unused, untagged) images?</p>",
+        { danger: true, confirmLabel: "Prune" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
+        apiFetch('/api/images/prune', {
+            method: 'POST',
+            triggerEl: btn,
+            errorMsg: 'Prune failed',
+            onSuccess: function(data) {
+                showToast('Pruned ' + data.images_deleted + ' images, reclaimed ' + formatBytes(data.space_reclaimed), 'success');
+                loadImages();
+            }
+        });
+    });
 }
 
-export async function removeImage(id) {
-    if (!confirm('Remove this image? This cannot be undone.')) return;
-    try {
-        var resp = await fetch('/api/images/' + encodeURIComponent(id), { method: 'DELETE' });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        if (window.showToast) window.showToast('Image removed');
-        loadImages();
-    } catch (err) {
-        if (window.showToast) window.showToast('Remove failed: ' + err.message, 'error');
-    }
+export function removeImage(id) {
+    showConfirm(
+        "Remove Image",
+        "<p>Remove this image? This cannot be undone.</p>",
+        { danger: true, confirmLabel: "Remove" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
+        var btn = document.querySelector('button[data-image-id="' + CSS.escape(id) + '"]');
+        apiFetch('/api/images/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            triggerEl: btn,
+            successMsg: 'Image removed',
+            errorMsg: 'Remove failed',
+            onSuccess: function() { loadImages(); }
+        });
+    });
 }

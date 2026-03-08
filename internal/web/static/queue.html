@@ -20,6 +20,9 @@
             <img src="/favicon.svg" alt="S" class="nav-logo">
             <span class="nav-brand-text">Sentinel</span>
         </a>
+                <button class="nav-hamburger" aria-label="Menu" aria-expanded="false">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
         <div class="nav-links">
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/queue" class="nav-link active" aria-current="page">
@@ -188,9 +191,11 @@
                             <tr>
                                 <td colspan="5">
                                     <div class="empty-state">
-                                        <h3>No pending updates</h3>
-                                        <p>No containers are waiting for approval. Containers with a <strong>manual</strong> policy will appear here when updates are available.</p>
-                                        <p style="margin-top: var(--sp-2)"><a href="/settings">Manage default policies</a></p>
+                                        <div class="empty-state-icon">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+                                        </div>
+                                        <h3>All caught up</h3>
+                                        <p>No containers are waiting for updates.</p>
                                     </div>
                                 </td>
                             </tr>
