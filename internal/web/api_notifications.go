@@ -166,8 +166,8 @@ func (s *Server) apiNotificationEventTypes(w http.ResponseWriter, _ *http.Reques
 // apiGetNotifyPref returns the notification preference for a container.
 func (s *Server) apiGetNotifyPref(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 	if s.deps.NotifyState == nil {
@@ -193,8 +193,8 @@ func (s *Server) apiGetNotifyPref(w http.ResponseWriter, r *http.Request) {
 // apiSetNotifyPref sets the notification preference for a container.
 func (s *Server) apiSetNotifyPref(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 	var body struct {

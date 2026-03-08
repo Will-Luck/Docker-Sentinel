@@ -55,7 +55,10 @@ func (s *Store) CreateUser(user auth.User) error {
 		return fmt.Errorf("marshal user: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketUsers)
+		b, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 
 		// Ensure username is unique.
 		if existing := b.Get(userIndexKey(user.Username)); existing != nil {
@@ -77,7 +80,10 @@ func (s *Store) CreateFirstUser(user auth.User) error {
 		return fmt.Errorf("marshal user: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketUsers)
+		b, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 
 		// Count non-index keys. If any exist, another user beat us.
 		count := 0
@@ -102,7 +108,10 @@ func (s *Store) CreateFirstUser(user auth.User) error {
 func (s *Store) GetUser(id string) (*auth.User, error) {
 	var user auth.User
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketUsers)
+		b, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(id))
 		if v == nil {
 			return fmt.Errorf("user %q not found", id)
@@ -119,7 +128,10 @@ func (s *Store) GetUser(id string) (*auth.User, error) {
 func (s *Store) GetUserByUsername(username string) (*auth.User, error) {
 	var user auth.User
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketUsers)
+		b, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 
 		idBytes := b.Get(userIndexKey(username))
 		if idBytes == nil {
@@ -146,7 +158,10 @@ func (s *Store) UpdateUser(user auth.User) error {
 		return fmt.Errorf("marshal user: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketUsers)
+		b, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 
 		// Fetch existing to detect username change.
 		existing := b.Get([]byte(user.ID))
@@ -181,7 +196,10 @@ func (s *Store) UpdateUser(user auth.User) error {
 // and API tokens in a single transaction.
 func (s *Store) DeleteUser(id string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		ub := tx.Bucket(bucketUsers)
+		ub, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 
 		// Fetch user to find the username.
 		v := ub.Get([]byte(id))
@@ -203,7 +221,10 @@ func (s *Store) DeleteUser(id string) error {
 
 		// Cascade-delete sessions for this user.
 		// Collect keys first — mutating during iteration is undefined behaviour in BoltDB.
-		sb := tx.Bucket(bucketSessions)
+		sb, err := bucket(tx, bucketSessions)
+		if err != nil {
+			return err
+		}
 		prefix := sessionUserIndexPrefix(id)
 		sc := sb.Cursor()
 
@@ -229,7 +250,10 @@ func (s *Store) DeleteUser(id string) error {
 
 		// Cascade-delete API tokens for this user.
 		// Collect keys first — mutating during iteration is undefined behaviour in BoltDB.
-		ab := tx.Bucket(bucketAPITokens)
+		ab, err := bucket(tx, bucketAPITokens)
+		if err != nil {
+			return err
+		}
 		aprefix := apiTokenUserIndexPrefix(id)
 		ac := ab.Cursor()
 
@@ -278,7 +302,10 @@ func (s *Store) DeleteUser(id string) error {
 func (s *Store) ListUsers() ([]auth.User, error) {
 	var users []auth.User
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketUsers)
+		b, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 		return b.ForEach(func(k, v []byte) error {
 			if isIndexKey(k) {
 				return nil
@@ -298,7 +325,10 @@ func (s *Store) ListUsers() ([]auth.User, error) {
 func (s *Store) UserCount() (int, error) {
 	var count int
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketUsers)
+		b, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			if !isIndexKey(k) {
@@ -321,7 +351,10 @@ func (s *Store) CreateSession(session auth.Session) error {
 		return fmt.Errorf("marshal session: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSessions)
+		b, err := bucket(tx, bucketSessions)
+		if err != nil {
+			return err
+		}
 		if err := b.Put([]byte(session.Token), data); err != nil {
 			return err
 		}
@@ -333,7 +366,10 @@ func (s *Store) CreateSession(session auth.Session) error {
 func (s *Store) GetSession(token string) (*auth.Session, error) {
 	var session auth.Session
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSessions)
+		b, err := bucket(tx, bucketSessions)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(token))
 		if v == nil {
 			return fmt.Errorf("session not found")
@@ -349,7 +385,10 @@ func (s *Store) GetSession(token string) (*auth.Session, error) {
 // DeleteSession removes a session and its user index entry.
 func (s *Store) DeleteSession(token string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSessions)
+		b, err := bucket(tx, bucketSessions)
+		if err != nil {
+			return err
+		}
 
 		// Get session to find userID for index cleanup.
 		v := b.Get([]byte(token))
@@ -373,7 +412,10 @@ func (s *Store) DeleteSession(token string) error {
 // DeleteSessionsForUser removes all sessions belonging to the given user.
 func (s *Store) DeleteSessionsForUser(userID string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSessions)
+		b, err := bucket(tx, bucketSessions)
+		if err != nil {
+			return err
+		}
 		prefix := sessionUserIndexPrefix(userID)
 		c := b.Cursor()
 
@@ -404,7 +446,10 @@ func (s *Store) DeleteSessionsForUser(userID string) error {
 func (s *Store) ListSessionsForUser(userID string) ([]auth.Session, error) {
 	var sessions []auth.Session
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSessions)
+		b, err := bucket(tx, bucketSessions)
+		if err != nil {
+			return err
+		}
 		prefix := sessionUserIndexPrefix(userID)
 		c := b.Cursor()
 
@@ -432,7 +477,10 @@ func (s *Store) DeleteExpiredSessions() (int, error) {
 	now := time.Now().UTC()
 
 	err := s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSessions)
+		b, err := bucket(tx, bucketSessions)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 
 		// Collect expired session keys and their user index keys.
@@ -481,7 +529,10 @@ func (s *Store) DeleteExpiredSessions() (int, error) {
 func (s *Store) GetRole(id string) (*auth.Role, error) {
 	var role auth.Role
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketRoles)
+		b, err := bucket(tx, bucketRoles)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(id))
 		if v == nil {
 			return fmt.Errorf("role %q not found", id)
@@ -498,7 +549,10 @@ func (s *Store) GetRole(id string) (*auth.Role, error) {
 func (s *Store) ListRoles() ([]auth.Role, error) {
 	var roles []auth.Role
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketRoles)
+		b, err := bucket(tx, bucketRoles)
+		if err != nil {
+			return err
+		}
 		return b.ForEach(func(k, v []byte) error {
 			var role auth.Role
 			if err := json.Unmarshal(v, &role); err != nil {
@@ -515,7 +569,10 @@ func (s *Store) ListRoles() ([]auth.Role, error) {
 func (s *Store) SeedBuiltinRoles() error {
 	roles := auth.BuiltinRoles()
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketRoles)
+		b, err := bucket(tx, bucketRoles)
+		if err != nil {
+			return err
+		}
 		for _, role := range roles {
 			if existing := b.Get([]byte(role.ID)); existing != nil {
 				continue // don't overwrite existing roles
@@ -543,7 +600,10 @@ func (s *Store) CreateAPIToken(token auth.APIToken) error {
 		return fmt.Errorf("marshal api token: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketAPITokens)
+		b, err := bucket(tx, bucketAPITokens)
+		if err != nil {
+			return err
+		}
 
 		if err := b.Put([]byte(token.ID), data); err != nil {
 			return err
@@ -559,7 +619,10 @@ func (s *Store) CreateAPIToken(token auth.APIToken) error {
 func (s *Store) GetAPITokenByHash(hash string) (*auth.APIToken, error) {
 	var token auth.APIToken
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketAPITokens)
+		b, err := bucket(tx, bucketAPITokens)
+		if err != nil {
+			return err
+		}
 
 		idBytes := b.Get(apiTokenHashIndexKey(hash))
 		if idBytes == nil {
@@ -581,7 +644,10 @@ func (s *Store) GetAPITokenByHash(hash string) (*auth.APIToken, error) {
 // DeleteAPIToken removes an API token and all its indexes.
 func (s *Store) DeleteAPIToken(id string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketAPITokens)
+		b, err := bucket(tx, bucketAPITokens)
+		if err != nil {
+			return err
+		}
 
 		v := b.Get([]byte(id))
 		if v == nil {
@@ -607,7 +673,10 @@ func (s *Store) DeleteAPIToken(id string) error {
 // TouchAPIToken updates only the LastUsedAt timestamp for an API token.
 func (s *Store) TouchAPIToken(id string, t time.Time) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketAPITokens)
+		b, err := bucket(tx, bucketAPITokens)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(id))
 		if v == nil {
 			return nil
@@ -629,7 +698,10 @@ func (s *Store) TouchAPIToken(id string, t time.Time) error {
 func (s *Store) ListAPITokensForUser(userID string) ([]auth.APIToken, error) {
 	var tokens []auth.APIToken
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketAPITokens)
+		b, err := bucket(tx, bucketAPITokens)
+		if err != nil {
+			return err
+		}
 		prefix := apiTokenUserIndexPrefix(userID)
 		c := b.Cursor()
 
@@ -667,7 +739,11 @@ func (s *Store) SavePendingTOTP(token, userID string, expiresAt time.Time) error
 		return fmt.Errorf("marshal pending TOTP: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketTOTPPending).Put([]byte(token), data)
+		b, err := bucket(tx, bucketTOTPPending)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(token), data)
 	})
 }
 
@@ -676,7 +752,11 @@ func (s *Store) SavePendingTOTP(token, userID string, expiresAt time.Time) error
 func (s *Store) GetPendingTOTP(token string) (string, error) {
 	var entry pendingTOTPEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket(bucketTOTPPending).Get([]byte(token))
+		b, err := bucket(tx, bucketTOTPPending)
+		if err != nil {
+			return err
+		}
+		v := b.Get([]byte(token))
 		if v == nil {
 			return nil
 		}
@@ -700,6 +780,10 @@ func (s *Store) GetPendingTOTP(token string) (string, error) {
 // DeletePendingTOTP removes a pending TOTP token.
 func (s *Store) DeletePendingTOTP(token string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketTOTPPending).Delete([]byte(token))
+		b, err := bucket(tx, bucketTOTPPending)
+		if err != nil {
+			return err
+		}
+		return b.Delete([]byte(token))
 	})
 }

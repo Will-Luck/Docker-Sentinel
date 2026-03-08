@@ -165,6 +165,22 @@ func webReplaceTag(imageRef, newTag string) string {
 	return imageRef + ":" + newTag
 }
 
+// isValidContainerName checks that s looks like a valid Docker container name:
+// alphanumerics, underscores, dots, and hyphens only.
+// Rejects empty strings, path separators, and control characters.
+func isValidContainerName(s string) bool {
+	if s == "" || len(s) > 255 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '_' || c == '.' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // isValidImageRef checks that s looks like a Docker image reference:
 // alphanumerics, dots, dashes, underscores, slashes, colons, and @.
 // Rejects empty strings, whitespace, and control characters.

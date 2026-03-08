@@ -18,8 +18,8 @@ var validTag = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
 // apiRestart restarts a container by name.
 func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -105,8 +105,8 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 // apiStop stops a container by name.
 func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -192,8 +192,8 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 // apiStart starts a container by name.
 func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -279,8 +279,8 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 // apiUpdate triggers an immediate update for a container by name.
 func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -413,8 +413,8 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 // apiRollback triggers a rollback to the most recent snapshot.
 func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -492,8 +492,8 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 // If an update is found, it gets added to the queue (triggering SSE events).
 func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -725,8 +725,8 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 // For Sentinel containers, it routes through the self-updater helper.
 func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 

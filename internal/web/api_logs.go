@@ -15,8 +15,8 @@ import (
 // apiContainerLogs returns the last N lines of a container's logs.
 func (s *Server) apiContainerLogs(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -87,8 +87,8 @@ func (s *Server) apiContainerLogs(w http.ResponseWriter, r *http.Request) {
 // apiContainerLogStream streams container logs via SSE (local containers only).
 func (s *Server) apiContainerLogStream(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
