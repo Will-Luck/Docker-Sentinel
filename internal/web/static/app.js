@@ -973,22 +973,142 @@
       });
     }
   })();
+  var LOG_MAX_LINES = 1e3;
+  var _tsPatterns = [
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s*/,
+    // ISO 8601
+    /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2})\s*/,
+    // Go default
+    /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\s*/,
+    // Common datetime
+    /^(\[\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\])\s*/
+    // Bracketed
+  ];
+  var _levelPatterns = [
+    { re: /\b(?:ERROR|ERR|FATAL|CRIT|PANIC)\b/i, level: "error" },
+    { re: /\b(?:WARN(?:ING)?|WRN)\b/i, level: "warn" },
+    { re: /\b(?:INFO|INF|NOTICE)\b/i, level: "info" },
+    { re: /\b(?:DEBUG|DBG|TRACE|VERBOSE)\b/i, level: "debug" }
+  ];
+  function _parseLogLine(raw) {
+    var ts = "";
+    var msg = raw;
+    for (var i = 0; i < _tsPatterns.length; i++) {
+      var m = raw.match(_tsPatterns[i]);
+      if (m) {
+        ts = m[1];
+        msg = raw.slice(m[0].length);
+        break;
+      }
+    }
+    var level = "";
+    var probe = msg.slice(0, 80);
+    for (var j = 0; j < _levelPatterns.length; j++) {
+      if (_levelPatterns[j].re.test(probe)) {
+        level = _levelPatterns[j].level;
+        break;
+      }
+    }
+    return { ts, msg, level };
+  }
+  function _createLogLineEl(parsed) {
+    var div = document.createElement("div");
+    div.className = "log-line";
+    if (parsed.level) div.dataset.level = parsed.level;
+    if (parsed.ts) {
+      var tsSpan = document.createElement("span");
+      tsSpan.className = "log-line-ts";
+      tsSpan.textContent = parsed.ts;
+      div.appendChild(tsSpan);
+    }
+    var msgSpan = document.createElement("span");
+    msgSpan.className = "log-line-msg";
+    msgSpan.textContent = parsed.msg;
+    div.appendChild(msgSpan);
+    return div;
+  }
+  function _createSystemMsg(text) {
+    var div = document.createElement("div");
+    div.className = "log-line-system";
+    div.textContent = text;
+    return div;
+  }
+  function _clearLogs(logsEl) {
+    while (logsEl.firstChild) logsEl.removeChild(logsEl.firstChild);
+    _logLineCount = 0;
+  }
+  var _logLineCount = 0;
+  function _appendLogLine(logsEl, raw) {
+    var parsed = _parseLogLine(raw);
+    var el = _createLogLineEl(parsed);
+    logsEl.appendChild(el);
+    _logLineCount++;
+    while (_logLineCount > LOG_MAX_LINES && logsEl.firstChild) {
+      logsEl.removeChild(logsEl.firstChild);
+      _logLineCount--;
+    }
+  }
+  function _shouldAutoScroll(logsEl) {
+    var cb = document.getElementById("log-auto-scroll");
+    if (cb && !cb.checked) return false;
+    return logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 30;
+  }
+  function _scrollToBottom(logsEl) {
+    logsEl.scrollTop = logsEl.scrollHeight;
+  }
+  var _logFilterTimer = null;
+  function _applyLogFilter() {
+    var input = document.getElementById("log-filter");
+    var logsEl = document.getElementById("container-logs");
+    if (!input || !logsEl) return;
+    var filter = input.value.toLowerCase();
+    var lines = logsEl.querySelectorAll(".log-line");
+    for (var i = 0; i < lines.length; i++) {
+      var text = lines[i].textContent.toLowerCase();
+      lines[i].style.display = !filter || text.indexOf(filter) !== -1 ? "" : "none";
+    }
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("DOMContentLoaded", function() {
+      var filterEl = document.getElementById("log-filter");
+      if (filterEl) {
+        filterEl.addEventListener("input", function() {
+          if (_logFilterTimer) clearTimeout(_logFilterTimer);
+          _logFilterTimer = setTimeout(_applyLogFilter, 150);
+        });
+      }
+    });
+  }
   async function fetchContainerLogs(name, hostId) {
     var linesEl = document.getElementById("log-lines");
     var lines = linesEl ? linesEl.value : "50";
     var logsEl = document.getElementById("container-logs");
+    var filterEl = document.getElementById("log-filter");
     if (!logsEl) return;
-    logsEl.textContent = "Loading logs...";
+    _clearLogs(logsEl);
+    logsEl.appendChild(_createSystemMsg("Loading logs..."));
     var url = "/api/containers/" + encodeURIComponent(name) + "/logs?lines=" + lines;
     if (hostId) url += "&host=" + encodeURIComponent(hostId);
     try {
       var resp = await fetch(url);
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       var data = await resp.json();
-      logsEl.textContent = data.logs || "No log output.";
-      logsEl.scrollTop = logsEl.scrollHeight;
+      _clearLogs(logsEl);
+      var logText = data.logs || "";
+      if (!logText) {
+        logsEl.appendChild(_createSystemMsg("No log output."));
+        return;
+      }
+      var logLines = logText.split("\n");
+      for (var i = 0; i < logLines.length; i++) {
+        if (logLines[i] === "" && i === logLines.length - 1) continue;
+        _appendLogLine(logsEl, logLines[i]);
+      }
+      if (filterEl) filterEl.disabled = false;
+      _scrollToBottom(logsEl);
     } catch (err) {
-      logsEl.textContent = "Error loading logs: " + err.message;
+      _clearLogs(logsEl);
+      logsEl.appendChild(_createSystemMsg("Error loading logs: " + err.message));
     }
   }
   var logStreamSource = null;
@@ -996,7 +1116,6 @@
   var _followName = "";
   var _followHostId = "";
   var _reconnectTimer = null;
-  var _logScrollHandler = null;
   function _connectLogStream() {
     if (logStreamSource) {
       logStreamSource.close();
@@ -1013,26 +1132,18 @@
     var url = "/api/containers/" + encodeURIComponent(_followName) + "/logs/stream?lines=" + lines;
     var es = new EventSource(url);
     logStreamSource = es;
-    var userScrolled = false;
-    if (_logScrollHandler) {
-      logsEl.removeEventListener("scroll", _logScrollHandler);
-    }
-    _logScrollHandler = function() {
-      var atBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
-      userScrolled = !atBottom;
-    };
-    logsEl.addEventListener("scroll", _logScrollHandler);
     es.onmessage = function(e) {
-      logsEl.textContent += e.data + "\n";
-      if (!userScrolled) {
-        logsEl.scrollTop = logsEl.scrollHeight;
-      }
+      var wasAtBottom = _shouldAutoScroll(logsEl);
+      _appendLogLine(logsEl, e.data);
+      _applyLogFilter();
+      if (wasAtBottom) _scrollToBottom(logsEl);
     };
     es.addEventListener("eof", function() {
       es.close();
       logStreamSource = null;
       if (!_followMode) return;
-      logsEl.textContent += "\n--- stream ended, reconnecting... ---\n";
+      logsEl.appendChild(_createSystemMsg("Stream ended, reconnecting..."));
+      _scrollToBottom(logsEl);
       _scheduleReconnect();
     });
     es.onerror = function() {
@@ -1088,7 +1199,9 @@
       btn.classList.add("btn-danger");
     }
     var logsEl = document.getElementById("container-logs");
-    if (logsEl) logsEl.textContent = "";
+    var filterEl = document.getElementById("log-filter");
+    if (logsEl) _clearLogs(logsEl);
+    if (filterEl) filterEl.disabled = false;
     _connectLogStream();
   }
   if (typeof window !== "undefined") {
