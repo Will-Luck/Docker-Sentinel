@@ -420,6 +420,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				severity = "build"
 			} else {
 				severity = classifySeverity(tag, newestVersion)
+				// Fall back to resolved OCI version for non-semver tags like "latest".
+				if severity == "" && resolved != "" {
+					severity = classifySeverity(resolved, newestVersion)
+				}
 			}
 		}
 
