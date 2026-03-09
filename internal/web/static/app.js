@@ -1343,6 +1343,81 @@
       }
     }
   }
+  function initDashboardKeyboard() {
+    if (!document.getElementById("container-table")) return;
+    document.addEventListener("keydown", function(e) {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      switch (e.key) {
+        case "m":
+          toggleManageMode();
+          if (typeof window._dashboardManageMode !== "undefined") {
+            window._dashboardManageMode = manageMode;
+          }
+          break;
+        case "s":
+          var scanBtn = document.getElementById("scan-btn");
+          if (scanBtn && !scanBtn.disabled) {
+            scanBtn.click();
+          }
+          break;
+        case "?":
+          toggleDashboardShortcutsHelp();
+          break;
+      }
+    });
+  }
+  var _dashboardShortcutsVisible = false;
+  function toggleDashboardShortcutsHelp() {
+    if (_dashboardShortcutsVisible) {
+      var existing = document.getElementById("dashboard-shortcuts-overlay");
+      if (existing) existing.remove();
+      _dashboardShortcutsVisible = false;
+      return;
+    }
+    var overlay = document.createElement("div");
+    overlay.id = "dashboard-shortcuts-overlay";
+    overlay.className = "kb-shortcuts-overlay";
+    var card = document.createElement("div");
+    card.className = "kb-shortcuts-card";
+    var title = document.createElement("div");
+    title.className = "kb-shortcuts-title";
+    title.textContent = "Keyboard Shortcuts";
+    card.appendChild(title);
+    var table = document.createElement("table");
+    table.className = "kb-shortcuts-table";
+    var shortcuts = [
+      ["m", "Toggle manage mode"],
+      ["s", "Check for updates"],
+      ["?", "Show this help"]
+    ];
+    for (var i = 0; i < shortcuts.length; i++) {
+      var tr = document.createElement("tr");
+      var tdKey = document.createElement("td");
+      var kbd = document.createElement("kbd");
+      kbd.textContent = shortcuts[i][0];
+      tdKey.appendChild(kbd);
+      var tdDesc = document.createElement("td");
+      tdDesc.textContent = shortcuts[i][1];
+      tr.appendChild(tdKey);
+      tr.appendChild(tdDesc);
+      table.appendChild(tr);
+    }
+    card.appendChild(table);
+    var closeBtn = document.createElement("button");
+    closeBtn.className = "btn btn-sm kb-shortcuts-dismiss";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", function() {
+      toggleDashboardShortcutsHelp();
+    });
+    card.appendChild(closeBtn);
+    overlay.appendChild(card);
+    overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) toggleDashboardShortcutsHelp();
+    });
+    document.body.appendChild(overlay);
+    _dashboardShortcutsVisible = true;
+  }
 
   // internal/web/static/src/js/queue.js
   function _updateQueueBadge() {
@@ -2373,9 +2448,11 @@
     var pendingEl = stats.querySelectorAll(".stat-value")[2];
     if (!pendingEl) return;
     if (pending === 0 || pending === "0") {
-      pendingEl.className = "stat-value success";
+      pendingEl.className = "stat-value success stat-all-clear";
+      pendingEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> 0';
     } else {
       pendingEl.className = "stat-value warning";
+      pendingEl.textContent = pending;
     }
   }
   var pendingBadgeActions = {};
@@ -2828,7 +2905,35 @@
   }
 
   // internal/web/static/src/js/settings-core.js
+  function toggleAdvanced() {
+    var body = document.body;
+    var btn = document.getElementById("advanced-toggle");
+    if (!btn) return;
+    var isSimple = body.classList.contains("settings-simple");
+    if (isSimple) {
+      body.classList.remove("settings-simple");
+      btn.textContent = "Hide Advanced";
+      btn.classList.add("active");
+      localStorage.setItem("sentinel-show-advanced", "true");
+    } else {
+      body.classList.add("settings-simple");
+      btn.textContent = "Show Advanced";
+      btn.classList.remove("active");
+      localStorage.setItem("sentinel-show-advanced", "false");
+    }
+  }
   function initSettingsPage() {
+    var advBtn = document.getElementById("advanced-toggle");
+    if (advBtn) {
+      var showAdvanced = localStorage.getItem("sentinel-show-advanced") === "true";
+      if (!showAdvanced) {
+        document.body.classList.add("settings-simple");
+        advBtn.textContent = "Show Advanced";
+      } else {
+        advBtn.textContent = "Hide Advanced";
+        advBtn.classList.add("active");
+      }
+    }
     var themeSelect = document.getElementById("theme-select");
     var stackSelect = document.getElementById("stack-default");
     var sectionSelect = document.getElementById("section-default");
@@ -5255,6 +5360,24 @@
       appendAboutRow(rows, "Containers Monitored", String(data.containers || 0));
       appendAboutRow(rows, "Updates Applied", String(data.updates_applied || 0));
       appendAboutRow(rows, "Snapshots Stored", String(data.snapshots || 0));
+      appendAboutSection(rows, "Health");
+      var dockerHealth = data.docker_health || "unknown";
+      var dockerRow = appendAboutRow(rows, "Docker", dockerHealth === "ok" ? "Connected" : dockerHealth);
+      if (dockerHealth === "ok") {
+        addHealthDot(dockerRow, "ok");
+      } else {
+        addHealthDot(dockerRow, "error");
+      }
+      var dbHealth = data.db_health || "unknown";
+      var dbRow = appendAboutRow(rows, "Database", dbHealth === "ok" ? "Connected" : dbHealth);
+      if (dbHealth === "ok") {
+        addHealthDot(dbRow, "ok");
+      } else {
+        addHealthDot(dbRow, "error");
+      }
+      if (data.next_scan) {
+        appendAboutRow(rows, "Next Scan", formatTimeUntil(data.next_scan));
+      }
       appendAboutSection(rows, "Integrations");
       if (data.channels && data.channels.length > 0) {
         var chWrap = document.createElement("div");
@@ -5356,6 +5479,7 @@
     val.textContent = value;
     row.appendChild(val);
     parent.appendChild(row);
+    return row;
   }
   function appendAboutRowEl(parent, label, valueEl) {
     var row = document.createElement("div");
@@ -5392,6 +5516,30 @@
       return days + "d " + hours % 24 + "h ago";
     } catch (e) {
       return iso;
+    }
+  }
+  function formatTimeUntil(iso) {
+    try {
+      var d = new Date(iso);
+      var now = /* @__PURE__ */ new Date();
+      var diff = d - now;
+      if (diff <= 0) return "Now";
+      var mins = Math.floor(diff / 6e4);
+      if (mins < 60) return "in " + mins + "m";
+      var hours = Math.floor(mins / 60);
+      if (hours < 24) return "in " + hours + "h " + mins % 60 + "m";
+      var days = Math.floor(hours / 24);
+      return "in " + days + "d " + hours % 24 + "h";
+    } catch (e) {
+      return iso;
+    }
+  }
+  function addHealthDot(row, status) {
+    var dot = document.createElement("span");
+    dot.className = "health-dot health-" + status;
+    var valueEl = row.querySelector(".about-value");
+    if (valueEl) {
+      valueEl.insertBefore(dot, valueEl.firstChild);
     }
   }
   var releaseSources = [];
@@ -6096,6 +6244,7 @@
   window.toggleLogStream = toggleLogStream;
   window.containerAction = containerAction;
   window.bulkContainerAction = bulkContainerAction;
+  window.toggleDashboardShortcutsHelp = toggleDashboardShortcutsHelp;
   window.toggleQueueAccordion = toggleQueueAccordion;
   window.approveUpdate = approveUpdate;
   window.ignoreUpdate = ignoreUpdate;
@@ -6170,6 +6319,7 @@
   window.loadRetrySettings = loadRetrySettings;
   window.saveRetrySettings = saveRetrySettings;
   window.loadDashboardColumns = loadDashboardColumns;
+  window.toggleAdvanced = toggleAdvanced;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;
   window.loadClusterSettings = loadClusterSettings;
@@ -6255,6 +6405,30 @@
     initSettingsPage();
     initAccordionPersistence();
     initQueueKeyboard();
+    initDashboardKeyboard();
+    (function initHealthDot() {
+      var navStatus = document.querySelector(".nav-status");
+      if (!navStatus) return;
+      var dot = document.createElement("span");
+      dot.id = "health-indicator";
+      dot.className = "health-dot health-ok";
+      dot.title = "System healthy";
+      dot.style.marginLeft = "6px";
+      navStatus.appendChild(dot);
+      fetch("/readyz", { credentials: "same-origin" }).then(function(r) {
+        return r.json().then(function(d) {
+          return { ok: r.ok, data: d };
+        });
+      }).then(function(result) {
+        if (!result.ok || result.data.status !== "ready") {
+          dot.className = "health-dot health-error";
+          dot.title = "System unhealthy";
+        }
+      }).catch(function() {
+        dot.className = "health-dot health-error";
+        dot.title = "Health check failed";
+      });
+    })();
     var stats = document.getElementById("stats");
     if (stats) {
       var pendingEl = stats.querySelectorAll(".stat-value")[2];

@@ -452,6 +452,12 @@ a.stat-card-link:hover {
 .stat-value.info {
   color: var(--info);
 }
+.stat-all-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
 .stat-value.stat-changed {
   animation: statPulse 400ms var(--md-motion-emphasized-decelerate);
 }
@@ -749,14 +755,14 @@ a.version-link:hover {
   }
 }
 .row-updated {
-  animation: rowFadeIn 200ms var(--md-motion-emphasized-decelerate);
+  animation: rowFlash 600ms ease-out;
 }
-@keyframes rowFadeIn {
-  from {
-    opacity: 0.4;
+@keyframes rowFlash {
+  0% {
+    background: color-mix(in srgb, var(--success) 20%, transparent);
   }
-  to {
-    opacity: 1;
+  100% {
+    background: transparent;
   }
 }
 .btn-success {
@@ -2042,6 +2048,69 @@ table.managing .td-checkbox {
   margin: 0 var(--sp-2);
   vertical-align: middle;
 }
+.severity-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: 0.55rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.severity-major {
+  background: var(--badge-error-bg);
+  color: var(--badge-error-text);
+}
+.severity-minor {
+  background: var(--badge-warning-bg);
+  color: var(--badge-warning-text);
+}
+.severity-patch {
+  background: var(--badge-success-bg);
+  color: var(--badge-success-text);
+}
+.severity-build {
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+}
+.col-actions {
+  text-align: center;
+  vertical-align: middle;
+}
+.row-actions {
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.container-row:hover .row-actions {
+  opacity: 1;
+}
+.row-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: color 150ms, background 150ms;
+  padding: 0;
+  text-decoration: none;
+}
+.row-action-btn:hover {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+.row-action-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 /* internal/web/static/src/css/queue.css */
 .policy-select {
@@ -2605,24 +2674,31 @@ kbd {
 }
 .table-history th:nth-child(1),
 .table-history td:nth-child(1) {
-  width: 18%;
+  width: 14%;
   white-space: nowrap;
 }
 .table-history th:nth-child(2),
 .table-history td:nth-child(2) {
-  width: 42%;
+  width: 22%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .table-history th:nth-child(3),
 .table-history td:nth-child(3) {
-  width: 20%;
-  text-align: center;
+  width: 28%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .table-history th:nth-child(4),
 .table-history td:nth-child(4) {
-  width: 20%;
+  width: 18%;
+  text-align: center;
+}
+.table-history th:nth-child(5),
+.table-history td:nth-child(5) {
+  width: 18%;
   text-align: center;
 }
 .table-logs {
@@ -3097,6 +3173,23 @@ kbd {
   font-size: 1rem;
   line-height: 1;
 }
+.health-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.health-ok {
+  background: var(--success);
+  box-shadow: 0 0 4px light-dark(rgba(46, 125, 50, 0.4), rgba(129, 199, 132, 0.4));
+}
+.health-error {
+  background: var(--error);
+  box-shadow: 0 0 4px light-dark(rgba(176, 0, 32, 0.3), rgba(207, 102, 121, 0.3));
+}
 .app-footer {
   display: flex;
   align-items: center;
@@ -3138,6 +3231,17 @@ kbd {
   border-radius: var(--radius);
   font-size: 0.875rem;
   margin-bottom: var(--sp-4);
+}
+body.settings-simple [data-advanced] {
+  display: none !important;
+}
+#advanced-toggle {
+  white-space: nowrap;
+}
+#advanced-toggle.active {
+  background: var(--accent);
+  color: var(--md-on-primary);
+  border-color: var(--accent);
 }
 
 /* internal/web/static/src/css/notifications.css */
@@ -4002,6 +4106,9 @@ kbd {
     border-bottom: none;
     background: var(--bg-hover);
   }
+  .row-actions {
+    opacity: 1;
+  }
   .nav {
     position: relative;
   }
@@ -4080,6 +4187,9 @@ kbd {
     gap: var(--sp-2);
   }
   .nav-user-btn span:not(.nav-user-chevron):not(.nav-user-role) {
+    display: none;
+  }
+  .col-actions {
     display: none;
   }
 }

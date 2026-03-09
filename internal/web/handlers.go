@@ -198,6 +198,14 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					resolved = v
 				}
 			}
+			var severity string
+			if pendingNames[n] {
+				if newestVersion == "" {
+					severity = "build"
+				} else {
+					severity = classifySeverity(tag, newestVersion)
+				}
+			}
 			v := containerView{
 				ID:              c.ID,
 				Name:            n,
@@ -210,6 +218,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				Maintenance:     maintenance,
 				HasUpdate:       pendingNames[n],
 				DigestOnly:      pendingNames[n] && newestVersion == "",
+				Severity:        severity,
 				IsSelf:          c.Labels["sentinel.self"] == "true",
 				Stack:           c.Labels["com.docker.compose.project"],
 				Registry:        registry.RegistryHost(c.Image),
@@ -241,6 +250,14 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 						newestVersion = pend.NewerVersions[0]
 					}
 				}
+				var rcSeverity string
+				if hasUpdate {
+					if newestVersion == "" {
+						rcSeverity = "build"
+					} else {
+						rcSeverity = classifySeverity(tag, newestVersion)
+					}
+				}
 				// Resolve agent IP for port links and NPM lookup.
 				var rcHostAddr string
 				if s.deps.Cluster != nil {
@@ -257,6 +274,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					State:         rc.State,
 					HasUpdate:     hasUpdate,
 					DigestOnly:    hasUpdate && newestVersion == "",
+					Severity:      rcSeverity,
 					IsSelf:        rc.Labels["sentinel.self"] == "true",
 					HostID:        rc.HostID,
 					HostName:      rc.HostName,

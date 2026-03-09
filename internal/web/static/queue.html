@@ -122,8 +122,10 @@
                                         {{else}}
                                             <span class="version-new">{{index $q.NewerVersions 0}}</span>
                                         {{end}}
+                                        {{if $q.ResolvedCurrentVersion}}{{with classifySev $q.ResolvedCurrentVersion (index $q.NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{else}}{{with classifySev (imageTag $q.CurrentImage) (index $q.NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{end}}
                                     {{else}}
                                         {{imageTag $q.CurrentImage}}
+                                        <span class="severity-badge severity-build">build</span>
                                     {{end}}
                                 </td>
                                 <td title="{{fmtTime $q.DetectedAt}}">{{fmtTimeAgo $q.DetectedAt}}</td>

@@ -102,7 +102,8 @@ type containerView struct {
 	State           string
 	Maintenance     bool
 	HasUpdate       bool
-	DigestOnly      bool // true when update is digest-only (same tag, newer build)
+	DigestOnly      bool   // true when update is digest-only (same tag, newer build)
+	Severity        string // "major", "minor", "patch", "build", or "" (no update)
 	IsSelf          bool
 	Stack           string // com.docker.compose.project label, or "" for standalone
 	Registry        string // Registry host (e.g. "docker.io", "ghcr.io", "lscr.io")
@@ -135,6 +136,7 @@ type serviceView struct {
 	NewestVersion   string
 	Policy          string
 	HasUpdate       bool
+	Severity        string // "major", "minor", "patch", "build", or "" (no update)
 	Replicas        string
 	DesiredReplicas uint64
 	RunningReplicas uint64
@@ -157,6 +159,30 @@ type taskView struct {
 	Tag      string
 	Slot     int
 	Error    string
+}
+
+// classifySeverity compares current and newest version strings and returns
+// a severity classification: "major", "minor", "patch", or "build".
+// Returns "" if either version is empty or not parseable as semver.
+func classifySeverity(current, newest string) string {
+	if newest == "" {
+		return ""
+	}
+	cur, okC := registry.ParseSemVer(current)
+	nw, okN := registry.ParseSemVer(newest)
+	if !okC || !okN {
+		return ""
+	}
+	if nw.Major != cur.Major {
+		return "major"
+	}
+	if nw.Minor != cur.Minor {
+		return "minor"
+	}
+	if nw.Patch != cur.Patch {
+		return "patch"
+	}
+	return "build"
 }
 
 // buildServiceView constructs a serviceView from a ServiceDetail, resolving
@@ -208,6 +234,15 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool,
 		versionLink = VersionURL(d.Image, newestVersion)
 	}
 
+	var severity string
+	if pendingNames[name] {
+		if newestVersion == "" {
+			severity = "build"
+		} else {
+			severity = classifySeverity(tag, newestVersion)
+		}
+	}
+
 	sv := serviceView{
 		ID:              d.ID,
 		Name:            name,
@@ -217,6 +252,7 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool,
 		NewestVersion:   newestVersion,
 		Policy:          policy,
 		HasUpdate:       pendingNames[name],
+		Severity:        severity,
 		Replicas:        d.Replicas,
 		DesiredReplicas: d.DesiredReplicas,
 		RunningReplicas: d.RunningReplicas,
@@ -378,6 +414,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		var severity string
+		if pendingNames[name] {
+			if newestVersion == "" {
+				severity = "build"
+			} else {
+				severity = classifySeverity(tag, newestVersion)
+			}
+		}
+
 		views = append(views, containerView{
 			ID:              c.ID,
 			Name:            name,
@@ -390,6 +435,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			Maintenance:     maintenance,
 			HasUpdate:       pendingNames[name],
 			DigestOnly:      pendingNames[name] && newestVersion == "",
+			Severity:        severity,
 			IsSelf:          c.Labels["sentinel.self"] == "true",
 			Stack:           c.Labels["com.docker.compose.project"],
 			Registry:        registry.RegistryHost(c.Image),
@@ -534,8 +580,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Column count must match the actual <td> count in container-row, which
-	// always renders all 6 cells (hidden ones use CSS display:none).
-	colCount := 6 // checkbox + name + image + policy + status + ports
+	// always renders all 7 cells (hidden ones use CSS display:none).
+	colCount := 7 // checkbox + name + image + policy + status + ports + actions
 
 	// JSON for the JS column config.
 	visibleCols := make([]string, 0, 4)
@@ -614,6 +660,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			var rcSeverity string
+			if hasUpdate {
+				if newestVersion == "" {
+					rcSeverity = "build"
+				} else {
+					rcSeverity = classifySeverity(tag, newestVersion)
+				}
+			}
+
 			cv := containerView{
 				Name:          rc.Name,
 				Image:         rc.Image,
@@ -624,6 +679,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				State:         rc.State,
 				HasUpdate:     hasUpdate,
 				DigestOnly:    hasUpdate && newestVersion == "",
+				Severity:      rcSeverity,
 				IsSelf:        rc.Labels["sentinel.self"] == "true",
 				HostID:        rc.HostID,
 				HostName:      rc.HostName,

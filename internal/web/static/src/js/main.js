@@ -46,7 +46,9 @@ import {
     fetchContainerLogs,
     toggleLogStream,
     containerAction,
-    bulkContainerAction
+    bulkContainerAction,
+    initDashboardKeyboard,
+    toggleDashboardShortcutsHelp
 } from "./dashboard.js";
 
 import {
@@ -147,7 +149,8 @@ import {
     loadVerifierSettings,
     saveVerifierSettings,
     loadRetrySettings,
-    saveRetrySettings
+    saveRetrySettings,
+    toggleAdvanced
 } from "./settings-core.js";
 
 import {
@@ -259,6 +262,7 @@ window.fetchContainerLogs = fetchContainerLogs;
 window.toggleLogStream = toggleLogStream;
 window.containerAction = containerAction;
 window.bulkContainerAction = bulkContainerAction;
+window.toggleDashboardShortcutsHelp = toggleDashboardShortcutsHelp;
 
 // Queue
 window.toggleQueueAccordion = toggleQueueAccordion;
@@ -341,6 +345,7 @@ window.saveVerifierSettings = saveVerifierSettings;
 window.loadRetrySettings = loadRetrySettings;
 window.saveRetrySettings = saveRetrySettings;
 window.loadDashboardColumns = loadDashboardColumns;
+window.toggleAdvanced = toggleAdvanced;
 
 // Settings cluster
 window.onClusterToggle = onClusterToggle;
@@ -459,6 +464,32 @@ document.addEventListener("DOMContentLoaded", function () {
     initSettingsPage();
     initAccordionPersistence();
     initQueueKeyboard();
+    initDashboardKeyboard();
+
+    // Health indicator in nav — fetches /api/readyz on load.
+    (function initHealthDot() {
+        var navStatus = document.querySelector('.nav-status');
+        if (!navStatus) return;
+        var dot = document.createElement('span');
+        dot.id = 'health-indicator';
+        dot.className = 'health-dot health-ok';
+        dot.title = 'System healthy';
+        dot.style.marginLeft = '6px';
+        navStatus.appendChild(dot);
+
+        fetch('/readyz', {credentials: 'same-origin'})
+            .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+            .then(function(result) {
+                if (!result.ok || result.data.status !== 'ready') {
+                    dot.className = 'health-dot health-error';
+                    dot.title = 'System unhealthy';
+                }
+            })
+            .catch(function() {
+                dot.className = 'health-dot health-error';
+                dot.title = 'Health check failed';
+            });
+    })();
 
     // Color the pending stat card based on initial value.
     var stats = document.getElementById("stats");

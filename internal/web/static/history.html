@@ -93,6 +93,7 @@
                         <tr>
                             <th>Time</th>
                             <th>Container</th>
+                            <th>Version</th>
                             <th>Outcome</th>
                             <th>Duration</th>
                         </tr>
@@ -103,6 +104,19 @@
                             <tr class="container-row history-row" data-outcome="{{$r.Outcome}}" onclick="onRowClick(event, 'history-{{$i}}')">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
                                 <td><a href="{{serviceOrContainer $r.Type $r.ContainerName $r.HostID}}" class="container-link">{{$r.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
+                                <td class="cell-image mono">
+                                    {{$oldTag := imageTag $r.OldImage}}{{$newTag := imageTag $r.NewImage}}
+                                    {{if and $oldTag $newTag (ne $oldTag $newTag)}}
+                                        <span class="version-current">{{$oldTag}}</span>
+                                        <span class="version-arrow">&rarr;</span>
+                                        <span class="version-new">{{$newTag}}</span>
+                                        {{with classifySev $oldTag $newTag}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}
+                                    {{else if $newTag}}
+                                        {{$newTag}}
+                                    {{else}}
+                                        <span class="text-muted">&mdash;</span>
+                                    {{end}}
+                                </td>
                                 <td>
                                     {{if eq $r.Outcome "success"}}
                                         <span class="badge badge-success">Success</span>
@@ -131,7 +145,7 @@
                                 <td class="mono">{{fmtDuration $r.Duration}}</td>
                             </tr>
                             <tr class="accordion-panel" id="accordion-history-{{$i}}" style="display:none">
-                                <td colspan="4">
+                                <td colspan="5">
                                     <div class="accordion-content">
                                         <div class="accordion-grid">
                                             <div class="accordion-section">
@@ -159,7 +173,7 @@
                             {{end}}
                         {{else}}
                             <tr>
-                                <td colspan="4">
+                                <td colspan="5">
                                     <div class="empty-state">
                                         <div class="empty-state-icon">
                                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
@@ -267,6 +281,39 @@
                     link.textContent = r.container_name;
                     tdName.appendChild(link);
 
+                    var tdVersion = document.createElement('td');
+                    tdVersion.className = 'cell-image mono';
+                    var oldTag = extractTag(r.old_image || '');
+                    var newTag = extractTag(r.new_image || '');
+                    if (oldTag && newTag && oldTag !== newTag) {
+                        var curSpan = document.createElement('span');
+                        curSpan.className = 'version-current';
+                        curSpan.textContent = oldTag;
+                        tdVersion.appendChild(curSpan);
+                        var arrow = document.createElement('span');
+                        arrow.className = 'version-arrow';
+                        arrow.innerHTML = '&rarr;';
+                        tdVersion.appendChild(arrow);
+                        var newSpan = document.createElement('span');
+                        newSpan.className = 'version-new';
+                        newSpan.textContent = newTag;
+                        tdVersion.appendChild(newSpan);
+                        var sev = classifySevJS(oldTag, newTag);
+                        if (sev) {
+                            var sevBadge = document.createElement('span');
+                            sevBadge.className = 'severity-badge severity-' + sev;
+                            sevBadge.textContent = sev;
+                            tdVersion.appendChild(sevBadge);
+                        }
+                    } else if (newTag) {
+                        tdVersion.textContent = newTag;
+                    } else {
+                        var mdash = document.createElement('span');
+                        mdash.className = 'text-muted';
+                        mdash.textContent = '\u2014';
+                        tdVersion.appendChild(mdash);
+                    }
+
                     var tdOutcome = document.createElement('td');
                     tdOutcome.appendChild(badgeForHist(r.outcome));
 
@@ -276,6 +323,7 @@
 
                     tr.appendChild(tdTime);
                     tr.appendChild(tdName);
+                    tr.appendChild(tdVersion);
                     tr.appendChild(tdOutcome);
                     tr.appendChild(tdDur);
                     tbody.appendChild(tr);
@@ -285,7 +333,7 @@
                     detail.id = 'accordion-history-' + idx;
                     detail.style.display = 'none';
                     var detailTd = document.createElement('td');
-                    detailTd.colSpan = 4;
+                    detailTd.colSpan = 5;
                     var content = document.createElement('div');
                     content.className = 'accordion-content';
                     var grid = document.createElement('div');
@@ -356,6 +404,46 @@
         if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
         if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
         return Math.floor(diff / 86400) + 'd ago';
+    }
+
+    function extractTag(imageRef) {
+        if (!imageRef) return '';
+        // Strip digest
+        var ref = imageRef.split('@')[0];
+        // Extract tag after last colon
+        var colonIdx = ref.lastIndexOf(':');
+        if (colonIdx < 0) return 'latest';
+        var slashIdx = ref.lastIndexOf('/');
+        // Make sure the colon is after the last slash (not in registry host)
+        if (colonIdx > slashIdx) return ref.substring(colonIdx + 1);
+        return 'latest';
+    }
+
+    function classifySevJS(current, newest) {
+        var cur = parseSemVerJS(current);
+        var nw = parseSemVerJS(newest);
+        if (!cur || !nw) return '';
+        if (nw.major !== cur.major) return 'major';
+        if (nw.minor !== cur.minor) return 'minor';
+        if (nw.patch !== cur.patch) return 'patch';
+        return 'build';
+    }
+
+    function parseSemVerJS(tag) {
+        if (!tag) return null;
+        tag = tag.replace(/^[vV]/, '');
+        // Strip pre-release
+        var hyp = tag.indexOf('-');
+        if (hyp >= 0) tag = tag.substring(0, hyp);
+        var parts = tag.split('.');
+        if (parts.length < 1 || parts.length > 3) return null;
+        var major = parseInt(parts[0], 10);
+        if (isNaN(major)) return null;
+        var minor = parts.length >= 2 ? parseInt(parts[1], 10) : 0;
+        if (isNaN(minor)) return null;
+        var patch = parts.length >= 3 ? parseInt(parts[2], 10) : 0;
+        if (isNaN(patch)) return null;
+        return { major: major, minor: minor, patch: patch };
     }
     </script>
 </body>

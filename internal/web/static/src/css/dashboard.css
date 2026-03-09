@@ -1247,3 +1247,86 @@ table.managing .td-checkbox {
     margin: 0 var(--sp-2);
     vertical-align: middle;
 }
+
+
+/* --------------------------------------------------------------------------
+   Version Severity Badges
+   -------------------------------------------------------------------------- */
+
+.severity-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    font-size: 0.55rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+
+.severity-major {
+    background: var(--badge-error-bg);
+    color: var(--badge-error-text);
+}
+
+.severity-minor {
+    background: var(--badge-warning-bg);
+    color: var(--badge-warning-text);
+}
+
+.severity-patch {
+    background: var(--badge-success-bg);
+    color: var(--badge-success-text);
+}
+
+.severity-build {
+    background: var(--bg-hover);
+    color: var(--fg-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Row Quick Actions — visible on hover, always on mobile
+   -------------------------------------------------------------------------- */
+
+.col-actions {
+    text-align: center;
+    vertical-align: middle;
+}
+
+.row-actions {
+    display: inline-flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+
+.container-row:hover .row-actions {
+    opacity: 1;
+}
+
+.row-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: color 150ms, background 150ms;
+    padding: 0;
+    text-decoration: none;
+}
+
+.row-action-btn:hover {
+    color: var(--accent);
+    background: var(--bg-hover);
+}
+
+.row-action-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}

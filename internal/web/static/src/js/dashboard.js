@@ -1383,6 +1383,98 @@ function initPortLinks() {
     }
 }
 
+/* ------------------------------------------------------------
+   11. Dashboard Keyboard Shortcuts
+   ------------------------------------------------------------ */
+
+function initDashboardKeyboard() {
+    // Only on dashboard page.
+    if (!document.getElementById('container-table')) return;
+
+    document.addEventListener('keydown', function(e) {
+        // Skip if typing in an input.
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+        switch (e.key) {
+            case 'm':
+                toggleManageMode();
+                if (typeof window._dashboardManageMode !== 'undefined') {
+                    window._dashboardManageMode = manageMode;
+                }
+                break;
+            case 's':
+                var scanBtn = document.getElementById('scan-btn');
+                if (scanBtn && !scanBtn.disabled) {
+                    scanBtn.click();
+                }
+                break;
+            case '?':
+                toggleDashboardShortcutsHelp();
+                break;
+        }
+    });
+}
+
+var _dashboardShortcutsVisible = false;
+
+function toggleDashboardShortcutsHelp() {
+    if (_dashboardShortcutsVisible) {
+        var existing = document.getElementById('dashboard-shortcuts-overlay');
+        if (existing) existing.remove();
+        _dashboardShortcutsVisible = false;
+        return;
+    }
+
+    var overlay = document.createElement('div');
+    overlay.id = 'dashboard-shortcuts-overlay';
+    overlay.className = 'kb-shortcuts-overlay';
+
+    var card = document.createElement('div');
+    card.className = 'kb-shortcuts-card';
+
+    var title = document.createElement('div');
+    title.className = 'kb-shortcuts-title';
+    title.textContent = 'Keyboard Shortcuts';
+    card.appendChild(title);
+
+    var table = document.createElement('table');
+    table.className = 'kb-shortcuts-table';
+    var shortcuts = [
+        ['m', 'Toggle manage mode'],
+        ['s', 'Check for updates'],
+        ['?', 'Show this help']
+    ];
+    for (var i = 0; i < shortcuts.length; i++) {
+        var tr = document.createElement('tr');
+        var tdKey = document.createElement('td');
+        var kbd = document.createElement('kbd');
+        kbd.textContent = shortcuts[i][0];
+        tdKey.appendChild(kbd);
+        var tdDesc = document.createElement('td');
+        tdDesc.textContent = shortcuts[i][1];
+        tr.appendChild(tdKey);
+        tr.appendChild(tdDesc);
+        table.appendChild(tr);
+    }
+    card.appendChild(table);
+
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'btn btn-sm kb-shortcuts-dismiss';
+    closeBtn.textContent = 'Close';
+    closeBtn.addEventListener('click', function() {
+        toggleDashboardShortcutsHelp();
+    });
+    card.appendChild(closeBtn);
+
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) toggleDashboardShortcutsHelp();
+    });
+    document.body.appendChild(overlay);
+    _dashboardShortcutsVisible = true;
+}
+
 export {
     togglePorts,
     initPortLinks,
@@ -1415,5 +1507,7 @@ export {
     fetchContainerLogs,
     toggleLogStream,
     containerAction,
-    bulkContainerAction
+    bulkContainerAction,
+    initDashboardKeyboard,
+    toggleDashboardShortcutsHelp
 };
