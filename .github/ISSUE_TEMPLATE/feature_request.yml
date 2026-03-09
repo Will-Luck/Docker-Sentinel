@@ -1,0 +1,41 @@
+name: Feature Request
+description: Suggest a new feature or improvement for Docker-Sentinel
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for Docker-Sentinel? Describe it below.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem description
+      description: What problem does this solve? Why is this feature needed?
+      placeholder: I find it difficult to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How do you think this should work? Be as specific as you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you considered any alternative approaches or workarounds?
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any other information, screenshots, or references that might be helpful.
+    validations:
+      required: false

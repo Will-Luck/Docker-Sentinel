@@ -1,0 +1,8 @@
+title: "[Show] "
+body:
+  - type: textarea
+    attributes:
+      label: What did you build or set up?
+      description: Share your Docker-Sentinel setup, integrations, or customisations.
+    validations:
+      required: true
