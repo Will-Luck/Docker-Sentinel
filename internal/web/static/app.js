@@ -2770,6 +2770,8 @@
       updateScanPreviews();
     }).catch(function() {
     });
+    loadScannerSettings();
+    loadVerifierSettings();
     var settingsTabContainer = document.getElementById("settings-tabs");
     var tabBtns = settingsTabContainer ? settingsTabContainer.querySelectorAll(".tab-btn") : [];
     var tabPanels = settingsTabContainer ? settingsTabContainer.parentElement.querySelectorAll(".tab-panel") : [];
@@ -3604,6 +3606,105 @@
     } else {
       preview.textContent = cols.length + " of " + allCols.length + " columns";
     }
+  }
+  function loadScannerSettings() {
+    fetch("/api/settings/scanner").then(function(r) {
+      return r.json();
+    }).then(function(data) {
+      var modeEl = document.getElementById("scanner-mode");
+      var threshEl = document.getElementById("scanner-threshold");
+      var pathEl = document.getElementById("trivy-path");
+      var preview = document.getElementById("scanner-preview");
+      if (modeEl) modeEl.value = data.mode || "disabled";
+      if (threshEl) threshEl.value = data.threshold || "HIGH";
+      if (pathEl) pathEl.value = data.trivy_path || "trivy";
+      if (preview) {
+        if (data.mode === "disabled" || !data.mode) {
+          preview.textContent = "Disabled";
+        } else {
+          preview.textContent = data.mode + " (threshold: " + (data.threshold || "HIGH") + ")";
+        }
+      }
+    }).catch(function() {
+    });
+  }
+  function saveScannerSettings() {
+    var mode = document.getElementById("scanner-mode");
+    var threshold = document.getElementById("scanner-threshold");
+    var trivyPath = document.getElementById("trivy-path");
+    var body = {};
+    if (mode) body.mode = mode.value;
+    if (threshold) body.threshold = threshold.value;
+    if (trivyPath && trivyPath.value) body.trivy_path = trivyPath.value;
+    fetch("/api/settings/scanner", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function(r) {
+      if (!r.ok) return r.json().then(function(e) {
+        throw new Error(e.error);
+      });
+      return r.json();
+    }).then(function() {
+      showToast("Scanner settings saved", "success");
+      loadScannerSettings();
+    }).catch(function(err) {
+      showToast("Failed: " + err.message, "error");
+    });
+  }
+  function loadVerifierSettings() {
+    fetch("/api/settings/verifier").then(function(r) {
+      return r.json();
+    }).then(function(data) {
+      var modeEl = document.getElementById("verify-mode");
+      var pathEl = document.getElementById("cosign-path");
+      var keylessEl = document.getElementById("cosign-keyless");
+      var keyPathEl = document.getElementById("cosign-key-path");
+      var preview = document.getElementById("verifier-preview");
+      if (modeEl) modeEl.value = data.mode || "disabled";
+      if (pathEl) pathEl.value = data.cosign_path || "cosign";
+      if (keylessEl) {
+        keylessEl.checked = data.keyless === "true";
+        var text = document.getElementById("cosign-keyless-text");
+        if (text) text.textContent = data.keyless === "true" ? "On" : "Off";
+      }
+      if (keyPathEl) keyPathEl.value = data.key_path || "";
+      if (preview) {
+        if (data.mode === "disabled" || !data.mode) {
+          preview.textContent = "Disabled";
+        } else {
+          var label = data.mode === "enforce" ? "Enforce" : "Warn";
+          preview.textContent = label + (data.keyless === "true" ? " (keyless)" : " (key)");
+        }
+      }
+    }).catch(function() {
+    });
+  }
+  function saveVerifierSettings() {
+    var mode = document.getElementById("verify-mode");
+    var cosignPath = document.getElementById("cosign-path");
+    var keyless = document.getElementById("cosign-keyless");
+    var keyPath = document.getElementById("cosign-key-path");
+    var body = {};
+    if (mode) body.mode = mode.value;
+    if (cosignPath && cosignPath.value) body.cosign_path = cosignPath.value;
+    if (keyless) body.keyless = keyless.checked;
+    if (keyPath) body.key_path = keyPath.value;
+    fetch("/api/settings/verifier", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function(r) {
+      if (!r.ok) return r.json().then(function(e) {
+        throw new Error(e.error);
+      });
+      return r.json();
+    }).then(function() {
+      showToast("Verifier settings saved", "success");
+      loadVerifierSettings();
+    }).catch(function(err) {
+      showToast("Failed: " + err.message, "error");
+    });
   }
 
   // internal/web/static/src/js/settings-cluster.js
@@ -5783,6 +5884,10 @@
   window.exportConfig = exportConfig;
   window.importConfig = importConfig;
   window.saveDashboardColumns = saveDashboardColumns;
+  window.loadScannerSettings = loadScannerSettings;
+  window.saveScannerSettings = saveScannerSettings;
+  window.loadVerifierSettings = loadVerifierSettings;
+  window.saveVerifierSettings = saveVerifierSettings;
   window.loadDashboardColumns = loadDashboardColumns;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;

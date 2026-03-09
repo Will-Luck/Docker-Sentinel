@@ -15,6 +15,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
@@ -495,25 +496,75 @@ func (s *Server) handleRollbackResult(hostID string, rr *proto.RollbackResult) {
 	})
 }
 
-// handleOfflineJournal processes journal entries from an agent that was offline.
-// Phase 6 will add full journal replay; for now we just log the entries.
+// handleOfflineJournal replays journal entries from an agent that was offline.
+// Each entry is persisted to history (if a HistoryRecorder is wired in) and
+// published as an SSE event so the dashboard updates in real time.
 func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 	s.log.Info("offline journal received",
 		"hostID", hostID,
 		"entries", len(oj.Entries),
 	)
 
-	// TODO(phase6): replay journal entries into the server's history and
-	// reconcile container state. For now, log each entry as an event.
+	// Look up the host name for enriched history records and SSE events.
+	var hostName string
+	if hs, ok := s.registry.Get(hostID); ok {
+		hostName = hs.Info.Name
+	}
+
 	for _, e := range oj.Entries {
+		ts := time.Now()
+		if e.GetTimestamp() != nil {
+			ts = e.GetTimestamp().AsTime()
+		}
+
+		var dur time.Duration
+		if e.GetDuration() != nil {
+			dur = e.GetDuration().AsDuration()
+		}
+
+		rec := store.UpdateRecord{
+			Timestamp:     ts,
+			ContainerName: e.Container,
+			OldImage:      e.OldImage,
+			NewImage:      e.NewImage,
+			OldDigest:     e.OldDigest,
+			NewDigest:     e.NewDigest,
+			Outcome:       e.Outcome,
+			Error:         e.Error,
+			Duration:      dur,
+			HostID:        hostID,
+			HostName:      hostName,
+		}
+
+		if s.history != nil {
+			if err := s.history.RecordUpdate(rec); err != nil {
+				s.log.Warn("failed to persist journal entry",
+					"hostID", hostID,
+					"container", e.Container,
+					"error", err,
+				)
+			}
+		}
+
+		msg := fmt.Sprintf("journal: %s %s → %s (%s)", e.Container, e.OldImage, e.NewImage, e.Outcome)
+		if e.Outcome != "success" && e.Error != "" {
+			msg = fmt.Sprintf("journal: %s failed: %s", e.Container, e.Error)
+		}
+
 		s.bus.Publish(events.SSEEvent{
 			Type:          events.EventContainerUpdate,
 			ContainerName: e.Container,
-			HostName:      hostID,
-			Message:       fmt.Sprintf("journal: %s %s (%s)", e.Action, e.Container, e.Outcome),
-			Timestamp:     time.Now(),
+			HostID:        hostID,
+			HostName:      hostName,
+			Message:       msg,
+			Timestamp:     ts,
 		})
 	}
+
+	s.log.Info("replayed journal entries",
+		"hostID", hostID,
+		"count", len(oj.Entries),
+	)
 }
 
 // handleCertRenewal processes a certificate renewal CSR from an agent whose

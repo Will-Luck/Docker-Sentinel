@@ -15,7 +15,9 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 )
@@ -140,6 +142,51 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.queue.Remove(name)
 		u.publishEvent(events.EventContainerUpdate, name, "no change detected")
 		return nil
+	}
+
+	// 3.6 Signature verification gate.
+	if u.imgVerifier != nil && u.verifyMode != verify.ModeDisabled {
+		effectiveMode := verify.ResolveMode(
+			inspect.Config.Labels[verify.ContainerLabel], "", u.verifyMode,
+		)
+		if effectiveMode != verify.ModeDisabled {
+			result := u.imgVerifier.Verify(ctx, pullImage)
+			if !result.Verified {
+				if effectiveMode == verify.ModeEnforce {
+					u.log.Warn("signature verification failed, blocking update",
+						"name", name, "image", pullImage, "error", result.Error)
+					_ = u.store.SetMaintenance(name, false)
+					return fmt.Errorf("signature verification failed for %s: %s", name, result.Error)
+				}
+				// Warn mode: log and proceed.
+				u.log.Warn("signature verification failed, proceeding (warn mode)",
+					"name", name, "image", pullImage, "error", result.Error)
+			} else {
+				u.log.Info("signature verified", "name", name, "image", pullImage)
+			}
+		}
+	}
+
+	// 3.7 Pre-update vulnerability scan gate.
+	if u.imgScanner != nil && u.scanMode == scanner.ScanPreUpdate {
+		scanResult, scanErr := u.imgScanner.Scan(ctx, pullImage)
+		if scanErr != nil {
+			// Scan tool failure should not block updates.
+			u.log.Warn("pre-update scan failed, proceeding",
+				"name", name, "image", pullImage, "error", scanErr)
+		} else if scanResult.ExceedsThreshold(u.severityThresh) {
+			u.log.Warn("pre-update scan found vulnerabilities above threshold, blocking update",
+				"name", name, "image", pullImage,
+				"critical", scanResult.Summary.Critical,
+				"high", scanResult.Summary.High,
+				"threshold", string(u.severityThresh))
+			_ = u.store.SetMaintenance(name, false)
+			return fmt.Errorf("pre-update scan blocked %s: %d critical, %d high vulnerabilities",
+				name, scanResult.Summary.Critical, scanResult.Summary.High)
+		} else {
+			u.log.Info("pre-update scan passed",
+				"name", name, "image", pullImage, "total_vulns", scanResult.Summary.Total)
+		}
 	}
 
 	// 4. Stop and remove the old container.
@@ -339,6 +386,22 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	// Clear notification state so re-detection gets a fresh notification.
 	if err := u.store.ClearNotifyState(name); err != nil {
 		u.log.Warn("failed to clear notify state after update", "name", name, "error", err)
+	}
+
+	// Post-update vulnerability scan (informational, async).
+	if u.imgScanner != nil && u.scanMode == scanner.ScanPostUpdate {
+		go func() {
+			scanResult, scanErr := u.imgScanner.Scan(context.Background(), pullImage)
+			if scanErr != nil {
+				u.log.Warn("post-update scan failed", "name", name, "image", pullImage, "error", scanErr)
+				return
+			}
+			u.log.Info("post-update scan complete",
+				"name", name, "image", pullImage,
+				"total", scanResult.Summary.Total,
+				"critical", scanResult.Summary.Critical,
+				"high", scanResult.Summary.High)
+		}()
 	}
 
 	// Compose file sync (opt-in).

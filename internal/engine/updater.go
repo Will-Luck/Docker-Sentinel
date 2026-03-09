@@ -15,12 +15,24 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
+	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 )
 
 // ErrUpdateInProgress is returned when an update is attempted on a container
 // that already has an update in progress.
 var ErrUpdateInProgress = fmt.Errorf("update already in progress")
+
+// ImageScanner scans a container image for vulnerabilities.
+type ImageScanner interface {
+	Scan(ctx context.Context, imageRef string) (*scanner.ScanResult, error)
+}
+
+// ImageVerifier verifies the signature of a container image.
+type ImageVerifier interface {
+	Verify(ctx context.Context, imageRef string) *verify.Result
+}
 
 // finaliseError wraps an error with the stage at which finaliseContainer failed.
 // Stage values: "inspect", "stop", "remove", "create", "start".
@@ -61,6 +73,11 @@ type Updater struct {
 	cluster          ClusterScanner             // optional: nil = single-host mode
 	haDiscovery      *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
 	portainer        PortainerScanner           // optional: nil = no Portainer integration
+	imgScanner       ImageScanner               // optional: trivy vulnerability scanner
+	imgVerifier      ImageVerifier              // optional: cosign signature verifier
+	scanMode         scanner.ScanMode           // disabled/pre-update/post-update
+	verifyMode       verify.Mode                // disabled/warn/enforce
+	severityThresh   scanner.Severity           // block threshold for pre-update scans
 	ghcrWg           sync.WaitGroup             // tracks background GHCR alternative checks
 	ghcrRunning      atomic.Bool                // prevents concurrent GHCR checks
 	ghcrCancel       context.CancelFunc         // cancels the running GHCR check on shutdown
@@ -128,6 +145,31 @@ func (u *Updater) SetHADiscovery(h *notify.HADiscovery) {
 // When nil (the default), Portainer scanning is skipped entirely.
 func (u *Updater) SetPortainerScanner(ps PortainerScanner) {
 	u.portainer = ps
+}
+
+// SetScanner attaches a vulnerability scanner (Trivy).
+func (u *Updater) SetScanner(s ImageScanner) {
+	u.imgScanner = s
+}
+
+// SetVerifier attaches a signature verifier (cosign).
+func (u *Updater) SetVerifier(v ImageVerifier) {
+	u.imgVerifier = v
+}
+
+// SetScanMode sets when vulnerability scanning runs.
+func (u *Updater) SetScanMode(m scanner.ScanMode) {
+	u.scanMode = m
+}
+
+// SetVerifyMode sets the signature verification behaviour.
+func (u *Updater) SetVerifyMode(m verify.Mode) {
+	u.verifyMode = m
+}
+
+// SetSeverityThreshold sets the minimum severity that blocks a pre-update scan.
+func (u *Updater) SetSeverityThreshold(s scanner.Severity) {
+	u.severityThresh = s
 }
 
 // Close cancels any running background work and waits for goroutines to finish.

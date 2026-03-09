@@ -403,6 +403,103 @@
                     </div>
                 </details>
 
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Vulnerability Scanning</h2>
+                        <span class="accordion-preview" id="scanner-preview">Disabled</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Trivy path</div>
+                                    <div class="setting-desc">Path to the Trivy binary on the host</div>
+                                </div>
+                                <input type="text" id="trivy-path" class="setting-input" placeholder="trivy" style="width:200px">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Scan mode</div>
+                                    <div class="setting-desc">When to scan pulled images for vulnerabilities</div>
+                                </div>
+                                <select id="scanner-mode" class="setting-select">
+                                    <option value="disabled">Disabled</option>
+                                    <option value="pre-update">Pre-update (blocks on threshold)</option>
+                                    <option value="post-update">Post-update (informational)</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Severity threshold</div>
+                                    <div class="setting-desc">Block updates when vulnerabilities at or above this level are found (pre-update only)</div>
+                                </div>
+                                <select id="scanner-threshold" class="setting-select">
+                                    <option value="CRITICAL">Critical</option>
+                                    <option value="HIGH">High</option>
+                                    <option value="MEDIUM">Medium</option>
+                                    <option value="LOW">Low</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info"></div>
+                                <button class="btn btn-primary" onclick="saveScannerSettings()">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Signature Verification</h2>
+                        <span class="accordion-preview" id="verifier-preview">Disabled</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Cosign path</div>
+                                    <div class="setting-desc">Path to the cosign binary on the host</div>
+                                </div>
+                                <input type="text" id="cosign-path" class="setting-input" placeholder="cosign" style="width:200px">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Verify mode</div>
+                                    <div class="setting-desc">How to handle images without valid signatures</div>
+                                </div>
+                                <select id="verify-mode" class="setting-select">
+                                    <option value="disabled">Disabled</option>
+                                    <option value="warn">Warn (log and proceed)</option>
+                                    <option value="enforce">Enforce (block update)</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Keyless verification</div>
+                                    <div class="setting-desc">Use Sigstore keyless verification (Fulcio + Rekor)</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="cosign-keyless" class="channel-toggle">
+                                    <span id="cosign-keyless-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Public key path</div>
+                                    <div class="setting-desc">Path to cosign public key PEM for keyed verification</div>
+                                </div>
+                                <input type="text" id="cosign-key-path" class="setting-input" placeholder="/path/to/cosign.pub" style="width:250px">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info"></div>
+                                <button class="btn btn-primary" onclick="saveVerifierSettings()">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
             </div>
         </div>
 

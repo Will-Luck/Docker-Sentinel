@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Container log viewer redesign:** Line-by-line rendering with level-based
   colouring (error/warn/info/debug), timestamp extraction, filter input, and
   auto-scroll toggle. Replaces raw `<pre>` block.
+- **Cluster journal replay (Phase 6):** Offline journal entries from cluster
+  agents are now persisted to the history store with full field mapping and
+  enriched SSE events. Previously entries were logged but not recorded.
+- **Scanner/verifier wiring:** Trivy vulnerability scanning and Cosign signature
+  verification are now called during the update flow. Pre-update scan blocks
+  deploys exceeding the severity threshold; enforce mode rejects unsigned images.
+  Settings API endpoints and UI accordion sections added for configuration.
 
 ### Changed
 - **BoltDB nil-bucket safety:** All `tx.Bucket()` calls across the persistence
