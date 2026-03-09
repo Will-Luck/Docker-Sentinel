@@ -19,6 +19,8 @@ const (
 	EventSettingsChange  EventType = "settings_change"
 	EventRateLimits      EventType = "rate_limits"
 	EventGHCRCheck       EventType = "ghcr_check"
+	EventScanStart       EventType = "scan_start"
+	EventScanProgress    EventType = "scan_progress"
 	EventServiceUpdate   EventType = "service_update"
 	EventClusterHost     EventType = "cluster_host" // host connected/disconnected/enrolled
 )

@@ -37,6 +37,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security scanning (Trivy):** Scan images for vulnerabilities before or after
   updates with configurable severity thresholds. Pre-update mode blocks deploys
   that exceed the threshold.
+- **Styled confirmation dialogs:** All 8 bare `confirm()` calls replaced with
+  `showConfirm()` modal, including a red danger variant for destructive actions.
+- **Enhanced empty states:** Contextual SVG icons and call-to-action buttons on
+  all empty-data pages (queue, history, cluster, images, portainer, logs).
+- **`apiFetch()` utility:** Generalised fetch wrapper with automatic button
+  loading spinners, JSON handling, and toast notifications. Replaces raw `fetch()`
+  in images and queue modules.
+- **Responsive hamburger navigation:** Collapsible mobile nav at 768px with
+  hamburger toggle, Escape/outside-click dismiss, and aria-expanded support.
+  Added to all 13 page templates.
+- **Scan progress bar:** Real-time 3px accent bar below stat cards shows scan
+  progress via new `scan_start` and `scan_progress` SSE events from the engine.
+- **Container log viewer redesign:** Line-by-line rendering with level-based
+  colouring (error/warn/info/debug), timestamp extraction, filter input, and
+  auto-scroll toggle. Replaces raw `<pre>` block.
+- **Cluster journal replay (Phase 6):** Offline journal entries from cluster
+  agents are now persisted to the history store with full field mapping and
+  enriched SSE events. Previously entries were logged but not recorded.
+- **Scanner/verifier wiring:** Trivy vulnerability scanning and Cosign signature
+  verification are now called during the update flow. Pre-update scan blocks
+  deploys exceeding the severity threshold; enforce mode rejects unsigned images.
+  Settings API endpoints and UI accordion sections added for configuration.
+- **Queue CSV/JSON export:** Export pending updates from the queue page as CSV
+  or JSON, matching the existing history export pattern.
+- **Health check endpoints:** `/healthz` (liveness) and `/readyz` (readiness)
+  probes for Kubernetes and load balancer integration. Readiness checks DB and
+  Docker socket connectivity. Both endpoints skip authentication.
+- **Queue keyboard shortcuts:** `j`/`k` navigation, `a`/`r`/`i` for
+  approve/reject/ignore, Enter to toggle details, `?` for help overlay.
+- **Atom feed for update history:** Subscribe to updates via Atom 1.0 feed at
+  `/api/history/feed?token=xxx`. Authenticated via API token in query parameter.
+  Auto-discovery link on the history page.
+- **Bulk container actions:** Restart, stop, and start buttons in manage mode
+  bulk bar. Sequential execution with 200ms stagger, progress counter, and
+  summary toast on completion.
+- **Notification retry with backoff:** Configurable retry (0-3 attempts) with
+  exponential backoff for all notification providers. Initial backoff and max
+  retries configurable in the Notifications settings tab.
+
+### Changed
+- **BoltDB nil-bucket safety:** All `tx.Bucket()` calls across the persistence
+  layer (bolt.go, bolt_auth.go, bolt_hooks.go, bolt_registry.go, bolt_webauthn.go,
+  custom_urls.go, notify.go) now check for nil before use, returning descriptive
+  errors instead of panicking on missing or corrupted buckets.
+- **Docker daemon startup validation:** `NewClient()` now pings the Docker daemon
+  on init and returns a clear error if unreachable, instead of deferring failures
+  to the first API call.
+- **Notification dispatch timeouts:** `Stop()`, `flush()`, and `Reconfigure()`
+  on `notify.Multi` now use a 30-second context timeout instead of
+  `context.Background()`, preventing goroutines from hanging indefinitely during
+  shutdown.
+
+### Security
+- **HTTP security headers:** Added middleware setting `X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, and
+  `Content-Security-Policy` on all responses.
+- **Auth endpoint rate limiting:** Per-IP sliding window rate limiter (10 req/min)
+  on login, setup, passkey, and TOTP verification endpoints.
+- **Container name input validation:** All 28 API handlers that accept a container
+  name from URL path parameters now validate the input against a strict allowlist
+  (alphanumeric, underscore, dot, hyphen) before processing.
 
 ### Fixed
 - **IsIdle() race condition:** Replaced racy TryLock-based idle check with an

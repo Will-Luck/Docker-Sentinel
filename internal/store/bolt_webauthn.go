@@ -36,7 +36,10 @@ func (s *Store) CreateWebAuthnCredential(cred auth.WebAuthnCredential) error {
 		return fmt.Errorf("marshal webauthn credential: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketWebAuthnCreds)
+		b, err := bucket(tx, bucketWebAuthnCreds)
+		if err != nil {
+			return err
+		}
 		if err := b.Put(webauthnCredKey(cred.ID), data); err != nil {
 			return err
 		}
@@ -45,7 +48,10 @@ func (s *Store) CreateWebAuthnCredential(cred auth.WebAuthnCredential) error {
 		}
 		// Store the handle->userID index for discoverable login.
 		// Look up the user to get their WebAuthnUserID.
-		ub := tx.Bucket(bucketUsers)
+		ub, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 		uv := ub.Get([]byte(cred.UserID))
 		if uv != nil {
 			var user auth.User
@@ -63,7 +69,10 @@ func (s *Store) CreateWebAuthnCredential(cred auth.WebAuthnCredential) error {
 func (s *Store) GetWebAuthnCredential(credID []byte) (*auth.WebAuthnCredential, error) {
 	var cred auth.WebAuthnCredential
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketWebAuthnCreds)
+		b, err := bucket(tx, bucketWebAuthnCreds)
+		if err != nil {
+			return err
+		}
 		v := b.Get(webauthnCredKey(credID))
 		if v == nil {
 			return auth.ErrCredentialNotFound
@@ -80,7 +89,10 @@ func (s *Store) GetWebAuthnCredential(credID []byte) (*auth.WebAuthnCredential, 
 func (s *Store) ListWebAuthnCredentialsForUser(userID string) ([]auth.WebAuthnCredential, error) {
 	var creds []auth.WebAuthnCredential
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketWebAuthnCreds)
+		b, err := bucket(tx, bucketWebAuthnCreds)
+		if err != nil {
+			return err
+		}
 		prefix := webauthnUserIndexPrefix(userID)
 		c := b.Cursor()
 		for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
@@ -108,7 +120,10 @@ func (s *Store) ListWebAuthnCredentialsForUser(userID string) ([]auth.WebAuthnCr
 // DeleteWebAuthnCredential removes a credential and its indexes.
 func (s *Store) DeleteWebAuthnCredential(credID []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketWebAuthnCreds)
+		b, err := bucket(tx, bucketWebAuthnCreds)
+		if err != nil {
+			return err
+		}
 		key := webauthnCredKey(credID)
 		v := b.Get(key)
 		if v == nil {
@@ -132,12 +147,18 @@ func (s *Store) DeleteWebAuthnCredential(credID []byte) error {
 func (s *Store) GetUserByWebAuthnHandle(handle []byte) (*auth.User, error) {
 	var user auth.User
 	err := s.db.View(func(tx *bolt.Tx) error {
-		wb := tx.Bucket(bucketWebAuthnCreds)
+		wb, err := bucket(tx, bucketWebAuthnCreds)
+		if err != nil {
+			return err
+		}
 		userIDBytes := wb.Get(webauthnHandleIndexKey(handle))
 		if userIDBytes == nil {
 			return auth.ErrCredentialNotFound
 		}
-		ub := tx.Bucket(bucketUsers)
+		ub, err := bucket(tx, bucketUsers)
+		if err != nil {
+			return err
+		}
 		v := ub.Get(userIDBytes)
 		if v == nil {
 			return auth.ErrCredentialNotFound
@@ -154,7 +175,10 @@ func (s *Store) GetUserByWebAuthnHandle(handle []byte) (*auth.User, error) {
 func (s *Store) AnyWebAuthnCredentialsExist() (bool, error) {
 	var exists bool
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketWebAuthnCreds)
+		b, err := bucket(tx, bucketWebAuthnCreds)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 		for k, _ := c.First(); k != nil; k, _ = c.Next() {
 			if !isIndexKey(k) {

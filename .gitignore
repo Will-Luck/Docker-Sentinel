@@ -8,6 +8,7 @@ sentinel-bin
 docs/DESIGN.md
 docs/mood-board.md
 .gitea/
+CLAUDE.md
 .claude/
 sentinel
 docs/wiki/

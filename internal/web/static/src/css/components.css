@@ -178,6 +178,14 @@ a.stat-card-link:hover { border-color: var(--warning); }
 .stat-value.warning { color: var(--warning); }
 .stat-value.error   { color: var(--error); }
 .stat-value.info    { color: var(--info); }
+
+/* "All up to date" celebration state — checkmark + 0 */
+.stat-all-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
 .stat-value.stat-changed {
     animation: statPulse 400ms var(--md-motion-emphasized-decelerate);
 }
@@ -185,6 +193,35 @@ a.stat-card-link:hover { border-color: var(--warning); }
     0%   { transform: scale(1); }
     40%  { transform: scale(1.15); }
     100% { transform: scale(1); }
+}
+
+
+/* Scan progress bar */
+.scan-progress {
+    width: 100%;
+    height: 3px;
+    background: var(--bg-hover);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: var(--sp-4);
+}
+
+.scan-progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 300ms ease;
+}
+
+.scan-progress-bar.indeterminate {
+    width: 30%;
+    animation: scan-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes scan-indeterminate {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
 }
 
 
@@ -468,15 +505,19 @@ a.version-link:hover { border-bottom-style: solid; }
     to { transform: rotate(360deg); }
 }
 
-/* Row fade-in after live update */
+/* Row fade-in after live update — green flash then fade to transparent */
 
 .row-updated {
-    animation: rowFadeIn 200ms var(--md-motion-emphasized-decelerate);
+    animation: rowFlash 600ms ease-out;
 }
 
-@keyframes rowFadeIn {
-    from { opacity: 0.4; }
-    to { opacity: 1; }
+@keyframes rowFlash {
+    0% {
+        background: color-mix(in srgb, var(--success) 20%, transparent);
+    }
+    100% {
+        background: transparent;
+    }
 }
 
 .btn-success {
@@ -556,6 +597,14 @@ a.version-link:hover { border-bottom-style: solid; }
     font-size: 0.9rem;
     color: var(--fg-primary);
     min-width: 100px;
+}
+
+.bulk-divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+    margin: 0 8px;
+    flex-shrink: 0;
 }
 
 @keyframes slideUp {
@@ -674,6 +723,24 @@ a.version-link:hover { border-bottom-style: solid; }
     & p {
         font-size: 0.85rem;
     }
+}
+
+.empty-state-icon {
+    display: flex;
+    justify-content: center;
+    margin-bottom: var(--sp-4);
+    color: var(--fg-muted);
+    opacity: 0.4;
+}
+
+.empty-state-icon svg {
+    width: 48px;
+    height: 48px;
+    stroke-width: 1.5;
+}
+
+.empty-state-cta {
+    margin-top: var(--sp-4);
 }
 
 

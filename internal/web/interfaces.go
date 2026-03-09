@@ -71,6 +71,7 @@ type NotificationConfigStore interface {
 type NotifierReconfigurer interface {
 	Reconfigure(notifiers ...notify.Notifier)
 	SetBatchWindow(d time.Duration)
+	SetRetry(maxRetries int, backoff time.Duration)
 }
 
 // BackupManager provides backup creation, listing, and download.

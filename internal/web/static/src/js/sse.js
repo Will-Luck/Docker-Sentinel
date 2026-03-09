@@ -9,6 +9,17 @@ import { showToast, queueBatchToast } from "./utils.js";
 // Module-level state shared with other modules via window in main.js.
 var ghcrAlternatives = {};
 
+// Scan progress bar state (cached DOM refs + total count).
+var _scanProgressEl = null;
+var _scanProgressBar = null;
+var _scanTotal = 0;
+
+function getScanProgressEls() {
+    if (!_scanProgressEl) _scanProgressEl = document.getElementById("scan-progress");
+    if (!_scanProgressBar) _scanProgressBar = _scanProgressEl ? _scanProgressEl.querySelector(".scan-progress-bar") : null;
+    return { wrap: _scanProgressEl, bar: _scanProgressBar };
+}
+
 var sseReloadTimer = null;
 
 function scheduleReload() {
@@ -148,9 +159,12 @@ function updatePendingColor(pending) {
     var pendingEl = stats.querySelectorAll(".stat-value")[2];
     if (!pendingEl) return;
     if (pending === 0 || pending === "0") {
-        pendingEl.className = "stat-value success";
+        pendingEl.className = "stat-value success stat-all-clear";
+        // Static SVG checkmark icon — no user content, safe to use innerHTML.
+        pendingEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> 0';
     } else {
         pendingEl.className = "stat-value warning";
+        pendingEl.textContent = pending;
     }
 }
 
@@ -285,7 +299,48 @@ function initSSE() {
         }
     });
 
+    es.addEventListener("scan_start", function (e) {
+        try {
+            var data = JSON.parse(e.data);
+            var m = (data.message || "").match(/total=(\d+)/);
+            _scanTotal = m ? parseInt(m[1], 10) : 0;
+        } catch (_) {
+            _scanTotal = 0;
+        }
+        var els = getScanProgressEls();
+        if (!els.wrap || !els.bar) return;
+        els.bar.style.width = "0%";
+        els.bar.classList.remove("indeterminate");
+        els.wrap.removeAttribute("hidden");
+    });
+
+    es.addEventListener("scan_progress", function (e) {
+        var els = getScanProgressEls();
+        if (!els.wrap || !els.bar) return;
+        try {
+            var data = JSON.parse(e.data);
+            var m = (data.message || "").match(/checked=(\d+)\s+total=(\d+)/);
+            if (m) {
+                var checked = parseInt(m[1], 10);
+                var total = parseInt(m[2], 10);
+                if (total > 0) {
+                    var pct = Math.round((checked / total) * 100);
+                    els.bar.style.width = pct + "%";
+                }
+            }
+        } catch (_) {}
+    });
+
     es.addEventListener("scan_complete", function (e) {
+        // Fill progress bar to 100% then hide after a short delay.
+        var els = getScanProgressEls();
+        if (els.wrap && els.bar) {
+            els.bar.style.width = "100%";
+            setTimeout(function () {
+                els.wrap.setAttribute("hidden", "");
+                els.bar.style.width = "0%";
+            }, 800);
+        }
         // Clear scan button spinner.
         var scanBtn = document.getElementById("scan-btn");
         if (scanBtn) { scanBtn.classList.remove("loading"); scanBtn.disabled = false; }

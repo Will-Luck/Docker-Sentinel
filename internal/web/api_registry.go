@@ -312,8 +312,8 @@ func (s *Server) apiGetGHCRAlternatives(w http.ResponseWriter, r *http.Request) 
 // apiGetContainerGHCR returns GHCR alternative info for a single container.
 func (s *Server) apiGetContainerGHCR(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 
@@ -359,8 +359,8 @@ func (s *Server) apiGetContainerGHCR(w http.ResponseWriter, r *http.Request) {
 // apiSwitchToGHCR triggers a container migration from Docker Hub to GHCR.
 func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "container name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 

@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -40,6 +42,42 @@ func (s *Server) apiQueue(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiQueueCount(w http.ResponseWriter, r *http.Request) {
 	count := len(s.deps.Queue.List())
 	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}
+
+// apiQueueExport streams all pending queue items as CSV or JSON.
+func (s *Server) apiQueueExport(w http.ResponseWriter, r *http.Request) {
+	items := s.deps.Queue.List()
+	if items == nil {
+		items = []PendingUpdate{}
+	}
+
+	format := r.URL.Query().Get("format")
+	switch format {
+	case "csv":
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=sentinel-queue.csv")
+		cw := csv.NewWriter(w)
+		_ = cw.Write([]string{"container", "current_image", "new_image", "detected_at", "type", "host_id"})
+		for _, item := range items {
+			newImage := ""
+			if len(item.NewerVersions) > 0 {
+				newImage = item.NewerVersions[0]
+			}
+			_ = cw.Write([]string{
+				item.ContainerName,
+				item.CurrentImage,
+				newImage,
+				item.DetectedAt.Format(time.RFC3339),
+				item.Type,
+				item.HostID,
+			})
+		}
+		cw.Flush()
+	default:
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", "attachment; filename=sentinel-queue.json")
+		_ = json.NewEncoder(w).Encode(items)
+	}
 }
 
 // loadReleaseSources returns custom sources from the store, converted to registry types.

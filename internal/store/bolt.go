@@ -83,6 +83,27 @@ const (
 	SettingWebhookSecret  = "webhook_secret"  // hex-encoded random secret
 )
 
+// Scanner (Trivy) settings keys (stored in bucketSettings).
+const (
+	SettingScannerMode      = "scanner_mode"      // "disabled" / "pre-update" / "post-update"
+	SettingScannerThreshold = "scanner_threshold" // "CRITICAL" / "HIGH" / "MEDIUM" / "LOW"
+	SettingTrivyPath        = "trivy_path"        // path to trivy binary (default: "trivy")
+)
+
+// Verifier (cosign) settings keys (stored in bucketSettings).
+const (
+	SettingVerifyMode    = "verify_mode"     // "disabled" / "warn" / "enforce"
+	SettingCosignPath    = "cosign_path"     // path to cosign binary (default: "cosign")
+	SettingCosignKeyless = "cosign_keyless"  // "true" / "false"
+	SettingCosignKeyPath = "cosign_key_path" // path to public key PEM
+)
+
+// Notification retry settings keys (stored in bucketSettings).
+const (
+	SettingNotifyRetryCount   = "notification_retry_count"   // "0" (disabled) to "3"
+	SettingNotifyRetryBackoff = "notification_retry_backoff" // Go duration, e.g. "2s"
+)
+
 // UpdateRecord represents a completed (or failed) container update.
 type UpdateRecord struct {
 	Timestamp     time.Time     `json:"timestamp"`
@@ -102,6 +123,17 @@ type UpdateRecord struct {
 // Store wraps a BoltDB database for Sentinel persistence.
 type Store struct {
 	db *bolt.DB
+}
+
+// bucket retrieves a bucket by name, returning an error instead of nil.
+// All bucket access should go through this helper to prevent nil-pointer
+// panics if the database is corrupted or a bucket is unexpectedly missing.
+func bucket(tx *bolt.Tx, name []byte) (*bolt.Bucket, error) {
+	b := tx.Bucket(name)
+	if b == nil {
+		return nil, fmt.Errorf("bucket %q not found", string(name))
+	}
+	return b, nil
 }
 
 // Open creates or opens a BoltDB database at the given path and ensures
@@ -143,7 +175,10 @@ func (s *Store) DB() *bolt.DB {
 // Key format: "{name}::{RFC3339Nano}" for chronological ordering.
 func (s *Store) SaveSnapshot(name string, data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSnapshots)
+		b, err := bucket(tx, bucketSnapshots)
+		if err != nil {
+			return err
+		}
 		key := []byte(fmt.Sprintf("%s::%s", name, time.Now().UTC().Format(time.RFC3339Nano)))
 		return b.Put(key, data)
 	})
@@ -156,7 +191,10 @@ func (s *Store) GetLatestSnapshot(name string) ([]byte, error) {
 	prefix := []byte(name + "::")
 
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSnapshots)
+		b, err := bucket(tx, bucketSnapshots)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 
 		// Seek to the end of this container's keys by seeking past the prefix.
@@ -193,7 +231,10 @@ func (s *Store) RecordUpdate(rec UpdateRecord) error {
 		return fmt.Errorf("marshal update record: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketHistory)
+		b, err := bucket(tx, bucketHistory)
+		if err != nil {
+			return err
+		}
 		key := []byte(rec.Timestamp.UTC().Format(time.RFC3339Nano))
 		return b.Put(key, data)
 	})
@@ -206,7 +247,10 @@ func (s *Store) ListHistory(limit int, before string) ([]UpdateRecord, error) {
 	var records []UpdateRecord
 
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketHistory)
+		b, err := bucket(tx, bucketHistory)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 
 		var k, v []byte
@@ -233,7 +277,10 @@ func (s *Store) ListHistory(limit int, before string) ([]UpdateRecord, error) {
 // SetMaintenance marks a container as in or out of a maintenance window.
 func (s *Store) SetMaintenance(name string, active bool) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketState)
+		b, err := bucket(tx, bucketState)
+		if err != nil {
+			return err
+		}
 		key := []byte("maintenance::" + name)
 		if active {
 			return b.Put(key, []byte("true"))
@@ -246,7 +293,10 @@ func (s *Store) SetMaintenance(name string, active bool) error {
 func (s *Store) GetMaintenance(name string) (bool, error) {
 	var active bool
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketState)
+		b, err := bucket(tx, bucketState)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte("maintenance::" + name))
 		active = v != nil && string(v) == "true"
 		return nil
@@ -257,7 +307,10 @@ func (s *Store) GetMaintenance(name string) (bool, error) {
 // SavePendingQueue persists the pending update queue as JSON.
 func (s *Store) SavePendingQueue(data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketQueue)
+		b, err := bucket(tx, bucketQueue)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte("pending"), data)
 	})
 }
@@ -267,7 +320,10 @@ func (s *Store) SavePendingQueue(data []byte) error {
 func (s *Store) LoadPendingQueue() ([]byte, error) {
 	var data []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketQueue)
+		b, err := bucket(tx, bucketQueue)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte("pending"))
 		if v != nil {
 			data = make([]byte, len(v))
@@ -290,7 +346,10 @@ func (s *Store) ListSnapshots(name string) ([]SnapshotEntry, error) {
 	prefix := []byte(name + "::")
 
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSnapshots)
+		b, err := bucket(tx, bucketSnapshots)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 
 		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
@@ -327,7 +386,10 @@ func (s *Store) ListSnapshots(name string) ([]SnapshotEntry, error) {
 func (s *Store) ListAllHistory() ([]UpdateRecord, error) {
 	var records []UpdateRecord
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketHistory)
+		b, err := bucket(tx, bucketHistory)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 		for k, v := c.Last(); k != nil; k, v = c.Prev() {
 			var rec UpdateRecord
@@ -348,7 +410,10 @@ func (s *Store) ListHistoryByContainer(name string, limit int) ([]UpdateRecord, 
 	var records []UpdateRecord
 
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketHistory)
+		b, err := bucket(tx, bucketHistory)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 
 		// Reverse cursor scan (start at end, move backwards).
@@ -372,7 +437,10 @@ func (s *Store) ListHistoryByContainer(name string, limit int) ([]UpdateRecord, 
 func (s *Store) GetPolicyOverride(name string) (string, bool) {
 	var policy string
 	_ = s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketPolicies)
+		b, err := bucket(tx, bucketPolicies)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(name))
 		if v != nil {
 			policy = string(v)
@@ -385,7 +453,10 @@ func (s *Store) GetPolicyOverride(name string) (string, bool) {
 // SetPolicyOverride stores a policy override for a container in BoltDB.
 func (s *Store) SetPolicyOverride(name, policy string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketPolicies)
+		b, err := bucket(tx, bucketPolicies)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte(name), []byte(policy))
 	})
 }
@@ -393,7 +464,10 @@ func (s *Store) SetPolicyOverride(name, policy string) error {
 // DeletePolicyOverride removes the policy override for a container.
 func (s *Store) DeletePolicyOverride(name string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketPolicies)
+		b, err := bucket(tx, bucketPolicies)
+		if err != nil {
+			return err
+		}
 		return b.Delete([]byte(name))
 	})
 }
@@ -402,7 +476,10 @@ func (s *Store) DeletePolicyOverride(name string) error {
 func (s *Store) AllPolicyOverrides() map[string]string {
 	result := make(map[string]string)
 	_ = s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketPolicies)
+		b, err := bucket(tx, bucketPolicies)
+		if err != nil {
+			return err
+		}
 		return b.ForEach(func(k, v []byte) error {
 			result[string(k)] = string(v)
 			return nil
@@ -431,7 +508,10 @@ func (s *Store) AppendLog(entry LogEntry) error {
 		return fmt.Errorf("marshal log entry: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketLogs)
+		b, err := bucket(tx, bucketLogs)
+		if err != nil {
+			return err
+		}
 		key := []byte(entry.Timestamp.Format(time.RFC3339Nano))
 		return b.Put(key, data)
 	})
@@ -441,7 +521,10 @@ func (s *Store) AppendLog(entry LogEntry) error {
 func (s *Store) ListLogs(limit int) ([]LogEntry, error) {
 	var entries []LogEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketLogs)
+		b, err := bucket(tx, bucketLogs)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 		for k, v := c.Last(); k != nil && len(entries) < limit; k, v = c.Prev() {
 			var entry LogEntry
@@ -459,7 +542,10 @@ func (s *Store) ListLogs(limit int) ([]LogEntry, error) {
 // DeleteOldSnapshots removes all but the N most recent snapshots for a container.
 func (s *Store) DeleteOldSnapshots(name string, keep int) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSnapshots)
+		b, err := bucket(tx, bucketSnapshots)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 		prefix := []byte(name + "::")
 
@@ -490,7 +576,10 @@ func (s *Store) DeleteOldSnapshots(name string, keep int) error {
 // SaveSetting stores a setting key-value pair in the settings bucket.
 func (s *Store) SaveSetting(key, value string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte(key), []byte(value))
 	})
 }
@@ -500,7 +589,10 @@ func (s *Store) SaveSetting(key, value string) error {
 func (s *Store) LoadSetting(key string) (string, error) {
 	var val string
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(key))
 		if v != nil {
 			val = string(v)
@@ -527,7 +619,10 @@ func (s *Store) SetVersionScope(scope string) error {
 func (s *Store) GetAllSettings() (map[string]string, error) {
 	result := make(map[string]string)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		return b.ForEach(func(k, v []byte) error {
 			key := string(k)
 			// Skip internal compound keys that store JSON blobs.
@@ -546,7 +641,10 @@ func (s *Store) GetAllSettings() (map[string]string, error) {
 func (s *Store) CountHistory() (int, error) {
 	var count int
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketHistory)
+		b, err := bucket(tx, bucketHistory)
+		if err != nil {
+			return err
+		}
 		count = b.Stats().KeyN
 		return nil
 	})
@@ -558,7 +656,10 @@ func (s *Store) CountHistory() (int, error) {
 func (s *Store) CountSnapshots() (int, error) {
 	var count int
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSnapshots)
+		b, err := bucket(tx, bucketSnapshots)
+		if err != nil {
+			return err
+		}
 		count = b.Stats().KeyN
 		return nil
 	})
@@ -570,7 +671,10 @@ func (s *Store) CountSnapshots() (int, error) {
 func (s *Store) GetLastContainerScan(name string) (time.Time, error) {
 	var t time.Time
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte("last_scan_" + name))
 		if v == nil {
 			return nil
@@ -587,7 +691,10 @@ func (s *Store) SetLastContainerScan(name string, t time.Time) error {
 		return err
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte("last_scan_"+name), data)
 	})
 }
@@ -609,7 +716,11 @@ func ScopedKey(hostID, name string) string {
 // SaveClusterHost persists a host registration to the cluster_hosts bucket.
 func (s *Store) SaveClusterHost(id string, data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterHosts).Put([]byte(id), data)
+		b, err := bucket(tx, bucketClusterHosts)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), data)
 	})
 }
 
@@ -617,7 +728,11 @@ func (s *Store) SaveClusterHost(id string, data []byte) error {
 func (s *Store) GetClusterHost(id string) ([]byte, error) {
 	var data []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket(bucketClusterHosts).Get([]byte(id))
+		b, err := bucket(tx, bucketClusterHosts)
+		if err != nil {
+			return err
+		}
+		v := b.Get([]byte(id))
 		if v != nil {
 			data = make([]byte, len(v))
 			copy(data, v)
@@ -631,7 +746,11 @@ func (s *Store) GetClusterHost(id string) ([]byte, error) {
 func (s *Store) ListClusterHosts() (map[string][]byte, error) {
 	result := make(map[string][]byte)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterHosts).ForEach(func(k, v []byte) error {
+		b, err := bucket(tx, bucketClusterHosts)
+		if err != nil {
+			return err
+		}
+		return b.ForEach(func(k, v []byte) error {
 			data := make([]byte, len(v))
 			copy(data, v)
 			result[string(k)] = data
@@ -644,7 +763,11 @@ func (s *Store) ListClusterHosts() (map[string][]byte, error) {
 // DeleteClusterHost removes a host registration.
 func (s *Store) DeleteClusterHost(id string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterHosts).Delete([]byte(id))
+		b, err := bucket(tx, bucketClusterHosts)
+		if err != nil {
+			return err
+		}
+		return b.Delete([]byte(id))
 	})
 }
 
@@ -655,7 +778,11 @@ func (s *Store) DeleteClusterHost(id string) error {
 // SaveEnrollToken stores an enrollment token (hashed).
 func (s *Store) SaveEnrollToken(id string, data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterTokens).Put([]byte(id), data)
+		b, err := bucket(tx, bucketClusterTokens)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), data)
 	})
 }
 
@@ -663,7 +790,11 @@ func (s *Store) SaveEnrollToken(id string, data []byte) error {
 func (s *Store) GetEnrollToken(id string) ([]byte, error) {
 	var data []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket(bucketClusterTokens).Get([]byte(id))
+		b, err := bucket(tx, bucketClusterTokens)
+		if err != nil {
+			return err
+		}
+		v := b.Get([]byte(id))
 		if v != nil {
 			data = make([]byte, len(v))
 			copy(data, v)
@@ -676,7 +807,11 @@ func (s *Store) GetEnrollToken(id string) ([]byte, error) {
 // DeleteEnrollToken removes a used or expired token.
 func (s *Store) DeleteEnrollToken(id string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterTokens).Delete([]byte(id))
+		b, err := bucket(tx, bucketClusterTokens)
+		if err != nil {
+			return err
+		}
+		return b.Delete([]byte(id))
 	})
 }
 
@@ -687,7 +822,11 @@ func (s *Store) DeleteEnrollToken(id string) error {
 // AddRevokedCert adds a certificate serial to the revocation list.
 func (s *Store) AddRevokedCert(serial string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterRevoked).Put([]byte(serial), []byte(time.Now().UTC().Format(time.RFC3339)))
+		b, err := bucket(tx, bucketClusterRevoked)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(serial), []byte(time.Now().UTC().Format(time.RFC3339)))
 	})
 }
 
@@ -695,7 +834,11 @@ func (s *Store) AddRevokedCert(serial string) error {
 func (s *Store) IsRevokedCert(serial string) (bool, error) {
 	var revoked bool
 	err := s.db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket(bucketClusterRevoked).Get([]byte(serial))
+		b, err := bucket(tx, bucketClusterRevoked)
+		if err != nil {
+			return err
+		}
+		v := b.Get([]byte(serial))
 		revoked = v != nil
 		return nil
 	})
@@ -706,7 +849,11 @@ func (s *Store) IsRevokedCert(serial string) (bool, error) {
 func (s *Store) ListRevokedCerts() (map[string]string, error) {
 	result := make(map[string]string)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterRevoked).ForEach(func(k, v []byte) error {
+		b, err := bucket(tx, bucketClusterRevoked)
+		if err != nil {
+			return err
+		}
+		return b.ForEach(func(k, v []byte) error {
 			result[string(k)] = string(v)
 			return nil
 		})
@@ -721,7 +868,11 @@ func (s *Store) ListRevokedCerts() (map[string]string, error) {
 // SaveClusterJournal stores an offline action journal entry.
 func (s *Store) SaveClusterJournal(id string, data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterJournal).Put([]byte(id), data)
+		b, err := bucket(tx, bucketClusterJournal)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), data)
 	})
 }
 
@@ -729,7 +880,11 @@ func (s *Store) SaveClusterJournal(id string, data []byte) error {
 func (s *Store) ListClusterJournal() (map[string][]byte, error) {
 	result := make(map[string][]byte)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterJournal).ForEach(func(k, v []byte) error {
+		b, err := bucket(tx, bucketClusterJournal)
+		if err != nil {
+			return err
+		}
+		return b.ForEach(func(k, v []byte) error {
 			data := make([]byte, len(v))
 			copy(data, v)
 			result[string(k)] = data
@@ -742,7 +897,10 @@ func (s *Store) ListClusterJournal() (map[string][]byte, error) {
 // ClearClusterJournal removes all journal entries (after successful sync).
 func (s *Store) ClearClusterJournal() error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketClusterJournal)
+		b, err := bucket(tx, bucketClusterJournal)
+		if err != nil {
+			return err
+		}
 
 		// Collect keys first — mutating during iteration is undefined behaviour in BoltDB.
 		var keys [][]byte
@@ -771,7 +929,11 @@ func (s *Store) ClearClusterJournal() error {
 // SaveClusterConfigCache stores cached settings/policies for autonomous mode.
 func (s *Store) SaveClusterConfigCache(key string, data []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketClusterConfigCache).Put([]byte(key), data)
+		b, err := bucket(tx, bucketClusterConfigCache)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(key), data)
 	})
 }
 
@@ -779,7 +941,11 @@ func (s *Store) SaveClusterConfigCache(key string, data []byte) error {
 func (s *Store) GetClusterConfigCache(key string) ([]byte, error) {
 	var data []byte
 	err := s.db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket(bucketClusterConfigCache).Get([]byte(key))
+		b, err := bucket(tx, bucketClusterConfigCache)
+		if err != nil {
+			return err
+		}
+		v := b.Get([]byte(key))
 		if v != nil {
 			data = make([]byte, len(v))
 			copy(data, v)
@@ -798,7 +964,11 @@ func (s *Store) GetClusterConfigCache(key string) ([]byte, error) {
 func (s *Store) GetNotifyTemplate(eventType string) (string, error) {
 	var tmpl string
 	err := s.db.View(func(tx *bolt.Tx) error {
-		v := tx.Bucket(bucketNotifyTemplates).Get([]byte(eventType))
+		b, err := bucket(tx, bucketNotifyTemplates)
+		if err != nil {
+			return err
+		}
+		v := b.Get([]byte(eventType))
 		if v != nil {
 			tmpl = string(v)
 		}
@@ -810,7 +980,11 @@ func (s *Store) GetNotifyTemplate(eventType string) (string, error) {
 // SaveNotifyTemplate stores a custom template for an event type.
 func (s *Store) SaveNotifyTemplate(eventType, tmpl string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketNotifyTemplates).Put([]byte(eventType), []byte(tmpl))
+		b, err := bucket(tx, bucketNotifyTemplates)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(eventType), []byte(tmpl))
 	})
 }
 
@@ -818,7 +992,11 @@ func (s *Store) SaveNotifyTemplate(eventType, tmpl string) error {
 // reverting to the default format.
 func (s *Store) DeleteNotifyTemplate(eventType string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketNotifyTemplates).Delete([]byte(eventType))
+		b, err := bucket(tx, bucketNotifyTemplates)
+		if err != nil {
+			return err
+		}
+		return b.Delete([]byte(eventType))
 	})
 }
 
@@ -827,7 +1005,11 @@ func (s *Store) DeleteNotifyTemplate(eventType string) error {
 func (s *Store) GetAllNotifyTemplates() (map[string]string, error) {
 	result := make(map[string]string)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketNotifyTemplates).ForEach(func(k, v []byte) error {
+		b, err := bucket(tx, bucketNotifyTemplates)
+		if err != nil {
+			return err
+		}
+		return b.ForEach(func(k, v []byte) error {
 			result[string(k)] = string(v)
 			return nil
 		})
@@ -843,7 +1025,10 @@ func (s *Store) GetAllNotifyTemplates() (map[string]string, error) {
 func (s *Store) CacheDigestEquivalence(localDigest, remoteDigest string) error {
 	key := extractHash(localDigest) + "|" + extractHash(remoteDigest)
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketDigestEquiv)
+		b, err := bucket(tx, bucketDigestEquiv)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte(key), []byte(time.Now().UTC().Format(time.RFC3339)))
 	})
 }
@@ -853,7 +1038,10 @@ func (s *Store) CheckDigestEquivalence(localDigest, remoteDigest string) bool {
 	key := extractHash(localDigest) + "|" + extractHash(remoteDigest)
 	var found bool
 	_ = s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketDigestEquiv)
+		b, err := bucket(tx, bucketDigestEquiv)
+		if err != nil {
+			return err
+		}
 		found = b.Get([]byte(key)) != nil
 		return nil
 	})
@@ -868,9 +1056,12 @@ func (s *Store) ClearDigestEquivalence(imageRef string) error {
 		return nil
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketDigestEquiv)
+		b, err := bucket(tx, bucketDigestEquiv)
+		if err != nil {
+			return err
+		}
 		var toDelete [][]byte
-		err := b.ForEach(func(k, _ []byte) error {
+		err = b.ForEach(func(k, _ []byte) error {
 			if strings.Contains(string(k), hash) {
 				keyCopy := make([]byte, len(k))
 				copy(keyCopy, k)

@@ -20,6 +20,9 @@
             <img src="/favicon.svg" alt="S" class="nav-logo">
             <span class="nav-brand-text">Sentinel</span>
         </a>
+                <button class="nav-hamburger" aria-label="Menu" aria-expanded="false">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
         <div class="nav-links">
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/queue" class="nav-link">
@@ -64,6 +67,9 @@
                 <h1>Settings</h1>
                 <p class="subtitle">Configure Sentinel behaviour and notifications</p>
             </div>
+            <div class="page-header-actions">
+                <button class="btn btn-sm" id="advanced-toggle" onclick="toggleAdvanced()">Show Advanced</button>
+            </div>
         </div>
 
         <div class="tab-nav" role="tablist" id="settings-tabs">
@@ -72,8 +78,8 @@
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-registries" data-tab="registries">Registries</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-appearance" data-tab="appearance">Appearance</button>
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-general" data-tab="general">General</button>
-            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-cluster" data-tab="cluster">Cluster</button>
-            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-portainer" data-tab="portainer">Portainer</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-cluster" data-tab="cluster" data-advanced>Cluster</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-portainer" data-tab="portainer" data-advanced>Portainer</button>
             {{if .ShowSecurityTab}}
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-security" data-tab="security">Security</button>
             {{end}}
@@ -139,7 +145,7 @@
                                     <span id="pause-toggle-text" class="toggle-switch-text">Off</span>
                                 </label>
                             </div>
-                            <div class="setting-row">
+                            <div class="setting-row" data-advanced>
                                 <div class="setting-info">
                                     <div class="setting-label">Scan concurrency</div>
                                     <div class="setting-desc">Number of parallel registry checks per scan (1 = sequential). Experimental.</div>
@@ -192,7 +198,7 @@
                                     <span id="latest-auto-text" class="toggle-switch-text">On</span>
                                 </label>
                             </div>
-                            <div class="setting-row">
+                            <div class="setting-row" data-advanced>
                                 <div class="setting-info">
                                     <div class="setting-label">On Rollback</div>
                                     <div class="setting-desc">Automatically change update policy when a service or container rolls back, preventing the same broken update from being retried</div>
@@ -203,7 +209,7 @@
                                     <option value="pinned">Set to Pinned</option>
                                 </select>
                             </div>
-                            <div class="setting-row">
+                            <div class="setting-row" data-advanced>
                                 <div class="setting-info">
                                     <div class="setting-label">Grace period</div>
                                     <div class="setting-desc">Time to wait after an update before checking container health</div>
@@ -229,7 +235,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="setting-row">
+                            <div class="setting-row" data-advanced>
                                 <div class="setting-info">
                                     <div class="setting-label">Update delay</div>
                                     <div class="setting-desc">Wait this long after first detecting an update before applying it. Per-container: <code>sentinel.delay</code> label (e.g. <code>72h</code>, <code>3d</code>)</div>
@@ -239,7 +245,7 @@
                                     <button class="btn btn-success" onclick="setUpdateDelay()">Save</button>
                                 </div>
                             </div>
-                            <div class="setting-row">
+                            <div class="setting-row" data-advanced>
                                 <div class="setting-info">
                                     <div class="setting-label">Maintenance window</div>
                                     <div class="setting-desc">Time window when auto-updates are applied. Scans still run on schedule, but updates are deferred until inside the window. Manual approvals always bypass.</div>
@@ -254,7 +260,7 @@
                     </div>
                 </details>
 
-                <details class="accordion card">
+                <details class="accordion card" data-advanced>
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Container Scope</h2>
@@ -296,7 +302,7 @@
                     </div>
                 </details>
 
-                <details class="accordion card">
+                <details class="accordion card" data-advanced>
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Update Process</h2>
@@ -368,7 +374,7 @@
                     </div>
                 </details>
 
-                <details class="accordion card">
+                <details class="accordion card" data-advanced>
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Lifecycle Hooks</h2>
@@ -395,6 +401,103 @@
                                     <input type="checkbox" id="hooks-labels-toggle" class="channel-toggle" onchange="setHooksWriteLabels(this.checked)">
                                     <span id="hooks-labels-text" class="toggle-switch-text">Off</span>
                                 </label>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="accordion card" data-advanced>
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Vulnerability Scanning</h2>
+                        <span class="accordion-preview" id="scanner-preview">Disabled</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Trivy path</div>
+                                    <div class="setting-desc">Path to the Trivy binary on the host</div>
+                                </div>
+                                <input type="text" id="trivy-path" class="setting-input" placeholder="trivy" style="width:200px">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Scan mode</div>
+                                    <div class="setting-desc">When to scan pulled images for vulnerabilities</div>
+                                </div>
+                                <select id="scanner-mode" class="setting-select">
+                                    <option value="disabled">Disabled</option>
+                                    <option value="pre-update">Pre-update (blocks on threshold)</option>
+                                    <option value="post-update">Post-update (informational)</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Severity threshold</div>
+                                    <div class="setting-desc">Block updates when vulnerabilities at or above this level are found (pre-update only)</div>
+                                </div>
+                                <select id="scanner-threshold" class="setting-select">
+                                    <option value="CRITICAL">Critical</option>
+                                    <option value="HIGH">High</option>
+                                    <option value="MEDIUM">Medium</option>
+                                    <option value="LOW">Low</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info"></div>
+                                <button class="btn btn-primary" onclick="saveScannerSettings()">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                </details>
+
+                <details class="accordion card" data-advanced>
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Signature Verification</h2>
+                        <span class="accordion-preview" id="verifier-preview">Disabled</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Cosign path</div>
+                                    <div class="setting-desc">Path to the cosign binary on the host</div>
+                                </div>
+                                <input type="text" id="cosign-path" class="setting-input" placeholder="cosign" style="width:200px">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Verify mode</div>
+                                    <div class="setting-desc">How to handle images without valid signatures</div>
+                                </div>
+                                <select id="verify-mode" class="setting-select">
+                                    <option value="disabled">Disabled</option>
+                                    <option value="warn">Warn (log and proceed)</option>
+                                    <option value="enforce">Enforce (block update)</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Keyless verification</div>
+                                    <div class="setting-desc">Use Sigstore keyless verification (Fulcio + Rekor)</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="cosign-keyless" class="channel-toggle">
+                                    <span id="cosign-keyless-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Public key path</div>
+                                    <div class="setting-desc">Path to cosign public key PEM for keyed verification</div>
+                                </div>
+                                <input type="text" id="cosign-key-path" class="setting-input" placeholder="/path/to/cosign.pub" style="width:250px">
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info"></div>
+                                <button class="btn btn-primary" onclick="saveVerifierSettings()">Save</button>
                             </div>
                         </div>
                     </div>
@@ -688,7 +791,7 @@
                 </details>
 
                 <!-- Notification Behaviour -->
-                <details class="accordion card">
+                <details class="accordion card" data-advanced>
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Notification Behaviour</h2>
@@ -759,7 +862,7 @@
                 </details>
 
                 <!-- Message Templates -->
-                <details class="accordion card">
+                <details class="accordion card" data-advanced>
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Message Templates</h2>
@@ -806,7 +909,7 @@
                 </details>
 
                 <!-- Home Assistant MQTT Discovery -->
-                <details class="accordion card">
+                <details class="accordion card" data-advanced>
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Home Assistant Integration</h2>
@@ -840,7 +943,7 @@
                 </details>
 
                 <!-- Per-Container Notification Overrides -->
-                <details class="accordion card">
+                <details class="accordion card" data-advanced>
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Per-Container Overrides</h2>
@@ -850,6 +953,42 @@
                         <p class="accordion-intro">Override the default notification mode for specific containers. Containers not listed here use the default mode set above.</p>
                         <div id="container-notify-prefs">
                             <p class="text-muted">Loading...</p>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Retry Behaviour -->
+                <details class="accordion card" data-advanced>
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Retry Behaviour</h2>
+                        <span class="accordion-preview" id="retry-preview">Disabled</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="accordion-intro">When a notification channel fails to send, Sentinel can retry with exponential backoff before giving up.</p>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Retry count</div>
+                                    <div class="setting-desc">Number of additional attempts after the initial failure</div>
+                                </div>
+                                <select id="retry-count" class="setting-select" style="max-width:160px">
+                                    <option value="0">0 (Disabled)</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Initial backoff</div>
+                                    <div class="setting-desc">Delay before first retry. Doubles for each subsequent attempt (max 30s).</div>
+                                </div>
+                                <input type="text" id="retry-backoff" class="setting-input" style="max-width:160px" value="2s" placeholder="2s">
+                            </div>
+                        </div>
+                        <div class="setting-actions" style="margin-top: var(--sp-3)">
+                            <button class="btn btn-success" onclick="saveRetrySettings()">Save</button>
                         </div>
                     </div>
                 </details>
@@ -1095,7 +1234,7 @@
                 </details>
 
                 <!-- OIDC / SSO -->
-                <details class="accordion card{{if not .AuthEnabled}} accordion-disabled{{end}}">
+                <details class="accordion card{{if not .AuthEnabled}} accordion-disabled{{end}}" data-advanced>
                     <summary class="accordion-header">
                         <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         <h2>Single Sign-On (OIDC)</h2>

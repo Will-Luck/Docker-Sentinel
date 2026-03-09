@@ -98,7 +98,18 @@ func NewClient(dockerSock string, tlsCfg *TLSConfig) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{api: api}, nil
+	c := &Client{api: api}
+
+	// Validate connectivity at creation time so callers get a clear error
+	// instead of confusing failures later during container operations.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.Ping(ctx); err != nil {
+		api.Close()
+		return nil, fmt.Errorf("docker daemon unreachable at %s: %w", dockerSock, err)
+	}
+
+	return c, nil
 }
 
 // Ping checks that the Docker daemon is reachable.

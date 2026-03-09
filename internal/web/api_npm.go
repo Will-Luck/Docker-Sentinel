@@ -167,6 +167,10 @@ func (s *Server) apiGetNPMMappings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiGetPortConfig(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
+		return
+	}
 	hostID := r.URL.Query().Get("host")
 	key := portConfigKey(hostID, name)
 	if s.deps.PortConfigs == nil {
@@ -186,6 +190,10 @@ func (s *Server) apiGetPortConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiSetPortOverride(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
+		return
+	}
 	portStr := r.PathValue("port")
 	hostID := r.URL.Query().Get("host")
 	key := portConfigKey(hostID, name)
@@ -213,6 +221,10 @@ func (s *Server) apiSetPortOverride(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiDeletePortOverride(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
+		return
+	}
 	portStr := r.PathValue("port")
 	hostID := r.URL.Query().Get("host")
 	key := portConfigKey(hostID, name)

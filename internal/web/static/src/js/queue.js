@@ -2,7 +2,7 @@
    5. API Actions — Queue operations, container actions, bulk
    ============================================================ */
 
-import { showToast, escapeHTML, showConfirm, apiPost } from "./utils.js";
+import { showToast, escapeHTML, showConfirm, apiPost, apiFetch } from "./utils.js";
 
 // Access via window to avoid circular import with sse.js.
 function _updateQueueBadge() {
@@ -341,25 +341,20 @@ function triggerSelfUpdate(event) {
 }
 
 function switchToGHCR(name, ghcrImage) {
-    if (!confirm("Switch " + name + " to " + ghcrImage + "?\n\nThis will recreate the container with the GHCR image. A snapshot will be taken first for rollback.")) {
-        return;
-    }
-    var enc = encodeURIComponent(name);
-    fetch("/api/containers/" + enc + "/switch-ghcr", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_image: ghcrImage })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-        if (data.error) {
-            showToast(data.error, "error");
-        } else {
-            showToast("Switching " + name + " to GHCR image...", "success");
-        }
-    })
-    .catch(function() {
-        showToast("Failed to switch to GHCR", "error");
+    showConfirm(
+        "Switch to GHCR",
+        "<p>Switch <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(ghcrImage) + "</code>?</p>" +
+        "<p>This will recreate the container with the GHCR image. A snapshot will be taken first for rollback.</p>",
+        { danger: true, confirmLabel: "Switch" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
+        var enc = encodeURIComponent(name);
+        apiFetch("/api/containers/" + enc + "/switch-ghcr", {
+            method: "POST",
+            body: { target_image: ghcrImage },
+            successMsg: "Switching " + name + " to GHCR image...",
+            errorMsg: "Failed to switch to GHCR"
+        });
     });
 }
 
@@ -529,6 +524,222 @@ function applyBulkPolicy() {
 
 function getBulkInProgress() { return _bulkInProgress; }
 
+
+/* ============================================================
+   Keyboard Shortcuts — Queue page navigation and actions
+   ============================================================ */
+
+var _kbFocusIndex = -1;
+var _kbHandler = null;
+var _shortcutsOverlayVisible = false;
+
+// Get all visible container rows in the queue table.
+function _getQueueRows() {
+    return document.querySelectorAll(".table-wrap tbody tr.container-row");
+}
+
+// Apply visual focus to the row at _kbFocusIndex.
+function _applyKbFocus() {
+    var rows = _getQueueRows();
+    for (var i = 0; i < rows.length; i++) {
+        rows[i].classList.remove("kb-focused");
+    }
+    if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+        rows[_kbFocusIndex].classList.add("kb-focused");
+        // Scroll into view if needed.
+        rows[_kbFocusIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+}
+
+// Build the shortcuts help overlay using DOM methods (no innerHTML).
+function _createShortcutsOverlay() {
+    var overlay = document.createElement("div");
+    overlay.className = "kb-shortcuts-overlay";
+    overlay.id = "kb-shortcuts-overlay";
+
+    var card = document.createElement("div");
+    card.className = "kb-shortcuts-card";
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-modal", "true");
+    card.setAttribute("aria-label", "Keyboard shortcuts");
+
+    var title = document.createElement("h3");
+    title.className = "kb-shortcuts-title";
+    title.textContent = "Keyboard Shortcuts";
+    card.appendChild(title);
+
+    var shortcuts = [
+        ["j", "Next row"],
+        ["k", "Previous row"],
+        ["Enter / Space", "Toggle accordion"],
+        ["a", "Approve focused"],
+        ["r", "Reject focused"],
+        ["i", "Ignore focused"],
+        ["?", "Toggle this help"]
+    ];
+
+    var table = document.createElement("table");
+    table.className = "kb-shortcuts-table";
+    var tbody = document.createElement("tbody");
+
+    for (var s = 0; s < shortcuts.length; s++) {
+        var tr = document.createElement("tr");
+        var tdKey = document.createElement("td");
+        var tdDesc = document.createElement("td");
+
+        // Split key text on " / " so each key gets its own <kbd>.
+        var keyParts = shortcuts[s][0].split(" / ");
+        for (var p = 0; p < keyParts.length; p++) {
+            if (p > 0) {
+                var slash = document.createTextNode(" / ");
+                tdKey.appendChild(slash);
+            }
+            var kbd = document.createElement("kbd");
+            kbd.textContent = keyParts[p];
+            tdKey.appendChild(kbd);
+        }
+
+        tdDesc.textContent = shortcuts[s][1];
+        tr.appendChild(tdKey);
+        tr.appendChild(tdDesc);
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    card.appendChild(table);
+
+    var dismissBtn = document.createElement("button");
+    dismissBtn.className = "btn btn-sm kb-shortcuts-dismiss";
+    dismissBtn.textContent = "Close";
+    dismissBtn.addEventListener("click", function () {
+        toggleShortcutsHelp();
+    });
+    card.appendChild(dismissBtn);
+
+    overlay.appendChild(card);
+
+    // Click on backdrop dismisses.
+    overlay.addEventListener("click", function (e) {
+        if (e.target === overlay) toggleShortcutsHelp();
+    });
+
+    return overlay;
+}
+
+function toggleShortcutsHelp() {
+    var existing = document.getElementById("kb-shortcuts-overlay");
+    if (existing) {
+        existing.remove();
+        _shortcutsOverlayVisible = false;
+        return;
+    }
+    var overlay = _createShortcutsOverlay();
+    document.body.appendChild(overlay);
+    _shortcutsOverlayVisible = true;
+
+    // Focus the dismiss button for accessibility.
+    var dismiss = overlay.querySelector(".kb-shortcuts-dismiss");
+    if (dismiss) dismiss.focus();
+}
+
+function _onQueueKeydown(e) {
+    // Guard: skip when typing in form elements.
+    var tag = e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+    // Guard: skip when a modal is open (confirm dialogs).
+    if (document.querySelector(".confirm-overlay")) return;
+
+    var rows = _getQueueRows();
+    if (!rows.length && e.key !== "?") return;
+
+    switch (e.key) {
+        case "j":
+            e.preventDefault();
+            if (_kbFocusIndex < rows.length - 1) _kbFocusIndex++;
+            else _kbFocusIndex = 0;
+            _applyKbFocus();
+            break;
+
+        case "k":
+            e.preventDefault();
+            if (_kbFocusIndex > 0) _kbFocusIndex--;
+            else _kbFocusIndex = rows.length - 1;
+            _applyKbFocus();
+            break;
+
+        case "Enter":
+        case " ":
+            if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+                e.preventDefault();
+                toggleQueueAccordion(_kbFocusIndex);
+            }
+            break;
+
+        case "a":
+            if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+                e.preventDefault();
+                var aKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+                if (aKey) approveUpdate(aKey, { target: rows[_kbFocusIndex].querySelector(".btn-success") });
+            }
+            break;
+
+        case "r":
+            if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+                e.preventDefault();
+                var rKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+                if (rKey) rejectUpdate(rKey, { target: rows[_kbFocusIndex].querySelector(".btn-error") });
+            }
+            break;
+
+        case "i":
+            if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+                e.preventDefault();
+                var iKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+                if (iKey) ignoreUpdate(iKey, { target: rows[_kbFocusIndex].querySelector(".btn-warning") });
+            }
+            break;
+
+        case "?":
+            e.preventDefault();
+            toggleShortcutsHelp();
+            break;
+
+        case "Escape":
+            if (_shortcutsOverlayVisible) {
+                e.preventDefault();
+                toggleShortcutsHelp();
+            }
+            break;
+    }
+}
+
+function initQueueKeyboard() {
+    // Only activate on the queue page.
+    if (window.location.pathname !== "/queue") return;
+    cleanupQueueKeyboard();
+    _kbFocusIndex = -1;
+    _kbHandler = _onQueueKeydown;
+    document.addEventListener("keydown", _kbHandler);
+}
+
+function cleanupQueueKeyboard() {
+    if (_kbHandler) {
+        document.removeEventListener("keydown", _kbHandler);
+        _kbHandler = null;
+    }
+    _kbFocusIndex = -1;
+    _shortcutsOverlayVisible = false;
+    var overlay = document.getElementById("kb-shortcuts-overlay");
+    if (overlay) overlay.remove();
+
+    // Remove focus class from any rows.
+    var focused = document.querySelectorAll(".kb-focused");
+    for (var i = 0; i < focused.length; i++) {
+        focused[i].classList.remove("kb-focused");
+    }
+}
+
+
 export {
     removeQueueRow,
     toggleQueueAccordion,
@@ -549,5 +760,8 @@ export {
     switchToGHCR,
     loadAllTags,
     updateToVersion,
-    applyBulkPolicy
+    applyBulkPolicy,
+    initQueueKeyboard,
+    cleanupQueueKeyboard,
+    toggleShortcutsHelp
 };

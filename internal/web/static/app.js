@@ -87,7 +87,8 @@
     div.appendChild(document.createTextNode(str));
     return div.innerHTML;
   }
-  function showConfirm(title, bodyHTML) {
+  function showConfirm(title, bodyHTML, opts) {
+    if (!opts) opts = {};
     return new Promise(function(resolve) {
       var triggerEl = document.activeElement;
       var overlay = document.createElement("div");
@@ -115,8 +116,8 @@
       cancelBtn.type = "button";
       buttons.appendChild(cancelBtn);
       var applyBtn = document.createElement("button");
-      applyBtn.className = "confirm-btn-apply";
-      applyBtn.textContent = "Apply";
+      applyBtn.className = opts.danger ? "confirm-btn-danger" : "confirm-btn-apply";
+      applyBtn.textContent = opts.confirmLabel || "Apply";
       applyBtn.type = "button";
       buttons.appendChild(applyBtn);
       modal.appendChild(buttons);
@@ -192,6 +193,48 @@
     }).catch(function() {
       clearLoading();
       showToast("Network error \u2014 " + errorMsg.toLowerCase(), "error");
+    });
+  }
+  function apiFetch(url, opts) {
+    opts = opts || {};
+    var method = opts.method || "GET";
+    var triggerEl = opts.triggerEl || null;
+    if (triggerEl) {
+      triggerEl.classList.add("loading");
+      triggerEl.disabled = true;
+    }
+    var fetchOpts = { method, headers: {} };
+    if (opts.body) {
+      fetchOpts.headers["Content-Type"] = "application/json";
+      fetchOpts.body = typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body);
+    }
+    function clearLoading() {
+      if (triggerEl) {
+        triggerEl.classList.remove("loading");
+        triggerEl.disabled = false;
+      }
+    }
+    return fetch(url, fetchOpts).then(function(resp) {
+      return resp.json().then(function(data) {
+        return { ok: resp.ok, data };
+      });
+    }).then(function(result) {
+      clearLoading();
+      if (result.ok) {
+        if (opts.successMsg) showToast(result.data.message || opts.successMsg, "success");
+        if (opts.onSuccess) opts.onSuccess(result.data);
+      } else {
+        var msg = result.data.error || (opts.errorMsg || "Error");
+        showToast(msg, "error");
+        if (opts.onError) opts.onError(new Error(msg));
+      }
+      return result.data;
+    }).catch(function(err) {
+      clearLoading();
+      var msg = (opts.errorMsg || "Error") + ": " + err.message;
+      showToast(msg, "error");
+      if (opts.onError) opts.onError(err);
+      throw err;
     });
   }
 
@@ -973,22 +1016,142 @@
       });
     }
   })();
+  var LOG_MAX_LINES = 1e3;
+  var _tsPatterns = [
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s*/,
+    // ISO 8601
+    /^(\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2})\s*/,
+    // Go default
+    /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\s*/,
+    // Common datetime
+    /^(\[\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\])\s*/
+    // Bracketed
+  ];
+  var _levelPatterns = [
+    { re: /\b(?:ERROR|ERR|FATAL|CRIT|PANIC)\b/i, level: "error" },
+    { re: /\b(?:WARN(?:ING)?|WRN)\b/i, level: "warn" },
+    { re: /\b(?:INFO|INF|NOTICE)\b/i, level: "info" },
+    { re: /\b(?:DEBUG|DBG|TRACE|VERBOSE)\b/i, level: "debug" }
+  ];
+  function _parseLogLine(raw) {
+    var ts = "";
+    var msg = raw;
+    for (var i = 0; i < _tsPatterns.length; i++) {
+      var m = raw.match(_tsPatterns[i]);
+      if (m) {
+        ts = m[1];
+        msg = raw.slice(m[0].length);
+        break;
+      }
+    }
+    var level = "";
+    var probe = msg.slice(0, 80);
+    for (var j = 0; j < _levelPatterns.length; j++) {
+      if (_levelPatterns[j].re.test(probe)) {
+        level = _levelPatterns[j].level;
+        break;
+      }
+    }
+    return { ts, msg, level };
+  }
+  function _createLogLineEl(parsed) {
+    var div = document.createElement("div");
+    div.className = "log-line";
+    if (parsed.level) div.dataset.level = parsed.level;
+    if (parsed.ts) {
+      var tsSpan = document.createElement("span");
+      tsSpan.className = "log-line-ts";
+      tsSpan.textContent = parsed.ts;
+      div.appendChild(tsSpan);
+    }
+    var msgSpan = document.createElement("span");
+    msgSpan.className = "log-line-msg";
+    msgSpan.textContent = parsed.msg;
+    div.appendChild(msgSpan);
+    return div;
+  }
+  function _createSystemMsg(text) {
+    var div = document.createElement("div");
+    div.className = "log-line-system";
+    div.textContent = text;
+    return div;
+  }
+  function _clearLogs(logsEl) {
+    while (logsEl.firstChild) logsEl.removeChild(logsEl.firstChild);
+    _logLineCount = 0;
+  }
+  var _logLineCount = 0;
+  function _appendLogLine(logsEl, raw) {
+    var parsed = _parseLogLine(raw);
+    var el = _createLogLineEl(parsed);
+    logsEl.appendChild(el);
+    _logLineCount++;
+    while (_logLineCount > LOG_MAX_LINES && logsEl.firstChild) {
+      logsEl.removeChild(logsEl.firstChild);
+      _logLineCount--;
+    }
+  }
+  function _shouldAutoScroll(logsEl) {
+    var cb = document.getElementById("log-auto-scroll");
+    if (cb && !cb.checked) return false;
+    return logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 30;
+  }
+  function _scrollToBottom(logsEl) {
+    logsEl.scrollTop = logsEl.scrollHeight;
+  }
+  var _logFilterTimer = null;
+  function _applyLogFilter() {
+    var input = document.getElementById("log-filter");
+    var logsEl = document.getElementById("container-logs");
+    if (!input || !logsEl) return;
+    var filter = input.value.toLowerCase();
+    var lines = logsEl.querySelectorAll(".log-line");
+    for (var i = 0; i < lines.length; i++) {
+      var text = lines[i].textContent.toLowerCase();
+      lines[i].style.display = !filter || text.indexOf(filter) !== -1 ? "" : "none";
+    }
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("DOMContentLoaded", function() {
+      var filterEl = document.getElementById("log-filter");
+      if (filterEl) {
+        filterEl.addEventListener("input", function() {
+          if (_logFilterTimer) clearTimeout(_logFilterTimer);
+          _logFilterTimer = setTimeout(_applyLogFilter, 150);
+        });
+      }
+    });
+  }
   async function fetchContainerLogs(name, hostId) {
     var linesEl = document.getElementById("log-lines");
     var lines = linesEl ? linesEl.value : "50";
     var logsEl = document.getElementById("container-logs");
+    var filterEl = document.getElementById("log-filter");
     if (!logsEl) return;
-    logsEl.textContent = "Loading logs...";
+    _clearLogs(logsEl);
+    logsEl.appendChild(_createSystemMsg("Loading logs..."));
     var url = "/api/containers/" + encodeURIComponent(name) + "/logs?lines=" + lines;
     if (hostId) url += "&host=" + encodeURIComponent(hostId);
     try {
       var resp = await fetch(url);
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       var data = await resp.json();
-      logsEl.textContent = data.logs || "No log output.";
-      logsEl.scrollTop = logsEl.scrollHeight;
+      _clearLogs(logsEl);
+      var logText = data.logs || "";
+      if (!logText) {
+        logsEl.appendChild(_createSystemMsg("No log output."));
+        return;
+      }
+      var logLines = logText.split("\n");
+      for (var i = 0; i < logLines.length; i++) {
+        if (logLines[i] === "" && i === logLines.length - 1) continue;
+        _appendLogLine(logsEl, logLines[i]);
+      }
+      if (filterEl) filterEl.disabled = false;
+      _scrollToBottom(logsEl);
     } catch (err) {
-      logsEl.textContent = "Error loading logs: " + err.message;
+      _clearLogs(logsEl);
+      logsEl.appendChild(_createSystemMsg("Error loading logs: " + err.message));
     }
   }
   var logStreamSource = null;
@@ -996,7 +1159,6 @@
   var _followName = "";
   var _followHostId = "";
   var _reconnectTimer = null;
-  var _logScrollHandler = null;
   function _connectLogStream() {
     if (logStreamSource) {
       logStreamSource.close();
@@ -1013,26 +1175,18 @@
     var url = "/api/containers/" + encodeURIComponent(_followName) + "/logs/stream?lines=" + lines;
     var es = new EventSource(url);
     logStreamSource = es;
-    var userScrolled = false;
-    if (_logScrollHandler) {
-      logsEl.removeEventListener("scroll", _logScrollHandler);
-    }
-    _logScrollHandler = function() {
-      var atBottom = logsEl.scrollTop + logsEl.clientHeight >= logsEl.scrollHeight - 20;
-      userScrolled = !atBottom;
-    };
-    logsEl.addEventListener("scroll", _logScrollHandler);
     es.onmessage = function(e) {
-      logsEl.textContent += e.data + "\n";
-      if (!userScrolled) {
-        logsEl.scrollTop = logsEl.scrollHeight;
-      }
+      var wasAtBottom = _shouldAutoScroll(logsEl);
+      _appendLogLine(logsEl, e.data);
+      _applyLogFilter();
+      if (wasAtBottom) _scrollToBottom(logsEl);
     };
     es.addEventListener("eof", function() {
       es.close();
       logStreamSource = null;
       if (!_followMode) return;
-      logsEl.textContent += "\n--- stream ended, reconnecting... ---\n";
+      logsEl.appendChild(_createSystemMsg("Stream ended, reconnecting..."));
+      _scrollToBottom(logsEl);
       _scheduleReconnect();
     });
     es.onerror = function() {
@@ -1088,12 +1242,77 @@
       btn.classList.add("btn-danger");
     }
     var logsEl = document.getElementById("container-logs");
-    if (logsEl) logsEl.textContent = "";
+    var filterEl = document.getElementById("log-filter");
+    if (logsEl) _clearLogs(logsEl);
+    if (filterEl) filterEl.disabled = false;
     _connectLogStream();
   }
   if (typeof window !== "undefined") {
     window.addEventListener("beforeunload", function() {
       _stopFollowMode();
+    });
+  }
+  function bulkContainerAction(action) {
+    var names = [];
+    var keys = Object.keys(selectedContainers);
+    for (var i = 0; i < keys.length; i++) {
+      if (selectedContainers[keys[i]]) names.push(keys[i]);
+    }
+    if (names.length === 0) return;
+    var isDanger = action === "restart" || action === "stop";
+    var label = action.charAt(0).toUpperCase() + action.slice(1);
+    var bodyHTML = "<p>" + label + " <strong>" + names.length + "</strong> container" + (names.length !== 1 ? "s" : "") + '?</p><p class="confirm-muted-row">' + names.map(escapeHTML).join(", ") + "</p>";
+    showConfirm(label + " Containers", bodyHTML, {
+      danger: isDanger,
+      confirmLabel: label
+    }).then(function(confirmed) {
+      if (!confirmed) return;
+      var countEl = document.getElementById("bulk-count");
+      var originalText = countEl ? countEl.textContent : "";
+      var succeeded = 0;
+      var failed = [];
+      var total = names.length;
+      var completed = 0;
+      function onAllDone() {
+        if (completed < total) return;
+        if (failed.length === 0) {
+          showToast(label + " completed for " + succeeded + " container" + (succeeded !== 1 ? "s" : ""), "success");
+        } else {
+          var msg = succeeded + " succeeded, " + failed.length + " failed: " + failed.map(function(f) {
+            return f.name + " (" + f.error + ")";
+          }).join(", ");
+          showToast(msg, "error");
+        }
+        if (countEl) countEl.textContent = originalText;
+        clearSelection();
+      }
+      for (var j = 0; j < names.length; j++) {
+        (function(name, delay) {
+          setTimeout(function() {
+            if (countEl) {
+              var idx = names.indexOf(name) + 1;
+              countEl.textContent = label.replace(/e$/, "") + "ing " + idx + "/" + total + "...";
+            }
+            fetch("/api/containers/" + encodeURIComponent(name) + "/" + action, {
+              method: "POST",
+              credentials: "same-origin"
+            }).then(function(r) {
+              return r.json();
+            }).then(function(data) {
+              if (data.error) {
+                failed.push({ name, error: data.error });
+              } else {
+                succeeded++;
+              }
+            }).catch(function(err) {
+              failed.push({ name, error: err.message || "network error" });
+            }).then(function() {
+              completed++;
+              onAllDone();
+            });
+          }, delay);
+        })(names[j], j * 200);
+      }
     });
   }
   function containerAction(action, btn) {
@@ -1123,6 +1342,81 @@
         links[i].href = "http://" + host + ":" + port;
       }
     }
+  }
+  function initDashboardKeyboard() {
+    if (!document.getElementById("container-table")) return;
+    document.addEventListener("keydown", function(e) {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      switch (e.key) {
+        case "m":
+          toggleManageMode();
+          if (typeof window._dashboardManageMode !== "undefined") {
+            window._dashboardManageMode = manageMode;
+          }
+          break;
+        case "s":
+          var scanBtn = document.getElementById("scan-btn");
+          if (scanBtn && !scanBtn.disabled) {
+            scanBtn.click();
+          }
+          break;
+        case "?":
+          toggleDashboardShortcutsHelp();
+          break;
+      }
+    });
+  }
+  var _dashboardShortcutsVisible = false;
+  function toggleDashboardShortcutsHelp() {
+    if (_dashboardShortcutsVisible) {
+      var existing = document.getElementById("dashboard-shortcuts-overlay");
+      if (existing) existing.remove();
+      _dashboardShortcutsVisible = false;
+      return;
+    }
+    var overlay = document.createElement("div");
+    overlay.id = "dashboard-shortcuts-overlay";
+    overlay.className = "kb-shortcuts-overlay";
+    var card = document.createElement("div");
+    card.className = "kb-shortcuts-card";
+    var title = document.createElement("div");
+    title.className = "kb-shortcuts-title";
+    title.textContent = "Keyboard Shortcuts";
+    card.appendChild(title);
+    var table = document.createElement("table");
+    table.className = "kb-shortcuts-table";
+    var shortcuts = [
+      ["m", "Toggle manage mode"],
+      ["s", "Check for updates"],
+      ["?", "Show this help"]
+    ];
+    for (var i = 0; i < shortcuts.length; i++) {
+      var tr = document.createElement("tr");
+      var tdKey = document.createElement("td");
+      var kbd = document.createElement("kbd");
+      kbd.textContent = shortcuts[i][0];
+      tdKey.appendChild(kbd);
+      var tdDesc = document.createElement("td");
+      tdDesc.textContent = shortcuts[i][1];
+      tr.appendChild(tdKey);
+      tr.appendChild(tdDesc);
+      table.appendChild(tr);
+    }
+    card.appendChild(table);
+    var closeBtn = document.createElement("button");
+    closeBtn.className = "btn btn-sm kb-shortcuts-dismiss";
+    closeBtn.textContent = "Close";
+    closeBtn.addEventListener("click", function() {
+      toggleDashboardShortcutsHelp();
+    });
+    card.appendChild(closeBtn);
+    overlay.appendChild(card);
+    overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) toggleDashboardShortcutsHelp();
+    });
+    document.body.appendChild(overlay);
+    _dashboardShortcutsVisible = true;
   }
 
   // internal/web/static/src/js/queue.js
@@ -1437,24 +1731,19 @@
     });
   }
   function switchToGHCR(name, ghcrImage) {
-    if (!confirm("Switch " + name + " to " + ghcrImage + "?\n\nThis will recreate the container with the GHCR image. A snapshot will be taken first for rollback.")) {
-      return;
-    }
-    var enc = encodeURIComponent(name);
-    fetch("/api/containers/" + enc + "/switch-ghcr", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_image: ghcrImage })
-    }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      if (data.error) {
-        showToast(data.error, "error");
-      } else {
-        showToast("Switching " + name + " to GHCR image...", "success");
-      }
-    }).catch(function() {
-      showToast("Failed to switch to GHCR", "error");
+    showConfirm(
+      "Switch to GHCR",
+      "<p>Switch <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(ghcrImage) + "</code>?</p><p>This will recreate the container with the GHCR image. A snapshot will be taken first for rollback.</p>",
+      { danger: true, confirmLabel: "Switch" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      var enc = encodeURIComponent(name);
+      apiFetch("/api/containers/" + enc + "/switch-ghcr", {
+        method: "POST",
+        body: { target_image: ghcrImage },
+        successMsg: "Switching " + name + " to GHCR image...",
+        errorMsg: "Failed to switch to GHCR"
+      });
     });
   }
   function loadAllTags(summaryEl) {
@@ -1597,6 +1886,174 @@
   }
   function getBulkInProgress() {
     return _bulkInProgress;
+  }
+  var _kbFocusIndex = -1;
+  var _kbHandler = null;
+  var _shortcutsOverlayVisible = false;
+  function _getQueueRows() {
+    return document.querySelectorAll(".table-wrap tbody tr.container-row");
+  }
+  function _applyKbFocus() {
+    var rows = _getQueueRows();
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].classList.remove("kb-focused");
+    }
+    if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+      rows[_kbFocusIndex].classList.add("kb-focused");
+      rows[_kbFocusIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
+  function _createShortcutsOverlay() {
+    var overlay = document.createElement("div");
+    overlay.className = "kb-shortcuts-overlay";
+    overlay.id = "kb-shortcuts-overlay";
+    var card = document.createElement("div");
+    card.className = "kb-shortcuts-card";
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-modal", "true");
+    card.setAttribute("aria-label", "Keyboard shortcuts");
+    var title = document.createElement("h3");
+    title.className = "kb-shortcuts-title";
+    title.textContent = "Keyboard Shortcuts";
+    card.appendChild(title);
+    var shortcuts = [
+      ["j", "Next row"],
+      ["k", "Previous row"],
+      ["Enter / Space", "Toggle accordion"],
+      ["a", "Approve focused"],
+      ["r", "Reject focused"],
+      ["i", "Ignore focused"],
+      ["?", "Toggle this help"]
+    ];
+    var table = document.createElement("table");
+    table.className = "kb-shortcuts-table";
+    var tbody = document.createElement("tbody");
+    for (var s = 0; s < shortcuts.length; s++) {
+      var tr = document.createElement("tr");
+      var tdKey = document.createElement("td");
+      var tdDesc = document.createElement("td");
+      var keyParts = shortcuts[s][0].split(" / ");
+      for (var p = 0; p < keyParts.length; p++) {
+        if (p > 0) {
+          var slash = document.createTextNode(" / ");
+          tdKey.appendChild(slash);
+        }
+        var kbd = document.createElement("kbd");
+        kbd.textContent = keyParts[p];
+        tdKey.appendChild(kbd);
+      }
+      tdDesc.textContent = shortcuts[s][1];
+      tr.appendChild(tdKey);
+      tr.appendChild(tdDesc);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    card.appendChild(table);
+    var dismissBtn = document.createElement("button");
+    dismissBtn.className = "btn btn-sm kb-shortcuts-dismiss";
+    dismissBtn.textContent = "Close";
+    dismissBtn.addEventListener("click", function() {
+      toggleShortcutsHelp();
+    });
+    card.appendChild(dismissBtn);
+    overlay.appendChild(card);
+    overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) toggleShortcutsHelp();
+    });
+    return overlay;
+  }
+  function toggleShortcutsHelp() {
+    var existing = document.getElementById("kb-shortcuts-overlay");
+    if (existing) {
+      existing.remove();
+      _shortcutsOverlayVisible = false;
+      return;
+    }
+    var overlay = _createShortcutsOverlay();
+    document.body.appendChild(overlay);
+    _shortcutsOverlayVisible = true;
+    var dismiss = overlay.querySelector(".kb-shortcuts-dismiss");
+    if (dismiss) dismiss.focus();
+  }
+  function _onQueueKeydown(e) {
+    var tag = e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (document.querySelector(".confirm-overlay")) return;
+    var rows = _getQueueRows();
+    if (!rows.length && e.key !== "?") return;
+    switch (e.key) {
+      case "j":
+        e.preventDefault();
+        if (_kbFocusIndex < rows.length - 1) _kbFocusIndex++;
+        else _kbFocusIndex = 0;
+        _applyKbFocus();
+        break;
+      case "k":
+        e.preventDefault();
+        if (_kbFocusIndex > 0) _kbFocusIndex--;
+        else _kbFocusIndex = rows.length - 1;
+        _applyKbFocus();
+        break;
+      case "Enter":
+      case " ":
+        if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+          e.preventDefault();
+          toggleQueueAccordion(_kbFocusIndex);
+        }
+        break;
+      case "a":
+        if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+          e.preventDefault();
+          var aKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+          if (aKey) approveUpdate(aKey, { target: rows[_kbFocusIndex].querySelector(".btn-success") });
+        }
+        break;
+      case "r":
+        if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+          e.preventDefault();
+          var rKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+          if (rKey) rejectUpdate(rKey, { target: rows[_kbFocusIndex].querySelector(".btn-error") });
+        }
+        break;
+      case "i":
+        if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+          e.preventDefault();
+          var iKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+          if (iKey) ignoreUpdate(iKey, { target: rows[_kbFocusIndex].querySelector(".btn-warning") });
+        }
+        break;
+      case "?":
+        e.preventDefault();
+        toggleShortcutsHelp();
+        break;
+      case "Escape":
+        if (_shortcutsOverlayVisible) {
+          e.preventDefault();
+          toggleShortcutsHelp();
+        }
+        break;
+    }
+  }
+  function initQueueKeyboard() {
+    if (window.location.pathname !== "/queue") return;
+    cleanupQueueKeyboard();
+    _kbFocusIndex = -1;
+    _kbHandler = _onQueueKeydown;
+    document.addEventListener("keydown", _kbHandler);
+  }
+  function cleanupQueueKeyboard() {
+    if (_kbHandler) {
+      document.removeEventListener("keydown", _kbHandler);
+      _kbHandler = null;
+    }
+    _kbFocusIndex = -1;
+    _shortcutsOverlayVisible = false;
+    var overlay = document.getElementById("kb-shortcuts-overlay");
+    if (overlay) overlay.remove();
+    var focused = document.querySelectorAll(".kb-focused");
+    for (var i = 0; i < focused.length; i++) {
+      focused[i].classList.remove("kb-focused");
+    }
   }
 
   // internal/web/static/src/js/swarm.js
@@ -1880,6 +2337,14 @@
 
   // internal/web/static/src/js/sse.js
   var ghcrAlternatives = {};
+  var _scanProgressEl = null;
+  var _scanProgressBar = null;
+  var _scanTotal = 0;
+  function getScanProgressEls() {
+    if (!_scanProgressEl) _scanProgressEl = document.getElementById("scan-progress");
+    if (!_scanProgressBar) _scanProgressBar = _scanProgressEl ? _scanProgressEl.querySelector(".scan-progress-bar") : null;
+    return { wrap: _scanProgressEl, bar: _scanProgressBar };
+  }
   var sseReloadTimer = null;
   function scheduleReload() {
     if (!document.getElementById("container-table")) return;
@@ -1983,9 +2448,11 @@
     var pendingEl = stats.querySelectorAll(".stat-value")[2];
     if (!pendingEl) return;
     if (pending === 0 || pending === "0") {
-      pendingEl.className = "stat-value success";
+      pendingEl.className = "stat-value success stat-all-clear";
+      pendingEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> 0';
     } else {
       pendingEl.className = "stat-value warning";
+      pendingEl.textContent = pending;
     }
   }
   var pendingBadgeActions = {};
@@ -2103,7 +2570,46 @@
         updateQueueBadge();
       }
     });
+    es.addEventListener("scan_start", function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        var m = (data.message || "").match(/total=(\d+)/);
+        _scanTotal = m ? parseInt(m[1], 10) : 0;
+      } catch (_) {
+        _scanTotal = 0;
+      }
+      var els = getScanProgressEls();
+      if (!els.wrap || !els.bar) return;
+      els.bar.style.width = "0%";
+      els.bar.classList.remove("indeterminate");
+      els.wrap.removeAttribute("hidden");
+    });
+    es.addEventListener("scan_progress", function(e) {
+      var els = getScanProgressEls();
+      if (!els.wrap || !els.bar) return;
+      try {
+        var data = JSON.parse(e.data);
+        var m = (data.message || "").match(/checked=(\d+)\s+total=(\d+)/);
+        if (m) {
+          var checked = parseInt(m[1], 10);
+          var total = parseInt(m[2], 10);
+          if (total > 0) {
+            var pct = Math.round(checked / total * 100);
+            els.bar.style.width = pct + "%";
+          }
+        }
+      } catch (_) {
+      }
+    });
     es.addEventListener("scan_complete", function(e) {
+      var els = getScanProgressEls();
+      if (els.wrap && els.bar) {
+        els.bar.style.width = "100%";
+        setTimeout(function() {
+          els.wrap.setAttribute("hidden", "");
+          els.bar.style.width = "0%";
+        }, 800);
+      }
       var scanBtn = document.getElementById("scan-btn");
       if (scanBtn) {
         scanBtn.classList.remove("loading");
@@ -2399,7 +2905,35 @@
   }
 
   // internal/web/static/src/js/settings-core.js
+  function toggleAdvanced() {
+    var body = document.body;
+    var btn = document.getElementById("advanced-toggle");
+    if (!btn) return;
+    var isSimple = body.classList.contains("settings-simple");
+    if (isSimple) {
+      body.classList.remove("settings-simple");
+      btn.textContent = "Hide Advanced";
+      btn.classList.add("active");
+      localStorage.setItem("sentinel-show-advanced", "true");
+    } else {
+      body.classList.add("settings-simple");
+      btn.textContent = "Show Advanced";
+      btn.classList.remove("active");
+      localStorage.setItem("sentinel-show-advanced", "false");
+    }
+  }
   function initSettingsPage() {
+    var advBtn = document.getElementById("advanced-toggle");
+    if (advBtn) {
+      var showAdvanced = localStorage.getItem("sentinel-show-advanced") === "true";
+      if (!showAdvanced) {
+        document.body.classList.add("settings-simple");
+        advBtn.textContent = "Show Advanced";
+      } else {
+        advBtn.textContent = "Hide Advanced";
+        advBtn.classList.add("active");
+      }
+    }
     var themeSelect = document.getElementById("theme-select");
     var stackSelect = document.getElementById("stack-default");
     var sectionSelect = document.getElementById("section-default");
@@ -2572,6 +3106,9 @@
       updateScanPreviews();
     }).catch(function() {
     });
+    loadScannerSettings();
+    loadVerifierSettings();
+    loadRetrySettings();
     var settingsTabContainer = document.getElementById("settings-tabs");
     var tabBtns = settingsTabContainer ? settingsTabContainer.querySelectorAll(".tab-btn") : [];
     var tabPanels = settingsTabContainer ? settingsTabContainer.parentElement.querySelectorAll(".tab-panel") : [];
@@ -3228,26 +3765,32 @@
     });
   }
   function regenerateWebhookSecret() {
-    if (!confirm("This will invalidate all existing webhook integrations. Continue?")) return;
-    fetch("/api/settings/webhook-secret", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" }
-    }).then(function(resp) {
-      return resp.json().then(function(data) {
-        return { ok: resp.ok, data };
+    showConfirm(
+      "Regenerate Webhook Secret",
+      "<p>This will invalidate all existing webhook integrations. Continue?</p>",
+      { danger: true, confirmLabel: "Regenerate" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      fetch("/api/settings/webhook-secret", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      }).then(function(resp) {
+        return resp.json().then(function(data) {
+          return { ok: resp.ok, data };
+        });
+      }).then(function(result) {
+        if (result.ok) {
+          var secretInput = document.getElementById("webhook-secret");
+          if (secretInput) secretInput.value = result.data.secret || "";
+          var hint = document.getElementById("webhook-secret-hint");
+          if (hint) hint.style.display = "none";
+          showToast("Webhook secret regenerated \u2014 copy it now, it won't be shown again", "success");
+        } else {
+          showToast(result.data.error || "Failed to regenerate secret", "error");
+        }
+      }).catch(function() {
+        showToast("Network error -- could not regenerate secret", "error");
       });
-    }).then(function(result) {
-      if (result.ok) {
-        var secretInput = document.getElementById("webhook-secret");
-        if (secretInput) secretInput.value = result.data.secret || "";
-        var hint = document.getElementById("webhook-secret-hint");
-        if (hint) hint.style.display = "none";
-        showToast("Webhook secret regenerated \u2014 copy it now, it won't be shown again", "success");
-      } else {
-        showToast(result.data.error || "Failed to regenerate secret", "error");
-      }
-    }).catch(function() {
-      showToast("Network error -- could not regenerate secret", "error");
     });
   }
   function copyWebhookURL() {
@@ -3317,30 +3860,36 @@
       showToast("Select a file first", "error");
       return;
     }
-    if (!confirm("Import will overwrite matching settings. Continue?")) return;
-    var file = fileInput.files[0];
-    var reader = new FileReader();
-    reader.onload = function(e) {
-      fetch("/api/config/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: e.target.result
-      }).then(function(r) {
-        return r.json();
-      }).then(function(data) {
-        if (data.error) {
-          showToast(data.error, "error");
-        } else {
-          showToast(data.message || "Configuration imported", "success");
-          setTimeout(function() {
-            location.reload();
-          }, 1e3);
-        }
-      }).catch(function() {
-        showToast("Import failed", "error");
-      });
-    };
-    reader.readAsText(file);
+    showConfirm(
+      "Import Configuration",
+      "<p>Import will overwrite matching settings. Continue?</p>",
+      { confirmLabel: "Import" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      var file = fileInput.files[0];
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        fetch("/api/config/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: e.target.result
+        }).then(function(r) {
+          return r.json();
+        }).then(function(data) {
+          if (data.error) {
+            showToast(data.error, "error");
+          } else {
+            showToast(data.message || "Configuration imported", "success");
+            setTimeout(function() {
+              location.reload();
+            }, 1e3);
+          }
+        }).catch(function() {
+          showToast("Import failed", "error");
+        });
+      };
+      reader.readAsText(file);
+    });
   }
   function loadDashboardColumns() {
     fetch("/api/settings").then(function(r) {
@@ -3395,6 +3944,148 @@
       preview.textContent = cols.length + " of " + allCols.length + " columns";
     }
   }
+  function loadScannerSettings() {
+    fetch("/api/settings/scanner").then(function(r) {
+      return r.json();
+    }).then(function(data) {
+      var modeEl = document.getElementById("scanner-mode");
+      var threshEl = document.getElementById("scanner-threshold");
+      var pathEl = document.getElementById("trivy-path");
+      var preview = document.getElementById("scanner-preview");
+      if (modeEl) modeEl.value = data.mode || "disabled";
+      if (threshEl) threshEl.value = data.threshold || "HIGH";
+      if (pathEl) pathEl.value = data.trivy_path || "trivy";
+      if (preview) {
+        if (data.mode === "disabled" || !data.mode) {
+          preview.textContent = "Disabled";
+        } else {
+          preview.textContent = data.mode + " (threshold: " + (data.threshold || "HIGH") + ")";
+        }
+      }
+    }).catch(function() {
+    });
+  }
+  function saveScannerSettings() {
+    var mode = document.getElementById("scanner-mode");
+    var threshold = document.getElementById("scanner-threshold");
+    var trivyPath = document.getElementById("trivy-path");
+    var body = {};
+    if (mode) body.mode = mode.value;
+    if (threshold) body.threshold = threshold.value;
+    if (trivyPath && trivyPath.value) body.trivy_path = trivyPath.value;
+    fetch("/api/settings/scanner", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function(r) {
+      if (!r.ok) return r.json().then(function(e) {
+        throw new Error(e.error);
+      });
+      return r.json();
+    }).then(function() {
+      showToast("Scanner settings saved", "success");
+      loadScannerSettings();
+    }).catch(function(err) {
+      showToast("Failed: " + err.message, "error");
+    });
+  }
+  function loadVerifierSettings() {
+    fetch("/api/settings/verifier").then(function(r) {
+      return r.json();
+    }).then(function(data) {
+      var modeEl = document.getElementById("verify-mode");
+      var pathEl = document.getElementById("cosign-path");
+      var keylessEl = document.getElementById("cosign-keyless");
+      var keyPathEl = document.getElementById("cosign-key-path");
+      var preview = document.getElementById("verifier-preview");
+      if (modeEl) modeEl.value = data.mode || "disabled";
+      if (pathEl) pathEl.value = data.cosign_path || "cosign";
+      if (keylessEl) {
+        keylessEl.checked = data.keyless === "true";
+        var text = document.getElementById("cosign-keyless-text");
+        if (text) text.textContent = data.keyless === "true" ? "On" : "Off";
+      }
+      if (keyPathEl) keyPathEl.value = data.key_path || "";
+      if (preview) {
+        if (data.mode === "disabled" || !data.mode) {
+          preview.textContent = "Disabled";
+        } else {
+          var label = data.mode === "enforce" ? "Enforce" : "Warn";
+          preview.textContent = label + (data.keyless === "true" ? " (keyless)" : " (key)");
+        }
+      }
+    }).catch(function() {
+    });
+  }
+  function saveVerifierSettings() {
+    var mode = document.getElementById("verify-mode");
+    var cosignPath = document.getElementById("cosign-path");
+    var keyless = document.getElementById("cosign-keyless");
+    var keyPath = document.getElementById("cosign-key-path");
+    var body = {};
+    if (mode) body.mode = mode.value;
+    if (cosignPath && cosignPath.value) body.cosign_path = cosignPath.value;
+    if (keyless) body.keyless = keyless.checked;
+    if (keyPath) body.key_path = keyPath.value;
+    fetch("/api/settings/verifier", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function(r) {
+      if (!r.ok) return r.json().then(function(e) {
+        throw new Error(e.error);
+      });
+      return r.json();
+    }).then(function() {
+      showToast("Verifier settings saved", "success");
+      loadVerifierSettings();
+    }).catch(function(err) {
+      showToast("Failed: " + err.message, "error");
+    });
+  }
+  function loadRetrySettings() {
+    fetch("/api/settings/notifications/retry").then(function(r) {
+      return r.json();
+    }).then(function(data) {
+      var countEl = document.getElementById("retry-count");
+      var backoffEl = document.getElementById("retry-backoff");
+      var preview = document.getElementById("retry-preview");
+      if (countEl) countEl.value = data.count || "0";
+      if (backoffEl) backoffEl.value = data.backoff || "2s";
+      if (preview) {
+        var count = parseInt(data.count || "0", 10);
+        if (count === 0) {
+          preview.textContent = "Disabled";
+        } else {
+          preview.textContent = count + (count === 1 ? " retry" : " retries") + ", " + (data.backoff || "2s") + " backoff";
+        }
+      }
+    }).catch(function() {
+    });
+  }
+  function saveRetrySettings() {
+    var count = document.getElementById("retry-count");
+    var backoff = document.getElementById("retry-backoff");
+    var body = {
+      count: count ? count.value : "0",
+      backoff: backoff ? backoff.value : "2s"
+    };
+    fetch("/api/settings/notifications/retry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function(r) {
+      if (!r.ok) return r.json().then(function(e) {
+        throw new Error(e.error);
+      });
+      return r.json();
+    }).then(function() {
+      showToast("Retry settings saved", "success");
+      loadRetrySettings();
+    }).catch(function(err) {
+      showToast("Failed: " + err.message, "error");
+    });
+  }
 
   // internal/web/static/src/js/settings-cluster.js
   function _updateToggleText(textId, enabled) {
@@ -3426,10 +4117,20 @@
   }
   function onClusterToggle(enabled) {
     if (!enabled) {
-      if (!confirm("Disabling cluster mode will disconnect all agents. Continue?")) {
-        document.getElementById("cluster-enabled").checked = true;
-        return;
-      }
+      showConfirm(
+        "Disable Cluster Mode",
+        "<p>Disabling cluster mode will disconnect all agents. Continue?</p>",
+        { danger: true, confirmLabel: "Disable" }
+      ).then(function(confirmed) {
+        if (!confirmed) {
+          document.getElementById("cluster-enabled").checked = true;
+          return;
+        }
+        _updateToggleText("cluster-enabled-text", enabled);
+        toggleClusterFields(enabled);
+        saveClusterSettings();
+      });
+      return;
     }
     _updateToggleText("cluster-enabled-text", enabled);
     toggleClusterFields(enabled);
@@ -4117,26 +4818,31 @@
     if (cbs.length === 0) return;
     var label = NOTIFY_MODE_LABELS[mode] || mode;
     var action = forceMode ? "Reset" : "Set";
-    if (!confirm(action + " " + cbs.length + " container" + (cbs.length > 1 ? "s" : "") + ' to "' + label + '"?')) return;
-    var pending = cbs.length;
-    for (var i = 0; i < cbs.length; i++) {
-      (function(name) {
-        fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode })
-        }).then(function() {
-          pending--;
-          if (pending === 0) {
-            showToast(action + " " + cbs.length + " containers to " + label, "success");
-            loadContainerNotifyPrefs();
-          }
-        }).catch(function() {
-          pending--;
-        });
-      })(cbs[i].value);
-    }
+    showConfirm(
+      action + " Notification Preference",
+      "<p>" + action + " " + cbs.length + " container" + (cbs.length > 1 ? "s" : "") + ' to "' + label + '"?</p>'
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      var pending = cbs.length;
+      for (var i = 0; i < cbs.length; i++) {
+        (function(name) {
+          fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode })
+          }).then(function() {
+            pending--;
+            if (pending === 0) {
+              showToast(action + " " + cbs.length + " containers to " + label, "success");
+              loadContainerNotifyPrefs();
+            }
+          }).catch(function() {
+            pending--;
+          });
+        })(cbs[i].value);
+      }
+    });
   }
   function setContainerNotifyPref(name, mode) {
     fetch("/api/containers/" + encodeURIComponent(name) + "/notify-pref", {
@@ -4654,6 +5360,24 @@
       appendAboutRow(rows, "Containers Monitored", String(data.containers || 0));
       appendAboutRow(rows, "Updates Applied", String(data.updates_applied || 0));
       appendAboutRow(rows, "Snapshots Stored", String(data.snapshots || 0));
+      appendAboutSection(rows, "Health");
+      var dockerHealth = data.docker_health || "unknown";
+      var dockerRow = appendAboutRow(rows, "Docker", dockerHealth === "ok" ? "Connected" : dockerHealth);
+      if (dockerHealth === "ok") {
+        addHealthDot(dockerRow, "ok");
+      } else {
+        addHealthDot(dockerRow, "error");
+      }
+      var dbHealth = data.db_health || "unknown";
+      var dbRow = appendAboutRow(rows, "Database", dbHealth === "ok" ? "Connected" : dbHealth);
+      if (dbHealth === "ok") {
+        addHealthDot(dbRow, "ok");
+      } else {
+        addHealthDot(dbRow, "error");
+      }
+      if (data.next_scan) {
+        appendAboutRow(rows, "Next Scan", formatTimeUntil(data.next_scan));
+      }
       appendAboutSection(rows, "Integrations");
       if (data.channels && data.channels.length > 0) {
         var chWrap = document.createElement("div");
@@ -4755,6 +5479,7 @@
     val.textContent = value;
     row.appendChild(val);
     parent.appendChild(row);
+    return row;
   }
   function appendAboutRowEl(parent, label, valueEl) {
     var row = document.createElement("div");
@@ -4791,6 +5516,30 @@
       return days + "d " + hours % 24 + "h ago";
     } catch (e) {
       return iso;
+    }
+  }
+  function formatTimeUntil(iso) {
+    try {
+      var d = new Date(iso);
+      var now = /* @__PURE__ */ new Date();
+      var diff = d - now;
+      if (diff <= 0) return "Now";
+      var mins = Math.floor(diff / 6e4);
+      if (mins < 60) return "in " + mins + "m";
+      var hours = Math.floor(mins / 60);
+      if (hours < 24) return "in " + hours + "h " + mins % 60 + "m";
+      var days = Math.floor(hours / 24);
+      return "in " + days + "d " + hours % 24 + "h";
+    } catch (e) {
+      return iso;
+    }
+  }
+  function addHealthDot(row, status) {
+    var dot = document.createElement("span");
+    dot.className = "health-dot health-" + status;
+    var valueEl = row.querySelector(".about-value");
+    if (valueEl) {
+      valueEl.insertBefore(dot, valueEl.firstChild);
     }
   }
   var releaseSources = [];
@@ -5032,43 +5781,51 @@
     updateBulkBar();
   }
   var _deleting = false;
-  async function removeSelectedImages() {
+  function removeSelectedImages() {
     var count = _selectedIds.size;
     if (count === 0 || _deleting) return;
-    if (!confirm("Remove " + count + " selected image" + (count > 1 ? "s" : "") + "? This cannot be undone.")) return;
-    _deleting = true;
-    var removeBtn = document.querySelector("#images-bulk-bar .btn-danger");
-    if (removeBtn) removeBtn.disabled = true;
-    var ids = Array.from(_selectedIds);
-    var removed = 0;
-    var failed = 0;
-    for (var i = 0; i < ids.length; i++) {
-      try {
-        var resp = await fetch("/api/images/" + encodeURIComponent(ids[i]), { method: "DELETE" });
-        if (resp.ok) {
+    showConfirm(
+      "Remove Images",
+      "<p>Remove " + count + " selected image" + (count > 1 ? "s" : "") + "? This cannot be undone.</p>",
+      { danger: true, confirmLabel: "Remove" }
+    ).then(async function(confirmed) {
+      if (!confirmed) return;
+      _deleting = true;
+      var removeBtn = document.querySelector("#images-bulk-bar .btn-danger");
+      if (removeBtn) {
+        removeBtn.classList.add("loading");
+        removeBtn.disabled = true;
+      }
+      var ids = Array.from(_selectedIds);
+      var removed = 0;
+      var failed = 0;
+      for (var i = 0; i < ids.length; i++) {
+        try {
+          await apiFetch("/api/images/" + encodeURIComponent(ids[i]), {
+            method: "DELETE"
+          });
           removed++;
-        } else {
+        } catch (_) {
           failed++;
         }
-      } catch (_) {
-        failed++;
       }
-    }
-    _deleting = false;
-    if (removeBtn) removeBtn.disabled = false;
-    if (window.showToast) {
+      _deleting = false;
+      if (removeBtn) {
+        removeBtn.classList.remove("loading");
+        removeBtn.disabled = false;
+      }
       if (failed > 0) {
-        window.showToast("Removed " + removed + ", failed " + failed, "warning");
+        showToast("Removed " + removed + ", failed " + failed, "warning");
       } else {
-        window.showToast("Removed " + removed + " image" + (removed > 1 ? "s" : ""));
+        showToast("Removed " + removed + " image" + (removed > 1 ? "s" : ""), "success");
       }
-    }
-    _selectedIds.clear();
-    _manageMode = false;
-    var btn = document.getElementById("manage-btn");
-    if (btn) btn.textContent = "Manage";
-    updateBulkBar();
-    loadImages();
+      _selectedIds.clear();
+      _manageMode = false;
+      var btn = document.getElementById("manage-btn");
+      if (btn) btn.textContent = "Manage";
+      updateBulkBar();
+      loadImages();
+    });
   }
   function renderImagesTable() {
     var tbody = document.getElementById("images-tbody");
@@ -5079,10 +5836,16 @@
       var emptyRow = document.createElement("tr");
       var emptyCell = document.createElement("td");
       emptyCell.colSpan = _manageMode ? 7 : 6;
-      emptyCell.style.textAlign = "center";
-      emptyCell.style.padding = "2rem";
-      emptyCell.style.color = "var(--text-secondary)";
-      emptyCell.textContent = _currentFilter !== "all" ? "No " + _currentFilter + " images" : "No images found";
+      var emptyDiv = document.createElement("div");
+      emptyDiv.className = "empty-state";
+      var iconDiv = document.createElement("div");
+      iconDiv.className = "empty-state-icon";
+      iconDiv.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z"/></svg>';
+      emptyDiv.appendChild(iconDiv);
+      var msg = document.createElement("p");
+      msg.textContent = _currentFilter !== "all" ? "No " + _currentFilter + " images" : "No images found";
+      emptyDiv.appendChild(msg);
+      emptyCell.appendChild(emptyDiv);
       emptyRow.appendChild(emptyCell);
       tbody.appendChild(emptyRow);
       return;
@@ -5213,30 +5976,43 @@
     if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
     return Math.floor(diff / 86400) + "d ago";
   }
-  async function pruneImages() {
-    if (!confirm("Remove all dangling (unused, untagged) images?")) return;
-    try {
-      var resp = await fetch("/api/images/prune", { method: "POST" });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      var data = await resp.json();
-      if (window.showToast) {
-        window.showToast("Pruned " + data.images_deleted + " images, reclaimed " + formatBytes(data.space_reclaimed));
-      }
-      loadImages();
-    } catch (err) {
-      if (window.showToast) window.showToast("Prune failed: " + err.message, "error");
-    }
+  function pruneImages(event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    showConfirm(
+      "Prune Images",
+      "<p>Remove all dangling (unused, untagged) images?</p>",
+      { danger: true, confirmLabel: "Prune" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      apiFetch("/api/images/prune", {
+        method: "POST",
+        triggerEl: btn,
+        errorMsg: "Prune failed",
+        onSuccess: function(data) {
+          showToast("Pruned " + data.images_deleted + " images, reclaimed " + formatBytes(data.space_reclaimed), "success");
+          loadImages();
+        }
+      });
+    });
   }
-  async function removeImage(id) {
-    if (!confirm("Remove this image? This cannot be undone.")) return;
-    try {
-      var resp = await fetch("/api/images/" + encodeURIComponent(id), { method: "DELETE" });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      if (window.showToast) window.showToast("Image removed");
-      loadImages();
-    } catch (err) {
-      if (window.showToast) window.showToast("Remove failed: " + err.message, "error");
-    }
+  function removeImage(id) {
+    showConfirm(
+      "Remove Image",
+      "<p>Remove this image? This cannot be undone.</p>",
+      { danger: true, confirmLabel: "Remove" }
+    ).then(function(confirmed) {
+      if (!confirmed) return;
+      var btn = document.querySelector('button[data-image-id="' + CSS.escape(id) + '"]');
+      apiFetch("/api/images/" + encodeURIComponent(id), {
+        method: "DELETE",
+        triggerEl: btn,
+        successMsg: "Image removed",
+        errorMsg: "Remove failed",
+        onSuccess: function() {
+          loadImages();
+        }
+      });
+    });
   }
 
   // internal/web/static/src/js/logs.js
@@ -5322,10 +6098,16 @@
       var tr = document.createElement("tr");
       var td = document.createElement("td");
       td.colSpan = 5;
-      td.style.textAlign = "center";
-      td.style.padding = "2rem";
-      td.style.color = "var(--text-secondary)";
-      td.textContent = _currentType !== "all" ? "No " + _currentType + " entries" : "No activity logged yet.";
+      var emptyDiv = document.createElement("div");
+      emptyDiv.className = "empty-state";
+      var iconDiv = document.createElement("div");
+      iconDiv.className = "empty-state-icon";
+      iconDiv.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/></svg>';
+      emptyDiv.appendChild(iconDiv);
+      var msg = document.createElement("p");
+      msg.textContent = _currentType !== "all" ? "No " + _currentType + " entries" : "No activity logged yet.";
+      emptyDiv.appendChild(msg);
+      td.appendChild(emptyDiv);
       tr.appendChild(td);
       tbody.appendChild(tr);
       return;
@@ -5433,6 +6215,7 @@
   window.escapeHTML = escapeHTML;
   window.showConfirm = showConfirm;
   window.apiPost = apiPost2;
+  window.apiFetch = apiFetch;
   window.activateFilter = activateFilter;
   window.resumeScanning = resumeScanning;
   window.expandAllStacks = expandAllStacks;
@@ -5460,6 +6243,8 @@
   window.fetchContainerLogs = fetchContainerLogs;
   window.toggleLogStream = toggleLogStream;
   window.containerAction = containerAction;
+  window.bulkContainerAction = bulkContainerAction;
+  window.toggleDashboardShortcutsHelp = toggleDashboardShortcutsHelp;
   window.toggleQueueAccordion = toggleQueueAccordion;
   window.approveUpdate = approveUpdate;
   window.ignoreUpdate = ignoreUpdate;
@@ -5475,6 +6260,9 @@
   window.loadAllTags = loadAllTags;
   window.updateToVersion = updateToVersion;
   window.switchToGHCR = switchToGHCR;
+  window.initQueueKeyboard = initQueueKeyboard;
+  window.cleanupQueueKeyboard = cleanupQueueKeyboard;
+  window.toggleShortcutsHelp = toggleShortcutsHelp;
   window.toggleSvc = toggleSvc;
   window.triggerSvcUpdate = triggerSvcUpdate;
   window.changeSvcPolicy = changeSvcPolicy;
@@ -5524,7 +6312,14 @@
   window.exportConfig = exportConfig;
   window.importConfig = importConfig;
   window.saveDashboardColumns = saveDashboardColumns;
+  window.loadScannerSettings = loadScannerSettings;
+  window.saveScannerSettings = saveScannerSettings;
+  window.loadVerifierSettings = loadVerifierSettings;
+  window.saveVerifierSettings = saveVerifierSettings;
+  window.loadRetrySettings = loadRetrySettings;
+  window.saveRetrySettings = saveRetrySettings;
   window.loadDashboardColumns = loadDashboardColumns;
+  window.toggleAdvanced = toggleAdvanced;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;
   window.loadClusterSettings = loadClusterSettings;
@@ -5562,6 +6357,33 @@
   window.loadActivityLogs = loadActivityLogs;
   window.filterLogs = filterLogs;
   window.exportLogs = exportLogs;
+  (function initHamburger() {
+    var btn = document.querySelector(".nav-hamburger");
+    var links = document.querySelector(".nav-links");
+    if (!btn || !links) return;
+    btn.addEventListener("click", function() {
+      var open = links.classList.toggle("nav-open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape" && links.classList.contains("nav-open")) {
+        links.classList.remove("nav-open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    });
+    document.addEventListener("click", function(e) {
+      if (!btn.contains(e.target) && !links.contains(e.target) && links.classList.contains("nav-open")) {
+        links.classList.remove("nav-open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    });
+    links.addEventListener("click", function(e) {
+      if (e.target.closest(".nav-link")) {
+        links.classList.remove("nav-open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    });
+  })();
   document.addEventListener("DOMContentLoaded", function() {
     initTheme();
     var path = window.location.pathname;
@@ -5582,6 +6404,31 @@
     }
     initSettingsPage();
     initAccordionPersistence();
+    initQueueKeyboard();
+    initDashboardKeyboard();
+    (function initHealthDot() {
+      var navStatus = document.querySelector(".nav-status");
+      if (!navStatus) return;
+      var dot = document.createElement("span");
+      dot.id = "health-indicator";
+      dot.className = "health-dot health-ok";
+      dot.title = "System healthy";
+      dot.style.marginLeft = "6px";
+      navStatus.appendChild(dot);
+      fetch("/readyz", { credentials: "same-origin" }).then(function(r) {
+        return r.json().then(function(d) {
+          return { ok: r.ok, data: d };
+        });
+      }).then(function(result) {
+        if (!result.ok || result.data.status !== "ready") {
+          dot.className = "health-dot health-error";
+          dot.title = "System unhealthy";
+        }
+      }).catch(function() {
+        dot.className = "health-dot health-error";
+        dot.title = "Health check failed";
+      });
+    })();
     var stats = document.getElementById("stats");
     if (stats) {
       var pendingEl = stats.querySelectorAll(".stat-value")[2];

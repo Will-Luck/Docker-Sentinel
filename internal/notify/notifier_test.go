@@ -260,3 +260,40 @@ func TestLogNotifierCallsLogger(t *testing.T) {
 		t.Errorf("expected type=update_available in log args: %v", args)
 	}
 }
+
+// TestMultiNoNotifiersReturnsTrue verifies that Notify returns true when
+// no notifiers are configured (no notification is not a failure).
+func TestMultiNoNotifiersReturnsTrue(t *testing.T) {
+	log := &spyLogger{}
+	m := NewMulti(log) // no notifiers
+
+	ok := m.Notify(context.Background(), testEvent(EventUpdateStarted))
+	if !ok {
+		t.Error("Notify() with no notifiers should return true")
+	}
+}
+
+// TestMultiReconfigure verifies that Reconfigure swaps the notifier chain.
+func TestMultiReconfigure(t *testing.T) {
+	old := &stubNotifier{name: "old"}
+	new := &stubNotifier{name: "new"}
+	log := &spyLogger{}
+	m := NewMulti(log, old)
+
+	m.Notify(context.Background(), testEvent(EventUpdateAvailable))
+	if len(old.sent) != 1 {
+		t.Fatalf("old notifier: got %d, want 1", len(old.sent))
+	}
+
+	m.Reconfigure(new)
+	m.Notify(context.Background(), testEvent(EventUpdateSucceeded))
+
+	// Old should not have received the second event.
+	if len(old.sent) != 1 {
+		t.Errorf("old notifier: got %d, want 1 (unchanged)", len(old.sent))
+	}
+	// New should have received it.
+	if len(new.sent) != 1 {
+		t.Errorf("new notifier: got %d, want 1", len(new.sent))
+	}
+}

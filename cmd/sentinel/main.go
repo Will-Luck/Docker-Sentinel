@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -24,7 +21,6 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/backup"
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
-	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/agent"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
@@ -36,7 +32,9 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
 	portainerpkg "github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
+	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
 )
 
@@ -401,6 +399,20 @@ func main() {
 		}
 	}
 
+	// Load notification retry settings (default: disabled).
+	if countStr, _ := db.LoadSetting(store.SettingNotifyRetryCount); countStr != "" {
+		count, _ := strconv.Atoi(countStr)
+		backoffStr, _ := db.LoadSetting(store.SettingNotifyRetryBackoff)
+		backoff, parseErr := time.ParseDuration(backoffStr)
+		if parseErr != nil {
+			backoff = 2 * time.Second
+		}
+		notifier.SetRetry(count, backoff)
+		if count > 0 {
+			log.Info("notification retry enabled", "count", count, "backoff", backoff.String())
+		}
+	}
+
 	clk := clock.Real{}
 	checker := registry.NewChecker(client, log)
 	rateTracker := registry.NewRateLimitTracker()
@@ -437,6 +449,55 @@ func main() {
 	// Create hook runner if hooks are enabled.
 	hookRunner := hooks.NewRunner(client, &hookStoreAdapter{db}, log.Logger)
 	updater.SetHookRunner(hookRunner)
+
+	// Initialise vulnerability scanner (Trivy) if configured.
+	{
+		trivyPath := loadSettingStr(db, store.SettingTrivyPath)
+		if trivyPath == "" {
+			trivyPath = "trivy"
+		}
+		var scanOpts []scanner.Option
+		scanOpts = append(scanOpts, scanner.WithTrivyPath(trivyPath))
+		imgScanner := scanner.New(log, scanOpts...)
+		if imgScanner.Available() {
+			updater.SetScanner(imgScanner)
+			log.Info("vulnerability scanner available", "path", trivyPath)
+		} else {
+			log.Info("trivy not found, vulnerability scanning disabled")
+		}
+		scanMode := scanner.ParseScanMode(loadSettingStr(db, store.SettingScannerMode))
+		updater.SetScanMode(scanMode)
+		thresh := loadSettingStr(db, store.SettingScannerThreshold)
+		if thresh == "" {
+			thresh = string(scanner.SeverityHigh)
+		}
+		updater.SetSeverityThreshold(scanner.Severity(thresh))
+	}
+
+	// Initialise signature verifier (cosign) if configured.
+	{
+		cosignPath := loadSettingStr(db, store.SettingCosignPath)
+		if cosignPath == "" {
+			cosignPath = "cosign"
+		}
+		var verifyOpts []verify.Option
+		verifyOpts = append(verifyOpts, verify.WithCosignPath(cosignPath))
+		if loadSettingStr(db, store.SettingCosignKeyless) == "true" {
+			verifyOpts = append(verifyOpts, verify.WithKeyless())
+		}
+		if kp := loadSettingStr(db, store.SettingCosignKeyPath); kp != "" {
+			verifyOpts = append(verifyOpts, verify.WithKeyPath(kp))
+		}
+		imgVerifier := verify.New(log, verifyOpts...)
+		if imgVerifier.Available() {
+			updater.SetVerifier(imgVerifier)
+			log.Info("signature verifier available", "path", cosignPath)
+		} else {
+			log.Info("cosign not found, signature verification disabled")
+		}
+		verifyMode := verify.ParseMode(loadSettingStr(db, store.SettingVerifyMode))
+		updater.SetVerifyMode(verifyMode)
+	}
 
 	// Set up HA discovery if enabled and an MQTT channel is configured.
 	if haEnabled, _ := db.LoadSetting("ha_discovery_enabled"); haEnabled == "true" {
@@ -847,172 +908,4 @@ func main() {
 	}
 
 	log.Info("sentinel shutdown complete")
-}
-
-// runAgent starts Sentinel in agent mode. This is a completely separate
-// code path from the server — it connects to a remote Sentinel server
-// over gRPC and executes update commands on the local Docker host.
-func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
-	fmt.Println("Docker-Sentinel Agent " + versionString())
-	fmt.Println("=============================================")
-	fmt.Printf("SENTINEL_SERVER_ADDR=%s\n", cfg.ServerAddr)
-	fmt.Printf("SENTINEL_HOST_NAME=%s\n", cfg.HostName)
-	fmt.Printf("SENTINEL_CLUSTER_DIR=%s\n", cfg.ClusterDataDir)
-
-	db, err := store.Open(cfg.DBPath)
-	if err != nil {
-		log.Error("failed to open database", "error", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
-	// Load Docker TLS settings for agent mode too.
-	var agentTLSCfg *docker.TLSConfig
-	agentCA, _ := db.LoadSetting(store.SettingDockerTLSCA)
-	agentCert, _ := db.LoadSetting(store.SettingDockerTLSCert)
-	agentKey, _ := db.LoadSetting(store.SettingDockerTLSKey)
-	if agentCA != "" && agentCert != "" && agentKey != "" {
-		agentTLSCfg = &docker.TLSConfig{CACert: agentCA, ClientCert: agentCert, ClientKey: agentKey}
-		log.Info("Docker TLS configured (agent)", "ca", agentCA, "cert", agentCert)
-	}
-
-	client, err := docker.NewClient(cfg.DockerSock, agentTLSCfg)
-	if err != nil {
-		log.Error("failed to create Docker client", "error", err)
-		os.Exit(1)
-	}
-	defer client.Close()
-
-	if err := db.EnsureAuthBuckets(); err != nil {
-		log.Error("failed to create auth buckets", "error", err)
-		os.Exit(1)
-	}
-
-	authSvc := auth.NewService(auth.ServiceConfig{
-		Users:          db,
-		Sessions:       db,
-		Roles:          db,
-		Tokens:         db,
-		Settings:       db,
-		PendingTOTP:    db,
-		Log:            log.Logger,
-		CookieSecure:   cfg.CookieSecure,
-		SessionExpiry:  cfg.SessionExpiry,
-		AuthEnabledEnv: cfg.AuthEnabled,
-	})
-
-	agentWeb := web.NewAgentServer(web.AgentDeps{
-		Auth:          authSvc,
-		SettingsStore: &settingsStoreAdapter{db},
-		Log:           log.Logger,
-		Version:       versionString(),
-	})
-
-	go func() {
-		addr := net.JoinHostPort("", cfg.WebPort)
-		if err := agentWeb.ListenAndServe(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("agent web server error", "error", err)
-		}
-	}()
-
-	defer func() {
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = agentWeb.Shutdown(shutCtx)
-	}()
-
-	agentCfg := agent.Config{
-		ServerAddr:         cfg.ServerAddr,
-		EnrollToken:        cfg.EnrollToken,
-		HostName:           cfg.HostName,
-		DataDir:            cfg.ClusterDataDir,
-		GracePeriodOffline: cfg.GracePeriodOffline,
-		DockerSock:         cfg.DockerSock,
-		Version:            versionString(),
-	}
-
-	a := agent.New(agentCfg, client, log.Logger)
-	agentWeb.SetStatusProvider(a)
-
-	log.Info("starting agent mode", "server", cfg.ServerAddr, "host", cfg.HostName)
-	if err := a.Run(ctx); err != nil {
-		log.Error("agent exited with error", "error", err)
-		os.Exit(1)
-	}
-	log.Info("agent shutdown complete")
-}
-
-func generateRandomPassword() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-// runWizard starts the setup wizard server and blocks until setup completes
-// or ctx is cancelled.
-func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc *auth.Service, log *logging.Logger) {
-	fmt.Println("=============================================")
-	fmt.Println("First-run setup required!")
-	fmt.Println("")
-	fmt.Printf("  Open http://<your-host>:%s/setup\n", cfg.WebPort)
-	fmt.Println("  to configure this instance.")
-	fmt.Println("")
-	fmt.Println("  This page will be available for 5 minutes.")
-	fmt.Println("  Restart the container to get a new window.")
-	fmt.Println("=============================================")
-
-	ws := web.NewWizardServer(web.WizardDeps{
-		SettingsStore: &settingsStoreAdapter{db},
-		Auth:          authSvc,
-		Log:           log.Logger,
-		Version:       versionString(),
-		ClusterPort:   cfg.ClusterPort,
-	})
-
-	addr := net.JoinHostPort("", cfg.WebPort)
-	go func() {
-		if err := ws.ListenAndServe(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("wizard server error", "error", err)
-		}
-	}()
-
-	select {
-	case <-ws.Done():
-		log.Info("wizard setup complete")
-	case <-ctx.Done():
-		log.Info("wizard cancelled by signal")
-	}
-
-	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutCancel()
-	_ = ws.Shutdown(shutCtx)
-}
-
-// loadSettingStr loads a setting from the DB, returning "" on error.
-func loadSettingStr(db *store.Store, key string) string {
-	v, err := db.LoadSetting(key)
-	if err != nil {
-		return ""
-	}
-	return v
-}
-
-// loadSettingBool loads a boolean setting from the DB.
-func loadSettingBool(db *store.Store, key string) bool {
-	return loadSettingStr(db, key) == "true"
-}
-
-// parseHeaders parses comma-separated "Key:Value" pairs into a map.
-func parseHeaders(s string) map[string]string {
-	if s == "" {
-		return nil
-	}
-	headers := make(map[string]string)
-	for _, pair := range strings.Split(s, ",") {
-		kv := strings.SplitN(strings.TrimSpace(pair), ":", 2)
-		if len(kv) == 2 {
-			headers[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
-		}
-	}
-	return headers
 }
