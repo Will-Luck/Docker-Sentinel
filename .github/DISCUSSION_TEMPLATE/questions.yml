@@ -1,0 +1,17 @@
+title: "[Q&A] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for asking a question. Please check the [wiki](https://github.com/Will-Luck/Docker-Sentinel/wiki) first.
+  - type: textarea
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Sentinel version
+      placeholder: "e.g. v2.10.0"

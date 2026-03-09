@@ -1,8 +1,11 @@
 # Docker-Sentinel
 
-[![CI](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml/badge.svg)](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/release.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/releases/latest)
-[![Licence](https://img.shields.io/github/license/Will-Luck/Docker-Sentinel)](LICENSE)
+[![CI](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/releases/latest)
+[![License](https://img.shields.io/github/license/Will-Luck/Docker-Sentinel)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/Will-Luck/Docker-Sentinel)](go.mod)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Will-Luck/Docker-Sentinel)](https://goreportcard.com/report/github.com/Will-Luck/Docker-Sentinel)
+[![GHCR](https://img.shields.io/badge/ghcr.io-docker--sentinel-blue)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
 
 A container update orchestrator with a web dashboard, written in Go. Replaces Watchtower with per-container update policies, pre-update snapshots, automatic rollback, and real-time notifications.
 
