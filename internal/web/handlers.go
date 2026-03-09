@@ -204,6 +204,9 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					severity = "build"
 				} else {
 					severity = classifySeverity(tag, newestVersion)
+					if severity == "" && resolved != "" {
+						severity = classifySeverity(resolved, newestVersion)
+					}
 				}
 			}
 			v := containerView{
@@ -222,6 +225,8 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				IsSelf:          c.Labels["sentinel.self"] == "true",
 				Stack:           c.Labels["com.docker.compose.project"],
 				Registry:        registry.RegistryHost(c.Image),
+				Ports:           c.Ports,
+				HostAddress:     s.localHostAddr(r),
 			}
 			v.PortURLs = s.resolvePortURLs(n, s.localHostAddr(r), "", c.Ports)
 			targetView = &v
@@ -256,6 +261,11 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 						rcSeverity = "build"
 					} else {
 						rcSeverity = classifySeverity(tag, newestVersion)
+						if rcSeverity == "" {
+							if v := rc.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
+								rcSeverity = classifySeverity(v, newestVersion)
+							}
+						}
 					}
 				}
 				// Resolve agent IP for port links and NPM lookup.
@@ -544,9 +554,25 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		var newestVersion string
+		var hasUpdate bool
 		queueKey := rc.HostID + "::" + rc.Name
-		if pend, ok := s.deps.Queue.Get(queueKey); ok && len(pend.NewerVersions) > 0 {
-			newestVersion = pend.NewerVersions[0]
+		if pend, ok := s.deps.Queue.Get(queueKey); ok {
+			hasUpdate = true
+			if len(pend.NewerVersions) > 0 {
+				newestVersion = pend.NewerVersions[0]
+			}
+		}
+
+		var detailSeverity string
+		if hasUpdate {
+			if newestVersion == "" {
+				detailSeverity = "build"
+			} else {
+				detailSeverity = classifySeverity(tag, newestVersion)
+				if detailSeverity == "" && resolved != "" {
+					detailSeverity = classifySeverity(resolved, newestVersion)
+				}
+			}
 		}
 
 		// Resolve agent IP for port links and NPM lookup.
@@ -564,7 +590,9 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			NewestVersion:   newestVersion,
 			Policy:          policy,
 			State:           rc.State,
-			HasUpdate:       newestVersion != "",
+			HasUpdate:       hasUpdate,
+			DigestOnly:      hasUpdate && newestVersion == "",
+			Severity:        detailSeverity,
 			IsSelf:          rc.Labels["sentinel.self"] == "true",
 			HostID:          rc.HostID,
 			HostName:        rc.HostName,
@@ -619,18 +647,43 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		var localNewest string
+		var localHasUpdate bool
+		if pend, ok := s.deps.Queue.Get(name); ok {
+			localHasUpdate = true
+			if len(pend.NewerVersions) > 0 {
+				localNewest = pend.NewerVersions[0]
+			}
+		}
+		var localSeverity string
+		if localHasUpdate {
+			if localNewest == "" {
+				localSeverity = "build"
+			} else {
+				localSeverity = classifySeverity(detailTag, localNewest)
+				if localSeverity == "" && detailResolved != "" {
+					localSeverity = classifySeverity(detailResolved, localNewest)
+				}
+			}
+		}
+
 		view = containerView{
 			ID:              found.ID,
 			Name:            containerName(*found),
 			Image:           found.Image,
 			Tag:             detailTag,
 			ResolvedVersion: detailResolved,
+			NewestVersion:   localNewest,
 			Policy:          detailPolicy,
 			State:           found.State,
 			Maintenance:     maintenance,
+			HasUpdate:       localHasUpdate,
+			DigestOnly:      localHasUpdate && localNewest == "",
+			Severity:        localSeverity,
 			IsSelf:          found.Labels["sentinel.self"] == "true",
 			Registry:        registry.RegistryHost(found.Image),
 			Ports:           found.Ports,
+			HostAddress:     s.localHostAddr(r),
 		}
 		image = found.Image
 	}
