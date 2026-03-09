@@ -281,9 +281,15 @@
                                     <td class="cell-image mono">{{.OldImage}}</td>
                                     <td class="cell-image mono">{{.NewImage}}</td>
                                     <td>
-                                        {{if eq .Outcome "success"}}<span class="badge badge-success">Success</span>
-                                        {{else if eq .Outcome "rollback"}}<span class="badge badge-error">Rollback</span>
-                                        {{else if eq .Outcome "skipped"}}<span class="badge badge-warning">Skipped</span>
+                                        {{if eq .Outcome "success"}}<span class="badge badge-success" title="Container updated and running healthy">Updated</span>
+                                        {{else if eq .Outcome "rollback"}}<span class="badge badge-error" title="Update failed health check, restored previous version">Rolled Back</span>
+                                        {{else if eq .Outcome "rollback_success"}}<span class="badge badge-warning" title="Successfully restored previous version">Rollback OK</span>
+                                        {{else if eq .Outcome "rollback_failed"}}<span class="badge badge-error" title="Attempted rollback but restoration also failed">Rollback Failed</span>
+                                        {{else if eq .Outcome "failed"}}<span class="badge badge-error" title="Update failed, container may be unhealthy">Failed</span>
+                                        {{else if eq .Outcome "rate_limited"}}<span class="badge badge-warning" title="Registry throttled the request, will retry next scan">Rate Limited</span>
+                                        {{else if eq .Outcome "check_failed"}}<span class="badge badge-warning" title="Could not reach the registry to check for updates">Check Failed</span>
+                                        {{else if eq .Outcome "identical"}}<span class="badge badge-info" title="New image was pulled but is identical to the current one">Image Identical</span>
+                                        {{else if eq .Outcome "partial"}}<span class="badge badge-warning" title="Container updated but post-update cleanup had issues">Updated (partial)</span>
                                         {{else}}<span class="badge badge-muted">{{.Outcome}}</span>{{end}}
                                     </td>
                                     <td class="mono">{{fmtDuration .Duration}}</td>
