@@ -634,7 +634,7 @@ func setupUpdateMock(t *testing.T) (*mockDocker, *Updater) {
 
 // TestUpdateFinaliseStopFailureRecordsWarning tests the non-destructive path:
 // finalise stop fails, so the container is still running (with maintenance label).
-// Should record "finalise_warning" and NOT attempt rollback.
+// Should record "partial" and NOT attempt rollback.
 func TestUpdateFinaliseStopFailureRecordsWarning(t *testing.T) {
 	mock, u := setupUpdateMock(t)
 
@@ -662,7 +662,7 @@ func TestUpdateFinaliseStopFailureRecordsWarning(t *testing.T) {
 		t.Errorf("createCalls = %d, want 1 (no rollback on non-destructive finalise failure)", len(mock.createCalls))
 	}
 
-	// Verify update was recorded as "finalise_warning" (not "success").
+	// Verify update was recorded as "partial" (not "success").
 	history, hErr := u.store.ListHistory(10, "")
 	if hErr != nil {
 		t.Fatalf("ListHistory: %v", hErr)
@@ -670,8 +670,8 @@ func TestUpdateFinaliseStopFailureRecordsWarning(t *testing.T) {
 	if len(history) != 1 {
 		t.Fatalf("history len = %d, want 1", len(history))
 	}
-	if history[0].Outcome != "finalise_warning" {
-		t.Errorf("outcome = %q, want %q", history[0].Outcome, "finalise_warning")
+	if history[0].Outcome != "partial" {
+		t.Errorf("outcome = %q, want %q", history[0].Outcome, "partial")
 	}
 	if history[0].Error == "" {
 		t.Error("error field should be non-empty for finalise_warning")
@@ -975,7 +975,7 @@ func TestUpdateContainerImageIDGuardSkipsNoChange(t *testing.T) {
 		t.Errorf("startCalls = %d, want 0", len(mock.startCalls))
 	}
 
-	// History should show "no_change" outcome.
+	// History should show "identical" outcome.
 	history, hErr := u.store.ListHistory(10, "")
 	if hErr != nil {
 		t.Fatalf("ListHistory: %v", hErr)
@@ -983,8 +983,8 @@ func TestUpdateContainerImageIDGuardSkipsNoChange(t *testing.T) {
 	if len(history) != 1 {
 		t.Fatalf("history len = %d, want 1", len(history))
 	}
-	if history[0].Outcome != "no_change" {
-		t.Errorf("outcome = %q, want %q", history[0].Outcome, "no_change")
+	if history[0].Outcome != "identical" {
+		t.Errorf("outcome = %q, want %q", history[0].Outcome, "identical")
 	}
 }
 

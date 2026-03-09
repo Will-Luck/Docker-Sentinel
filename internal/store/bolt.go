@@ -112,7 +112,7 @@ type UpdateRecord struct {
 	OldDigest     string        `json:"old_digest"`
 	NewImage      string        `json:"new_image"`
 	NewDigest     string        `json:"new_digest"`
-	Outcome       string        `json:"outcome"` // "success", "rollback", "failed", or "finalise_warning"
+	Outcome       string        `json:"outcome"` // "success", "failed", "rollback", "identical", "partial", "rate_limited", "check_failed", "dry_run", "pull_only", "scan_summary"
 	Duration      time.Duration `json:"duration"`
 	Error         string        `json:"error,omitempty"`
 	Type          string        `json:"type,omitempty"`      // "container" (default) or "service"

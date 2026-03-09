@@ -129,7 +129,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			OldDigest:     oldImageID,
 			NewImage:      pullImage,
 			NewDigest:     newImageID,
-			Outcome:       "no_change",
+			Outcome:       "identical",
 			Duration:      duration,
 		})
 		// Cache digest equivalence so future scans skip this pair.
@@ -336,7 +336,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			OldDigest:     extractDigestForRecord(inspect),
 			NewImage:      pullImage,
 			NewDigest:     newDigest,
-			Outcome:       "finalise_warning",
+			Outcome:       "partial",
 			Duration:      duration,
 			Error:         finaliseErr.Error(),
 		}); recErr != nil {

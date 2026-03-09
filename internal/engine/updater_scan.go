@@ -36,6 +36,7 @@ type ScanResult struct {
 	Updated     int
 	Failed      int
 	RateLimited int // containers skipped due to rate limits
+	UpToDate    int // containers where the registry confirmed no update
 	Errors      []error
 
 	// Swarm service stats (only populated when Swarm mode is active).
@@ -468,7 +469,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 					Timestamp:     u.clock.Now(),
 					ContainerName: name,
 					OldImage:      imageRef,
-					Outcome:       "skipped",
+					Outcome:       "rate_limited",
 					Error:         "rate limit low on " + host,
 				})
 				result.RateLimited++
@@ -487,7 +488,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				Timestamp:     u.clock.Now(),
 				ContainerName: name,
 				OldImage:      imageRef,
-				Outcome:       "skipped",
+				Outcome:       "check_failed",
 				Error:         check.Error.Error(),
 			})
 			result.Errors = append(result.Errors, fmt.Errorf("%s: %w", name, check.Error))
@@ -511,6 +512,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				u.log.Info("removed stale queue entry (now up to date)", "name", name)
 			}
 			u.log.Debug("up to date", "name", name, "image", imageRef)
+			result.UpToDate++
 			continue
 		}
 
@@ -793,6 +795,16 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	metrics.ContainersMonitored.Set(float64(result.Total - result.Skipped))
 	metrics.PendingUpdates.Set(float64(result.Queued))
 	metrics.ScanDuration.Observe(time.Since(scanStart).Seconds())
+
+	// Record scan summary in history.
+	_ = u.store.RecordUpdate(store.UpdateRecord{
+		Timestamp: u.clock.Now(),
+		Outcome:   "scan_summary",
+		Type:      "scan",
+		Error: fmt.Sprintf("%d checked, %d up to date, %d updated, %d queued, %d skipped, %d failed",
+			result.Total-result.Skipped, result.UpToDate, result.Updated, result.Queued, result.RateLimited, result.Failed),
+		Duration: time.Since(scanStart),
+	})
 
 	// Publish HA discovery states after scan.
 	if u.haDiscovery != nil {
