@@ -137,7 +137,11 @@ import {
     exportConfig,
     importConfig,
     loadDashboardColumns,
-    saveDashboardColumns
+    saveDashboardColumns,
+    loadScannerSettings,
+    saveScannerSettings,
+    loadVerifierSettings,
+    saveVerifierSettings
 } from "./settings-core.js";
 
 import {
@@ -320,6 +324,10 @@ window.saveMaintenanceWindow = saveMaintenanceWindow;
 window.exportConfig = exportConfig;
 window.importConfig = importConfig;
 window.saveDashboardColumns = saveDashboardColumns;
+window.loadScannerSettings = loadScannerSettings;
+window.saveScannerSettings = saveScannerSettings;
+window.loadVerifierSettings = loadVerifierSettings;
+window.saveVerifierSettings = saveVerifierSettings;
 window.loadDashboardColumns = loadDashboardColumns;
 
 // Settings cluster

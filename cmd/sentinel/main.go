@@ -32,7 +32,9 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
 	portainerpkg "github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
+	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
 )
 
@@ -433,6 +435,55 @@ func main() {
 	// Create hook runner if hooks are enabled.
 	hookRunner := hooks.NewRunner(client, &hookStoreAdapter{db}, log.Logger)
 	updater.SetHookRunner(hookRunner)
+
+	// Initialise vulnerability scanner (Trivy) if configured.
+	{
+		trivyPath := loadSettingStr(db, store.SettingTrivyPath)
+		if trivyPath == "" {
+			trivyPath = "trivy"
+		}
+		var scanOpts []scanner.Option
+		scanOpts = append(scanOpts, scanner.WithTrivyPath(trivyPath))
+		imgScanner := scanner.New(log, scanOpts...)
+		if imgScanner.Available() {
+			updater.SetScanner(imgScanner)
+			log.Info("vulnerability scanner available", "path", trivyPath)
+		} else {
+			log.Info("trivy not found, vulnerability scanning disabled")
+		}
+		scanMode := scanner.ParseScanMode(loadSettingStr(db, store.SettingScannerMode))
+		updater.SetScanMode(scanMode)
+		thresh := loadSettingStr(db, store.SettingScannerThreshold)
+		if thresh == "" {
+			thresh = string(scanner.SeverityHigh)
+		}
+		updater.SetSeverityThreshold(scanner.Severity(thresh))
+	}
+
+	// Initialise signature verifier (cosign) if configured.
+	{
+		cosignPath := loadSettingStr(db, store.SettingCosignPath)
+		if cosignPath == "" {
+			cosignPath = "cosign"
+		}
+		var verifyOpts []verify.Option
+		verifyOpts = append(verifyOpts, verify.WithCosignPath(cosignPath))
+		if loadSettingStr(db, store.SettingCosignKeyless) == "true" {
+			verifyOpts = append(verifyOpts, verify.WithKeyless())
+		}
+		if kp := loadSettingStr(db, store.SettingCosignKeyPath); kp != "" {
+			verifyOpts = append(verifyOpts, verify.WithKeyPath(kp))
+		}
+		imgVerifier := verify.New(log, verifyOpts...)
+		if imgVerifier.Available() {
+			updater.SetVerifier(imgVerifier)
+			log.Info("signature verifier available", "path", cosignPath)
+		} else {
+			log.Info("cosign not found, signature verification disabled")
+		}
+		verifyMode := verify.ParseMode(loadSettingStr(db, store.SettingVerifyMode))
+		updater.SetVerifyMode(verifyMode)
+	}
 
 	// Set up HA discovery if enabled and an MQTT channel is configured.
 	if haEnabled, _ := db.LoadSetting("ha_discovery_enabled"); haEnabled == "true" {

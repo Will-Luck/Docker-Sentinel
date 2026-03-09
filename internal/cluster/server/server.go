@@ -15,9 +15,17 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
+
+// HistoryRecorder is the subset of store.Store needed for persisting update
+// history. Defined as an interface so the cluster server doesn't import
+// the store package directly, matching the ClusterStore pattern.
+type HistoryRecorder interface {
+	RecordUpdate(rec store.UpdateRecord) error
+}
 
 // ClusterStore is the subset of store.Store needed by the cluster server.
 // Defined as an interface for dependency injection -- avoids importing the
@@ -50,6 +58,7 @@ type Server struct {
 	ca       *cluster.CA
 	registry *Registry
 	store    ClusterStore
+	history  HistoryRecorder
 	bus      *events.Bus
 	log      *slog.Logger
 	hmacKey  []byte // 32-byte random key for HMAC-SHA256 token signing
@@ -134,6 +143,12 @@ func loadOrGenerateHMACKey(dir string) ([]byte, error) {
 // Registry returns the server's host registry for external inspection.
 func (s *Server) Registry() *Registry {
 	return s.registry
+}
+
+// SetHistoryRecorder wires in a history store for persisting replayed
+// journal entries. Called after construction by main.go.
+func (s *Server) SetHistoryRecorder(h HistoryRecorder) {
+	s.history = h
 }
 
 // Start starts the gRPC server with mTLS on the given address.

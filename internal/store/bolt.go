@@ -83,6 +83,21 @@ const (
 	SettingWebhookSecret  = "webhook_secret"  // hex-encoded random secret
 )
 
+// Scanner (Trivy) settings keys (stored in bucketSettings).
+const (
+	SettingScannerMode      = "scanner_mode"      // "disabled" / "pre-update" / "post-update"
+	SettingScannerThreshold = "scanner_threshold" // "CRITICAL" / "HIGH" / "MEDIUM" / "LOW"
+	SettingTrivyPath        = "trivy_path"        // path to trivy binary (default: "trivy")
+)
+
+// Verifier (cosign) settings keys (stored in bucketSettings).
+const (
+	SettingVerifyMode    = "verify_mode"     // "disabled" / "warn" / "enforce"
+	SettingCosignPath    = "cosign_path"     // path to cosign binary (default: "cosign")
+	SettingCosignKeyless = "cosign_keyless"  // "true" / "false"
+	SettingCosignKeyPath = "cosign_key_path" // path to public key PEM
+)
+
 // UpdateRecord represents a completed (or failed) container update.
 type UpdateRecord struct {
 	Timestamp     time.Time     `json:"timestamp"`

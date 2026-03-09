@@ -461,6 +461,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/config/import", perm(auth.PermSettingsModify, s.apiConfigImport))
 	s.mux.Handle("GET /api/grafana-dashboard", perm(auth.PermSettingsModify, s.apiGrafanaDashboard))
 
+	// Scanner & verifier settings
+	s.mux.Handle("GET /api/settings/scanner", perm(auth.PermSettingsView, s.apiScannerSettings))
+	s.mux.Handle("POST /api/settings/scanner", perm(auth.PermSettingsModify, s.apiScannerSettingsSave))
+	s.mux.Handle("GET /api/settings/verifier", perm(auth.PermSettingsView, s.apiVerifierSettings))
+	s.mux.Handle("POST /api/settings/verifier", perm(auth.PermSettingsModify, s.apiVerifierSettingsSave))
+
 	// Cluster settings — always available so the admin can enable/configure cluster
 	// even when the cluster server is not yet running.
 	s.mux.Handle("GET /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettings))

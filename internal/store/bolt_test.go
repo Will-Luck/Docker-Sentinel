@@ -423,3 +423,141 @@ func TestDigestEquivalenceClearNoHash(t *testing.T) {
 		t.Fatalf("ClearDigestEquivalence: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Edge Cases: Duplicate Timestamps
+// ---------------------------------------------------------------------------
+
+func TestRecordUpdateDuplicateTimestamp(t *testing.T) {
+	s := testStore(t)
+
+	// Two records with the exact same timestamp. BoltDB uses the timestamp as
+	// the key, so the second Put overwrites the first. This test documents that
+	// behaviour explicitly.
+	ts := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	r1 := UpdateRecord{Timestamp: ts, ContainerName: "nginx", Outcome: "success"}
+	r2 := UpdateRecord{Timestamp: ts, ContainerName: "redis", Outcome: "rollback"}
+
+	if err := s.RecordUpdate(r1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordUpdate(r2); err != nil {
+		t.Fatal(err)
+	}
+
+	// Because the key is RFC3339Nano of the same timestamp, the second
+	// record overwrites the first. Only one should remain.
+	got, err := s.ListHistory(10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 record (overwrite), got %d", len(got))
+	}
+	// The surviving record should be the last one written.
+	if got[0].ContainerName != "redis" {
+		t.Errorf("surviving record = %q, want redis (last write wins)", got[0].ContainerName)
+	}
+}
+
+func TestAppendLogDuplicateTimestamp(t *testing.T) {
+	s := testStore(t)
+
+	// Same timestamp for two log entries — same overwrite behaviour as history.
+	ts := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
+	e1 := LogEntry{Timestamp: ts, Type: "update", Message: "first"}
+	e2 := LogEntry{Timestamp: ts, Type: "policy_set", Message: "second"}
+
+	if err := s.AppendLog(e1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendLog(e2); err != nil {
+		t.Fatal(err)
+	}
+
+	logs, err := s.ListLogs(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected 1 log (overwrite), got %d", len(logs))
+	}
+	if logs[0].Message != "second" {
+		t.Errorf("surviving log = %q, want %q", logs[0].Message, "second")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Edge Cases: Pagination with before cursor
+// ---------------------------------------------------------------------------
+
+func TestListHistoryPagination(t *testing.T) {
+	s := testStore(t)
+
+	// Insert 5 records with 1-minute spacing.
+	base := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		rec := UpdateRecord{
+			Timestamp:     base.Add(time.Duration(i) * time.Minute),
+			ContainerName: fmt.Sprintf("app-%d", i),
+			Outcome:       "success",
+		}
+		if err := s.RecordUpdate(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Page 1: newest 2 records.
+	page1, err := s.ListHistory(2, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page1) != 2 {
+		t.Fatalf("page1: expected 2 records, got %d", len(page1))
+	}
+	if page1[0].ContainerName != "app-4" {
+		t.Errorf("page1[0] = %q, want app-4", page1[0].ContainerName)
+	}
+	if page1[1].ContainerName != "app-3" {
+		t.Errorf("page1[1] = %q, want app-3", page1[1].ContainerName)
+	}
+
+	// Page 2: use the timestamp of the last record on page 1 as cursor.
+	cursor := page1[1].Timestamp.UTC().Format(time.RFC3339Nano)
+	page2, err := s.ListHistory(2, cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page2) != 2 {
+		t.Fatalf("page2: expected 2 records, got %d", len(page2))
+	}
+	if page2[0].ContainerName != "app-2" {
+		t.Errorf("page2[0] = %q, want app-2", page2[0].ContainerName)
+	}
+	if page2[1].ContainerName != "app-1" {
+		t.Errorf("page2[1] = %q, want app-1", page2[1].ContainerName)
+	}
+
+	// Page 3: should have 1 remaining record.
+	cursor = page2[1].Timestamp.UTC().Format(time.RFC3339Nano)
+	page3, err := s.ListHistory(2, cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page3) != 1 {
+		t.Fatalf("page3: expected 1 record, got %d", len(page3))
+	}
+	if page3[0].ContainerName != "app-0" {
+		t.Errorf("page3[0] = %q, want app-0", page3[0].ContainerName)
+	}
+
+	// Page 4: past the end — should be empty.
+	cursor = page3[0].Timestamp.UTC().Format(time.RFC3339Nano)
+	page4, err := s.ListHistory(2, cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page4) != 0 {
+		t.Errorf("page4: expected 0 records, got %d", len(page4))
+	}
+}
