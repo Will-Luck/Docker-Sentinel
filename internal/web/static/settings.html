@@ -954,6 +954,42 @@
                     </div>
                 </details>
 
+                <!-- Retry Behaviour -->
+                <details class="accordion card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Retry Behaviour</h2>
+                        <span class="accordion-preview" id="retry-preview">Disabled</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="accordion-intro">When a notification channel fails to send, Sentinel can retry with exponential backoff before giving up.</p>
+                        <div class="settings-rows">
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Retry count</div>
+                                    <div class="setting-desc">Number of additional attempts after the initial failure</div>
+                                </div>
+                                <select id="retry-count" class="setting-select" style="max-width:160px">
+                                    <option value="0">0 (Disabled)</option>
+                                    <option value="1">1</option>
+                                    <option value="2">2</option>
+                                    <option value="3">3</option>
+                                </select>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
+                                    <div class="setting-label">Initial backoff</div>
+                                    <div class="setting-desc">Delay before first retry. Doubles for each subsequent attempt (max 30s).</div>
+                                </div>
+                                <input type="text" id="retry-backoff" class="setting-input" style="max-width:160px" value="2s" placeholder="2s">
+                            </div>
+                        </div>
+                        <div class="setting-actions" style="margin-top: var(--sp-3)">
+                            <button class="btn btn-success" onclick="saveRetrySettings()">Save</button>
+                        </div>
+                    </div>
+                </details>
+
             </div>
         </div>
 

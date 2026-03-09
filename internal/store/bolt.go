@@ -98,6 +98,12 @@ const (
 	SettingCosignKeyPath = "cosign_key_path" // path to public key PEM
 )
 
+// Notification retry settings keys (stored in bucketSettings).
+const (
+	SettingNotifyRetryCount   = "notification_retry_count"   // "0" (disabled) to "3"
+	SettingNotifyRetryBackoff = "notification_retry_backoff" // Go duration, e.g. "2s"
+)
+
 // UpdateRecord represents a completed (or failed) container update.
 type UpdateRecord struct {
 	Timestamp     time.Time     `json:"timestamp"`

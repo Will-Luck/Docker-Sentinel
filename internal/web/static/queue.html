@@ -67,6 +67,10 @@
                 <h1>Pending Updates</h1>
                 <p class="subtitle">Containers awaiting manual approval</p>
             </div>
+            <div class="page-header-actions">
+                <a href="/api/queue/export?format=json" class="btn btn-sm">Export JSON</a>
+                <a href="/api/queue/export?format=csv" class="btn btn-sm">Export CSV</a>
+            </div>
         </div>
 
         <div class="card">
@@ -77,6 +81,7 @@
                     <button class="btn btn-success btn-sm" onclick="approveAll(event)">Approve All</button>
                     <button class="btn btn-warning btn-sm" onclick="ignoreAll(event)">Ignore All</button>
                     <button class="btn btn-error btn-sm" onclick="rejectAll(event)">Reject All</button>
+                    <button class="kb-hint-btn" onclick="toggleShortcutsHelp()" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
                 </div>
                 {{end}}
             </div>

@@ -1252,6 +1252,69 @@
       _stopFollowMode();
     });
   }
+  function bulkContainerAction(action) {
+    var names = [];
+    var keys = Object.keys(selectedContainers);
+    for (var i = 0; i < keys.length; i++) {
+      if (selectedContainers[keys[i]]) names.push(keys[i]);
+    }
+    if (names.length === 0) return;
+    var isDanger = action === "restart" || action === "stop";
+    var label = action.charAt(0).toUpperCase() + action.slice(1);
+    var bodyHTML = "<p>" + label + " <strong>" + names.length + "</strong> container" + (names.length !== 1 ? "s" : "") + '?</p><p class="confirm-muted-row">' + names.map(escapeHTML).join(", ") + "</p>";
+    showConfirm(label + " Containers", bodyHTML, {
+      danger: isDanger,
+      confirmLabel: label
+    }).then(function(confirmed) {
+      if (!confirmed) return;
+      var countEl = document.getElementById("bulk-count");
+      var originalText = countEl ? countEl.textContent : "";
+      var succeeded = 0;
+      var failed = [];
+      var total = names.length;
+      var completed = 0;
+      function onAllDone() {
+        if (completed < total) return;
+        if (failed.length === 0) {
+          showToast(label + " completed for " + succeeded + " container" + (succeeded !== 1 ? "s" : ""), "success");
+        } else {
+          var msg = succeeded + " succeeded, " + failed.length + " failed: " + failed.map(function(f) {
+            return f.name + " (" + f.error + ")";
+          }).join(", ");
+          showToast(msg, "error");
+        }
+        if (countEl) countEl.textContent = originalText;
+        clearSelection();
+      }
+      for (var j = 0; j < names.length; j++) {
+        (function(name, delay) {
+          setTimeout(function() {
+            if (countEl) {
+              var idx = names.indexOf(name) + 1;
+              countEl.textContent = label.replace(/e$/, "") + "ing " + idx + "/" + total + "...";
+            }
+            fetch("/api/containers/" + encodeURIComponent(name) + "/" + action, {
+              method: "POST",
+              credentials: "same-origin"
+            }).then(function(r) {
+              return r.json();
+            }).then(function(data) {
+              if (data.error) {
+                failed.push({ name, error: data.error });
+              } else {
+                succeeded++;
+              }
+            }).catch(function(err) {
+              failed.push({ name, error: err.message || "network error" });
+            }).then(function() {
+              completed++;
+              onAllDone();
+            });
+          }, delay);
+        })(names[j], j * 200);
+      }
+    });
+  }
   function containerAction(action, btn) {
     var name = window._containerName || (typeof _containerName !== "undefined" ? _containerName : "");
     var hostId = window._containerHostId || (typeof _containerHostId !== "undefined" ? _containerHostId : "");
@@ -1748,6 +1811,174 @@
   }
   function getBulkInProgress() {
     return _bulkInProgress;
+  }
+  var _kbFocusIndex = -1;
+  var _kbHandler = null;
+  var _shortcutsOverlayVisible = false;
+  function _getQueueRows() {
+    return document.querySelectorAll(".table-wrap tbody tr.container-row");
+  }
+  function _applyKbFocus() {
+    var rows = _getQueueRows();
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].classList.remove("kb-focused");
+    }
+    if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+      rows[_kbFocusIndex].classList.add("kb-focused");
+      rows[_kbFocusIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
+  function _createShortcutsOverlay() {
+    var overlay = document.createElement("div");
+    overlay.className = "kb-shortcuts-overlay";
+    overlay.id = "kb-shortcuts-overlay";
+    var card = document.createElement("div");
+    card.className = "kb-shortcuts-card";
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-modal", "true");
+    card.setAttribute("aria-label", "Keyboard shortcuts");
+    var title = document.createElement("h3");
+    title.className = "kb-shortcuts-title";
+    title.textContent = "Keyboard Shortcuts";
+    card.appendChild(title);
+    var shortcuts = [
+      ["j", "Next row"],
+      ["k", "Previous row"],
+      ["Enter / Space", "Toggle accordion"],
+      ["a", "Approve focused"],
+      ["r", "Reject focused"],
+      ["i", "Ignore focused"],
+      ["?", "Toggle this help"]
+    ];
+    var table = document.createElement("table");
+    table.className = "kb-shortcuts-table";
+    var tbody = document.createElement("tbody");
+    for (var s = 0; s < shortcuts.length; s++) {
+      var tr = document.createElement("tr");
+      var tdKey = document.createElement("td");
+      var tdDesc = document.createElement("td");
+      var keyParts = shortcuts[s][0].split(" / ");
+      for (var p = 0; p < keyParts.length; p++) {
+        if (p > 0) {
+          var slash = document.createTextNode(" / ");
+          tdKey.appendChild(slash);
+        }
+        var kbd = document.createElement("kbd");
+        kbd.textContent = keyParts[p];
+        tdKey.appendChild(kbd);
+      }
+      tdDesc.textContent = shortcuts[s][1];
+      tr.appendChild(tdKey);
+      tr.appendChild(tdDesc);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    card.appendChild(table);
+    var dismissBtn = document.createElement("button");
+    dismissBtn.className = "btn btn-sm kb-shortcuts-dismiss";
+    dismissBtn.textContent = "Close";
+    dismissBtn.addEventListener("click", function() {
+      toggleShortcutsHelp();
+    });
+    card.appendChild(dismissBtn);
+    overlay.appendChild(card);
+    overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) toggleShortcutsHelp();
+    });
+    return overlay;
+  }
+  function toggleShortcutsHelp() {
+    var existing = document.getElementById("kb-shortcuts-overlay");
+    if (existing) {
+      existing.remove();
+      _shortcutsOverlayVisible = false;
+      return;
+    }
+    var overlay = _createShortcutsOverlay();
+    document.body.appendChild(overlay);
+    _shortcutsOverlayVisible = true;
+    var dismiss = overlay.querySelector(".kb-shortcuts-dismiss");
+    if (dismiss) dismiss.focus();
+  }
+  function _onQueueKeydown(e) {
+    var tag = e.target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (document.querySelector(".confirm-overlay")) return;
+    var rows = _getQueueRows();
+    if (!rows.length && e.key !== "?") return;
+    switch (e.key) {
+      case "j":
+        e.preventDefault();
+        if (_kbFocusIndex < rows.length - 1) _kbFocusIndex++;
+        else _kbFocusIndex = 0;
+        _applyKbFocus();
+        break;
+      case "k":
+        e.preventDefault();
+        if (_kbFocusIndex > 0) _kbFocusIndex--;
+        else _kbFocusIndex = rows.length - 1;
+        _applyKbFocus();
+        break;
+      case "Enter":
+      case " ":
+        if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+          e.preventDefault();
+          toggleQueueAccordion(_kbFocusIndex);
+        }
+        break;
+      case "a":
+        if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+          e.preventDefault();
+          var aKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+          if (aKey) approveUpdate(aKey, { target: rows[_kbFocusIndex].querySelector(".btn-success") });
+        }
+        break;
+      case "r":
+        if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+          e.preventDefault();
+          var rKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+          if (rKey) rejectUpdate(rKey, { target: rows[_kbFocusIndex].querySelector(".btn-error") });
+        }
+        break;
+      case "i":
+        if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
+          e.preventDefault();
+          var iKey = rows[_kbFocusIndex].getAttribute("data-queue-key");
+          if (iKey) ignoreUpdate(iKey, { target: rows[_kbFocusIndex].querySelector(".btn-warning") });
+        }
+        break;
+      case "?":
+        e.preventDefault();
+        toggleShortcutsHelp();
+        break;
+      case "Escape":
+        if (_shortcutsOverlayVisible) {
+          e.preventDefault();
+          toggleShortcutsHelp();
+        }
+        break;
+    }
+  }
+  function initQueueKeyboard() {
+    if (window.location.pathname !== "/queue") return;
+    cleanupQueueKeyboard();
+    _kbFocusIndex = -1;
+    _kbHandler = _onQueueKeydown;
+    document.addEventListener("keydown", _kbHandler);
+  }
+  function cleanupQueueKeyboard() {
+    if (_kbHandler) {
+      document.removeEventListener("keydown", _kbHandler);
+      _kbHandler = null;
+    }
+    _kbFocusIndex = -1;
+    _shortcutsOverlayVisible = false;
+    var overlay = document.getElementById("kb-shortcuts-overlay");
+    if (overlay) overlay.remove();
+    var focused = document.querySelectorAll(".kb-focused");
+    for (var i = 0; i < focused.length; i++) {
+      focused[i].classList.remove("kb-focused");
+    }
   }
 
   // internal/web/static/src/js/swarm.js
@@ -2772,6 +3003,7 @@
     });
     loadScannerSettings();
     loadVerifierSettings();
+    loadRetrySettings();
     var settingsTabContainer = document.getElementById("settings-tabs");
     var tabBtns = settingsTabContainer ? settingsTabContainer.querySelectorAll(".tab-btn") : [];
     var tabPanels = settingsTabContainer ? settingsTabContainer.parentElement.querySelectorAll(".tab-panel") : [];
@@ -3702,6 +3934,49 @@
     }).then(function() {
       showToast("Verifier settings saved", "success");
       loadVerifierSettings();
+    }).catch(function(err) {
+      showToast("Failed: " + err.message, "error");
+    });
+  }
+  function loadRetrySettings() {
+    fetch("/api/settings/notifications/retry").then(function(r) {
+      return r.json();
+    }).then(function(data) {
+      var countEl = document.getElementById("retry-count");
+      var backoffEl = document.getElementById("retry-backoff");
+      var preview = document.getElementById("retry-preview");
+      if (countEl) countEl.value = data.count || "0";
+      if (backoffEl) backoffEl.value = data.backoff || "2s";
+      if (preview) {
+        var count = parseInt(data.count || "0", 10);
+        if (count === 0) {
+          preview.textContent = "Disabled";
+        } else {
+          preview.textContent = count + (count === 1 ? " retry" : " retries") + ", " + (data.backoff || "2s") + " backoff";
+        }
+      }
+    }).catch(function() {
+    });
+  }
+  function saveRetrySettings() {
+    var count = document.getElementById("retry-count");
+    var backoff = document.getElementById("retry-backoff");
+    var body = {
+      count: count ? count.value : "0",
+      backoff: backoff ? backoff.value : "2s"
+    };
+    fetch("/api/settings/notifications/retry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function(r) {
+      if (!r.ok) return r.json().then(function(e) {
+        throw new Error(e.error);
+      });
+      return r.json();
+    }).then(function() {
+      showToast("Retry settings saved", "success");
+      loadRetrySettings();
     }).catch(function(err) {
       showToast("Failed: " + err.message, "error");
     });
@@ -5820,6 +6095,7 @@
   window.fetchContainerLogs = fetchContainerLogs;
   window.toggleLogStream = toggleLogStream;
   window.containerAction = containerAction;
+  window.bulkContainerAction = bulkContainerAction;
   window.toggleQueueAccordion = toggleQueueAccordion;
   window.approveUpdate = approveUpdate;
   window.ignoreUpdate = ignoreUpdate;
@@ -5835,6 +6111,9 @@
   window.loadAllTags = loadAllTags;
   window.updateToVersion = updateToVersion;
   window.switchToGHCR = switchToGHCR;
+  window.initQueueKeyboard = initQueueKeyboard;
+  window.cleanupQueueKeyboard = cleanupQueueKeyboard;
+  window.toggleShortcutsHelp = toggleShortcutsHelp;
   window.toggleSvc = toggleSvc;
   window.triggerSvcUpdate = triggerSvcUpdate;
   window.changeSvcPolicy = changeSvcPolicy;
@@ -5888,6 +6167,8 @@
   window.saveScannerSettings = saveScannerSettings;
   window.loadVerifierSettings = loadVerifierSettings;
   window.saveVerifierSettings = saveVerifierSettings;
+  window.loadRetrySettings = loadRetrySettings;
+  window.saveRetrySettings = saveRetrySettings;
   window.loadDashboardColumns = loadDashboardColumns;
   window.onClusterToggle = onClusterToggle;
   window.saveClusterSettings = saveClusterSettings;
@@ -5973,6 +6254,7 @@
     }
     initSettingsPage();
     initAccordionPersistence();
+    initQueueKeyboard();
     var stats = document.getElementById("stats");
     if (stats) {
       var pendingEl = stats.querySelectorAll(".stat-value")[2];

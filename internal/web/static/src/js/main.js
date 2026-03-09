@@ -45,7 +45,8 @@ import {
     toggleManageMode,
     fetchContainerLogs,
     toggleLogStream,
-    containerAction
+    containerAction,
+    bulkContainerAction
 } from "./dashboard.js";
 
 import {
@@ -66,7 +67,10 @@ import {
     switchToGHCR,
     loadAllTags,
     updateToVersion,
-    applyBulkPolicy
+    applyBulkPolicy,
+    initQueueKeyboard,
+    cleanupQueueKeyboard,
+    toggleShortcutsHelp
 } from "./queue.js";
 
 import {
@@ -141,7 +145,9 @@ import {
     loadScannerSettings,
     saveScannerSettings,
     loadVerifierSettings,
-    saveVerifierSettings
+    saveVerifierSettings,
+    loadRetrySettings,
+    saveRetrySettings
 } from "./settings-core.js";
 
 import {
@@ -252,6 +258,7 @@ window.refreshLastScan = refreshLastScan;
 window.fetchContainerLogs = fetchContainerLogs;
 window.toggleLogStream = toggleLogStream;
 window.containerAction = containerAction;
+window.bulkContainerAction = bulkContainerAction;
 
 // Queue
 window.toggleQueueAccordion = toggleQueueAccordion;
@@ -269,6 +276,9 @@ window.triggerSelfUpdate = triggerSelfUpdate;
 window.loadAllTags = loadAllTags;
 window.updateToVersion = updateToVersion;
 window.switchToGHCR = switchToGHCR;
+window.initQueueKeyboard = initQueueKeyboard;
+window.cleanupQueueKeyboard = cleanupQueueKeyboard;
+window.toggleShortcutsHelp = toggleShortcutsHelp;
 
 // Swarm
 window.toggleSvc = toggleSvc;
@@ -328,6 +338,8 @@ window.loadScannerSettings = loadScannerSettings;
 window.saveScannerSettings = saveScannerSettings;
 window.loadVerifierSettings = loadVerifierSettings;
 window.saveVerifierSettings = saveVerifierSettings;
+window.loadRetrySettings = loadRetrySettings;
+window.saveRetrySettings = saveRetrySettings;
 window.loadDashboardColumns = loadDashboardColumns;
 
 // Settings cluster
@@ -446,6 +458,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     initSettingsPage();
     initAccordionPersistence();
+    initQueueKeyboard();
 
     // Color the pending stat card based on initial value.
     var stats = document.getElementById("stats");

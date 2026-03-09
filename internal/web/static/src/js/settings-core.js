@@ -232,9 +232,10 @@ function initSettingsPage() {
         })
         .catch(function() { /* ignore -- falls back to defaults */ });
 
-    // Load scanner and verifier settings into their accordion sections.
+    // Load scanner, verifier, and retry settings into their accordion sections.
     loadScannerSettings();
     loadVerifierSettings();
+    loadRetrySettings();
 
     // Tab navigation (settings page only -- other pages handle their own tabs).
     var settingsTabContainer = document.getElementById("settings-tabs");
@@ -1282,6 +1283,53 @@ function saveVerifierSettings() {
     .catch(function(err) { showToast("Failed: " + err.message, "error"); });
 }
 
+function loadRetrySettings() {
+    fetch("/api/settings/notifications/retry")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var countEl = document.getElementById("retry-count");
+            var backoffEl = document.getElementById("retry-backoff");
+            var preview = document.getElementById("retry-preview");
+
+            if (countEl) countEl.value = data.count || "0";
+            if (backoffEl) backoffEl.value = data.backoff || "2s";
+            if (preview) {
+                var count = parseInt(data.count || "0", 10);
+                if (count === 0) {
+                    preview.textContent = "Disabled";
+                } else {
+                    preview.textContent = count + (count === 1 ? " retry" : " retries") + ", " + (data.backoff || "2s") + " backoff";
+                }
+            }
+        })
+        .catch(function() { /* ignore */ });
+}
+
+function saveRetrySettings() {
+    var count = document.getElementById("retry-count");
+    var backoff = document.getElementById("retry-backoff");
+
+    var body = {
+        count: count ? count.value : "0",
+        backoff: backoff ? backoff.value : "2s"
+    };
+
+    fetch("/api/settings/notifications/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    })
+    .then(function(r) {
+        if (!r.ok) return r.json().then(function(e) { throw new Error(e.error); });
+        return r.json();
+    })
+    .then(function() {
+        showToast("Retry settings saved", "success");
+        loadRetrySettings();
+    })
+    .catch(function(err) { showToast("Failed: " + err.message, "error"); });
+}
+
 export {
     initSettingsPage,
     onPollIntervalChange,
@@ -1327,5 +1375,7 @@ export {
     loadScannerSettings,
     saveScannerSettings,
     loadVerifierSettings,
-    saveVerifierSettings
+    saveVerifierSettings,
+    loadRetrySettings,
+    saveRetrySettings
 };

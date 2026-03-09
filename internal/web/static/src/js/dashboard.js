@@ -4,7 +4,7 @@
    manage mode, drag reorder
    ============================================================ */
 
-import { showToast, escapeHTML } from "./utils.js";
+import { showToast, escapeHTML, showConfirm } from "./utils.js";
 
 /* ------------------------------------------------------------
    0. Column Visibility
@@ -1275,6 +1275,81 @@ if (typeof window !== 'undefined') {
     });
 }
 
+function bulkContainerAction(action) {
+    var names = [];
+    var keys = Object.keys(selectedContainers);
+    for (var i = 0; i < keys.length; i++) {
+        if (selectedContainers[keys[i]]) names.push(keys[i]);
+    }
+    if (names.length === 0) return;
+
+    var isDanger = action === "restart" || action === "stop";
+    var label = action.charAt(0).toUpperCase() + action.slice(1);
+    var bodyHTML = "<p>" + label + " <strong>" + names.length + "</strong> container" +
+        (names.length !== 1 ? "s" : "") + "?</p>" +
+        "<p class=\"confirm-muted-row\">" + names.map(escapeHTML).join(", ") + "</p>";
+
+    showConfirm(label + " Containers", bodyHTML, {
+        danger: isDanger,
+        confirmLabel: label
+    }).then(function (confirmed) {
+        if (!confirmed) return;
+
+        var countEl = document.getElementById("bulk-count");
+        var originalText = countEl ? countEl.textContent : "";
+        var succeeded = 0;
+        var failed = [];
+        var total = names.length;
+        var completed = 0;
+
+        function onAllDone() {
+            if (completed < total) return;
+
+            if (failed.length === 0) {
+                showToast(label + " completed for " + succeeded + " container" + (succeeded !== 1 ? "s" : ""), "success");
+            } else {
+                var msg = succeeded + " succeeded, " + failed.length + " failed: " +
+                    failed.map(function (f) { return f.name + " (" + f.error + ")"; }).join(", ");
+                showToast(msg, "error");
+            }
+
+            if (countEl) countEl.textContent = originalText;
+            clearSelection();
+        }
+
+        for (var j = 0; j < names.length; j++) {
+            (function (name, delay) {
+                setTimeout(function () {
+                    if (countEl) {
+                        var idx = names.indexOf(name) + 1;
+                        countEl.textContent = label.replace(/e$/, "") + "ing " + idx + "/" + total + "...";
+                    }
+
+                    fetch("/api/containers/" + encodeURIComponent(name) + "/" + action, {
+                        method: "POST",
+                        credentials: "same-origin"
+                    })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (data.error) {
+                            failed.push({ name: name, error: data.error });
+                        } else {
+                            succeeded++;
+                        }
+                    })
+                    .catch(function (err) {
+                        failed.push({ name: name, error: err.message || "network error" });
+                    })
+                    .then(function () {
+                        completed++;
+                        onAllDone();
+                    });
+                }, delay);
+            })(names[j], j * 200);
+        }
+    });
+}
+
 function containerAction(action, btn) {
     var name = window._containerName || (typeof _containerName !== 'undefined' ? _containerName : '');
     var hostId = window._containerHostId || (typeof _containerHostId !== 'undefined' ? _containerHostId : '');
@@ -1339,5 +1414,6 @@ export {
     toggleManageMode,
     fetchContainerLogs,
     toggleLogStream,
-    containerAction
+    containerAction,
+    bulkContainerAction
 };
