@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-03-09
+
 ### Added
 - **Real-time container log streaming:** Live log tailing via SSE with Follow
   mode that survives container restarts and stream disconnects. Includes 30s
@@ -119,6 +121,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Queue page self-update button not working (#58)
 - Throttle `UpdateLastSeen` BoltDB writes to every 5 minutes per agent instead
   of every 30-second heartbeat, reducing disk I/O ~10x at scale (#50)
+- **Version severity badges:** Coloured MAJOR/MINOR/PATCH/BUILD chips next to
+  version arrows on dashboard, queue, and history pages. Uses `registry.ParseSemVer`
+  with OCI label fallback for non-semver tags like "latest".
+- **Row quick actions:** Detail, check, and logs icon buttons per container row,
+  visible on hover (always visible on mobile touch devices).
+- **History page version column:** Shows old-to-new version transition with
+  severity badge. JS-side semver parser mirrors the Go implementation.
+- **Settings "Show Advanced" toggle:** Hides expert settings (cluster, Portainer,
+  scan concurrency, maintenance windows, OIDC, lifecycle hooks) by default.
+  Persisted in localStorage.
+- **System health indicators:** Docker and database health dots in the About tab.
+  Nav bar health dot fetches `/readyz` on page load.
+- **Dashboard keyboard shortcuts:** `m` (toggle manage mode), `s` (trigger scan),
+  `?` (show help overlay).
+- **"All up to date" celebration state:** Checkmark icon replaces "0" on the
+  Updates Pending stat card when no updates are pending.
+- **Row update flash animation:** Green highlight fades out over 500ms when SSE
+  patches a container row.
+
+### Fixed
+- Severity badge empty for containers with non-semver tags (e.g. "latest") that
+  have pending semver updates. Now falls back to the OCI
+  `org.opencontainers.image.version` label.
+- Port chips vanishing on SSE row refresh. `handleContainerRow` local path was
+  missing `Ports` and `HostAddress` fields.
+- Container detail page missing `Severity`, `HasUpdate`, and `DigestOnly` fields
+  for both local and remote containers.
+- Remote container detail `HasUpdate` not detecting digest-only updates. Now
+  checks queue membership instead of `newestVersion != ""`.
 
 ## [2.8.0] - 2026-03-03
 
@@ -298,7 +329,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.8.0...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.10.0...HEAD
+[2.10.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.9.1...v2.10.0
+[2.9.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.9.0...v2.9.1
+[2.9.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.6.0...v2.8.0
 [2.6.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.5.0...v2.5.1
