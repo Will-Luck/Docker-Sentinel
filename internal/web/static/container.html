@@ -20,6 +20,9 @@
             <img src="/favicon.svg" alt="S" class="nav-logo">
             <span class="nav-brand-text">Sentinel</span>
         </a>
+                <button class="nav-hamburger" aria-label="Menu" aria-expanded="false">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
         <div class="nav-links">
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/queue" class="nav-link">Pending Updates</a>
@@ -339,9 +342,20 @@
                     <span class="accordion-preview">On demand</span>
                 </summary>
                 <div class="accordion-body">
-                    <div style="margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
-                        <label for="log-lines">Lines:</label>
-                        <select id="log-lines" style="padding: 0.25rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">
+                    <div class="log-toolbar">
+                        <div class="log-toolbar-left">
+                            <input type="text" id="log-filter" class="log-filter-input" placeholder="Filter logs..." disabled>
+                        </div>
+                        <div class="log-toolbar-right">
+                            <label class="log-scroll-toggle">
+                                <input type="checkbox" id="log-auto-scroll" checked>
+                                <span>Auto-scroll</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="log-actions">
+                        <label for="log-lines" class="log-lines-label">Lines:</label>
+                        <select id="log-lines" class="log-lines-select">
                             <option value="50" selected>50</option>
                             <option value="100">100</option>
                             <option value="200">200</option>
@@ -354,12 +368,14 @@
                             onclick="toggleLogStream('{{.Container.Name}}', '{{.Container.HostID}}')">
                             Follow
                         </button>
-                        <span style="border-left: 1px solid var(--border); height: 1.5rem;"></span>
+                        <span class="log-divider"></span>
                         <button class="btn btn-sm" onclick="containerAction('restart', this)">Restart</button>
                         <button class="btn btn-sm" onclick="containerAction('stop', this)">Stop</button>
                         <button class="btn btn-sm" onclick="containerAction('start', this)">Start</button>
                     </div>
-                    <pre id="container-logs" style="background: var(--bg-secondary); padding: 1rem; border-radius: 6px; overflow-x: auto; max-height: 400px; overflow-y: auto; font-size: 0.8rem; line-height: 1.4; white-space: pre-wrap; word-break: break-all;">Click "Load Logs" to fetch container output.</pre>
+                    <div id="container-logs" class="log-viewer">
+                        <div class="log-placeholder">Click "Load Logs" to fetch container output.</div>
+                    </div>
                 </div>
             </details>
 

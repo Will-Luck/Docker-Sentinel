@@ -2,6 +2,27 @@
    27. Responsive
    -------------------------------------------------------------------------- */
 
+/* Hamburger menu button — hidden on desktop, shown on mobile */
+.nav-hamburger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--fg-secondary);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+}
+
+.nav-hamburger:hover {
+    background: var(--bg-hover);
+    color: var(--fg-primary);
+}
+
 @media (max-width: 768px) {
     .nav {
         padding: 0 var(--sp-3);
@@ -101,26 +122,55 @@
     .host-grid {
         grid-template-columns: 1fr;
     }
+
+    .nav-hamburger {
+        display: flex;
+    }
+
+    .nav-links {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        background: var(--md-surface-container);
+        border-bottom: 1px solid var(--border);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        z-index: 99;
+        padding: var(--sp-2) 0;
+    }
+
+    .nav-links.nav-open {
+        display: flex;
+    }
+
+    .nav-links .nav-link {
+        padding: var(--sp-3) var(--sp-6);
+        justify-content: flex-start;
+        border-bottom: none;
+    }
+
+    .nav-links .nav-link:hover {
+        background: var(--bg-hover);
+    }
+
+    .nav-links .nav-link.active {
+        border-bottom: none;
+        background: var(--bg-hover);
+    }
+
+    /* Always show row actions on touch devices */
+    .row-actions {
+        opacity: 1;
+    }
+
+    .nav {
+        position: relative;
+    }
 }
 
 @media (max-width: 480px) {
-    .nav-links {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
-    }
-
-    .nav-links::-webkit-scrollbar {
-        display: none;
-    }
-
-    .nav-link {
-        padding: 0 var(--sp-2);
-        font-size: 0.75rem;
-        flex-shrink: 0;
-        white-space: nowrap;
-    }
-
     .nav-status-text {
         display: none;
     }
@@ -218,6 +268,11 @@
 
     /* Nav user dropdown: hide username on small screens */
     .nav-user-btn span:not(.nav-user-chevron):not(.nav-user-role) {
+        display: none;
+    }
+
+    /* Hide actions column on very small screens */
+    .col-actions {
         display: none;
     }
 }

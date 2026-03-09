@@ -10,7 +10,8 @@ import {
     showToast,
     escapeHTML,
     showConfirm,
-    apiPost
+    apiPost,
+    apiFetch
 } from "./utils.js";
 
 import {
@@ -44,7 +45,10 @@ import {
     toggleManageMode,
     fetchContainerLogs,
     toggleLogStream,
-    containerAction
+    containerAction,
+    bulkContainerAction,
+    initDashboardKeyboard,
+    toggleDashboardShortcutsHelp
 } from "./dashboard.js";
 
 import {
@@ -65,7 +69,10 @@ import {
     switchToGHCR,
     loadAllTags,
     updateToVersion,
-    applyBulkPolicy
+    applyBulkPolicy,
+    initQueueKeyboard,
+    cleanupQueueKeyboard,
+    toggleShortcutsHelp
 } from "./queue.js";
 
 import {
@@ -136,7 +143,14 @@ import {
     exportConfig,
     importConfig,
     loadDashboardColumns,
-    saveDashboardColumns
+    saveDashboardColumns,
+    loadScannerSettings,
+    saveScannerSettings,
+    loadVerifierSettings,
+    saveVerifierSettings,
+    loadRetrySettings,
+    saveRetrySettings,
+    toggleAdvanced
 } from "./settings-core.js";
 
 import {
@@ -217,6 +231,7 @@ window.csrfToken = getCSRFToken;
 window.escapeHTML = escapeHTML;
 window.showConfirm = showConfirm;
 window.apiPost = apiPost;
+window.apiFetch = apiFetch;
 
 // Dashboard
 window.activateFilter = activateFilter;
@@ -246,6 +261,8 @@ window.refreshLastScan = refreshLastScan;
 window.fetchContainerLogs = fetchContainerLogs;
 window.toggleLogStream = toggleLogStream;
 window.containerAction = containerAction;
+window.bulkContainerAction = bulkContainerAction;
+window.toggleDashboardShortcutsHelp = toggleDashboardShortcutsHelp;
 
 // Queue
 window.toggleQueueAccordion = toggleQueueAccordion;
@@ -263,6 +280,9 @@ window.triggerSelfUpdate = triggerSelfUpdate;
 window.loadAllTags = loadAllTags;
 window.updateToVersion = updateToVersion;
 window.switchToGHCR = switchToGHCR;
+window.initQueueKeyboard = initQueueKeyboard;
+window.cleanupQueueKeyboard = cleanupQueueKeyboard;
+window.toggleShortcutsHelp = toggleShortcutsHelp;
 
 // Swarm
 window.toggleSvc = toggleSvc;
@@ -318,7 +338,14 @@ window.saveMaintenanceWindow = saveMaintenanceWindow;
 window.exportConfig = exportConfig;
 window.importConfig = importConfig;
 window.saveDashboardColumns = saveDashboardColumns;
+window.loadScannerSettings = loadScannerSettings;
+window.saveScannerSettings = saveScannerSettings;
+window.loadVerifierSettings = loadVerifierSettings;
+window.saveVerifierSettings = saveVerifierSettings;
+window.loadRetrySettings = loadRetrySettings;
+window.saveRetrySettings = saveRetrySettings;
 window.loadDashboardColumns = loadDashboardColumns;
+window.toggleAdvanced = toggleAdvanced;
 
 // Settings cluster
 window.onClusterToggle = onClusterToggle;
@@ -370,6 +397,45 @@ window.filterLogs = filterLogs;
 window.exportLogs = exportLogs;
 
 /* ------------------------------------------------------------
+   Hamburger menu toggle
+   ------------------------------------------------------------ */
+
+(function initHamburger() {
+    var btn = document.querySelector('.nav-hamburger');
+    var links = document.querySelector('.nav-links');
+    if (!btn || !links) return;
+
+    btn.addEventListener('click', function () {
+        var open = links.classList.toggle('nav-open');
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+
+    // Close on Escape
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && links.classList.contains('nav-open')) {
+            links.classList.remove('nav-open');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    // Close on outside click
+    document.addEventListener('click', function (e) {
+        if (!btn.contains(e.target) && !links.contains(e.target) && links.classList.contains('nav-open')) {
+            links.classList.remove('nav-open');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    // Close when a link is clicked
+    links.addEventListener('click', function (e) {
+        if (e.target.closest('.nav-link')) {
+            links.classList.remove('nav-open');
+            btn.setAttribute('aria-expanded', 'false');
+        }
+    });
+})();
+
+/* ------------------------------------------------------------
    12. Initialisation
    ------------------------------------------------------------ */
 
@@ -397,6 +463,33 @@ document.addEventListener("DOMContentLoaded", function () {
 
     initSettingsPage();
     initAccordionPersistence();
+    initQueueKeyboard();
+    initDashboardKeyboard();
+
+    // Health indicator in nav — fetches /api/readyz on load.
+    (function initHealthDot() {
+        var navStatus = document.querySelector('.nav-status');
+        if (!navStatus) return;
+        var dot = document.createElement('span');
+        dot.id = 'health-indicator';
+        dot.className = 'health-dot health-ok';
+        dot.title = 'System healthy';
+        dot.style.marginLeft = '6px';
+        navStatus.appendChild(dot);
+
+        fetch('/readyz', {credentials: 'same-origin'})
+            .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+            .then(function(result) {
+                if (!result.ok || result.data.status !== 'ready') {
+                    dot.className = 'health-dot health-error';
+                    dot.title = 'System unhealthy';
+                }
+            })
+            .catch(function() {
+                dot.className = 'health-dot health-error';
+                dot.title = 'Health check failed';
+            });
+    })();
 
     // Color the pending stat card based on initial value.
     var stats = document.getElementById("stats");

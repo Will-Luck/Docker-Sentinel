@@ -20,6 +20,9 @@
             <img src="/favicon.svg" alt="S" class="nav-logo">
             <span class="nav-brand-text">Sentinel</span>
         </a>
+                <button class="nav-hamburger" aria-label="Menu" aria-expanded="false">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
         <div class="nav-links">
             <a href="/" class="nav-link">Dashboard</a>
             <a href="/queue" class="nav-link active" aria-current="page">
@@ -64,6 +67,10 @@
                 <h1>Pending Updates</h1>
                 <p class="subtitle">Containers awaiting manual approval</p>
             </div>
+            <div class="page-header-actions">
+                <a href="/api/queue/export?format=json" class="btn btn-sm">Export JSON</a>
+                <a href="/api/queue/export?format=csv" class="btn btn-sm">Export CSV</a>
+            </div>
         </div>
 
         <div class="card">
@@ -74,6 +81,7 @@
                     <button class="btn btn-success btn-sm" onclick="approveAll(event)">Approve All</button>
                     <button class="btn btn-warning btn-sm" onclick="ignoreAll(event)">Ignore All</button>
                     <button class="btn btn-error btn-sm" onclick="rejectAll(event)">Reject All</button>
+                    <button class="kb-hint-btn" onclick="toggleShortcutsHelp()" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
                 </div>
                 {{end}}
             </div>
@@ -114,8 +122,10 @@
                                         {{else}}
                                             <span class="version-new">{{index $q.NewerVersions 0}}</span>
                                         {{end}}
+                                        {{if $q.ResolvedCurrentVersion}}{{with classifySev $q.ResolvedCurrentVersion (index $q.NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{else}}{{with classifySev (imageTag $q.CurrentImage) (index $q.NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{end}}
                                     {{else}}
                                         {{imageTag $q.CurrentImage}}
+                                        <span class="severity-badge severity-build">build</span>
                                     {{end}}
                                 </td>
                                 <td title="{{fmtTime $q.DetectedAt}}">{{fmtTimeAgo $q.DetectedAt}}</td>
@@ -188,9 +198,11 @@
                             <tr>
                                 <td colspan="5">
                                     <div class="empty-state">
-                                        <h3>No pending updates</h3>
-                                        <p>No containers are waiting for approval. Containers with a <strong>manual</strong> policy will appear here when updates are available.</p>
-                                        <p style="margin-top: var(--sp-2)"><a href="/settings">Manage default policies</a></p>
+                                        <div class="empty-state-icon">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+                                        </div>
+                                        <h3>All caught up</h3>
+                                        <p>No containers are waiting for updates.</p>
                                     </div>
                                 </td>
                             </tr>

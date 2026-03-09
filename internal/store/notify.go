@@ -29,7 +29,10 @@ type NotifyPref struct {
 func (s *Store) GetNotifyState(name string) (*NotifyState, error) {
 	var state *NotifyState
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketNotifyState)
+		b, err := bucket(tx, bucketNotifyState)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(name))
 		if v == nil {
 			return nil
@@ -47,7 +50,10 @@ func (s *Store) SetNotifyState(name string, state *NotifyState) error {
 		return fmt.Errorf("marshal notify state: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketNotifyState)
+		b, err := bucket(tx, bucketNotifyState)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte(name), data)
 	})
 }
@@ -56,7 +62,10 @@ func (s *Store) SetNotifyState(name string, state *NotifyState) error {
 // Called after a successful update to reset the deduplication slate.
 func (s *Store) ClearNotifyState(name string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketNotifyState)
+		b, err := bucket(tx, bucketNotifyState)
+		if err != nil {
+			return err
+		}
 		return b.Delete([]byte(name))
 	})
 }
@@ -65,7 +74,10 @@ func (s *Store) ClearNotifyState(name string) error {
 func (s *Store) AllNotifyStates() (map[string]*NotifyState, error) {
 	result := make(map[string]*NotifyState)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketNotifyState)
+		b, err := bucket(tx, bucketNotifyState)
+		if err != nil {
+			return err
+		}
 		return b.ForEach(func(k, v []byte) error {
 			var state NotifyState
 			if err := json.Unmarshal(v, &state); err != nil {
@@ -84,7 +96,10 @@ func (s *Store) AllNotifyStates() (map[string]*NotifyState, error) {
 func (s *Store) GetNotifyPref(name string) (*NotifyPref, error) {
 	var pref *NotifyPref
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketNotifyPrefs)
+		b, err := bucket(tx, bucketNotifyPrefs)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(name))
 		if v == nil {
 			return nil
@@ -102,7 +117,10 @@ func (s *Store) SetNotifyPref(name string, pref *NotifyPref) error {
 		return fmt.Errorf("marshal notify pref: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketNotifyPrefs)
+		b, err := bucket(tx, bucketNotifyPrefs)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte(name), data)
 	})
 }
@@ -111,7 +129,10 @@ func (s *Store) SetNotifyPref(name string, pref *NotifyPref) error {
 // causing it to fall back to the global default.
 func (s *Store) DeleteNotifyPref(name string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketNotifyPrefs)
+		b, err := bucket(tx, bucketNotifyPrefs)
+		if err != nil {
+			return err
+		}
 		return b.Delete([]byte(name))
 	})
 }
@@ -120,7 +141,10 @@ func (s *Store) DeleteNotifyPref(name string) error {
 func (s *Store) AllNotifyPrefs() (map[string]*NotifyPref, error) {
 	result := make(map[string]*NotifyPref)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketNotifyPrefs)
+		b, err := bucket(tx, bucketNotifyPrefs)
+		if err != nil {
+			return err
+		}
 		return b.ForEach(func(k, v []byte) error {
 			var pref NotifyPref
 			if err := json.Unmarshal(v, &pref); err != nil {
@@ -146,7 +170,10 @@ type NotificationConfig struct {
 func (s *Store) GetNotificationConfig() (NotificationConfig, error) {
 	var cfg NotificationConfig
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte("notification_config"))
 		if v == nil {
 			return nil
@@ -163,7 +190,10 @@ func (s *Store) SetNotificationConfig(cfg NotificationConfig) error {
 		return fmt.Errorf("marshal notification config: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte("notification_config"), data)
 	})
 }
@@ -174,7 +204,10 @@ func (s *Store) SetNotificationConfig(cfg NotificationConfig) error {
 func (s *Store) GetNotificationChannels() ([]notify.Channel, error) {
 	var channels []notify.Channel
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte("notification_channels"))
 		if v == nil {
 			// Try legacy key migration.
@@ -196,7 +229,10 @@ func (s *Store) SetNotificationChannels(channels []notify.Channel) error {
 		return fmt.Errorf("marshal notification channels: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSettings)
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
 		return b.Put([]byte("notification_channels"), data)
 	})
 }

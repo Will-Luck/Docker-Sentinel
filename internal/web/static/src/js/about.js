@@ -40,6 +40,31 @@ function loadAboutInfo() {
             appendAboutRow(rows, "Updates Applied", String(data.updates_applied || 0));
             appendAboutRow(rows, "Snapshots Stored", String(data.snapshots || 0));
 
+            appendAboutSection(rows, "Health");
+
+            // Docker health
+            var dockerHealth = data.docker_health || "unknown";
+            var dockerRow = appendAboutRow(rows, "Docker", dockerHealth === "ok" ? "Connected" : dockerHealth);
+            if (dockerHealth === "ok") {
+                addHealthDot(dockerRow, "ok");
+            } else {
+                addHealthDot(dockerRow, "error");
+            }
+
+            // Database health
+            var dbHealth = data.db_health || "unknown";
+            var dbRow = appendAboutRow(rows, "Database", dbHealth === "ok" ? "Connected" : dbHealth);
+            if (dbHealth === "ok") {
+                addHealthDot(dbRow, "ok");
+            } else {
+                addHealthDot(dbRow, "error");
+            }
+
+            // Next scan (only shown if the API provides it)
+            if (data.next_scan) {
+                appendAboutRow(rows, "Next Scan", formatTimeUntil(data.next_scan));
+            }
+
             appendAboutSection(rows, "Integrations");
 
             // Notification channels
@@ -153,6 +178,7 @@ function appendAboutRow(parent, label, value) {
     val.textContent = value;
     row.appendChild(val);
     parent.appendChild(row);
+    return row;
 }
 
 function appendAboutRowEl(parent, label, valueEl) {
@@ -193,6 +219,32 @@ function formatAboutTimeAgo(iso) {
         return days + "d " + (hours % 24) + "h ago";
     } catch(e) {
         return iso;
+    }
+}
+
+function formatTimeUntil(iso) {
+    try {
+        var d = new Date(iso);
+        var now = new Date();
+        var diff = d - now;
+        if (diff <= 0) return "Now";
+        var mins = Math.floor(diff / 60000);
+        if (mins < 60) return "in " + mins + "m";
+        var hours = Math.floor(mins / 60);
+        if (hours < 24) return "in " + hours + "h " + (mins % 60) + "m";
+        var days = Math.floor(hours / 24);
+        return "in " + days + "d " + (hours % 24) + "h";
+    } catch(e) {
+        return iso;
+    }
+}
+
+function addHealthDot(row, status) {
+    var dot = document.createElement("span");
+    dot.className = "health-dot health-" + status;
+    var valueEl = row.querySelector(".about-value");
+    if (valueEl) {
+        valueEl.insertBefore(dot, valueEl.firstChild);
     }
 }
 

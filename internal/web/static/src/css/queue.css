@@ -321,7 +321,137 @@
     border-color: var(--accent-hover);
 }
 
+.confirm-btn-danger {
+    padding: 6px 16px;
+    border: 1px solid var(--error);
+    border-radius: 20px;
+    background: var(--error);
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 150ms, border-color 150ms;
+}
+
+.confirm-btn-danger:hover {
+    filter: brightness(1.15);
+}
+
 @keyframes confirmFadeIn {
     from { opacity: 0; transform: scale(0.96); }
     to { opacity: 1; transform: scale(1); }
+}
+
+
+/* --------------------------------------------------------------------------
+   14. Keyboard Navigation — Focus indicator and shortcuts overlay
+   -------------------------------------------------------------------------- */
+
+/* Row focus indicator for keyboard navigation (j/k). */
+tr.container-row.kb-focused {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    background: var(--md-focus-state);
+}
+
+/* Shortcuts hint button in toolbar. */
+.kb-hint-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 150ms, color 150ms, border-color 150ms;
+    margin-left: var(--sp-2);
+
+    &:hover {
+        background: var(--bg-hover);
+        color: var(--fg-primary);
+        border-color: var(--border-strong);
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+    }
+}
+
+/* Shortcuts help overlay. */
+.kb-shortcuts-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 500;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: confirmFadeIn 150ms var(--md-motion-emphasized-decelerate);
+}
+
+.kb-shortcuts-card {
+    background: var(--md-surface-container-high);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
+    padding: var(--sp-5) var(--sp-6);
+    width: 90%;
+    max-width: 380px;
+    animation: confirmFadeIn 150ms var(--md-motion-emphasized-decelerate);
+}
+
+.kb-shortcuts-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--fg-primary);
+    margin-bottom: var(--sp-4);
+}
+
+.kb-shortcuts-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: var(--sp-4);
+
+    td {
+        padding: var(--sp-1) var(--sp-2);
+        font-size: 0.85rem;
+        color: var(--fg-secondary);
+        vertical-align: middle;
+    }
+
+    td:first-child {
+        text-align: right;
+        padding-right: var(--sp-3);
+        white-space: nowrap;
+    }
+
+    td:last-child {
+        text-align: left;
+        color: var(--fg-primary);
+    }
+}
+
+kbd {
+    display: inline-block;
+    padding: 2px 7px;
+    background: var(--md-surface-container-lowest);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--fg-primary);
+    line-height: 1.4;
+    box-shadow: 0 1px 0 var(--border);
+}
+
+.kb-shortcuts-dismiss {
+    display: block;
+    margin: 0 auto;
 }

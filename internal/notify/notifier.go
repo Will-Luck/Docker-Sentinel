@@ -77,6 +77,10 @@ type Multi struct {
 	batchWindow time.Duration // 0 = disabled (immediate send)
 	pending     []Event       // buffered events
 	flushTimer  *time.Timer   // fires after batchWindow
+
+	retryMu      sync.RWMutex
+	maxRetries   int           // 0 = disabled (default)
+	retryBackoff time.Duration // initial backoff, doubles each retry
 }
 
 // NewMulti creates a dispatcher from the given notifiers.
@@ -121,6 +125,17 @@ func (m *Multi) SetBatchWindow(d time.Duration) {
 	m.batchMu.Unlock()
 }
 
+// SetRetry configures retry behaviour for failed notification sends.
+// maxRetries is the number of additional attempts after the first failure
+// (0 = disabled). backoff is the initial delay before the first retry;
+// it doubles on each subsequent attempt, capped at 30 seconds.
+func (m *Multi) SetRetry(maxRetries int, backoff time.Duration) {
+	m.retryMu.Lock()
+	m.maxRetries = maxRetries
+	m.retryBackoff = backoff
+	m.retryMu.Unlock()
+}
+
 // Stop flushes any remaining pending events and stops the flush timer.
 // Call this on shutdown to ensure no buffered events are lost.
 func (m *Multi) Stop() {
@@ -134,8 +149,10 @@ func (m *Multi) Stop() {
 	m.batchMu.Unlock()
 
 	if len(pending) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		for _, event := range aggregateEvents(pending) {
-			m.dispatch(context.Background(), event)
+			m.dispatch(ctx, event)
 		}
 	}
 }
@@ -153,18 +170,73 @@ func (m *Multi) dispatch(ctx context.Context, event Event) bool {
 
 	anyOK := false
 	for _, n := range notifiers {
-		if err := n.Send(ctx, event); err != nil {
+		if m.retrySend(ctx, n, event) {
+			anyOK = true
+		}
+	}
+	return anyOK
+}
+
+// retrySend attempts to send an event via a single notifier, retrying with
+// exponential backoff on failure. Returns true if the send eventually
+// succeeded, false if all attempts were exhausted or the context was cancelled.
+func (m *Multi) retrySend(ctx context.Context, n Notifier, event Event) bool {
+	m.retryMu.RLock()
+	maxRetries := m.maxRetries
+	backoff := m.retryBackoff
+	m.retryMu.RUnlock()
+
+	const maxBackoff = 30 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		err := n.Send(ctx, event)
+		if err == nil {
+			if attempt > 0 {
+				m.log.Info("notification succeeded after retry",
+					"provider", n.Name(),
+					"event", string(event.Type),
+					"attempt", attempt+1,
+				)
+			}
+			return true
+		}
+
+		// Last attempt — no more retries, log final failure.
+		if attempt == maxRetries {
 			m.log.Error("notification failed",
 				"provider", n.Name(),
 				"event", string(event.Type),
 				"container", event.ContainerName,
 				"error", err.Error(),
 			)
-		} else {
-			anyOK = true
+			return false
+		}
+
+		// Log the failure and wait before retrying.
+		m.log.Error("notification failed, retrying",
+			"provider", n.Name(),
+			"event", string(event.Type),
+			"container", event.ContainerName,
+			"attempt", attempt+1,
+			"next_backoff", backoff.String(),
+			"error", err.Error(),
+		)
+
+		// Respect context cancellation during backoff wait.
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(backoff):
+		}
+
+		// Double the backoff for the next attempt, capped at 30s.
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
 		}
 	}
-	return anyOK
+
+	return false
 }
 
 // flush aggregates pending events and dispatches the summaries.
@@ -180,8 +252,10 @@ func (m *Multi) flush() {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	for _, event := range aggregateEvents(pending) {
-		m.dispatch(context.Background(), event)
+		m.dispatch(ctx, event)
 	}
 }
 
@@ -199,8 +273,10 @@ func (m *Multi) Reconfigure(notifiers ...Notifier) {
 
 	// Dispatch any buffered events with the old notifiers.
 	if len(pending) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		for _, event := range aggregateEvents(pending) {
-			m.dispatch(context.Background(), event)
+			m.dispatch(ctx, event)
 		}
 	}
 

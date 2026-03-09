@@ -3,13 +3,48 @@
    2a. Settings Helpers
    ============================================================ */
 
-import { showToast } from "./utils.js";
+import { showToast, showConfirm } from "./utils.js";
+
+/* ------------------------------------------------------------
+   Show Advanced toggle
+   ------------------------------------------------------------ */
+
+function toggleAdvanced() {
+    var body = document.body;
+    var btn = document.getElementById('advanced-toggle');
+    if (!btn) return;
+    var isSimple = body.classList.contains('settings-simple');
+    if (isSimple) {
+        body.classList.remove('settings-simple');
+        btn.textContent = 'Hide Advanced';
+        btn.classList.add('active');
+        localStorage.setItem('sentinel-show-advanced', 'true');
+    } else {
+        body.classList.add('settings-simple');
+        btn.textContent = 'Show Advanced';
+        btn.classList.remove('active');
+        localStorage.setItem('sentinel-show-advanced', 'false');
+    }
+}
 
 /* ------------------------------------------------------------
    2. Settings Page — initSettingsPage
    ------------------------------------------------------------ */
 
 function initSettingsPage() {
+    // Init Show Advanced toggle — default to simple mode.
+    var advBtn = document.getElementById('advanced-toggle');
+    if (advBtn) {
+        var showAdvanced = localStorage.getItem('sentinel-show-advanced') === 'true';
+        if (!showAdvanced) {
+            document.body.classList.add('settings-simple');
+            advBtn.textContent = 'Show Advanced';
+        } else {
+            advBtn.textContent = 'Hide Advanced';
+            advBtn.classList.add('active');
+        }
+    }
+
     var themeSelect = document.getElementById("theme-select");
     var stackSelect = document.getElementById("stack-default");
     var sectionSelect = document.getElementById("section-default");
@@ -231,6 +266,11 @@ function initSettingsPage() {
             updateScanPreviews();
         })
         .catch(function() { /* ignore -- falls back to defaults */ });
+
+    // Load scanner, verifier, and retry settings into their accordion sections.
+    loadScannerSettings();
+    loadVerifierSettings();
+    loadRetrySettings();
 
     // Tab navigation (settings page only -- other pages handle their own tabs).
     var settingsTabContainer = document.getElementById("settings-tabs");
@@ -956,32 +996,38 @@ function setWebhookEnabled(enabled) {
 }
 
 function regenerateWebhookSecret() {
-    if (!confirm("This will invalidate all existing webhook integrations. Continue?")) return;
+    showConfirm(
+        "Regenerate Webhook Secret",
+        "<p>This will invalidate all existing webhook integrations. Continue?</p>",
+        { danger: true, confirmLabel: "Regenerate" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
 
-    fetch("/api/settings/webhook-secret", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-    })
-        .then(function(resp) {
-            return resp.json().then(function(data) {
-                return { ok: resp.ok, data: data };
+        fetch("/api/settings/webhook-secret", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+        })
+            .then(function(resp) {
+                return resp.json().then(function(data) {
+                    return { ok: resp.ok, data: data };
+                });
+            })
+            .then(function(result) {
+                if (result.ok) {
+                    var secretInput = document.getElementById("webhook-secret");
+                    if (secretInput) secretInput.value = result.data.secret || "";
+                    // Hide the masked hint — the full secret is now visible.
+                    var hint = document.getElementById("webhook-secret-hint");
+                    if (hint) hint.style.display = "none";
+                    showToast("Webhook secret regenerated — copy it now, it won't be shown again", "success");
+                } else {
+                    showToast(result.data.error || "Failed to regenerate secret", "error");
+                }
+            })
+            .catch(function() {
+                showToast("Network error -- could not regenerate secret", "error");
             });
-        })
-        .then(function(result) {
-            if (result.ok) {
-                var secretInput = document.getElementById("webhook-secret");
-                if (secretInput) secretInput.value = result.data.secret || "";
-                // Hide the masked hint — the full secret is now visible.
-                var hint = document.getElementById("webhook-secret-hint");
-                if (hint) hint.style.display = "none";
-                showToast("Webhook secret regenerated — copy it now, it won't be shown again", "success");
-            } else {
-                showToast(result.data.error || "Failed to regenerate secret", "error");
-            }
-        })
-        .catch(function() {
-            showToast("Network error -- could not regenerate secret", "error");
-        });
+    });
 }
 
 function copyWebhookURL() {
@@ -1070,30 +1116,36 @@ function importConfig() {
         return;
     }
 
-    if (!confirm("Import will overwrite matching settings. Continue?")) return;
+    showConfirm(
+        "Import Configuration",
+        "<p>Import will overwrite matching settings. Continue?</p>",
+        { confirmLabel: "Import" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
 
-    var file = fileInput.files[0];
-    var reader = new FileReader();
-    reader.onload = function(e) {
-        fetch("/api/config/import", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: e.target.result
-        })
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (data.error) {
-                    showToast(data.error, "error");
-                } else {
-                    showToast(data.message || "Configuration imported", "success");
-                    setTimeout(function() { location.reload(); }, 1000);
-                }
+        var file = fileInput.files[0];
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            fetch("/api/config/import", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: e.target.result
             })
-            .catch(function() {
-                showToast("Import failed", "error");
-            });
-    };
-    reader.readAsText(file);
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.error) {
+                        showToast(data.error, "error");
+                    } else {
+                        showToast(data.message || "Configuration imported", "success");
+                        setTimeout(function() { location.reload(); }, 1000);
+                    }
+                })
+                .catch(function() {
+                    showToast("Import failed", "error");
+                });
+        };
+        reader.readAsText(file);
+    });
 }
 
 // --- Dashboard Column Config ---
@@ -1155,6 +1207,164 @@ function updateDashboardColumnsPreview(cols) {
     }
 }
 
+/* ------------------------------------------------------------
+   Scanner & Verifier settings
+   ------------------------------------------------------------ */
+
+function loadScannerSettings() {
+    fetch("/api/settings/scanner")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var modeEl = document.getElementById("scanner-mode");
+            var threshEl = document.getElementById("scanner-threshold");
+            var pathEl = document.getElementById("trivy-path");
+            var preview = document.getElementById("scanner-preview");
+
+            if (modeEl) modeEl.value = data.mode || "disabled";
+            if (threshEl) threshEl.value = data.threshold || "HIGH";
+            if (pathEl) pathEl.value = data.trivy_path || "trivy";
+            if (preview) {
+                if (data.mode === "disabled" || !data.mode) {
+                    preview.textContent = "Disabled";
+                } else {
+                    preview.textContent = data.mode + " (threshold: " + (data.threshold || "HIGH") + ")";
+                }
+            }
+        })
+        .catch(function() { /* ignore */ });
+}
+
+function saveScannerSettings() {
+    var mode = document.getElementById("scanner-mode");
+    var threshold = document.getElementById("scanner-threshold");
+    var trivyPath = document.getElementById("trivy-path");
+
+    var body = {};
+    if (mode) body.mode = mode.value;
+    if (threshold) body.threshold = threshold.value;
+    if (trivyPath && trivyPath.value) body.trivy_path = trivyPath.value;
+
+    fetch("/api/settings/scanner", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    })
+    .then(function(r) {
+        if (!r.ok) return r.json().then(function(e) { throw new Error(e.error); });
+        return r.json();
+    })
+    .then(function() {
+        showToast("Scanner settings saved", "success");
+        loadScannerSettings();
+    })
+    .catch(function(err) { showToast("Failed: " + err.message, "error"); });
+}
+
+function loadVerifierSettings() {
+    fetch("/api/settings/verifier")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var modeEl = document.getElementById("verify-mode");
+            var pathEl = document.getElementById("cosign-path");
+            var keylessEl = document.getElementById("cosign-keyless");
+            var keyPathEl = document.getElementById("cosign-key-path");
+            var preview = document.getElementById("verifier-preview");
+
+            if (modeEl) modeEl.value = data.mode || "disabled";
+            if (pathEl) pathEl.value = data.cosign_path || "cosign";
+            if (keylessEl) {
+                keylessEl.checked = data.keyless === "true";
+                var text = document.getElementById("cosign-keyless-text");
+                if (text) text.textContent = data.keyless === "true" ? "On" : "Off";
+            }
+            if (keyPathEl) keyPathEl.value = data.key_path || "";
+            if (preview) {
+                if (data.mode === "disabled" || !data.mode) {
+                    preview.textContent = "Disabled";
+                } else {
+                    var label = data.mode === "enforce" ? "Enforce" : "Warn";
+                    preview.textContent = label + (data.keyless === "true" ? " (keyless)" : " (key)");
+                }
+            }
+        })
+        .catch(function() { /* ignore */ });
+}
+
+function saveVerifierSettings() {
+    var mode = document.getElementById("verify-mode");
+    var cosignPath = document.getElementById("cosign-path");
+    var keyless = document.getElementById("cosign-keyless");
+    var keyPath = document.getElementById("cosign-key-path");
+
+    var body = {};
+    if (mode) body.mode = mode.value;
+    if (cosignPath && cosignPath.value) body.cosign_path = cosignPath.value;
+    if (keyless) body.keyless = keyless.checked;
+    if (keyPath) body.key_path = keyPath.value;
+
+    fetch("/api/settings/verifier", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    })
+    .then(function(r) {
+        if (!r.ok) return r.json().then(function(e) { throw new Error(e.error); });
+        return r.json();
+    })
+    .then(function() {
+        showToast("Verifier settings saved", "success");
+        loadVerifierSettings();
+    })
+    .catch(function(err) { showToast("Failed: " + err.message, "error"); });
+}
+
+function loadRetrySettings() {
+    fetch("/api/settings/notifications/retry")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var countEl = document.getElementById("retry-count");
+            var backoffEl = document.getElementById("retry-backoff");
+            var preview = document.getElementById("retry-preview");
+
+            if (countEl) countEl.value = data.count || "0";
+            if (backoffEl) backoffEl.value = data.backoff || "2s";
+            if (preview) {
+                var count = parseInt(data.count || "0", 10);
+                if (count === 0) {
+                    preview.textContent = "Disabled";
+                } else {
+                    preview.textContent = count + (count === 1 ? " retry" : " retries") + ", " + (data.backoff || "2s") + " backoff";
+                }
+            }
+        })
+        .catch(function() { /* ignore */ });
+}
+
+function saveRetrySettings() {
+    var count = document.getElementById("retry-count");
+    var backoff = document.getElementById("retry-backoff");
+
+    var body = {
+        count: count ? count.value : "0",
+        backoff: backoff ? backoff.value : "2s"
+    };
+
+    fetch("/api/settings/notifications/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+    })
+    .then(function(r) {
+        if (!r.ok) return r.json().then(function(e) { throw new Error(e.error); });
+        return r.json();
+    })
+    .then(function() {
+        showToast("Retry settings saved", "success");
+        loadRetrySettings();
+    })
+    .catch(function(err) { showToast("Failed: " + err.message, "error"); });
+}
+
 export {
     initSettingsPage,
     onPollIntervalChange,
@@ -1196,5 +1406,12 @@ export {
     exportConfig,
     importConfig,
     loadDashboardColumns,
-    saveDashboardColumns
+    saveDashboardColumns,
+    loadScannerSettings,
+    saveScannerSettings,
+    loadVerifierSettings,
+    saveVerifierSettings,
+    loadRetrySettings,
+    saveRetrySettings,
+    toggleAdvanced
 };

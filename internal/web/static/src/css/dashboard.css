@@ -377,6 +377,181 @@ details[open] > .accordion-header .accordion-chevron {
     font-size: 0.85rem;
 }
 
+/* Container detail — log viewer */
+
+.log-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-2);
+}
+
+.log-toolbar-left {
+    flex: 1;
+}
+
+.log-toolbar-right {
+    flex-shrink: 0;
+}
+
+.log-filter-input {
+    width: 100%;
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--md-shape-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--fg-primary);
+    font-size: 0.8rem;
+    font-family: inherit;
+}
+
+.log-filter-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.log-filter-input::placeholder {
+    color: var(--fg-muted);
+}
+
+.log-scroll-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.log-scroll-toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+}
+
+.log-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.log-lines-label {
+    font-size: 0.8rem;
+    color: var(--fg-secondary);
+}
+
+.log-lines-select {
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--md-shape-xs);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--fg-primary);
+    font-size: 0.8rem;
+}
+
+.log-divider {
+    border-left: 1px solid var(--border);
+    height: 1.5rem;
+}
+
+.log-viewer {
+    background: var(--md-surface-container-lowest);
+    border-radius: var(--md-shape-sm);
+    overflow-y: auto;
+    height: 60vh;
+    min-height: 300px;
+    max-height: 800px;
+    font-family: 'Menlo', 'Consolas', 'Monaco', 'Liberation Mono', monospace;
+    font-size: 0.78rem;
+    line-height: 1;
+}
+
+.log-placeholder {
+    padding: 2rem;
+    text-align: center;
+    color: var(--fg-muted);
+    font-family: inherit;
+    font-size: 0.85rem;
+}
+
+.log-line {
+    display: flex;
+    padding: 0.2rem 0.75rem;
+    border-bottom: 1px solid var(--md-surface-container);
+    gap: 0.75rem;
+    min-height: 1.4rem;
+    align-items: baseline;
+}
+
+.log-line:last-child {
+    border-bottom: none;
+}
+
+.log-line:hover {
+    background: var(--md-hover-state);
+}
+
+.log-line-ts {
+    color: var(--fg-muted);
+    flex-shrink: 0;
+    white-space: nowrap;
+    font-size: 0.72rem;
+}
+
+.log-line-msg {
+    color: var(--fg-primary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    flex: 1;
+}
+
+/* Log level colouring — left border accent */
+.log-line[data-level="error"] {
+    border-left: 3px solid var(--error);
+    background: var(--error-bg);
+}
+
+.log-line[data-level="warn"] {
+    border-left: 3px solid var(--warning);
+    background: var(--warning-bg);
+}
+
+.log-line[data-level="info"] {
+    border-left: 3px solid var(--info);
+    background: var(--info-bg);
+}
+
+.log-line[data-level="debug"] {
+    border-left: 3px solid var(--fg-muted);
+    opacity: 0.7;
+}
+
+/* Level keyword highlight within the message */
+.log-level-tag {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+}
+
+.log-line[data-level="error"] .log-level-tag { color: var(--error); }
+.log-line[data-level="warn"] .log-level-tag { color: var(--warning); }
+.log-line[data-level="info"] .log-level-tag { color: var(--info); }
+.log-line[data-level="debug"] .log-level-tag { color: var(--fg-muted); }
+
+/* Reconnect/system messages */
+.log-line-system {
+    display: flex;
+    padding: 0.3rem 0.75rem;
+    color: var(--fg-muted);
+    font-style: italic;
+    font-size: 0.75rem;
+    justify-content: center;
+    border-bottom: 1px solid var(--md-surface-container);
+}
+
 /* Legacy detail grid (kept for other pages if used) */
 
 .detail-summary {
@@ -1071,4 +1246,87 @@ table.managing .td-checkbox {
     background: var(--border);
     margin: 0 var(--sp-2);
     vertical-align: middle;
+}
+
+
+/* --------------------------------------------------------------------------
+   Version Severity Badges
+   -------------------------------------------------------------------------- */
+
+.severity-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    font-size: 0.55rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+
+.severity-major {
+    background: var(--badge-error-bg);
+    color: var(--badge-error-text);
+}
+
+.severity-minor {
+    background: var(--badge-warning-bg);
+    color: var(--badge-warning-text);
+}
+
+.severity-patch {
+    background: var(--badge-success-bg);
+    color: var(--badge-success-text);
+}
+
+.severity-build {
+    background: var(--bg-hover);
+    color: var(--fg-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Row Quick Actions — visible on hover, always on mobile
+   -------------------------------------------------------------------------- */
+
+.col-actions {
+    text-align: center;
+    vertical-align: middle;
+}
+
+.row-actions {
+    display: inline-flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+
+.container-row:hover .row-actions {
+    opacity: 1;
+}
+
+.row-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+    transition: color 150ms, background 150ms;
+    padding: 0;
+    text-decoration: none;
+}
+
+.row-action-btn:hover {
+    color: var(--accent);
+    background: var(--bg-hover);
+}
+
+.row-action-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
 }

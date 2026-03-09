@@ -22,7 +22,10 @@ func (s *Store) ListHooks(containerName string) ([]HookEntry, error) {
 	prefix := []byte(containerName + "::")
 
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketHooks)
+		b, err := bucket(tx, bucketHooks)
+		if err != nil {
+			return err
+		}
 		c := b.Cursor()
 		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
 			var entry HookEntry
@@ -43,7 +46,10 @@ func (s *Store) SaveHook(hook HookEntry) error {
 		return fmt.Errorf("marshal hook: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketHooks)
+		b, err := bucket(tx, bucketHooks)
+		if err != nil {
+			return err
+		}
 		key := []byte(hook.ContainerName + "::" + hook.Phase)
 		return b.Put(key, data)
 	})
@@ -52,7 +58,10 @@ func (s *Store) SaveHook(hook HookEntry) error {
 // DeleteHook removes a hook for a container.
 func (s *Store) DeleteHook(containerName, phase string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketHooks)
+		b, err := bucket(tx, bucketHooks)
+		if err != nil {
+			return err
+		}
 		key := []byte(containerName + "::" + phase)
 		return b.Delete(key)
 	})

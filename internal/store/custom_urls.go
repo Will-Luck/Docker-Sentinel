@@ -23,7 +23,10 @@ type PortOverride struct {
 func (s *Store) GetPortConfig(name string) (*PortConfig, error) {
 	var cfg *PortConfig
 	err := s.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketPortConfig)
+		b, err := bucket(tx, bucketPortConfig)
+		if err != nil {
+			return err
+		}
 		v := b.Get([]byte(name))
 		if v == nil {
 			return nil
@@ -43,7 +46,10 @@ func (s *Store) GetPortConfig(name string) (*PortConfig, error) {
 // Creates a new PortConfig if one doesn't exist.
 func (s *Store) SetPortOverride(name string, hostPort uint16, override PortOverride) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketPortConfig)
+		b, err := bucket(tx, bucketPortConfig)
+		if err != nil {
+			return err
+		}
 		key := []byte(name)
 		portKey := fmt.Sprintf("%d", hostPort)
 
@@ -74,7 +80,10 @@ func (s *Store) SetPortOverride(name string, hostPort uint16, override PortOverr
 // If no ports remain, the entire entry is deleted.
 func (s *Store) DeletePortOverride(name string, hostPort uint16) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketPortConfig)
+		b, err := bucket(tx, bucketPortConfig)
+		if err != nil {
+			return err
+		}
 		key := []byte(name)
 		portKey := fmt.Sprintf("%d", hostPort)
 
@@ -110,7 +119,11 @@ func (s *Store) DeletePortOverride(name string, hostPort uint16) error {
 func (s *Store) AllPortConfigs() (map[string]*PortConfig, error) {
 	result := make(map[string]*PortConfig)
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketPortConfig).ForEach(func(k, v []byte) error {
+		b, err := bucket(tx, bucketPortConfig)
+		if err != nil {
+			return err
+		}
+		return b.ForEach(func(k, v []byte) error {
 			data := make([]byte, len(v))
 			copy(data, v)
 			var cfg PortConfig

@@ -146,8 +146,8 @@ func (s *Server) apiLogs(w http.ResponseWriter, r *http.Request) {
 // Used by the frontend to do targeted row replacement instead of full page reloads.
 func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "name required")
+	if !isValidContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name")
 		return
 	}
 	hostFilter := r.URL.Query().Get("host")
@@ -198,6 +198,17 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					resolved = v
 				}
 			}
+			var severity string
+			if pendingNames[n] {
+				if newestVersion == "" {
+					severity = "build"
+				} else {
+					severity = classifySeverity(tag, newestVersion)
+					if severity == "" && resolved != "" {
+						severity = classifySeverity(resolved, newestVersion)
+					}
+				}
+			}
 			v := containerView{
 				ID:              c.ID,
 				Name:            n,
@@ -210,9 +221,12 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				Maintenance:     maintenance,
 				HasUpdate:       pendingNames[n],
 				DigestOnly:      pendingNames[n] && newestVersion == "",
+				Severity:        severity,
 				IsSelf:          c.Labels["sentinel.self"] == "true",
 				Stack:           c.Labels["com.docker.compose.project"],
 				Registry:        registry.RegistryHost(c.Image),
+				Ports:           c.Ports,
+				HostAddress:     s.localHostAddr(r),
 			}
 			v.PortURLs = s.resolvePortURLs(n, s.localHostAddr(r), "", c.Ports)
 			targetView = &v
@@ -241,6 +255,19 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 						newestVersion = pend.NewerVersions[0]
 					}
 				}
+				var rcSeverity string
+				if hasUpdate {
+					if newestVersion == "" {
+						rcSeverity = "build"
+					} else {
+						rcSeverity = classifySeverity(tag, newestVersion)
+						if rcSeverity == "" {
+							if v := rc.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
+								rcSeverity = classifySeverity(v, newestVersion)
+							}
+						}
+					}
+				}
 				// Resolve agent IP for port links and NPM lookup.
 				var rcHostAddr string
 				if s.deps.Cluster != nil {
@@ -257,6 +284,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					State:         rc.State,
 					HasUpdate:     hasUpdate,
 					DigestOnly:    hasUpdate && newestVersion == "",
+					Severity:      rcSeverity,
 					IsSelf:        rc.Labels["sentinel.self"] == "true",
 					HostID:        rc.HostID,
 					HostName:      rc.HostName,
@@ -486,7 +514,7 @@ func (s *Server) withAuthDetail(r *http.Request, data *containerDetailData) {
 // handleContainerDetail renders the per-container detail page.
 func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
+	if !isValidContainerName(name) {
 		s.renderError(w, http.StatusBadRequest, "Bad Request", "Container name is required.")
 		return
 	}
@@ -526,9 +554,25 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		var newestVersion string
+		var hasUpdate bool
 		queueKey := rc.HostID + "::" + rc.Name
-		if pend, ok := s.deps.Queue.Get(queueKey); ok && len(pend.NewerVersions) > 0 {
-			newestVersion = pend.NewerVersions[0]
+		if pend, ok := s.deps.Queue.Get(queueKey); ok {
+			hasUpdate = true
+			if len(pend.NewerVersions) > 0 {
+				newestVersion = pend.NewerVersions[0]
+			}
+		}
+
+		var detailSeverity string
+		if hasUpdate {
+			if newestVersion == "" {
+				detailSeverity = "build"
+			} else {
+				detailSeverity = classifySeverity(tag, newestVersion)
+				if detailSeverity == "" && resolved != "" {
+					detailSeverity = classifySeverity(resolved, newestVersion)
+				}
+			}
 		}
 
 		// Resolve agent IP for port links and NPM lookup.
@@ -546,7 +590,9 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			NewestVersion:   newestVersion,
 			Policy:          policy,
 			State:           rc.State,
-			HasUpdate:       newestVersion != "",
+			HasUpdate:       hasUpdate,
+			DigestOnly:      hasUpdate && newestVersion == "",
+			Severity:        detailSeverity,
 			IsSelf:          rc.Labels["sentinel.self"] == "true",
 			HostID:          rc.HostID,
 			HostName:        rc.HostName,
@@ -601,18 +647,43 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		var localNewest string
+		var localHasUpdate bool
+		if pend, ok := s.deps.Queue.Get(name); ok {
+			localHasUpdate = true
+			if len(pend.NewerVersions) > 0 {
+				localNewest = pend.NewerVersions[0]
+			}
+		}
+		var localSeverity string
+		if localHasUpdate {
+			if localNewest == "" {
+				localSeverity = "build"
+			} else {
+				localSeverity = classifySeverity(detailTag, localNewest)
+				if localSeverity == "" && detailResolved != "" {
+					localSeverity = classifySeverity(detailResolved, localNewest)
+				}
+			}
+		}
+
 		view = containerView{
 			ID:              found.ID,
 			Name:            containerName(*found),
 			Image:           found.Image,
 			Tag:             detailTag,
 			ResolvedVersion: detailResolved,
+			NewestVersion:   localNewest,
 			Policy:          detailPolicy,
 			State:           found.State,
 			Maintenance:     maintenance,
+			HasUpdate:       localHasUpdate,
+			DigestOnly:      localHasUpdate && localNewest == "",
+			Severity:        localSeverity,
 			IsSelf:          found.Labels["sentinel.self"] == "true",
 			Registry:        registry.RegistryHost(found.Image),
 			Ports:           found.Ports,
+			HostAddress:     s.localHostAddr(r),
 		}
 		image = found.Image
 	}
@@ -705,7 +776,7 @@ func (s *Server) withAuthServiceDetail(r *http.Request, data *serviceDetailData)
 // handleServiceDetail renders the per-service detail page.
 func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
+	if !isValidContainerName(name) {
 		s.renderError(w, http.StatusBadRequest, "Bad Request", "Service name is required.")
 		return
 	}

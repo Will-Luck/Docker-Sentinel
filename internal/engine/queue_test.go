@@ -76,6 +76,47 @@ func TestQueueReplaceExisting(t *testing.T) {
 	}
 }
 
+func TestQueueKeyLocalContainer(t *testing.T) {
+	u := PendingUpdate{ContainerName: "nginx"}
+	if got := u.Key(); got != "nginx" {
+		t.Errorf("Key() = %q, want %q", got, "nginx")
+	}
+}
+
+func TestQueueKeyRemoteContainer(t *testing.T) {
+	u := PendingUpdate{ContainerName: "nginx", HostID: "host1"}
+	if got := u.Key(); got != "host1::nginx" {
+		t.Errorf("Key() = %q, want %q", got, "host1::nginx")
+	}
+}
+
+func TestQueueGetByHostScopedKey(t *testing.T) {
+	s := testStore(t)
+	q := NewQueue(s, nil, nil)
+
+	q.Add(PendingUpdate{ContainerName: "nginx", HostID: "host1", ContainerID: "aaa"})
+	q.Add(PendingUpdate{ContainerName: "nginx", HostID: "host2", ContainerID: "bbb"})
+
+	if q.Len() != 2 {
+		t.Fatalf("Len() = %d, want 2 (different hosts should not collide)", q.Len())
+	}
+
+	u1, ok := q.Get("host1::nginx")
+	if !ok || u1.ContainerID != "aaa" {
+		t.Errorf("Get(host1::nginx) = %+v, ok=%v, want ContainerID=aaa", u1, ok)
+	}
+	u2, ok := q.Get("host2::nginx")
+	if !ok || u2.ContainerID != "bbb" {
+		t.Errorf("Get(host2::nginx) = %+v, ok=%v, want ContainerID=bbb", u2, ok)
+	}
+
+	// Local "nginx" (no host) should not be found.
+	_, ok = q.Get("nginx")
+	if ok {
+		t.Error("Get(nginx) should not find host-scoped entries")
+	}
+}
+
 func TestQueuePersistence(t *testing.T) {
 	s := testStore(t)
 
