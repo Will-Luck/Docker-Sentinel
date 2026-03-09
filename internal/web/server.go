@@ -254,6 +254,7 @@ func (s *Server) parseTemplates() {
 		"changelogURL": ChangelogURL,
 		"versionURL":   VersionURL,
 		"imageTag":     ImageTag,
+		"classifySev":  classifySeverity,
 		"sub":          func(a, b int) int { return a - b },
 		"serviceOrContainer": func(kind, name string, hostID ...string) string {
 			base := "/container/" + name

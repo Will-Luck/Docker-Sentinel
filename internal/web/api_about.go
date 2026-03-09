@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -29,6 +30,8 @@ func (s *Server) apiAbout(w http.ResponseWriter, r *http.Request) {
 		Snapshots      int           `json:"snapshots"`
 		Channels       []channelInfo `json:"channels"`
 		Registries     []string      `json:"registries"`
+		DockerHealth   string        `json:"docker_health"`
+		DBHealth       string        `json:"db_health"`
 	}
 
 	// Only include commit hash in response if it's actually known.
@@ -117,6 +120,31 @@ func (s *Server) apiAbout(w http.ResponseWriter, r *http.Request) {
 				resp.Registries = append(resp.Registries, c.Registry)
 			}
 		}
+	}
+
+	// Health checks — reuse readiness logic.
+	if s.deps.SettingsStore != nil {
+		_, err := s.deps.SettingsStore.LoadSetting("_healthcheck")
+		if err != nil {
+			resp.DBHealth = err.Error()
+		} else {
+			resp.DBHealth = "ok"
+		}
+	} else {
+		resp.DBHealth = "not configured"
+	}
+
+	if s.deps.Docker != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		_, err := s.deps.Docker.ListContainers(ctx)
+		cancel()
+		if err != nil {
+			resp.DockerHealth = err.Error()
+		} else {
+			resp.DockerHealth = "ok"
+		}
+	} else {
+		resp.DockerHealth = "not configured"
 	}
 
 	writeJSON(w, http.StatusOK, resp)

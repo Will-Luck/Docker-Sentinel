@@ -6,10 +6,45 @@
 import { showToast, showConfirm } from "./utils.js";
 
 /* ------------------------------------------------------------
+   Show Advanced toggle
+   ------------------------------------------------------------ */
+
+function toggleAdvanced() {
+    var body = document.body;
+    var btn = document.getElementById('advanced-toggle');
+    if (!btn) return;
+    var isSimple = body.classList.contains('settings-simple');
+    if (isSimple) {
+        body.classList.remove('settings-simple');
+        btn.textContent = 'Hide Advanced';
+        btn.classList.add('active');
+        localStorage.setItem('sentinel-show-advanced', 'true');
+    } else {
+        body.classList.add('settings-simple');
+        btn.textContent = 'Show Advanced';
+        btn.classList.remove('active');
+        localStorage.setItem('sentinel-show-advanced', 'false');
+    }
+}
+
+/* ------------------------------------------------------------
    2. Settings Page — initSettingsPage
    ------------------------------------------------------------ */
 
 function initSettingsPage() {
+    // Init Show Advanced toggle — default to simple mode.
+    var advBtn = document.getElementById('advanced-toggle');
+    if (advBtn) {
+        var showAdvanced = localStorage.getItem('sentinel-show-advanced') === 'true';
+        if (!showAdvanced) {
+            document.body.classList.add('settings-simple');
+            advBtn.textContent = 'Show Advanced';
+        } else {
+            advBtn.textContent = 'Hide Advanced';
+            advBtn.classList.add('active');
+        }
+    }
+
     var themeSelect = document.getElementById("theme-select");
     var stackSelect = document.getElementById("stack-default");
     var sectionSelect = document.getElementById("section-default");
@@ -1377,5 +1412,6 @@ export {
     loadVerifierSettings,
     saveVerifierSettings,
     loadRetrySettings,
-    saveRetrySettings
+    saveRetrySettings,
+    toggleAdvanced
 };

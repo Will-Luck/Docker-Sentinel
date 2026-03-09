@@ -160,6 +160,11 @@
         background: var(--bg-hover);
     }
 
+    /* Always show row actions on touch devices */
+    .row-actions {
+        opacity: 1;
+    }
+
     .nav {
         position: relative;
     }
@@ -263,6 +268,11 @@
 
     /* Nav user dropdown: hide username on small screens */
     .nav-user-btn span:not(.nav-user-chevron):not(.nav-user-role) {
+        display: none;
+    }
+
+    /* Hide actions column on very small screens */
+    .col-actions {
         display: none;
     }
 }

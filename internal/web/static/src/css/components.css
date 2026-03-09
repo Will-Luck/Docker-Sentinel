@@ -178,6 +178,14 @@ a.stat-card-link:hover { border-color: var(--warning); }
 .stat-value.warning { color: var(--warning); }
 .stat-value.error   { color: var(--error); }
 .stat-value.info    { color: var(--info); }
+
+/* "All up to date" celebration state — checkmark + 0 */
+.stat-all-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
 .stat-value.stat-changed {
     animation: statPulse 400ms var(--md-motion-emphasized-decelerate);
 }
@@ -497,15 +505,19 @@ a.version-link:hover { border-bottom-style: solid; }
     to { transform: rotate(360deg); }
 }
 
-/* Row fade-in after live update */
+/* Row fade-in after live update — green flash then fade to transparent */
 
 .row-updated {
-    animation: rowFadeIn 200ms var(--md-motion-emphasized-decelerate);
+    animation: rowFlash 600ms ease-out;
 }
 
-@keyframes rowFadeIn {
-    from { opacity: 0.4; }
-    to { opacity: 1; }
+@keyframes rowFlash {
+    0% {
+        background: color-mix(in srgb, var(--success) 20%, transparent);
+    }
+    100% {
+        background: transparent;
+    }
 }
 
 .btn-success {
