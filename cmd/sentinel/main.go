@@ -399,6 +399,20 @@ func main() {
 		}
 	}
 
+	// Load notification retry settings (default: disabled).
+	if countStr, _ := db.LoadSetting(store.SettingNotifyRetryCount); countStr != "" {
+		count, _ := strconv.Atoi(countStr)
+		backoffStr, _ := db.LoadSetting(store.SettingNotifyRetryBackoff)
+		backoff, parseErr := time.ParseDuration(backoffStr)
+		if parseErr != nil {
+			backoff = 2 * time.Second
+		}
+		notifier.SetRetry(count, backoff)
+		if count > 0 {
+			log.Info("notification retry enabled", "count", count, "backoff", backoff.String())
+		}
+	}
+
 	clk := clock.Real{}
 	checker := registry.NewChecker(client, log)
 	rateTracker := registry.NewRateLimitTracker()

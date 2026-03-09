@@ -310,6 +310,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/auth/oidc/login", s.apiOIDCLogin)
 	s.mux.HandleFunc("GET /api/auth/oidc/callback", s.apiOIDCCallback)
 	s.mux.HandleFunc("GET /api/auth/oidc/available", s.apiOIDCAvailable)
+	s.mux.HandleFunc("GET /healthz", s.apiHealthz)
+	s.mux.HandleFunc("GET /readyz", s.apiReadyz)
+	s.mux.HandleFunc("GET /api/history/feed", s.apiHistoryFeed)
 
 	// --- Auth-only routes (authenticated, no specific permission) ---
 	s.mux.Handle("GET /account", authed(s.handleAccount))
@@ -349,6 +352,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/events", perm(auth.PermContainersView, s.apiSSE))
 	s.mux.Handle("GET /api/queue", perm(auth.PermContainersView, s.apiQueue))
 	s.mux.Handle("GET /api/queue/count", perm(auth.PermContainersView, s.apiQueueCount))
+	s.mux.Handle("GET /api/queue/export", perm(auth.PermContainersView, s.apiQueueExport))
 	s.mux.Handle("GET /api/last-scan", perm(auth.PermContainersView, s.apiLastScan))
 
 	// containers.update
@@ -466,6 +470,10 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/scanner", perm(auth.PermSettingsModify, s.apiScannerSettingsSave))
 	s.mux.Handle("GET /api/settings/verifier", perm(auth.PermSettingsView, s.apiVerifierSettings))
 	s.mux.Handle("POST /api/settings/verifier", perm(auth.PermSettingsModify, s.apiVerifierSettingsSave))
+
+	// Notification retry settings
+	s.mux.Handle("GET /api/settings/notifications/retry", perm(auth.PermSettingsView, s.apiRetrySettings))
+	s.mux.Handle("POST /api/settings/notifications/retry", perm(auth.PermSettingsModify, s.apiRetrySettingsSave))
 
 	// Cluster settings — always available so the admin can enable/configure cluster
 	// even when the cluster server is not yet running.

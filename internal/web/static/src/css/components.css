@@ -587,6 +587,14 @@ a.version-link:hover { border-bottom-style: solid; }
     min-width: 100px;
 }
 
+.bulk-divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border);
+    margin: 0 8px;
+    flex-shrink: 0;
+}
+
 @keyframes slideUp {
     from {
         opacity: 0;

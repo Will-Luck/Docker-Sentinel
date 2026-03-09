@@ -351,6 +351,10 @@
             <option value="pinned">pinned</option>
         </select>
         <button class="btn btn-success" onclick="applyBulkPolicy()">Apply Policy</button>
+        <span class="bulk-divider"></span>
+        <button class="btn" onclick="bulkContainerAction('restart')">Restart</button>
+        <button class="btn btn-error" onclick="bulkContainerAction('stop')">Stop</button>
+        <button class="btn btn-success" onclick="bulkContainerAction('start')">Start</button>
         <button class="btn" onclick="clearSelection()">Cancel</button>
     </div>
 

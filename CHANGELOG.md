@@ -59,6 +59,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verification are now called during the update flow. Pre-update scan blocks
   deploys exceeding the severity threshold; enforce mode rejects unsigned images.
   Settings API endpoints and UI accordion sections added for configuration.
+- **Queue CSV/JSON export:** Export pending updates from the queue page as CSV
+  or JSON, matching the existing history export pattern.
+- **Health check endpoints:** `/healthz` (liveness) and `/readyz` (readiness)
+  probes for Kubernetes and load balancer integration. Readiness checks DB and
+  Docker socket connectivity. Both endpoints skip authentication.
+- **Queue keyboard shortcuts:** `j`/`k` navigation, `a`/`r`/`i` for
+  approve/reject/ignore, Enter to toggle details, `?` for help overlay.
+- **Atom feed for update history:** Subscribe to updates via Atom 1.0 feed at
+  `/api/history/feed?token=xxx`. Authenticated via API token in query parameter.
+  Auto-discovery link on the history page.
+- **Bulk container actions:** Restart, stop, and start buttons in manage mode
+  bulk bar. Sequential execution with 200ms stagger, progress counter, and
+  summary toast on completion.
+- **Notification retry with backoff:** Configurable retry (0-3 attempts) with
+  exponential backoff for all notification providers. Initial backoff and max
+  retries configurable in the Notifications settings tab.
 
 ### Changed
 - **BoltDB nil-bucket safety:** All `tx.Bucket()` calls across the persistence
