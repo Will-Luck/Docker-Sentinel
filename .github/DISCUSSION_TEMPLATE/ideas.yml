@@ -1,0 +1,13 @@
+title: "[Idea] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    attributes:
+      label: Idea
+      description: Describe your idea or suggestion.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Use case
+      description: What problem would this solve for you?
