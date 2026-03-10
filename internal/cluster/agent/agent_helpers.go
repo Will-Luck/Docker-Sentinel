@@ -140,6 +140,107 @@ func configFromInspect(inspect *container.InspectResponse, targetImage string) (
 	return &cfgCopy, hostCfg, netCfg
 }
 
+// selfUpdateContainer uses the rename-before-replace pattern to update the
+// agent's own container without killing itself mid-update. The flow:
+//  1. Inspect to capture full config
+//  2. Pull the new image
+//  3. Rename self out of the way (container keeps running)
+//  4. Create new container with original name + new image
+//  5. Connect extra networks beyond the primary
+//  6. Start the new container
+//  7. Old agent exits naturally (the new container takes over)
+//
+// On failure at step 4 or 6, the old container is renamed back.
+func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage string) (oldImage, oldDigest, newDigest string, err error) {
+	cID, err := a.findContainerID(ctx, name)
+	if err != nil {
+		return "", "", "", fmt.Errorf("find container %s: %w", name, err)
+	}
+
+	inspect, err := a.docker.InspectContainer(ctx, cID)
+	if err != nil {
+		return "", "", "", fmt.Errorf("inspect %s: %w", name, err)
+	}
+
+	oldImage = inspect.Config.Image
+	oldDigest, _ = a.docker.ImageDigest(ctx, oldImage)
+
+	// Pull first, before any destructive changes.
+	if err := a.docker.PullImage(ctx, targetImage); err != nil {
+		return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+	}
+	newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
+
+	// Rename self out of the way. The container keeps running.
+	oldName := fmt.Sprintf("%s-old-%d", name, time.Now().Unix())
+	a.log.Info("self-update: renaming self", "from", name, "to", oldName)
+	if err := a.docker.RenameContainer(ctx, cID, oldName); err != nil {
+		return oldImage, oldDigest, newDigest, fmt.Errorf("rename self: %w", err)
+	}
+
+	// Build config for the replacement container.
+	cfg, hostCfg, netCfg := configFromInspect(&inspect, targetImage)
+
+	// Create new container with the original name.
+	a.log.Info("self-update: creating replacement", "name", name, "image", targetImage)
+	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, netCfg)
+	if err != nil {
+		a.log.Error("self-update: create failed, rolling back rename", "error", err)
+		_ = a.docker.RenameContainer(ctx, cID, name)
+		return oldImage, oldDigest, newDigest, fmt.Errorf("create replacement: %w", err)
+	}
+
+	// Connect extra networks. configFromInspect puts all networks in
+	// EndpointsConfig, but Docker only allows one at create time. The
+	// rest need NetworkConnect calls. Pick the first as primary (already
+	// in netCfg), connect the remainder.
+	if inspect.NetworkSettings != nil {
+		first := true
+		for netName := range inspect.NetworkSettings.Networks {
+			if netName == "bridge" {
+				continue
+			}
+			if first {
+				first = false
+				continue // already in the create's NetworkingConfig
+			}
+			if err := a.docker.NetworkConnect(ctx, netName, newID); err != nil {
+				a.log.Error("self-update: extra network connect failed", "network", netName, "error", err)
+				// Non-fatal: container can start without secondary networks.
+			}
+		}
+	}
+
+	// Start the replacement.
+	a.log.Info("self-update: starting replacement", "id", newID[:12])
+	if err := a.docker.StartContainer(ctx, newID); err != nil {
+		a.log.Error("self-update: start failed, rolling back", "error", err)
+		_ = a.docker.RemoveContainer(ctx, newID)
+		_ = a.docker.RenameContainer(ctx, cID, name)
+		return oldImage, oldDigest, newDigest, fmt.Errorf("start replacement: %w", err)
+	}
+
+	a.log.Info("self-update: complete, old process will exit")
+	return oldImage, oldDigest, newDigest, nil
+}
+
+// isSelfContainer checks if the named container has the sentinel.self=true
+// label, meaning it's this agent's own container.
+func (a *Agent) isSelfContainer(ctx context.Context, name string) bool {
+	cID, err := a.findContainerID(ctx, name)
+	if err != nil {
+		return false
+	}
+	inspect, err := a.docker.InspectContainer(ctx, cID)
+	if err != nil {
+		return false
+	}
+	if inspect.Config == nil {
+		return false
+	}
+	return inspect.Config.Labels["sentinel.self"] == "true"
+}
+
 // --- Helpers ---
 
 // listLocalContainers fetches all containers (regardless of state) from the

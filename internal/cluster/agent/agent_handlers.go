@@ -133,14 +133,27 @@ func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentServ
 }
 
 // handleUpdateContainer executes the full update lifecycle for a container.
-// Flow: inspect -> pull -> stop -> remove -> create -> start -> report.
+// For regular containers: inspect -> pull -> stop -> remove -> create -> start.
+// For self-containers (sentinel.self=true): uses rename-before-replace to
+// avoid killing the agent mid-update.
 func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentService_ChannelClient, req *proto.UpdateContainerRequest, requestID string) error {
 	name := req.GetContainerName()
 	targetImage := req.GetTargetImage()
 	a.log.Info("updating container", "name", name, "target", targetImage, "request_id", requestID)
 
+	isSelf := a.isSelfContainer(ctx, name)
+	if isSelf {
+		a.log.Info("detected self-container, using rename-before-replace", "name", name)
+	}
+
 	start := time.Now()
-	oldImage, oldDigest, newDigest, err := a.recreateContainer(ctx, name, targetImage)
+	var oldImage, oldDigest, newDigest string
+	var err error
+	if isSelf {
+		oldImage, oldDigest, newDigest, err = a.selfUpdateContainer(ctx, name, targetImage)
+	} else {
+		oldImage, oldDigest, newDigest, err = a.recreateContainer(ctx, name, targetImage)
+	}
 	dur := time.Since(start)
 
 	result := &proto.UpdateResult{
