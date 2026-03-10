@@ -41,6 +41,12 @@ type mockDocker struct {
 	restartCalls []string
 	restartErr   map[string]error
 
+	renameCalls []struct{ id, newName string }
+	renameErr   map[string]error
+
+	networkConnectCalls []struct{ networkID, containerID string }
+	networkConnectErr   map[string]error
+
 	pullCalls []string
 	pullErr   map[string]error
 
@@ -86,24 +92,26 @@ type mockDocker struct {
 
 func newMockDocker() *mockDocker {
 	return &mockDocker{
-		inspectResults: make(map[string]container.InspectResponse),
-		inspectErr:     make(map[string]error),
-		stopErr:        make(map[string]error),
-		removeErr:      make(map[string]error),
-		createResult:   make(map[string]string),
-		createErr:      make(map[string]error),
-		createConfigs:  make(map[string]*container.Config),
-		startErr:       make(map[string]error),
-		restartErr:     make(map[string]error),
-		pullErr:        make(map[string]error),
-		imageDigests:   make(map[string]string),
-		imageDigestErr: make(map[string]error),
-		imageIDs:       make(map[string]string),
-		imageIDErr:     make(map[string]error),
-		distDigests:    make(map[string]string),
-		distErr:        make(map[string]error),
-		removeImageErr: make(map[string]error),
-		tagImageErr:    make(map[string]error),
+		inspectResults:    make(map[string]container.InspectResponse),
+		inspectErr:        make(map[string]error),
+		stopErr:           make(map[string]error),
+		removeErr:         make(map[string]error),
+		createResult:      make(map[string]string),
+		createErr:         make(map[string]error),
+		createConfigs:     make(map[string]*container.Config),
+		startErr:          make(map[string]error),
+		restartErr:        make(map[string]error),
+		renameErr:         make(map[string]error),
+		networkConnectErr: make(map[string]error),
+		pullErr:           make(map[string]error),
+		imageDigests:      make(map[string]string),
+		imageDigestErr:    make(map[string]error),
+		imageIDs:          make(map[string]string),
+		imageIDErr:        make(map[string]error),
+		distDigests:       make(map[string]string),
+		distErr:           make(map[string]error),
+		removeImageErr:    make(map[string]error),
+		tagImageErr:       make(map[string]error),
 		execResults: make(map[string]struct {
 			exitCode int
 			output   string
@@ -184,6 +192,26 @@ func (m *mockDocker) RestartContainer(_ context.Context, id string) error {
 	m.restartCalls = append(m.restartCalls, id)
 	m.mu.Unlock()
 	if err, ok := m.restartErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) RenameContainer(_ context.Context, id string, newName string) error {
+	m.mu.Lock()
+	m.renameCalls = append(m.renameCalls, struct{ id, newName string }{id, newName})
+	m.mu.Unlock()
+	if err, ok := m.renameErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) NetworkConnect(_ context.Context, networkID string, containerID string) error {
+	m.mu.Lock()
+	m.networkConnectCalls = append(m.networkConnectCalls, struct{ networkID, containerID string }{networkID, containerID})
+	m.mu.Unlock()
+	if err, ok := m.networkConnectErr[networkID]; ok {
 		return err
 	}
 	return nil
