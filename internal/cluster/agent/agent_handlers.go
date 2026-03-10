@@ -133,14 +133,31 @@ func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentServ
 }
 
 // handleUpdateContainer executes the full update lifecycle for a container.
-// Flow: inspect -> pull -> stop -> remove -> create -> start -> report.
+// For regular containers: inspect -> pull -> stop -> remove -> create -> start.
+// For self-containers (sentinel.self=true): uses rename-before-replace to
+// avoid killing the agent mid-update.
 func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentService_ChannelClient, req *proto.UpdateContainerRequest, requestID string) error {
 	name := req.GetContainerName()
 	targetImage := req.GetTargetImage()
 	a.log.Info("updating container", "name", name, "target", targetImage, "request_id", requestID)
 
+	isSelf := a.isSelfContainer(ctx, name)
+	if isSelf {
+		a.log.Info("detected self-container, using rename-before-replace", "name", name)
+	}
+
 	start := time.Now()
-	oldImage, oldDigest, newDigest, err := a.recreateContainer(ctx, name, targetImage)
+	var oldImage, oldDigest, newDigest string
+	var oldContainerID string
+	var err error
+	if isSelf {
+		sr, selfErr := a.selfUpdateContainer(ctx, name, targetImage)
+		oldImage, oldDigest, newDigest = sr.oldImage, sr.oldDigest, sr.newDigest
+		oldContainerID = sr.oldContainerID
+		err = selfErr
+	} else {
+		oldImage, oldDigest, newDigest, err = a.recreateContainer(ctx, name, targetImage)
+	}
 	dur := time.Since(start)
 
 	result := &proto.UpdateResult{
@@ -173,7 +190,23 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 			UpdateResult: result,
 		},
 	}
-	return a.sendMsg(stream, msg)
+	if sendErr := a.sendMsg(stream, msg); sendErr != nil {
+		return sendErr
+	}
+
+	// For self-updates: stop the old container AFTER we've sent the
+	// success result over gRPC. The old container holds the BoltDB lock
+	// on the shared volume, preventing the new container from opening
+	// the database. We must stop it to release the lock. This is safe
+	// because all gRPC messages have already been sent.
+	if isSelf && err == nil && oldContainerID != "" {
+		a.log.Info("self-update: stopping old container to release DB lock", "id", oldContainerID[:12])
+		if stopErr := a.docker.StopContainer(ctx, oldContainerID, 10); stopErr != nil {
+			a.log.Error("self-update: failed to stop old container", "error", stopErr)
+		}
+	}
+
+	return nil
 }
 
 // handleContainerAction executes a stop, start, or restart action on a

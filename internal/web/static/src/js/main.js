@@ -21,6 +21,7 @@ import {
     initTheme,
     applyTheme,
     initAccordionPersistence,
+    openAccordionFromHash,
     initPauseBanner,
     resumeScanning,
     checkPauseState,
@@ -463,6 +464,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     initSettingsPage();
     initAccordionPersistence();
+    openAccordionFromHash();
     initQueueKeyboard();
     initDashboardKeyboard();
 

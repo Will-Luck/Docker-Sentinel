@@ -16,7 +16,8 @@ import (
 // queueResponse wraps a PendingUpdate with additional display fields.
 type queueResponse struct {
 	PendingUpdate
-	ReleaseNotesURL string `json:"release_notes_url,omitempty"`
+	ReleaseNotesURL  string `json:"release_notes_url,omitempty"`
+	ReleaseNotesBody string `json:"release_notes_body,omitempty"`
 }
 
 // apiQueue returns all pending manual approvals, enriched with release notes URLs.
@@ -32,6 +33,7 @@ func (s *Server) apiQueue(w http.ResponseWriter, r *http.Request) {
 			cancel()
 			if info != nil {
 				out[i].ReleaseNotesURL = info.URL
+				out[i].ReleaseNotesBody = info.Body
 			}
 		}
 	}

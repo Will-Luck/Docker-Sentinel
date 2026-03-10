@@ -2075,42 +2075,6 @@ table.managing .td-checkbox {
   background: var(--bg-hover);
   color: var(--fg-muted);
 }
-.col-actions {
-  text-align: center;
-  vertical-align: middle;
-}
-.row-actions {
-  display: inline-flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 150ms ease;
-}
-.container-row:hover .row-actions {
-  opacity: 1;
-}
-.row-action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--fg-muted);
-  cursor: pointer;
-  transition: color 150ms, background 150ms;
-  padding: 0;
-  text-decoration: none;
-}
-.row-action-btn:hover {
-  color: var(--accent);
-  background: var(--bg-hover);
-}
-.row-action-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
 
 /* internal/web/static/src/css/queue.css */
 .policy-select {
@@ -2238,6 +2202,20 @@ table.managing .td-checkbox {
 .accordion-value {
   font-size: 0.85rem;
   color: var(--fg-primary);
+}
+.release-notes-body {
+  margin-top: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
 }
 .accordion-versions {
   display: flex;
@@ -4106,9 +4084,6 @@ body.settings-simple [data-advanced] {
     border-bottom: none;
     background: var(--bg-hover);
   }
-  .row-actions {
-    opacity: 1;
-  }
   .nav {
     position: relative;
   }
@@ -4187,9 +4162,6 @@ body.settings-simple [data-advanced] {
     gap: var(--sp-2);
   }
   .nav-user-btn span:not(.nav-user-chevron):not(.nav-user-role) {
-    display: none;
-  }
-  .col-actions {
     display: none;
   }
 }
