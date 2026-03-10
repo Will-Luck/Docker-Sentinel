@@ -7,7 +7,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/Will-Luck/Docker-Sentinel)](https://goreportcard.com/report/github.com/Will-Luck/Docker-Sentinel)
 [![GHCR](https://img.shields.io/badge/ghcr.io-docker--sentinel-blue)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
 [![GitHub Downloads](https://img.shields.io/github/downloads/Will-Luck/Docker-Sentinel/total)](https://github.com/Will-Luck/Docker-Sentinel/releases)
-[![GHCR Image](https://ghcr-badge.egpl.dev/will-luck/docker-sentinel/size)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
+[![GHCR Pulls](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fipitio.github.io%2Fbackage%2FWill-Luck%2FDocker-Sentinel%2Fdocker-sentinel.json&query=%24.downloads&label=ghcr%20pulls)](https://github.com/Will-Luck/Docker-Sentinel/pkgs/container/docker-sentinel)
 
 A container update orchestrator with a web dashboard, written in Go. Replaces Watchtower with per-container update policies, pre-update snapshots, automatic rollback, and real-time notifications.
 
