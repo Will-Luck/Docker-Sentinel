@@ -75,9 +75,13 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	// Get current image digest for the audit trail.
 	oldDigest, _ = a.docker.ImageDigest(ctx, oldImage)
 
-	// Pull the target image.
+	// Pull the target image. If pull fails but the image is already
+	// available locally, continue (supports local/dev images).
 	if err := a.docker.PullImage(ctx, targetImage); err != nil {
-		return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+		if _, localErr := a.docker.ImageDigest(ctx, targetImage); localErr != nil {
+			return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+		}
+		a.log.Warn("pull failed but image available locally", "image", targetImage, "pull_error", err)
 	}
 
 	// Get the new image's digest.
@@ -138,6 +142,121 @@ func configFromInspect(inspect *container.InspectResponse, targetImage string) (
 	}
 
 	return &cfgCopy, hostCfg, netCfg
+}
+
+// selfUpdateContainer uses the rename-before-replace pattern to update the
+// agent's own container without killing itself mid-update. The flow:
+//  1. Inspect to capture full config
+//  2. Pull the new image
+//  3. Rename self out of the way (container keeps running)
+//  4. Create new container with original name + new image
+//  5. Connect extra networks beyond the primary
+//  6. Start the new container
+//  7. Old agent exits naturally (the new container takes over)
+//
+// On failure at step 4 or 6, the old container is renamed back.
+// selfUpdateResult extends the standard update return values with the old
+// container ID, so the caller can stop/remove it after reporting success.
+type selfUpdateResult struct {
+	oldImage, oldDigest, newDigest string
+	oldContainerID                 string
+}
+
+func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage string) (selfUpdateResult, error) {
+	var r selfUpdateResult
+
+	cID, err := a.findContainerID(ctx, name)
+	if err != nil {
+		return r, fmt.Errorf("find container %s: %w", name, err)
+	}
+	r.oldContainerID = cID
+
+	inspect, err := a.docker.InspectContainer(ctx, cID)
+	if err != nil {
+		return r, fmt.Errorf("inspect %s: %w", name, err)
+	}
+
+	r.oldImage = inspect.Config.Image
+	r.oldDigest, _ = a.docker.ImageDigest(ctx, r.oldImage)
+
+	// Pull first, before any destructive changes. If pull fails but the
+	// image is already available locally, continue (supports local/dev images).
+	if err := a.docker.PullImage(ctx, targetImage); err != nil {
+		if _, localErr := a.docker.ImageDigest(ctx, targetImage); localErr != nil {
+			return r, fmt.Errorf("pull %s: %w", targetImage, err)
+		}
+		a.log.Warn("pull failed but image available locally", "image", targetImage, "pull_error", err)
+	}
+	r.newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
+
+	// Rename self out of the way. The container keeps running.
+	oldName := fmt.Sprintf("%s-old-%d", name, time.Now().Unix())
+	a.log.Info("self-update: renaming self", "from", name, "to", oldName)
+	if err := a.docker.RenameContainer(ctx, cID, oldName); err != nil {
+		return r, fmt.Errorf("rename self: %w", err)
+	}
+
+	// Build config for the replacement container.
+	cfg, hostCfg, netCfg := configFromInspect(&inspect, targetImage)
+
+	// Create new container with the original name.
+	a.log.Info("self-update: creating replacement", "name", name, "image", targetImage)
+	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, netCfg)
+	if err != nil {
+		a.log.Error("self-update: create failed, rolling back rename", "error", err)
+		_ = a.docker.RenameContainer(ctx, cID, name)
+		return r, fmt.Errorf("create replacement: %w", err)
+	}
+
+	// Connect extra networks. configFromInspect puts all networks in
+	// EndpointsConfig, but Docker only allows one at create time. The
+	// rest need NetworkConnect calls. Pick the first as primary (already
+	// in netCfg), connect the remainder.
+	if inspect.NetworkSettings != nil {
+		first := true
+		for netName := range inspect.NetworkSettings.Networks {
+			if netName == "bridge" {
+				continue
+			}
+			if first {
+				first = false
+				continue // already in the create's NetworkingConfig
+			}
+			if err := a.docker.NetworkConnect(ctx, netName, newID); err != nil {
+				a.log.Error("self-update: extra network connect failed", "network", netName, "error", err)
+				// Non-fatal: container can start without secondary networks.
+			}
+		}
+	}
+
+	// Start the replacement.
+	a.log.Info("self-update: starting replacement", "id", newID[:12])
+	if err := a.docker.StartContainer(ctx, newID); err != nil {
+		a.log.Error("self-update: start failed, rolling back", "error", err)
+		_ = a.docker.RemoveContainer(ctx, newID)
+		_ = a.docker.RenameContainer(ctx, cID, name)
+		return r, fmt.Errorf("start replacement: %w", err)
+	}
+
+	a.log.Info("self-update: complete, old container can be stopped")
+	return r, nil
+}
+
+// isSelfContainer checks if the named container has the sentinel.self=true
+// label, meaning it's this agent's own container.
+func (a *Agent) isSelfContainer(ctx context.Context, name string) bool {
+	cID, err := a.findContainerID(ctx, name)
+	if err != nil {
+		return false
+	}
+	inspect, err := a.docker.InspectContainer(ctx, cID)
+	if err != nil {
+		return false
+	}
+	if inspect.Config == nil {
+		return false
+	}
+	return inspect.Config.Labels["sentinel.self"] == "true"
 }
 
 // --- Helpers ---

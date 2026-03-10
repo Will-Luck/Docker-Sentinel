@@ -276,6 +276,22 @@
     }
     localStorage.setItem("sentinel-theme", theme);
   }
+  function openAccordionFromHash() {
+    var hash = window.location.hash;
+    if (!hash) return;
+    var target = hash.substring(1).toLowerCase();
+    var accordions = document.querySelectorAll("details.accordion");
+    for (var i = 0; i < accordions.length; i++) {
+      var h2 = accordions[i].querySelector("h2");
+      if (!h2) continue;
+      var heading = h2.textContent.trim().toLowerCase().replace(/\s+/g, "-");
+      if (heading === target || heading.indexOf(target) !== -1) {
+        accordions[i].open = true;
+        accordions[i].scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+    }
+  }
   function getAccordionKey(details) {
     var h2 = details.querySelector("h2");
     if (!h2) return null;
@@ -6404,6 +6420,7 @@
     }
     initSettingsPage();
     initAccordionPersistence();
+    openAccordionFromHash();
     initQueueKeyboard();
     initDashboardKeyboard();
     (function initHealthDot() {

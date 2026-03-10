@@ -43,14 +43,21 @@ type mockDocker struct {
 	removeCalls []string
 	removeErr   map[string]error
 
-	createResult map[string]string // name -> id
-	createErr    map[string]error
+	createResult  map[string]string // name -> id
+	createErr     map[string]error
+	createConfigs map[string]*container.Config
 
 	startCalls []string
 	startErr   map[string]error
 
 	restartCalls []string
 	restartErr   map[string]error
+
+	renameCalls []struct{ id, newName string }
+	renameErr   map[string]error
+
+	networkConnectCalls []struct{ networkID, containerID string }
+	networkConnectErr   map[string]error
 
 	pullCalls []string
 	pullErr   map[string]error
@@ -70,17 +77,20 @@ type mockDocker struct {
 
 func newMockDocker() *mockDocker {
 	return &mockDocker{
-		inspectResults: make(map[string]container.InspectResponse),
-		inspectErr:     make(map[string]error),
-		stopErr:        make(map[string]error),
-		removeErr:      make(map[string]error),
-		createResult:   make(map[string]string),
-		createErr:      make(map[string]error),
-		startErr:       make(map[string]error),
-		restartErr:     make(map[string]error),
-		pullErr:        make(map[string]error),
-		imageDigests:   make(map[string]string),
-		imageDigestErr: make(map[string]error),
+		inspectResults:    make(map[string]container.InspectResponse),
+		inspectErr:        make(map[string]error),
+		stopErr:           make(map[string]error),
+		removeErr:         make(map[string]error),
+		createResult:      make(map[string]string),
+		createErr:         make(map[string]error),
+		createConfigs:     make(map[string]*container.Config),
+		startErr:          make(map[string]error),
+		restartErr:        make(map[string]error),
+		renameErr:         make(map[string]error),
+		networkConnectErr: make(map[string]error),
+		pullErr:           make(map[string]error),
+		imageDigests:      make(map[string]string),
+		imageDigestErr:    make(map[string]error),
 		execResults: make(map[string]struct {
 			exitCode int
 			output   string
@@ -129,9 +139,12 @@ func (m *mockDocker) RemoveContainer(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockDocker) CreateContainer(_ context.Context, name string, _ *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
+func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if cfg != nil {
+		m.createConfigs[name] = cfg
+	}
 	if err, ok := m.createErr[name]; ok {
 		return "", err
 	}
@@ -156,6 +169,26 @@ func (m *mockDocker) RestartContainer(_ context.Context, id string) error {
 	m.restartCalls = append(m.restartCalls, id)
 	m.mu.Unlock()
 	if err, ok := m.restartErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) RenameContainer(_ context.Context, id string, newName string) error {
+	m.mu.Lock()
+	m.renameCalls = append(m.renameCalls, struct{ id, newName string }{id, newName})
+	m.mu.Unlock()
+	if err, ok := m.renameErr[id]; ok {
+		return err
+	}
+	return nil
+}
+
+func (m *mockDocker) NetworkConnect(_ context.Context, networkID string, containerID string) error {
+	m.mu.Lock()
+	m.networkConnectCalls = append(m.networkConnectCalls, struct{ networkID, containerID string }{networkID, containerID})
+	m.mu.Unlock()
+	if err, ok := m.networkConnectErr[networkID]; ok {
 		return err
 	}
 	return nil
@@ -840,6 +873,179 @@ func TestConfigFromInspectNoNetworks(t *testing.T) {
 	}
 	if len(netCfg.EndpointsConfig) != 0 {
 		t.Errorf("expected empty EndpointsConfig, got %d entries", len(netCfg.EndpointsConfig))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Self-update (rename-before-replace)
+// ---------------------------------------------------------------------------
+
+func sentinelSummary(id, name, image string) container.Summary {
+	return container.Summary{
+		ID:     id,
+		Names:  []string{"/" + name},
+		Image:  image,
+		Labels: map[string]string{"sentinel.self": "true"},
+	}
+}
+
+func sentinelInspect(image string) container.InspectResponse {
+	return container.InspectResponse{
+		Config: &container.Config{
+			Image:  image,
+			Env:    []string{"SENTINEL_PORT=8889"},
+			Labels: map[string]string{"sentinel.self": "true"},
+		},
+		HostConfig: &container.HostConfig{
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+			NetworkMode:   "host",
+		},
+	}
+}
+
+func TestIsSelfContainer(t *testing.T) {
+	mock := newMockDocker()
+	mock.containers = []container.Summary{
+		sentinelSummary("s-1", "sentinel-agent", "sentinel:v1"),
+		{ID: "n-1", Names: []string{"/nginx"}, Image: "nginx:1.25"},
+	}
+	mock.inspectResults["s-1"] = sentinelInspect("sentinel:v1")
+	mock.inspectResults["n-1"] = container.InspectResponse{
+		Config: &container.Config{Image: "nginx:1.25"},
+	}
+
+	a := newTestAgent(t.TempDir(), mock)
+
+	if !a.isSelfContainer(context.Background(), "sentinel-agent") {
+		t.Error("expected true for sentinel-agent")
+	}
+	if a.isSelfContainer(context.Background(), "nginx") {
+		t.Error("expected false for nginx")
+	}
+}
+
+func TestSelfUpdateContainerRenameAndReplace(t *testing.T) {
+	mock := newMockDocker()
+	mock.containers = []container.Summary{sentinelSummary("s-1", "sentinel-agent", "sentinel:v1")}
+	mock.inspectResults["s-1"] = sentinelInspect("sentinel:v1")
+
+	a := newTestAgent(t.TempDir(), mock)
+	r, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if r.oldImage != "sentinel:v1" {
+		t.Errorf("oldImage = %q, want %q", r.oldImage, "sentinel:v1")
+	}
+
+	// Should return the old container ID for the caller to stop later.
+	if r.oldContainerID != "s-1" {
+		t.Errorf("oldContainerID = %q, want %q", r.oldContainerID, "s-1")
+	}
+
+	// Should have pulled the target image.
+	if len(mock.pullCalls) != 1 || mock.pullCalls[0] != "sentinel:v2" {
+		t.Errorf("expected pull of sentinel:v2, got %v", mock.pullCalls)
+	}
+
+	// Should have renamed the old container.
+	if len(mock.renameCalls) != 1 {
+		t.Fatalf("expected 1 rename call, got %d", len(mock.renameCalls))
+	}
+	if mock.renameCalls[0].id != "s-1" {
+		t.Errorf("expected rename of s-1, got %s", mock.renameCalls[0].id)
+	}
+
+	// Should NOT have stopped or removed the old container.
+	if len(mock.stopCalls) != 0 {
+		t.Errorf("expected no stop calls for self-update, got %v", mock.stopCalls)
+	}
+	if len(mock.removeCalls) != 0 {
+		t.Errorf("expected no remove calls for self-update, got %v", mock.removeCalls)
+	}
+
+	// Should have created and started the new container.
+	if len(mock.startCalls) != 1 {
+		t.Fatalf("expected 1 start call, got %d", len(mock.startCalls))
+	}
+
+	// Config should use the new image.
+	cfg := mock.createConfigs["sentinel-agent"]
+	if cfg == nil {
+		t.Fatal("no config captured for replacement container")
+	}
+	if cfg.Image != "sentinel:v2" {
+		t.Errorf("expected image sentinel:v2, got %s", cfg.Image)
+	}
+}
+
+func TestSelfUpdateRollbackOnCreateFailure(t *testing.T) {
+	mock := newMockDocker()
+	mock.containers = []container.Summary{sentinelSummary("s-1", "sentinel-agent", "sentinel:v1")}
+	mock.inspectResults["s-1"] = sentinelInspect("sentinel:v1")
+	mock.createErr["sentinel-agent"] = fmt.Errorf("name conflict")
+
+	a := newTestAgent(t.TempDir(), mock)
+	_, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
+	if err == nil {
+		t.Fatal("expected error when create fails")
+	}
+
+	// Should have renamed, then rolled back.
+	if len(mock.renameCalls) != 2 {
+		t.Fatalf("expected 2 rename calls (rename + rollback), got %d", len(mock.renameCalls))
+	}
+	if mock.renameCalls[1].newName != "sentinel-agent" {
+		t.Errorf("rollback should rename back to 'sentinel-agent', got %s", mock.renameCalls[1].newName)
+	}
+}
+
+func TestSelfUpdateRollbackOnStartFailure(t *testing.T) {
+	mock := newMockDocker()
+	mock.containers = []container.Summary{sentinelSummary("s-1", "sentinel-agent", "sentinel:v1")}
+	mock.inspectResults["s-1"] = sentinelInspect("sentinel:v1")
+	mock.startErr["new-sentinel-agent"] = fmt.Errorf("port conflict")
+
+	a := newTestAgent(t.TempDir(), mock)
+	_, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
+	if err == nil {
+		t.Fatal("expected error when start fails")
+	}
+
+	// Should have removed the new container and renamed old back.
+	if len(mock.removeCalls) != 1 || mock.removeCalls[0] != "new-sentinel-agent" {
+		t.Errorf("expected remove of new-sentinel-agent, got %v", mock.removeCalls)
+	}
+	if len(mock.renameCalls) < 2 {
+		t.Fatalf("expected 2 rename calls, got %d", len(mock.renameCalls))
+	}
+	if mock.renameCalls[1].newName != "sentinel-agent" {
+		t.Errorf("rollback should rename back to 'sentinel-agent', got %s", mock.renameCalls[1].newName)
+	}
+}
+
+func TestSelfUpdateMultiNetwork(t *testing.T) {
+	mock := newMockDocker()
+	mock.containers = []container.Summary{sentinelSummary("s-1", "sentinel-agent", "sentinel:v1")}
+	inspect := sentinelInspect("sentinel:v1")
+	inspect.NetworkSettings = &container.NetworkSettings{
+		Networks: map[string]*network.EndpointSettings{
+			"app_net":     {},
+			"monitor_net": {},
+		},
+	}
+	mock.inspectResults["s-1"] = inspect
+
+	a := newTestAgent(t.TempDir(), mock)
+	_, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// One network in create's NetworkingConfig, one via NetworkConnect.
+	if len(mock.networkConnectCalls) != 1 {
+		t.Fatalf("expected 1 NetworkConnect call for second network, got %d", len(mock.networkConnectCalls))
 	}
 }
 

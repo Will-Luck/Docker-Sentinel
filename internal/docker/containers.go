@@ -82,6 +82,22 @@ func (c *Client) RestartContainer(ctx context.Context, id string) error {
 	return err
 }
 
+// RenameContainer changes the name of a container.
+func (c *Client) RenameContainer(ctx context.Context, id string, newName string) error {
+	_, err := c.api.ContainerRename(ctx, id, client.ContainerRenameOptions{
+		NewName: newName,
+	})
+	return err
+}
+
+// NetworkConnect connects a container to a network.
+func (c *Client) NetworkConnect(ctx context.Context, networkID string, containerID string) error {
+	_, err := c.api.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+		Container: containerID,
+	})
+	return err
+}
+
 // PullImage pulls an image by reference, waiting for pull to complete.
 func (c *Client) PullImage(ctx context.Context, refStr string) error {
 	resp, err := c.api.ImagePull(ctx, refStr, client.ImagePullOptions{})

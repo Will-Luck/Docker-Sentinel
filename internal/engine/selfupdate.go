@@ -3,16 +3,17 @@ package engine
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
-	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
 )
 
-// SelfUpdater manages self-update operations via an ephemeral helper container.
+// SelfUpdater manages self-update operations using the rename-before-replace
+// pattern. It renames the running container, creates a new one with the
+// original name, and starts it. The old container (this process) exits
+// naturally after the new one is running.
 type SelfUpdater struct {
 	docker docker.API
 	log    *logging.Logger
@@ -23,9 +24,10 @@ func NewSelfUpdater(d docker.API, log *logging.Logger) *SelfUpdater {
 	return &SelfUpdater{docker: d, log: log}
 }
 
-// Update performs a self-update by creating an ephemeral helper container.
-// The helper pulls the new image, stops/removes the current Sentinel container,
-// and recreates it with the same configuration.
+// Update performs a self-update using rename-before-replace.
+// It pulls the new image, renames the current container out of the way,
+// creates a new container with the original name and config, connects
+// extra networks, and starts it. The old process exits naturally.
 func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	// 1. Find our own container.
 	containers, err := su.docker.ListContainers(ctx)
@@ -55,7 +57,6 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	if err != nil {
 		return fmt.Errorf("inspect self: %w", err)
 	}
-
 	if inspect.Config == nil {
 		return fmt.Errorf("inspect %s: container config is nil", selfName)
 	}
@@ -66,172 +67,80 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	}
 	su.log.Info("self-update initiated", "name", selfName, "image", imageRef)
 
-	// 3. Build the docker run arguments from the inspect config.
-	dockerArgs := buildDockerRunArgs(inspect)
+	// 3. Pull the new image before making any changes.
+	su.log.Info("pulling target image", "image", imageRef)
+	if err := su.docker.PullImage(ctx, imageRef); err != nil {
+		return fmt.Errorf("pull image: %w", err)
+	}
 
-	// Collect extra networks that need docker network connect after creation.
-	var extraNetCmds string
+	// 4. Rename self out of the way.
+	oldName := fmt.Sprintf("%s-old-%d", selfName, time.Now().Unix())
+	su.log.Info("renaming self", "from", selfName, "to", oldName)
+	if err := su.docker.RenameContainer(ctx, selfID, oldName); err != nil {
+		return fmt.Errorf("rename self: %w", err)
+	}
+
+	// 5. Build config for the new container from inspect data.
+	// Override the image to the target version.
+	newConfig := *inspect.Config
+	newConfig.Image = imageRef
+
+	// Collect extra networks (all non-bridge, after the first which goes in NetworkingConfig).
+	var primaryNetwork string
+	var extraNetworks []string
 	if inspect.NetworkSettings != nil {
-		first := true
 		for netName := range inspect.NetworkSettings.Networks {
 			if netName == "bridge" {
 				continue
 			}
-			if first {
-				first = false // first non-bridge is in --network flag
-				continue
+			if primaryNetwork == "" {
+				primaryNetwork = netName
+			} else {
+				extraNetworks = append(extraNetworks, netName)
 			}
-			extraNetCmds += fmt.Sprintf("\ndocker network connect \"%s\" \"%s\" || { echo \"FATAL: failed to connect to network %s, rolling back\"; docker stop -t 10 \"%s\" 2>/dev/null; docker rm \"%s\" 2>/dev/null; exit 1; }\n", shellEscape(netName), shellEscape(selfName), shellEscape(netName), shellEscape(selfName), shellEscape(selfName))
 		}
 	}
 
-	// 4. Create the helper script with all arguments embedded.
-	// Shell-escape user-derived values to prevent injection.
-	escapedSelfName := shellEscape(selfName)
-	escapedImageRef := shellEscape(imageRef)
-
-	script := fmt.Sprintf(`#!/bin/sh
-set -e
-echo "=== Sentinel Self-Update Helper ==="
-
-docker pull "%s"
-
-docker stop -t 30 "%s" 2>/dev/null || true
-docker rm "%s" 2>/dev/null || true
-
-docker run -d --name "%s" %s "%s"
-%s
-echo "Self-update complete!"
-`, escapedImageRef, escapedSelfName, escapedSelfName, escapedSelfName, dockerArgs, escapedImageRef, extraNetCmds)
-
-	// 5. Pull the helper image (docker:cli) — it may not be present locally.
-	const helperImage = "docker:cli"
-	su.log.Info("pulling helper image", "image", helperImage)
-	if err := su.docker.PullImage(ctx, helperImage); err != nil {
-		return fmt.Errorf("pull helper image: %w", err)
-	}
-
-	// 6. Create the ephemeral helper container.
-	helperName := fmt.Sprintf("sentinel-updater-%d", time.Now().Unix())
-
-	helperConfig := &container.Config{
-		Image: helperImage,
-		Cmd:   []string{"/bin/sh", "-c", script},
-		Labels: map[string]string{
-			"sentinel.helper": "true",
-		},
-	}
-
-	helperHostConfig := &container.HostConfig{
-		AutoRemove: true,
-		Mounts: []mount.Mount{
-			{
-				Type:   mount.TypeBind,
-				Source: "/var/run/docker.sock",
-				Target: "/var/run/docker.sock",
+	var netCfg *network.NetworkingConfig
+	if primaryNetwork != "" {
+		netCfg = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				primaryNetwork: {},
 			},
-		},
+		}
 	}
 
-	su.log.Info("creating helper container", "name", helperName)
-
-	helperID, err := su.docker.CreateContainer(ctx, helperName, helperConfig, helperHostConfig, nil)
+	// 6. Create new container with the original name.
+	su.log.Info("creating replacement container", "name", selfName, "image", imageRef)
+	newID, err := su.docker.CreateContainer(ctx, selfName, &newConfig, inspect.HostConfig, netCfg)
 	if err != nil {
-		return fmt.Errorf("create helper: %w", err)
+		// Rollback: rename back to original name.
+		su.log.Error("create failed, rolling back rename", "error", err)
+		_ = su.docker.RenameContainer(ctx, selfID, selfName)
+		return fmt.Errorf("create replacement: %w", err)
 	}
 
-	// 7. Start the helper — it runs independently of Sentinel.
-	if err := su.docker.StartContainer(ctx, helperID); err != nil {
-		_ = su.docker.RemoveContainer(ctx, helperID)
-		return fmt.Errorf("start helper: %w", err)
+	// 7. Connect extra networks.
+	for _, netName := range extraNetworks {
+		if err := su.docker.NetworkConnect(ctx, netName, newID); err != nil {
+			su.log.Error("failed to connect extra network", "network", netName, "error", err)
+			// Non-fatal: container can still start, just missing a secondary network.
+		}
 	}
 
-	su.log.Info("self-update helper started — Sentinel will restart shortly", "helper_id", helperID[:12])
+	// 8. Start the new container.
+	su.log.Info("starting replacement container", "id", newID[:12])
+	if err := su.docker.StartContainer(ctx, newID); err != nil {
+		// Rollback: remove new container, rename old back.
+		su.log.Error("start failed, rolling back", "error", err)
+		_ = su.docker.RemoveContainer(ctx, newID)
+		_ = su.docker.RenameContainer(ctx, selfID, selfName)
+		return fmt.Errorf("start replacement: %w", err)
+	}
+
+	// 9. Success. The old container (this process) will exit naturally.
+	// The web handler returns 200 before this goroutine completes,
+	// and the SSE reconnect logic in the frontend handles the transition.
+	su.log.Info("self-update complete — new container running, old process will exit")
 	return nil
-}
-
-// buildDockerRunArgs reconstructs docker run flags from an inspect response.
-func buildDockerRunArgs(inspect container.InspectResponse) string {
-	var parts []string
-
-	// Restart policy.
-	if inspect.HostConfig != nil && inspect.HostConfig.RestartPolicy.Name != "" {
-		rp := string(inspect.HostConfig.RestartPolicy.Name)
-		if inspect.HostConfig.RestartPolicy.MaximumRetryCount > 0 {
-			rp += fmt.Sprintf(":%d", inspect.HostConfig.RestartPolicy.MaximumRetryCount)
-		}
-		parts = append(parts, "--restart "+rp)
-	}
-
-	// Environment variables.
-	if inspect.Config != nil {
-		for _, env := range inspect.Config.Env {
-			parts = append(parts, fmt.Sprintf("-e '%s'", shellEscape(env)))
-		}
-	}
-
-	// Labels.
-	if inspect.Config != nil {
-		for k, v := range inspect.Config.Labels {
-			parts = append(parts, fmt.Sprintf("-l '%s=%s'", shellEscape(k), shellEscape(v)))
-		}
-	}
-
-	// Port bindings.
-	if inspect.HostConfig != nil {
-		for containerPort, bindings := range inspect.HostConfig.PortBindings {
-			for _, binding := range bindings {
-				if binding.HostIP.IsValid() && !binding.HostIP.IsUnspecified() {
-					parts = append(parts, fmt.Sprintf("-p %s:%s:%s", binding.HostIP.String(), binding.HostPort, containerPort))
-				} else {
-					parts = append(parts, fmt.Sprintf("-p %s:%s", binding.HostPort, containerPort))
-				}
-			}
-		}
-	}
-
-	// Bind mounts and volumes.
-	if inspect.HostConfig != nil {
-		for _, bind := range inspect.HostConfig.Binds {
-			parts = append(parts, fmt.Sprintf("-v '%s'", shellEscape(bind)))
-		}
-		for _, m := range inspect.HostConfig.Mounts {
-			switch m.Type {
-			case mount.TypeBind:
-				spec := m.Source + ":" + m.Target
-				if m.ReadOnly {
-					spec += ":ro"
-				}
-				parts = append(parts, fmt.Sprintf("-v '%s'", shellEscape(spec)))
-			case mount.TypeVolume:
-				if m.Source != "" {
-					spec := m.Source + ":" + m.Target
-					parts = append(parts, fmt.Sprintf("-v '%s'", shellEscape(spec)))
-				}
-			}
-		}
-	}
-
-	// Networks (skip default bridge). docker run only accepts one --network;
-	// additional networks must be connected after container creation.
-	if inspect.NetworkSettings != nil {
-		first := true
-		for netName := range inspect.NetworkSettings.Networks {
-			if netName == "bridge" {
-				continue
-			}
-			if first {
-				parts = append(parts, "--network "+netName)
-				first = false
-			}
-			// Additional networks are handled by extraNetworks().
-		}
-	}
-
-	return strings.Join(parts, " ")
-}
-
-// shellEscape escapes single quotes for safe shell interpolation.
-func shellEscape(s string) string {
-	return strings.ReplaceAll(s, "'", "'\\''")
 }
