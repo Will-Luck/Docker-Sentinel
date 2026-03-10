@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-03-10
+
+### Changed
+- **Self-update rewritten: rename-before-replace pattern.** The old self-update
+  spawned a helper container that ran a shell script to pull/stop/rm/run. This
+  was fragile: the helper had to reconstruct all `docker run` flags, and the
+  stop/rm/run sequence created a window where Sentinel was completely down.
+  The new approach renames the running container out of the way, creates the
+  replacement with the original name, and starts it. If anything fails, the
+  rename is rolled back. The old container is stopped only after the new one
+  is confirmed running and has reported success. This eliminates the helper
+  container entirely, preserves all container configuration from the Docker
+  inspect output, and reduces downtime from seconds to milliseconds. (#72)
+
+### Fixed
+- **Self-update left old container running (BoltDB lock):** After a successful
+  rename-before-replace self-update, the old container kept running and held
+  the BoltDB file lock on the shared data volume. The new container could not
+  open the database. The old container is now stopped after the update result
+  is sent, releasing the lock for the replacement. (#72)
+- **Self-update failed for local/dev images:** Pull failures are now tolerated
+  when the target image already exists locally, so self-updates work in
+  environments without registry access.
+
 ## [2.10.3] - 2026-03-10
 
 ### Fixed
