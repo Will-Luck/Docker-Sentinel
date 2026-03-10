@@ -156,6 +156,21 @@
     color: var(--fg-primary);
 }
 
+.release-notes-body {
+    margin-top: var(--sp-2);
+    padding: var(--sp-3);
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-secondary);
+}
+
 .accordion-versions {
     display: flex;
     flex-wrap: wrap;

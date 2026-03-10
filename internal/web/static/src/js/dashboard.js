@@ -60,7 +60,30 @@ function applyTheme(theme) {
 }
 
 /* ------------------------------------------------------------
-   1b. Accordion Persistence
+   1b. Accordion Hash Fragment — auto-open accordion from URL hash
+   ------------------------------------------------------------ */
+
+// Maps hash fragments to accordion heading text (case-insensitive prefix match).
+function openAccordionFromHash() {
+    var hash = window.location.hash;
+    if (!hash) return;
+    var target = hash.substring(1).toLowerCase(); // strip #
+    var accordions = document.querySelectorAll("details.accordion");
+    for (var i = 0; i < accordions.length; i++) {
+        var h2 = accordions[i].querySelector("h2");
+        if (!h2) continue;
+        var heading = h2.textContent.trim().toLowerCase().replace(/\s+/g, "-");
+        // Match "logs" → "container-logs", "policy" → "update-policy", etc.
+        if (heading === target || heading.indexOf(target) !== -1) {
+            accordions[i].open = true;
+            accordions[i].scrollIntoView({ behavior: "smooth", block: "start" });
+            return;
+        }
+    }
+}
+
+/* ------------------------------------------------------------
+   1c. Accordion Persistence
    ------------------------------------------------------------ */
 
 function getAccordionKey(details) {
@@ -1482,6 +1505,7 @@ export {
     initTheme,
     applyTheme,
     initAccordionPersistence,
+    openAccordionFromHash,
     initPauseBanner,
     resumeScanning,
     checkPauseState,

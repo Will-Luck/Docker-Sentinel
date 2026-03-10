@@ -177,9 +177,12 @@
                                             <div class="accordion-section">
                                                 <div class="accordion-label">Changelog</div>
                                                 <div class="accordion-value">
-                                                    {{$rnURL := index $.QueueReleaseNotes $q.Key}}
-                                                    {{if $rnURL}}
-                                                        <a href="{{$rnURL}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>
+                                                    {{$rn := index $.QueueReleaseNotes $q.Key}}
+                                                    {{if $rn.URL}}
+                                                        <a href="{{$rn.URL}}" target="_blank" rel="noopener" class="changelog-link">View on GitHub &#8599;</a>
+                                                        {{if $rn.Body}}
+                                                            <pre class="release-notes-body">{{$rn.Body}}</pre>
+                                                        {{end}}
                                                     {{else}}
                                                         {{with changelogURL $q.CurrentImage}}
                                                             <a href="{{.}}" target="_blank" rel="noopener" class="changelog-link">Release Notes</a>

@@ -151,7 +151,6 @@
                         {{if index .ColumnVisible "policy"}}<col class="col-policy" style="width:110px">{{end}}
                         {{if index .ColumnVisible "status"}}<col class="col-status" style="width:150px">{{end}}
                         {{if index .ColumnVisible "ports"}}<col class="col-ports" style="width:160px">{{end}}
-                        <col class="col-actions" style="width:90px">
                     </colgroup>
                     <thead>
                         <tr>
@@ -171,7 +170,6 @@
                             </th>{{end}}
                             {{if index .ColumnVisible "status"}}<th class="col-status">Status</th>{{end}}
                             {{if index .ColumnVisible "ports"}}<th class="col-ports th-ports">Ports</th>{{end}}
-                            <th class="col-actions"></th>
                         </tr>
                     </thead>
                     {{if .HostGroups}}
@@ -463,18 +461,5 @@
                                     {{end}}
                                 </td>
                                 <td class="col-ports cell-ports">{{$hostAddr := .HostAddress}}{{$portURLs := .PortURLs}}{{range $i, $p := .Ports}}<a class="port-chip{{if ge $i 2}} port-hidden{{end}}" {{if and $portURLs (index $portURLs $p.HostPort)}}href="{{index $portURLs $p.HostPort}}"{{else if $hostAddr}}href="http://{{$hostAddr}}:{{$p.HostPort}}"{{end}} data-port="{{$p.HostPort}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{$p.HostPort}}:{{$p.ContainerPort}}</a>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
-                                <td class="col-actions">
-                                    <div class="row-actions">
-                                        <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="row-action-btn" title="View details" onclick="event.stopPropagation()">
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                                        </a>
-                                        <button class="row-action-btn" title="Check for updates" onclick="event.stopPropagation(); triggerCheck('{{.Name}}', event, '{{.HostID}}')">
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                                        </button>
-                                        <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}#logs" class="row-action-btn" title="View logs" onclick="event.stopPropagation()">
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-                                        </a>
-                                    </div>
-                                </td>
                             </tr>
 {{end}}

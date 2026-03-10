@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.3] - 2026-03-10
+
+### Fixed
+- **Dashboard action icons clipped off screen:** Removed the redundant row action
+  icons (view details, check for updates, view logs) that overflowed the table on
+  narrow viewports. Clicking the row already navigates to the container detail page
+  where all actions are available. (#60)
+- **"View Logs" link did not show logs:** Added URL hash fragment handling so
+  navigating to `/container/{name}#logs` auto-opens the Container Logs accordion
+  and scrolls it into view. Works for any accordion section (e.g. `#policy`,
+  `#history`). (#60)
+
+### Changed
+- **Inline release notes in queue:** Pending updates now show the upstream release
+  notes body inline below the changelog link, rendered in a scrollable pre-formatted
+  block. Previously only a link was shown.
+
 ## [2.10.2] - 2026-03-10
 
 ### Fixed
