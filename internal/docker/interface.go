@@ -20,6 +20,8 @@ type API interface {
 	CreateContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig) (string, error)
 	StartContainer(ctx context.Context, id string) error
 	RestartContainer(ctx context.Context, id string) error
+	RenameContainer(ctx context.Context, id string, newName string) error
+	NetworkConnect(ctx context.Context, networkID string, containerID string) error
 	PullImage(ctx context.Context, refStr string) error
 	ImageDigest(ctx context.Context, imageRef string) (string, error)
 	ImageID(ctx context.Context, imageRef string) (string, error)
