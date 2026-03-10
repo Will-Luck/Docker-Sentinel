@@ -148,9 +148,13 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 
 	start := time.Now()
 	var oldImage, oldDigest, newDigest string
+	var oldContainerID string
 	var err error
 	if isSelf {
-		oldImage, oldDigest, newDigest, err = a.selfUpdateContainer(ctx, name, targetImage)
+		sr, selfErr := a.selfUpdateContainer(ctx, name, targetImage)
+		oldImage, oldDigest, newDigest = sr.oldImage, sr.oldDigest, sr.newDigest
+		oldContainerID = sr.oldContainerID
+		err = selfErr
 	} else {
 		oldImage, oldDigest, newDigest, err = a.recreateContainer(ctx, name, targetImage)
 	}
@@ -186,7 +190,23 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 			UpdateResult: result,
 		},
 	}
-	return a.sendMsg(stream, msg)
+	if sendErr := a.sendMsg(stream, msg); sendErr != nil {
+		return sendErr
+	}
+
+	// For self-updates: stop the old container AFTER we've sent the
+	// success result over gRPC. The old container holds the BoltDB lock
+	// on the shared volume, preventing the new container from opening
+	// the database. We must stop it to release the lock. This is safe
+	// because all gRPC messages have already been sent.
+	if isSelf && err == nil && oldContainerID != "" {
+		a.log.Info("self-update: stopping old container to release DB lock", "id", oldContainerID[:12])
+		if stopErr := a.docker.StopContainer(ctx, oldContainerID, 10); stopErr != nil {
+			a.log.Error("self-update: failed to stop old container", "error", stopErr)
+		}
+	}
+
+	return nil
 }
 
 // handleContainerAction executes a stop, start, or restart action on a

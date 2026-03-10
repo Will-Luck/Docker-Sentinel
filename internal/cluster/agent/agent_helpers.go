@@ -155,35 +155,45 @@ func configFromInspect(inspect *container.InspectResponse, targetImage string) (
 //  7. Old agent exits naturally (the new container takes over)
 //
 // On failure at step 4 or 6, the old container is renamed back.
-func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage string) (oldImage, oldDigest, newDigest string, err error) {
+// selfUpdateResult extends the standard update return values with the old
+// container ID, so the caller can stop/remove it after reporting success.
+type selfUpdateResult struct {
+	oldImage, oldDigest, newDigest string
+	oldContainerID                 string
+}
+
+func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage string) (selfUpdateResult, error) {
+	var r selfUpdateResult
+
 	cID, err := a.findContainerID(ctx, name)
 	if err != nil {
-		return "", "", "", fmt.Errorf("find container %s: %w", name, err)
+		return r, fmt.Errorf("find container %s: %w", name, err)
 	}
+	r.oldContainerID = cID
 
 	inspect, err := a.docker.InspectContainer(ctx, cID)
 	if err != nil {
-		return "", "", "", fmt.Errorf("inspect %s: %w", name, err)
+		return r, fmt.Errorf("inspect %s: %w", name, err)
 	}
 
-	oldImage = inspect.Config.Image
-	oldDigest, _ = a.docker.ImageDigest(ctx, oldImage)
+	r.oldImage = inspect.Config.Image
+	r.oldDigest, _ = a.docker.ImageDigest(ctx, r.oldImage)
 
 	// Pull first, before any destructive changes. If pull fails but the
 	// image is already available locally, continue (supports local/dev images).
 	if err := a.docker.PullImage(ctx, targetImage); err != nil {
 		if _, localErr := a.docker.ImageDigest(ctx, targetImage); localErr != nil {
-			return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+			return r, fmt.Errorf("pull %s: %w", targetImage, err)
 		}
 		a.log.Warn("pull failed but image available locally", "image", targetImage, "pull_error", err)
 	}
-	newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
+	r.newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
 
 	// Rename self out of the way. The container keeps running.
 	oldName := fmt.Sprintf("%s-old-%d", name, time.Now().Unix())
 	a.log.Info("self-update: renaming self", "from", name, "to", oldName)
 	if err := a.docker.RenameContainer(ctx, cID, oldName); err != nil {
-		return oldImage, oldDigest, newDigest, fmt.Errorf("rename self: %w", err)
+		return r, fmt.Errorf("rename self: %w", err)
 	}
 
 	// Build config for the replacement container.
@@ -195,7 +205,7 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 	if err != nil {
 		a.log.Error("self-update: create failed, rolling back rename", "error", err)
 		_ = a.docker.RenameContainer(ctx, cID, name)
-		return oldImage, oldDigest, newDigest, fmt.Errorf("create replacement: %w", err)
+		return r, fmt.Errorf("create replacement: %w", err)
 	}
 
 	// Connect extra networks. configFromInspect puts all networks in
@@ -225,11 +235,11 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 		a.log.Error("self-update: start failed, rolling back", "error", err)
 		_ = a.docker.RemoveContainer(ctx, newID)
 		_ = a.docker.RenameContainer(ctx, cID, name)
-		return oldImage, oldDigest, newDigest, fmt.Errorf("start replacement: %w", err)
+		return r, fmt.Errorf("start replacement: %w", err)
 	}
 
-	a.log.Info("self-update: complete, old process will exit")
-	return oldImage, oldDigest, newDigest, nil
+	a.log.Info("self-update: complete, old container can be stopped")
+	return r, nil
 }
 
 // isSelfContainer checks if the named container has the sentinel.self=true
