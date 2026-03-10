@@ -179,6 +179,19 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		a.log.Info("update succeeded", "name", name, "old_image", oldImage, "new_digest", newDigest, "duration", dur)
 	}
 
+	// For self-updates: guarantee the old container is stopped to release
+	// the BoltDB file lock, regardless of whether the gRPC send succeeds.
+	// Uses context.Background() because ctx may already be cancelled if the
+	// stream broke during send.
+	if isSelf && err == nil && oldContainerID != "" {
+		defer func() {
+			a.log.Info("self-update: stopping old container to release DB lock", "id", truncateID(oldContainerID))
+			if stopErr := a.docker.StopContainer(context.Background(), oldContainerID, 10); stopErr != nil {
+				a.log.Error("self-update: failed to stop old container", "error", stopErr)
+			}
+		}()
+	}
+
 	// Push a fresh container list BEFORE the result so the server cache
 	// reflects the updated image/digest when the SSE-triggered row fetch
 	// arrives. gRPC stream messages are processed in order, so the cache
@@ -190,23 +203,7 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 			UpdateResult: result,
 		},
 	}
-	if sendErr := a.sendMsg(stream, msg); sendErr != nil {
-		return sendErr
-	}
-
-	// For self-updates: stop the old container AFTER we've sent the
-	// success result over gRPC. The old container holds the BoltDB lock
-	// on the shared volume, preventing the new container from opening
-	// the database. We must stop it to release the lock. This is safe
-	// because all gRPC messages have already been sent.
-	if isSelf && err == nil && oldContainerID != "" {
-		a.log.Info("self-update: stopping old container to release DB lock", "id", oldContainerID[:12])
-		if stopErr := a.docker.StopContainer(ctx, oldContainerID, 10); stopErr != nil {
-			a.log.Error("self-update: failed to stop old container", "error", stopErr)
-		}
-	}
-
-	return nil
+	return a.sendMsg(stream, msg)
 }
 
 // handleContainerAction executes a stop, start, or restart action on a
