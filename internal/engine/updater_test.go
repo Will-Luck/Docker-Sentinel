@@ -988,6 +988,50 @@ func TestUpdateContainerImageIDGuardSkipsNoChange(t *testing.T) {
 	}
 }
 
+func TestUpdateContainerImageIDGuardCachesDistributionDigest(t *testing.T) {
+	mock := newMockDocker()
+
+	// Simulate a multi-arch image where the repo digest (platform-specific)
+	// differs from the registry manifest list digest. The image ID guard
+	// should cache the correct pair so the next scan skips the false update.
+	mock.inspectResults["aaa"] = container.InspectResponse{
+		ID:    "aaa",
+		Name:  "/mqtt-broker",
+		Image: "sha256:same456",
+		Config: &container.Config{
+			Image:  "docker.io/library/redis:latest",
+			Labels: map[string]string{},
+		},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	// Same image ID after pull (guard fires).
+	mock.imageIDs["docker.io/library/redis:latest"] = "sha256:same456"
+
+	// Post-pull repo digest (what ImageDigest returns).
+	mock.imageDigests["docker.io/library/redis:latest"] = "docker.io/library/redis@sha256:repoBBB"
+
+	// Registry manifest list digest (what DistributionDigest returns).
+	// For multi-arch images this differs from the repo digest.
+	mock.distDigests["docker.io/library/redis:latest"] = "sha256:manifestListCCC"
+
+	u, _ := newTestUpdater(t, mock)
+	err := u.UpdateContainer(context.Background(), "aaa", "mqtt-broker", "")
+	if err != nil {
+		t.Fatalf("expected nil error, got: %v", err)
+	}
+
+	// The cache should store repoBBB|manifestListCCC, the pair that
+	// the next scan's Check() will compare. NOT repoBBB|repoBBB.
+	if !u.store.CheckDigestEquivalence(
+		"docker.io/library/redis@sha256:repoBBB",
+		"sha256:manifestListCCC",
+	) {
+		t.Error("expected digest equivalence cached for repo digest vs distribution digest")
+	}
+}
+
 func TestUpdateContainerImageIDGuardProceedsOnDifferentID(t *testing.T) {
 	mock := newMockDocker()
 
