@@ -75,9 +75,13 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	// Get current image digest for the audit trail.
 	oldDigest, _ = a.docker.ImageDigest(ctx, oldImage)
 
-	// Pull the target image.
+	// Pull the target image. If pull fails but the image is already
+	// available locally, continue (supports local/dev images).
 	if err := a.docker.PullImage(ctx, targetImage); err != nil {
-		return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+		if _, localErr := a.docker.ImageDigest(ctx, targetImage); localErr != nil {
+			return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+		}
+		a.log.Warn("pull failed but image available locally", "image", targetImage, "pull_error", err)
 	}
 
 	// Get the new image's digest.
@@ -165,9 +169,13 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 	oldImage = inspect.Config.Image
 	oldDigest, _ = a.docker.ImageDigest(ctx, oldImage)
 
-	// Pull first, before any destructive changes.
+	// Pull first, before any destructive changes. If pull fails but the
+	// image is already available locally, continue (supports local/dev images).
 	if err := a.docker.PullImage(ctx, targetImage); err != nil {
-		return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+		if _, localErr := a.docker.ImageDigest(ctx, targetImage); localErr != nil {
+			return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+		}
+		a.log.Warn("pull failed but image available locally", "image", targetImage, "pull_error", err)
 	}
 	newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
 
