@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.2] - 2026-03-10
+
+### Fixed
+- **Repeated "Image Identical" results for multi-arch images:** The digest
+  equivalence cache in the image ID guard was storing a useless self-referential
+  pair for mutable tags like `:latest`. Images like `eclipse-mosquitto` that
+  have differing repo vs manifest list digests would trigger a pull on every
+  scan cycle even though the image content never changed. The cache now stores
+  the correct digest pair (`ImageDigest` vs `DistributionDigest`) so subsequent
+  scans skip the false positive after one confirmation pull. (#63)
+
+## [2.10.1] - 2026-03-09
+
+### Changed
+- **Clearer history outcome labels:** Renamed all outcome badges for clarity:
+  `Success` → `Updated`, `Rollback` → `Rolled Back`, `No Change` → `Image Identical`,
+  `Warning` → `Updated (partial)`, `Dry Run` → `Simulated`, `Pull Only` → `Pulled`.
+  Split `Skipped` into `Rate Limited` and `Check Failed`.
+- **Outcome tooltips:** Every history badge now has a hover tooltip explaining what
+  the outcome means in plain English.
+- **Scan summary row:** Each scan writes a summary line to history showing the full
+  breakdown (checked, up to date, updated, queued, skipped, failed).
+- **"Identical" filter pill:** New filter button on the history page to show/hide
+  image-identical entries.
+
 ## [2.10.0] - 2026-03-09
 
 ### Added
@@ -329,7 +354,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.10.0...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.10.1...HEAD
+[2.10.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.9.1...v2.10.0
 [2.9.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.8.0...v2.9.0

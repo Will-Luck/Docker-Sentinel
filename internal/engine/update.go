@@ -132,11 +132,17 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			Outcome:       "identical",
 			Duration:      duration,
 		})
-		// Cache digest equivalence so future scans skip this pair.
+		// Cache the digest pair that the next scan will actually compare:
+		// post-pull repo digest (ImageDigest) vs registry manifest digest
+		// (DistributionDigest). For multi-arch images or registries that
+		// rebuild manifests without changing content, these differ even
+		// after pulling — causing repeated false "update available" hits.
+		// The old code cached ImageDigest(oldImage) vs ImageDigest(pullImage)
+		// which were identical for mutable tags, making the cache useless.
 		if newDigest != "" {
-			localDigest, _ := u.docker.ImageDigest(ctx, oldImage)
-			if localDigest != "" {
-				_ = u.store.CacheDigestEquivalence(localDigest, newDigest)
+			distDigest, _ := u.docker.DistributionDigest(ctx, pullImage)
+			if distDigest != "" {
+				_ = u.store.CacheDigestEquivalence(newDigest, distDigest)
 			}
 		}
 		u.queue.Remove(name)
