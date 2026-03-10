@@ -160,10 +160,7 @@
         background: var(--bg-hover);
     }
 
-    /* Always show row actions on touch devices */
-    .row-actions {
-        opacity: 1;
-    }
+
 
     .nav {
         position: relative;
@@ -271,8 +268,5 @@
         display: none;
     }
 
-    /* Hide actions column on very small screens */
-    .col-actions {
-        display: none;
-    }
+
 }

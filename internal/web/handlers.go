@@ -21,7 +21,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sources := s.loadReleaseSources()
-	releaseNotes := make(map[string]string)
+	releaseNotes := make(map[string]releaseNote)
 	selfKeys := make(map[string]bool)
 	for _, item := range items {
 		if len(item.NewerVersions) > 0 {
@@ -29,7 +29,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 			info := registry.FetchReleaseNotesWithSources(ctx, item.CurrentImage, item.NewerVersions[0], sources)
 			cancel()
 			if info != nil {
-				releaseNotes[item.Key()] = info.URL
+				releaseNotes[item.Key()] = releaseNote{URL: info.URL, Body: info.Body}
 			}
 		}
 		// Check if this queue item is the Sentinel container itself.
