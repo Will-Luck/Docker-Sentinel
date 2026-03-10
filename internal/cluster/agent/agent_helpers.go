@@ -97,13 +97,20 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 		return oldImage, oldDigest, newDigest, fmt.Errorf("remove %s: %w", name, err)
 	}
 
-	// Rebuild the container config with the new image. We extract
-	// Config, HostConfig, and NetworkingConfig from the inspect result.
-	cfg, hostCfg, netCfg := configFromInspect(&inspect, targetImage)
+	// Rebuild the container config with the new image. Network plan
+	// separates primary (for create) from extras (for connect after).
+	cfg, hostCfg := configFromInspect(&inspect, targetImage)
+	np := buildNetworkPlan(inspect.NetworkSettings)
 
-	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, netCfg)
+	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, np.primary)
 	if err != nil {
 		return oldImage, oldDigest, newDigest, fmt.Errorf("create %s: %w", name, err)
+	}
+
+	for _, netName := range np.extras {
+		if err := a.docker.NetworkConnect(ctx, netName, newID); err != nil {
+			a.log.Error("extra network connect failed", "container", name, "network", netName, "error", err)
+		}
 	}
 
 	if err := a.docker.StartContainer(ctx, newID); err != nil {
@@ -113,35 +120,63 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	return oldImage, oldDigest, newDigest, nil
 }
 
-// configFromInspect extracts container creation parameters from an
-// InspectResponse, replacing the image with targetImage. This preserves
-// env vars, volumes, ports, networks, and all other configuration from
-// the original container.
-func configFromInspect(inspect *container.InspectResponse, targetImage string) (*container.Config, *container.HostConfig, *network.NetworkingConfig) {
-	cfgCopy := *inspect.Config
-	cfgCopy.Image = targetImage
+// networkPlan separates a container's networks into a primary (for
+// CreateContainer) and extras (for subsequent NetworkConnect calls).
+// Docker API 1.44+ rejects creation with multiple endpoints, so only
+// one can go in the NetworkingConfig. Bridge is skipped entirely as
+// Docker attaches it automatically. Only user-specified fields (IPAM,
+// aliases, driver opts) are copied; runtime fields (Gateway, IPAddress)
+// would conflict on the new container.
+type networkPlan struct {
+	primary *network.NetworkingConfig
+	extras  []string // network names to connect after create
+}
 
-	hostCfg := inspect.HostConfig
+func buildNetworkPlan(ns *container.NetworkSettings) networkPlan {
+	var plan networkPlan
+	if ns == nil {
+		return plan
+	}
 
-	// Rebuild NetworkingConfig from the inspect's network settings.
-	// Only copy user-specified fields (IPAM, aliases, driver opts).
-	// Copying runtime fields (Gateway, IPAddress, etc.) causes conflicts
-	// when Docker tries to assign them on the new container.
-	netCfg := &network.NetworkingConfig{}
-	if inspect.NetworkSettings != nil && len(inspect.NetworkSettings.Networks) > 0 {
-		netCfg.EndpointsConfig = make(map[string]*network.EndpointSettings, len(inspect.NetworkSettings.Networks))
-		for name, ep := range inspect.NetworkSettings.Networks {
-			netCfg.EndpointsConfig[name] = &network.EndpointSettings{
-				IPAMConfig: ep.IPAMConfig,
-				Aliases:    ep.Aliases,
-				DriverOpts: ep.DriverOpts,
-				NetworkID:  ep.NetworkID,
-				MacAddress: ep.MacAddress,
-			}
+	var primaryName string
+	for netName := range ns.Networks {
+		if netName == "bridge" {
+			continue
+		}
+		if primaryName == "" {
+			primaryName = netName
+		} else {
+			plan.extras = append(plan.extras, netName)
 		}
 	}
 
-	return &cfgCopy, hostCfg, netCfg
+	if primaryName != "" {
+		ep := ns.Networks[primaryName]
+		plan.primary = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				primaryName: {
+					IPAMConfig: ep.IPAMConfig,
+					Aliases:    ep.Aliases,
+					DriverOpts: ep.DriverOpts,
+					NetworkID:  ep.NetworkID,
+					MacAddress: ep.MacAddress,
+				},
+			},
+		}
+	}
+
+	return plan
+}
+
+// configFromInspect extracts container creation parameters from an
+// InspectResponse, replacing the image with targetImage. This preserves
+// env vars, volumes, ports, and all other configuration from the original
+// container. Network config is handled separately via buildNetworkPlan.
+func configFromInspect(inspect *container.InspectResponse, targetImage string) (*container.Config, *container.HostConfig) {
+	cfgCopy := *inspect.Config
+	cfgCopy.Image = targetImage
+	hostCfgCopy := *inspect.HostConfig
+	return &cfgCopy, &hostCfgCopy
 }
 
 // selfUpdateContainer uses the rename-before-replace pattern to update the
@@ -196,41 +231,31 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 		return r, fmt.Errorf("rename self: %w", err)
 	}
 
-	// Build config for the replacement container.
-	cfg, hostCfg, netCfg := configFromInspect(&inspect, targetImage)
+	// Build config for the replacement container. Network plan separates
+	// primary (for create) from extras (for connect after), avoiding the
+	// Docker API 1.44+ rejection of multiple endpoints at create time.
+	cfg, hostCfg := configFromInspect(&inspect, targetImage)
+	np := buildNetworkPlan(inspect.NetworkSettings)
 
 	// Create new container with the original name.
 	a.log.Info("self-update: creating replacement", "name", name, "image", targetImage)
-	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, netCfg)
+	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, np.primary)
 	if err != nil {
 		a.log.Error("self-update: create failed, rolling back rename", "error", err)
 		_ = a.docker.RenameContainer(ctx, cID, name)
 		return r, fmt.Errorf("create replacement: %w", err)
 	}
 
-	// Connect extra networks. configFromInspect puts all networks in
-	// EndpointsConfig, but Docker only allows one at create time. The
-	// rest need NetworkConnect calls. Pick the first as primary (already
-	// in netCfg), connect the remainder.
-	if inspect.NetworkSettings != nil {
-		first := true
-		for netName := range inspect.NetworkSettings.Networks {
-			if netName == "bridge" {
-				continue
-			}
-			if first {
-				first = false
-				continue // already in the create's NetworkingConfig
-			}
-			if err := a.docker.NetworkConnect(ctx, netName, newID); err != nil {
-				a.log.Error("self-update: extra network connect failed", "network", netName, "error", err)
-				// Non-fatal: container can start without secondary networks.
-			}
+	// Connect extra networks beyond the primary.
+	for _, netName := range np.extras {
+		if err := a.docker.NetworkConnect(ctx, netName, newID); err != nil {
+			a.log.Error("self-update: extra network connect failed", "network", netName, "error", err)
+			// Non-fatal: container can start without secondary networks.
 		}
 	}
 
 	// Start the replacement.
-	a.log.Info("self-update: starting replacement", "id", newID[:12])
+	a.log.Info("self-update: starting replacement", "id", truncateID(newID))
 	if err := a.docker.StartContainer(ctx, newID); err != nil {
 		a.log.Error("self-update: start failed, rolling back", "error", err)
 		_ = a.docker.RemoveContainer(ctx, newID)
@@ -360,6 +385,15 @@ func (a *Agent) findContainerID(ctx context.Context, name string) (string, error
 		}
 	}
 	return "", fmt.Errorf("container %q not found", name)
+}
+
+// truncateID returns the first 12 characters of a container ID for
+// logging. Handles short/empty IDs without panicking.
+func truncateID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // clampInt32 clamps an int to the int32 range. Docker exit codes are

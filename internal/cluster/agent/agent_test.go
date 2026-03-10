@@ -832,47 +832,107 @@ func TestConfigFromInspect(t *testing.T) {
 		HostConfig: &container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: "always"},
 		},
-		NetworkSettings: &container.NetworkSettings{
-			Networks: map[string]*network.EndpointSettings{
-				"bridge": {
-					Aliases:   []string{"app"},
-					NetworkID: "net-123",
-				},
-			},
-		},
 	}
 
-	cfg, hostCfg, netCfg := configFromInspect(inspect, "new:2.0")
+	cfg, hostCfg := configFromInspect(inspect, "new:2.0")
 
 	if cfg.Image != "new:2.0" {
 		t.Errorf("Image = %q, want %q", cfg.Image, "new:2.0")
 	}
-	// Original config should be preserved (env).
 	if len(cfg.Env) != 1 || cfg.Env[0] != "FOO=bar" {
 		t.Errorf("Env = %v, want [FOO=bar]", cfg.Env)
 	}
 	if hostCfg.RestartPolicy.Name != "always" {
 		t.Errorf("RestartPolicy = %q, want %q", hostCfg.RestartPolicy.Name, "always")
 	}
-	if netCfg.EndpointsConfig["bridge"].NetworkID != "net-123" {
-		t.Errorf("NetworkID = %q, want %q", netCfg.EndpointsConfig["bridge"].NetworkID, "net-123")
+	// Original inspect should not be mutated.
+	if inspect.Config.Image != "old:1.0" {
+		t.Errorf("original inspect mutated: Image = %q", inspect.Config.Image)
 	}
 }
 
-func TestConfigFromInspectNoNetworks(t *testing.T) {
-	inspect := &container.InspectResponse{
-		Config:     &container.Config{Image: "app:1.0"},
-		HostConfig: &container.HostConfig{},
+func TestBuildNetworkPlanSingleNetwork(t *testing.T) {
+	ns := &container.NetworkSettings{
+		Networks: map[string]*network.EndpointSettings{
+			"app_net": {NetworkID: "net-1", Aliases: []string{"app"}},
+		},
 	}
 
-	_, _, netCfg := configFromInspect(inspect, "app:2.0")
-
-	// Should return an empty NetworkingConfig, not nil or panic.
-	if netCfg == nil {
-		t.Fatal("expected non-nil NetworkingConfig")
+	plan := buildNetworkPlan(ns)
+	if plan.primary == nil {
+		t.Fatal("expected non-nil primary")
 	}
-	if len(netCfg.EndpointsConfig) != 0 {
-		t.Errorf("expected empty EndpointsConfig, got %d entries", len(netCfg.EndpointsConfig))
+	if len(plan.primary.EndpointsConfig) != 1 {
+		t.Errorf("expected 1 primary endpoint, got %d", len(plan.primary.EndpointsConfig))
+	}
+	if len(plan.extras) != 0 {
+		t.Errorf("expected 0 extras, got %d", len(plan.extras))
+	}
+}
+
+func TestBuildNetworkPlanMultiNetwork(t *testing.T) {
+	ns := &container.NetworkSettings{
+		Networks: map[string]*network.EndpointSettings{
+			"app_net":     {NetworkID: "net-1"},
+			"monitor_net": {NetworkID: "net-2"},
+		},
+	}
+
+	plan := buildNetworkPlan(ns)
+	if plan.primary == nil {
+		t.Fatal("expected non-nil primary")
+	}
+	if len(plan.primary.EndpointsConfig) != 1 {
+		t.Errorf("expected exactly 1 primary endpoint, got %d", len(plan.primary.EndpointsConfig))
+	}
+	if len(plan.extras) != 1 {
+		t.Errorf("expected 1 extra network, got %d", len(plan.extras))
+	}
+}
+
+func TestBuildNetworkPlanSkipsBridge(t *testing.T) {
+	ns := &container.NetworkSettings{
+		Networks: map[string]*network.EndpointSettings{
+			"bridge":  {NetworkID: "net-0"},
+			"app_net": {NetworkID: "net-1"},
+		},
+	}
+
+	plan := buildNetworkPlan(ns)
+	if plan.primary == nil {
+		t.Fatal("expected non-nil primary")
+	}
+	if _, ok := plan.primary.EndpointsConfig["bridge"]; ok {
+		t.Error("bridge should not be in primary")
+	}
+	if _, ok := plan.primary.EndpointsConfig["app_net"]; !ok {
+		t.Error("app_net should be the primary")
+	}
+	if len(plan.extras) != 0 {
+		t.Errorf("expected 0 extras (bridge skipped), got %d", len(plan.extras))
+	}
+}
+
+func TestBuildNetworkPlanNilSettings(t *testing.T) {
+	plan := buildNetworkPlan(nil)
+	if plan.primary != nil {
+		t.Errorf("expected nil primary for nil settings, got %v", plan.primary)
+	}
+	if len(plan.extras) != 0 {
+		t.Errorf("expected 0 extras, got %d", len(plan.extras))
+	}
+}
+
+func TestBuildNetworkPlanBridgeOnly(t *testing.T) {
+	ns := &container.NetworkSettings{
+		Networks: map[string]*network.EndpointSettings{
+			"bridge": {},
+		},
+	}
+
+	plan := buildNetworkPlan(ns)
+	if plan.primary != nil {
+		t.Errorf("expected nil primary when only bridge, got %v", plan.primary)
 	}
 }
 
