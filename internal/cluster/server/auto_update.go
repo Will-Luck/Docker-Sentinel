@@ -11,9 +11,9 @@ import (
 // CheckAgentVersions iterates connected agents and triggers an update for any
 // agent running a different version than the server. The sentinel container on
 // each agent is identified by the "sentinel.self=true" label. The update is
-// sent via UpdateContainerSync, which recreates the container with the new
-// image tag -- the agent process is killed during the stop phase and the new
-// container starts a fresh agent that reconnects automatically.
+// sent via UpdateContainerSync. The agent detects its own container and uses
+// rename-before-replace: rename self out of the way, create new container with
+// the original name, start it. The old agent process exits naturally.
 //
 // Skipped when serverVersion is empty or "dev" (local/untagged builds).
 func (s *Server) CheckAgentVersions(ctx context.Context, serverVersion string) {
