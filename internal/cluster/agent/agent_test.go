@@ -930,13 +930,18 @@ func TestSelfUpdateContainerRenameAndReplace(t *testing.T) {
 	mock.inspectResults["s-1"] = sentinelInspect("sentinel:v1")
 
 	a := newTestAgent(t.TempDir(), mock)
-	oldImage, _, _, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
+	r, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if oldImage != "sentinel:v1" {
-		t.Errorf("oldImage = %q, want %q", oldImage, "sentinel:v1")
+	if r.oldImage != "sentinel:v1" {
+		t.Errorf("oldImage = %q, want %q", r.oldImage, "sentinel:v1")
+	}
+
+	// Should return the old container ID for the caller to stop later.
+	if r.oldContainerID != "s-1" {
+		t.Errorf("oldContainerID = %q, want %q", r.oldContainerID, "s-1")
 	}
 
 	// Should have pulled the target image.
@@ -982,7 +987,7 @@ func TestSelfUpdateRollbackOnCreateFailure(t *testing.T) {
 	mock.createErr["sentinel-agent"] = fmt.Errorf("name conflict")
 
 	a := newTestAgent(t.TempDir(), mock)
-	_, _, _, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
+	_, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
 	if err == nil {
 		t.Fatal("expected error when create fails")
 	}
@@ -1003,7 +1008,7 @@ func TestSelfUpdateRollbackOnStartFailure(t *testing.T) {
 	mock.startErr["new-sentinel-agent"] = fmt.Errorf("port conflict")
 
 	a := newTestAgent(t.TempDir(), mock)
-	_, _, _, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
+	_, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
 	if err == nil {
 		t.Fatal("expected error when start fails")
 	}
@@ -1033,7 +1038,7 @@ func TestSelfUpdateMultiNetwork(t *testing.T) {
 	mock.inspectResults["s-1"] = inspect
 
 	a := newTestAgent(t.TempDir(), mock)
-	_, _, _, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
+	_, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "sentinel:v2")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
