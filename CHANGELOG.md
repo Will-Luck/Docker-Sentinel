@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.2] - 2026-03-10
+
+### Fixed
+- **Repeated "Image Identical" results for multi-arch images:** The digest
+  equivalence cache in the image ID guard was storing a useless self-referential
+  pair for mutable tags like `:latest`. Images like `eclipse-mosquitto` that
+  have differing repo vs manifest list digests would trigger a pull on every
+  scan cycle even though the image content never changed. The cache now stores
+  the correct digest pair (`ImageDigest` vs `DistributionDigest`) so subsequent
+  scans skip the false positive after one confirmation pull. (#63)
+
 ## [2.10.1] - 2026-03-09
 
 ### Changed
