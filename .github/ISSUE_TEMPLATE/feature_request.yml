@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Have an idea for Docker-Sentinel? Describe it below.
+        Have an idea for Docker-Sentinel? Describe it below. All fields are optional — share whatever you have.
 
   - type: textarea
     id: problem
@@ -14,7 +14,7 @@ body:
       description: What problem does this solve? Why is this feature needed?
       placeholder: I find it difficult to...
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: solution
@@ -22,7 +22,7 @@ body:
       label: Proposed solution
       description: How do you think this should work? Be as specific as you can.
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: alternatives

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.1] - 2026-03-10
+
+### Fixed
+- **Cluster agent: multi-network containers failed to recreate.** Docker API
+  1.44+ (Engine 26.0) rejects container creation with multiple network
+  endpoints. The agent was passing all networks in a single `CreateContainer`
+  call, causing `"conflicting options: cannot attach network to more than 1
+  network endpoint"` for any container on 2+ non-bridge networks. Now uses
+  the same single-primary + `NetworkConnect` pattern as the standalone engine.
+- **Cluster agent: BoltDB lock not released on gRPC stream failure.** After a
+  successful self-update, the old container stop (which releases the BoltDB
+  file lock) was conditional on the gRPC result send succeeding. If the stream
+  broke during send, the new container could never open the database. The old
+  container stop now uses `defer` and `context.Background()` to guarantee
+  execution regardless of stream health.
+- **Cluster agent: non-deterministic network skip in self-update.** The extra
+  network connect loop re-iterated Go maps non-deterministically, potentially
+  skipping the wrong network. Now uses a deterministic `networkPlan` that
+  selects the primary once before `CreateContainer`.
+
 ## [2.11.0] - 2026-03-10
 
 ### Changed
