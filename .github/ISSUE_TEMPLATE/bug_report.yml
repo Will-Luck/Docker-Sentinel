@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to report a bug. Please fill out the form below as completely as you can.
+        Thanks for taking the time to report a bug. Fill in whatever you can — every field is optional, but more detail helps us fix it faster.
 
   - type: textarea
     id: description
@@ -14,7 +14,7 @@ body:
       description: A clear summary of the bug.
       placeholder: What went wrong?
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: steps
@@ -26,7 +26,7 @@ body:
         2. Navigate to...
         3. Click on...
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: expected
@@ -34,7 +34,7 @@ body:
       label: Expected behaviour
       description: What you expected to happen.
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: actual
@@ -42,7 +42,7 @@ body:
       label: Actual behaviour
       description: What actually happened instead.
     validations:
-      required: true
+      required: false
 
   - type: input
     id: version
@@ -51,7 +51,7 @@ body:
       description: The version of Docker-Sentinel you are running.
       placeholder: "e.g. v2.10.0"
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: deployment
@@ -62,7 +62,7 @@ body:
         - Docker
         - Binary
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: environment
