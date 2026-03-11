@@ -254,41 +254,51 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 	}
 }
 
-// scanPortainerEndpoints iterates Portainer endpoints and scans their containers.
-// Registry checks run server-side; updates are dispatched via PortainerScanner.
-func (u *Updater) scanPortainerEndpoints(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
-	u.portainer.ResetCache()
-
-	endpoints, err := u.portainer.Endpoints(ctx)
-	if err != nil {
-		u.log.Error("failed to list Portainer endpoints", "error", err)
-		return
-	}
-	if len(endpoints) == 0 {
-		return
-	}
-
-	u.log.Info("scanning Portainer endpoints", "count", len(endpoints))
-
-	for _, ep := range endpoints {
+// scanPortainerInstances iterates all configured Portainer instances and their endpoints.
+func (u *Updater) scanPortainerInstances(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
+	for i := range u.portainerInstances {
 		if ctx.Err() != nil {
 			return
 		}
-		u.scanPortainerEndpoint(ctx, ep, mode, result, filters, reserve, localIDs)
+		inst := &u.portainerInstances[i]
+		inst.Scanner.ResetCache()
+
+		endpoints, err := inst.Scanner.Endpoints(ctx)
+		if err != nil {
+			u.log.Warn("failed to list Portainer endpoints", "instance", inst.Name, "error", err)
+			continue
+		}
+
+		u.log.Info("scanning Portainer instance", "instance", inst.Name, "endpoints", len(endpoints))
+
+		for _, ep := range endpoints {
+			if ctx.Err() != nil {
+				return
+			}
+			// Skip blocked or disabled endpoints.
+			if cfg, ok := inst.Endpoints[ep.ID]; ok {
+				if cfg.Blocked || !cfg.Enabled {
+					u.log.Debug("skipping disabled/blocked Portainer endpoint",
+						"instance", inst.Name, "endpoint", ep.Name)
+					continue
+				}
+			}
+			u.scanPortainerEndpoint(ctx, inst, ep, mode, result, filters, reserve, localIDs)
+		}
 	}
 }
 
 // scanPortainerEndpoint scans a single Portainer endpoint's containers for updates.
-func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpointInfo, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
-	containers, err := u.portainer.EndpointContainers(ctx, ep.ID)
+func (u *Updater) scanPortainerEndpoint(ctx context.Context, inst *PortainerInstance, ep PortainerEndpointInfo, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
+	containers, err := inst.Scanner.EndpointContainers(ctx, ep.ID)
 	if err != nil {
-		u.log.Error("failed to list Portainer endpoint containers", "endpoint", ep.Name, "error", err)
+		u.log.Error("failed to list Portainer endpoint containers", "instance", inst.Name, "endpoint", ep.Name, "error", err)
 		return
 	}
 
-	u.log.Info("scanning Portainer endpoint", "endpoint", ep.Name, "containers", len(containers))
+	u.log.Info("scanning Portainer endpoint", "instance", inst.Name, "endpoint", ep.Name, "containers", len(containers))
 
-	hostID := fmt.Sprintf("portainer:%d", ep.ID)
+	hostID := fmt.Sprintf("portainer:%s:%d", inst.ID, ep.ID)
 	remoteDefault := u.cfg.DefaultPolicy()
 
 	// Track redeployed stacks to avoid re-triggering the same stack multiple times.
@@ -458,13 +468,13 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 					result.Updated++
 					continue
 				}
-				updateErr = u.portainer.RedeployStack(ctx, c.StackID, ep.ID)
+				updateErr = inst.Scanner.RedeployStack(ctx, c.StackID, ep.ID)
 				if updateErr == nil {
 					redeployedStacks[c.StackID] = true
 				}
 			} else {
 				// Standalone container.
-				updateErr = u.portainer.UpdateStandaloneContainer(ctx, ep.ID, c.ID, scanTarget)
+				updateErr = inst.Scanner.UpdateStandaloneContainer(ctx, ep.ID, c.ID, scanTarget)
 			}
 
 			outcome := "success"
