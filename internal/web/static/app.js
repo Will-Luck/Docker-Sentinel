@@ -2464,8 +2464,8 @@
     var pendingEl = stats.querySelectorAll(".stat-value")[2];
     if (!pendingEl) return;
     if (pending === 0 || pending === "0") {
-      pendingEl.className = "stat-value success stat-all-clear";
-      pendingEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> 0';
+      pendingEl.className = "stat-value success";
+      pendingEl.textContent = "0";
     } else {
       pendingEl.className = "stat-value warning";
       pendingEl.textContent = pending;

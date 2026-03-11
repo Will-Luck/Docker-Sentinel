@@ -94,13 +94,10 @@
             </div>
             <a href="/queue" class="stat-card stat-card-link">
                 <dt class="stat-label"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="display:inline;vertical-align:-2px;margin-right:4px"><path d="M8 1L1 14h14L8 1zm-.75 5h1.5v4h-1.5V6zm0 5h1.5v1.5h-1.5V11z" fill="currentColor"/></svg>Updates Pending</dt>
-                {{if eq .PendingUpdates 0}}
-                <dd class="stat-value success stat-all-clear">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg>
-                    0
-                </dd>
+                {{if eq .QueueCount 0}}
+                <dd class="stat-value success">0</dd>
                 {{else}}
-                <dd class="stat-value warning">{{.PendingUpdates}}</dd>
+                <dd class="stat-value warning">{{.QueueCount}}</dd>
                 {{end}}
             </a>
             <a href="/settings" class="stat-card stat-card-link" onclick="localStorage.setItem('sentinel-settings-tab','registries')">
