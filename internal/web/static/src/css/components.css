@@ -66,8 +66,9 @@
     align-items: center;
     width: 100%;
     margin-top: var(--sp-3);
-    padding-top: var(--sp-3);
+    padding: var(--sp-3) 0;
     border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
 }
 
 .filter-pill {
