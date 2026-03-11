@@ -127,17 +127,21 @@ func (s *Server) apiSetPortainerToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiTestPortainerConnection(w http.ResponseWriter, r *http.Request) {
-	if s.deps.Portainer == nil {
-		writeError(w, http.StatusBadRequest, "Portainer not configured - save URL and token, then restart")
+	// Always (re)create the provider from current DB settings so the test
+	// picks up any URL or token changes made since the last test or startup.
+	if s.deps.PortainerInitFunc == nil {
+		writeError(w, http.StatusBadRequest, "Portainer not available")
 		return
 	}
-	if err := s.deps.Portainer.TestConnection(r.Context()); err != nil {
+	provider, err := s.deps.PortainerInitFunc(r.Context())
+	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success": false,
 			"error":   err.Error(),
 		})
 		return
 	}
+	s.deps.Portainer = provider
 	// Auto-enable on successful connection test.
 	if s.deps.SettingsStore != nil {
 		_ = s.deps.SettingsStore.SaveSetting(store.SettingPortainerEnabled, "true")

@@ -752,6 +752,22 @@ func main() {
 		if backupMgr != nil {
 			webDeps.Backup = &backupAdapter{backupMgr}
 		}
+		// Factory to create Portainer provider on demand (e.g. after first-time UI config).
+		webDeps.PortainerInitFunc = func(initCtx context.Context) (web.PortainerProvider, error) {
+			u, _ := db.LoadSetting(store.SettingPortainerURL)
+			t, _ := db.LoadSetting(store.SettingPortainerToken)
+			if u == "" || t == "" {
+				return nil, fmt.Errorf("save Portainer URL and API token first")
+			}
+			pc := portainerpkg.NewClient(u, t)
+			if err := pc.TestConnection(initCtx); err != nil {
+				return nil, err
+			}
+			ps := portainerpkg.NewScanner(pc)
+			updater.SetPortainerScanner(&portainerScannerAdapter{scanner: ps})
+			log.Info("portainer integration enabled (hot)", "url", u)
+			return &portainerAdapter{scanner: ps}, nil
+		}
 		// Factory to create NPM provider on demand (e.g. after first-time UI config).
 		webDeps.NPMInitFunc = func(initCtx context.Context) (web.NPMProvider, error) {
 			u, _ := db.LoadSetting(store.SettingNPMURL)

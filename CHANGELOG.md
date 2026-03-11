@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.2] - 2026-03-11
+
+### Fixed
+- **Portainer connector: hot-reload without restart.** Saving Portainer URL
+  and API token in the UI now takes effect immediately. Previously the test
+  button always returned "not configured" because the provider was only
+  created at startup. Uses the same factory pattern as the NPM connector.
+- **Portainer connector: stale credentials after token change.** The connection
+  test now always recreates the provider from current DB settings, so changing
+  the URL or token and re-testing uses the new values instead of the ones
+  from startup.
+- **Portainer duplicate queue entries.** When a Portainer endpoint pointed at
+  the same Docker socket Sentinel runs on, every container was scanned twice
+  (once locally, once via Portainer), creating duplicate queue entries. The
+  Portainer scan now collects local container IDs and skips any Portainer
+  container whose Docker ID matches a locally-monitored container.
+- **Portainer API token help text.** Corrected the path from "Settings > Users >
+  Access tokens" to "My account > Access tokens".
+
+### Changed
+- **Portainer integration descriptions.** Updated the vague "view endpoints"
+  description to accurately explain that Sentinel scans Portainer endpoints
+  for updates, applies policies, and can redeploy stacks or update standalone
+  containers via Portainer's API.
+
 ## [2.11.1] - 2026-03-10
 
 ### Fixed
