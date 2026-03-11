@@ -101,6 +101,47 @@ func (s *Store) DeletePortainerInstance(id string) error {
 	})
 }
 
+// MigratePortainerSettings converts old flat portainer_url/portainer_token
+// settings into a PortainerInstance record. Returns true if migration occurred.
+// Safe to call multiple times: skips if instances already exist.
+func (s *Store) MigratePortainerSettings() (bool, error) {
+	// Check if already migrated (instances exist).
+	existing, err := s.ListPortainerInstances()
+	if err != nil {
+		return false, fmt.Errorf("list instances: %w", err)
+	}
+	if len(existing) > 0 {
+		return false, nil
+	}
+
+	// Check for old settings.
+	url, _ := s.LoadSetting(SettingPortainerURL)
+	token, _ := s.LoadSetting(SettingPortainerToken)
+	if url == "" && token == "" {
+		return false, nil
+	}
+
+	enabled, _ := s.LoadSetting(SettingPortainerEnabled)
+
+	inst := PortainerInstance{
+		ID:      "p1",
+		Name:    "Portainer",
+		URL:     url,
+		Token:   token,
+		Enabled: enabled == "true",
+	}
+	if err := s.SavePortainerInstance(inst); err != nil {
+		return false, fmt.Errorf("save migrated instance: %w", err)
+	}
+
+	// Clear old settings.
+	_ = s.DeleteSetting(SettingPortainerURL)
+	_ = s.DeleteSetting(SettingPortainerToken)
+	_ = s.DeleteSetting(SettingPortainerEnabled)
+
+	return true, nil
+}
+
 // NextPortainerID returns the next available instance ID (p1, p2, ...).
 // Scans existing keys to find the highest numeric suffix and increments.
 func (s *Store) NextPortainerID() (string, error) {

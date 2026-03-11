@@ -587,6 +587,18 @@ func (s *Store) SaveSetting(key, value string) error {
 	})
 }
 
+// DeleteSetting removes a setting key from the settings bucket.
+// Deleting a non-existent key is a silent no-op (BoltDB behaviour).
+func (s *Store) DeleteSetting(key string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
+		return b.Delete([]byte(key))
+	})
+}
+
 // LoadSetting loads a setting by key from the settings bucket.
 // Returns empty string if the key doesn't exist.
 func (s *Store) LoadSetting(key string) (string, error) {
