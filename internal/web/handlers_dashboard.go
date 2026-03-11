@@ -309,9 +309,19 @@ func (s *Server) resolvePortURLs(name, hostAddr, hostID string, ports []PortMapp
 	urls := make(map[uint16]string)
 
 	// Layer NPM auto-discovery.
+	// For local containers (hostID empty), use Lookup() which matches against
+	// the resolver's configured sentinelHost IP. LookupForHost(hostAddr) fails
+	// when hostAddr is a domain (from the HTTP Host header) because NPM stores
+	// ForwardHost as an IP, not a domain.
 	if s.deps.NPM != nil {
 		for _, p := range ports {
-			if r := s.deps.NPM.LookupForHost(p.HostPort, hostAddr); r != nil {
+			var r *NPMResolvedURL
+			if hostID == "" {
+				r = s.deps.NPM.Lookup(p.HostPort)
+			} else {
+				r = s.deps.NPM.LookupForHost(p.HostPort, hostAddr)
+			}
+			if r != nil {
 				urls[p.HostPort] = r.URL
 			}
 		}
