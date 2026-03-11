@@ -21,8 +21,8 @@ func TestScanner_Endpoints(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/endpoints", func(w http.ResponseWriter, r *http.Request) {
 		endpoints := []Endpoint{
-			{ID: 1, Name: "docker-up", Type: EndpointDocker, Status: StatusUp},
-			{ID: 2, Name: "docker-down", Type: EndpointDocker, Status: StatusDown},
+			{ID: 1, Name: "docker-up", URL: "tcp://192.168.1.10:2375", Type: EndpointDocker, Status: StatusUp},
+			{ID: 2, Name: "docker-down", URL: "tcp://192.168.1.11:2375", Type: EndpointDocker, Status: StatusDown},
 			{ID: 3, Name: "k8s-up", Type: EndpointKubernetes, Status: StatusUp},
 		}
 		_ = json.NewEncoder(w).Encode(endpoints)
@@ -49,8 +49,8 @@ func TestScanner_AllEndpoints(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/endpoints", func(w http.ResponseWriter, r *http.Request) {
 		endpoints := []Endpoint{
-			{ID: 1, Name: "docker-up", Type: EndpointDocker, Status: StatusUp},
-			{ID: 2, Name: "docker-down", Type: EndpointDocker, Status: StatusDown},
+			{ID: 1, Name: "docker-up", URL: "tcp://192.168.1.10:2375", Type: EndpointDocker, Status: StatusUp},
+			{ID: 2, Name: "docker-down", URL: "tcp://192.168.1.11:2375", Type: EndpointDocker, Status: StatusDown},
 			{ID: 3, Name: "k8s-up", Type: EndpointKubernetes, Status: StatusUp},
 		}
 		_ = json.NewEncoder(w).Encode(endpoints)
