@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local socket endpoints not blocked.** `IsLocalSocket()` was defined but
   never called. Now auto-blocks local Docker socket endpoints during Test
   Connection and excludes them from scanning.
+- **Smart local socket blocking.** `unix://` endpoints are only auto-blocked
+  when the Portainer instance runs on the same host as Sentinel. Previously
+  all `unix://` endpoints were blocked, which incorrectly disabled remote
+  Portainer instances whose Docker sockets are valid monitoring targets.
+- **Runtime Portainer instances not scanned.** Portainer instances added via
+  the UI after boot were saved to the store and had scanners for API calls,
+  but were invisible to the scan engine. Now `ConnectInstance` registers
+  with both the web layer and the engine, so runtime-added instances are
+  scanned immediately. Endpoint config changes (enabled/blocked) are also
+  synced to the engine without requiring a restart.
 
 ### Changed
 - **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
