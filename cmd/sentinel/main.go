@@ -610,6 +610,8 @@ func main() {
 	}
 
 	portainerAdapter := newMultiPortainerAdapter()
+	portainerAdapter.engine = updater
+	portainerAdapter.store = db
 	var enginePortainerInstances []engine.PortainerInstance
 	instances, _ := db.ListPortainerInstances()
 	for _, inst := range instances {
