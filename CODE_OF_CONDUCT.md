@@ -33,7 +33,7 @@ Examples of unacceptable behaviour:
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behaviour may be
-reported by contacting the project team at **conduct@pphserv.uk**.
+reported by [opening a discussion](https://github.com/Will-Luck/Docker-Sentinel/discussions) or contacting the maintainer via their [GitHub profile](https://github.com/Will-Luck).
 
 All complaints will be reviewed and investigated promptly and fairly.
 
