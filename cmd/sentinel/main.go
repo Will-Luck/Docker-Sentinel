@@ -598,27 +598,49 @@ func main() {
 		}
 	})
 
-	// Portainer integration.
-	portainerURL := cfg.PortainerURL
-	portainerToken := cfg.PortainerToken
-	if portainerURL == "" {
-		if v, err := db.LoadSetting(store.SettingPortainerURL); err == nil && v != "" {
-			portainerURL = v
+	// Portainer multi-instance migration + init.
+	if migrated, err := db.MigratePortainerSettings(); err != nil {
+		log.Error("portainer settings migration failed", "error", err)
+	} else if migrated {
+		if err := db.MigratePortainerKeys("p1"); err != nil {
+			log.Error("portainer key migration failed", "error", err)
+		} else {
+			log.Info("migrated old portainer settings to instance record")
 		}
 	}
-	if portainerToken == "" {
-		if v, err := db.LoadSetting(store.SettingPortainerToken); err == nil && v != "" {
-			portainerToken = v
+
+	portainerAdapter := newMultiPortainerAdapter()
+	var enginePortainerInstances []engine.PortainerInstance
+	instances, _ := db.ListPortainerInstances()
+	for _, inst := range instances {
+		if !inst.Enabled || inst.URL == "" || inst.Token == "" {
+			continue
 		}
-	}
-	portainerEnabled, _ := db.LoadSetting(store.SettingPortainerEnabled)
-	var portainerProvider *portainerAdapter
-	if portainerURL != "" && portainerToken != "" && portainerEnabled == "true" {
-		pc := portainerpkg.NewClient(portainerURL, portainerToken)
+		pc := portainerpkg.NewClient(inst.URL, inst.Token)
 		ps := portainerpkg.NewScanner(pc)
-		portainerProvider = &portainerAdapter{scanner: ps}
-		updater.SetPortainerScanner(&portainerScannerAdapter{scanner: ps})
-		log.Info("portainer integration enabled", "url", portainerURL)
+		portainerAdapter.Set(inst.ID, ps)
+
+		// Build engine instance with endpoint configs.
+		ei := engine.PortainerInstance{
+			ID:      inst.ID,
+			Name:    inst.Name,
+			Scanner: &portainerScannerAdapter{scanner: ps},
+		}
+		if len(inst.Endpoints) > 0 {
+			ei.Endpoints = make(map[int]engine.EndpointConfig)
+			for k, v := range inst.Endpoints {
+				epID, _ := strconv.Atoi(k)
+				ei.Endpoints[epID] = engine.EndpointConfig{
+					Enabled: v.Enabled,
+					Blocked: v.Blocked,
+				}
+			}
+		}
+		enginePortainerInstances = append(enginePortainerInstances, ei)
+		log.Info("portainer instance loaded", "id", inst.ID, "name", inst.Name, "url", inst.URL)
+	}
+	if len(enginePortainerInstances) > 0 {
+		updater.SetPortainerInstances(enginePortainerInstances)
 	}
 
 	// NPM integration.
@@ -743,30 +765,13 @@ func main() {
 		if isSwarm {
 			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
 		}
-		if portainerProvider != nil {
-			webDeps.Portainer = portainerProvider
-		}
+		webDeps.Portainer = portainerAdapter
+		webDeps.PortainerInstances = &portainerInstanceStoreAdapter{store: db}
 		if npmProvider != nil {
 			webDeps.NPM = npmProvider
 		}
 		if backupMgr != nil {
 			webDeps.Backup = &backupAdapter{backupMgr}
-		}
-		// Factory to create Portainer provider on demand (e.g. after first-time UI config).
-		webDeps.PortainerInitFunc = func(initCtx context.Context) (web.PortainerProvider, error) {
-			u, _ := db.LoadSetting(store.SettingPortainerURL)
-			t, _ := db.LoadSetting(store.SettingPortainerToken)
-			if u == "" || t == "" {
-				return nil, fmt.Errorf("save Portainer URL and API token first")
-			}
-			pc := portainerpkg.NewClient(u, t)
-			if err := pc.TestConnection(initCtx); err != nil {
-				return nil, err
-			}
-			ps := portainerpkg.NewScanner(pc)
-			updater.SetPortainerScanner(&portainerScannerAdapter{scanner: ps})
-			log.Info("portainer integration enabled (hot)", "url", u)
-			return &portainerAdapter{scanner: ps}, nil
 		}
 		// Factory to create NPM provider on demand (e.g. after first-time UI config).
 		webDeps.NPMInitFunc = func(initCtx context.Context) (web.NPMProvider, error) {
