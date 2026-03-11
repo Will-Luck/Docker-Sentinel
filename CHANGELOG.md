@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Multi-instance Portainer support.** Connect to multiple Portainer servers,
+  each with per-endpoint enable/disable toggles. Local Docker socket endpoints
+  are auto-detected and blocked to prevent duplicate monitoring.
+- **Portainer containers on dashboard.** Portainer endpoint containers appear
+  as host groups on the dashboard, with full policy, queue, severity, and
+  maintenance support (same as cluster hosts).
+- **Connectors page redesigned.** Portainer tab now shows instance cards with
+  add/remove/test/configure workflow, replacing the single URL+token form.
+
+### Changed
+- **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
+  to `portainer:instanceID:N`. Existing queue and history entries are
+  automatically migrated on first boot.
+- **Portainer settings storage.** Old flat settings (`portainer_url`,
+  `portainer_token`, `portainer_enabled`) are migrated to a structured
+  `portainer_instances` BoltDB bucket on first boot. The migration is
+  idempotent and safe to re-run.
+
 ## [2.11.2] - 2026-03-11
 
 ### Fixed
