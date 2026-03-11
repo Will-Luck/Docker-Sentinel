@@ -327,12 +327,38 @@ type ClusterLifecycle interface {
 	Stop()
 }
 
-// PortainerProvider provides Portainer endpoint and container access for the web layer.
+// PortainerProvider provides multi-instance Portainer access for the web layer.
 type PortainerProvider interface {
-	TestConnection(ctx context.Context) error
-	Endpoints(ctx context.Context) ([]PortainerEndpoint, error)
-	AllEndpoints(ctx context.Context) ([]PortainerEndpoint, error)
-	EndpointContainers(ctx context.Context, endpointID int) ([]PortainerContainerInfo, error)
+	TestConnection(ctx context.Context, instanceID string) error
+	Endpoints(ctx context.Context, instanceID string) ([]PortainerEndpoint, error)
+	AllEndpoints(ctx context.Context, instanceID string) ([]PortainerEndpoint, error)
+	EndpointContainers(ctx context.Context, instanceID string, endpointID int) ([]PortainerContainerInfo, error)
+}
+
+// PortainerInstanceStore persists Portainer instance configuration.
+type PortainerInstanceStore interface {
+	ListPortainerInstances() ([]PortainerInstanceConfig, error)
+	GetPortainerInstance(id string) (PortainerInstanceConfig, error)
+	SavePortainerInstance(inst PortainerInstanceConfig) error
+	DeletePortainerInstance(id string) error
+	NextPortainerID() (string, error)
+}
+
+// PortainerInstanceConfig mirrors store.PortainerInstance for the web layer.
+type PortainerInstanceConfig struct {
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name"`
+	URL       string                 `json:"url"`
+	Token     string                 `json:"token,omitempty"`
+	Enabled   bool                   `json:"enabled"`
+	Endpoints map[string]EndpointCfg `json:"endpoints,omitempty"`
+}
+
+// EndpointCfg mirrors store.EndpointConfig.
+type EndpointCfg struct {
+	Enabled bool   `json:"enabled"`
+	Blocked bool   `json:"blocked,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // NPMProvider provides NPM (Nginx Proxy Manager) proxy host resolution.
@@ -386,10 +412,12 @@ type PortOverride struct {
 
 // PortainerEndpoint represents a Portainer-managed Docker environment.
 type PortainerEndpoint struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	URL    string `json:"url"`
-	Status string `json:"status"`
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	Type       int    `json:"type"`
+	Status     string `json:"status"`
+	InstanceID string `json:"instance_id,omitempty"`
 }
 
 // PortainerContainerInfo is a container from a Portainer-managed environment.
@@ -403,6 +431,8 @@ type PortainerContainerInfo struct {
 	EndpointName string            `json:"endpoint_name"`
 	StackID      int               `json:"stack_id,omitempty"`
 	StackName    string            `json:"stack_name,omitempty"`
+	InstanceID   string            `json:"instance_id,omitempty"`
+	InstanceName string            `json:"instance_name,omitempty"`
 }
 
 // LogEntry mirrors store.LogEntry.

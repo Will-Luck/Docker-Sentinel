@@ -457,9 +457,15 @@ func (s *Server) isPortainerEnabled() bool {
 	if s.deps.Portainer != nil {
 		return true
 	}
-	if s.deps.SettingsStore != nil {
-		v, _ := s.deps.SettingsStore.LoadSetting(store.SettingPortainerEnabled)
-		return v == "true"
+	if s.deps.PortainerInstances != nil {
+		instances, err := s.deps.PortainerInstances.ListPortainerInstances()
+		if err == nil {
+			for _, inst := range instances {
+				if inst.Enabled {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
@@ -508,14 +514,21 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	var image string // for changelog/version lookups
 
 	if strings.HasPrefix(hostFilter, "portainer:") && s.deps.Portainer != nil {
-		// Portainer container: look up from Portainer endpoint.
-		epIDStr := strings.TrimPrefix(hostFilter, "portainer:")
+		// Portainer container: parse "portainer:instanceID:epID" or legacy "portainer:epID".
+		parts := strings.SplitN(strings.TrimPrefix(hostFilter, "portainer:"), ":", 2)
+		var instanceID, epIDStr string
+		if len(parts) == 2 {
+			instanceID = parts[0]
+			epIDStr = parts[1]
+		} else {
+			epIDStr = parts[0]
+		}
 		epID, err := strconv.Atoi(epIDStr)
 		if err != nil {
 			s.renderError(w, http.StatusBadRequest, "Bad Request", "Invalid Portainer endpoint ID.")
 			return
 		}
-		containers, err := s.deps.Portainer.EndpointContainers(r.Context(), epID)
+		containers, err := s.deps.Portainer.EndpointContainers(r.Context(), instanceID, epID)
 		if err != nil {
 			s.deps.Log.Error("failed to list Portainer containers", "endpoint", epID, "error", err)
 			s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load Portainer containers.")
