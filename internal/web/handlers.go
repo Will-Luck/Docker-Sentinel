@@ -752,10 +752,17 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		image = found.Image
 	}
 
+	// Use the scoped key for history/snapshot lookups so Portainer and cluster
+	// containers find their records (stored as "portainer:3::name" or "hostID::name").
+	historyKey := name
+	if hostFilter != "" {
+		historyKey = hostFilter + "::" + name
+	}
+
 	// Gather history.
-	history, err := s.deps.Store.ListHistoryByContainer(name, 50)
+	history, err := s.deps.Store.ListHistoryByContainer(historyKey, 50)
 	if err != nil {
-		s.deps.Log.Warn("failed to list history for container", "name", name, "error", err)
+		s.deps.Log.Warn("failed to list history for container", "name", historyKey, "error", err)
 	}
 	if history == nil {
 		history = []UpdateRecord{}
@@ -764,7 +771,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	// Gather snapshots (nil-check dependency).
 	var snapshots []SnapshotEntry
 	if s.deps.Snapshots != nil {
-		storeEntries, err := s.deps.Snapshots.ListSnapshots(name)
+		storeEntries, err := s.deps.Snapshots.ListSnapshots(historyKey)
 		if err != nil {
 			s.deps.Log.Warn("failed to list snapshots", "name", name, "error", err)
 		}
