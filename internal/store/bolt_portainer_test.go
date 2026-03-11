@@ -309,7 +309,82 @@ func TestPortainerInstance_NilEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Endpoints != nil && len(got.Endpoints) != 0 {
+	if len(got.Endpoints) != 0 {
 		t.Errorf("expected nil/empty endpoints, got %v", got.Endpoints)
+	}
+}
+
+func TestPortainerMigration_OldSettingsToInstance(t *testing.T) {
+	s := testStore(t)
+
+	// Simulate old-style settings.
+	_ = s.SaveSetting(SettingPortainerURL, "https://portainer.example.com")
+	_ = s.SaveSetting(SettingPortainerToken, "ptr_old_token")
+	_ = s.SaveSetting(SettingPortainerEnabled, "true")
+
+	migrated, err := s.MigratePortainerSettings()
+	if err != nil {
+		t.Fatalf("MigratePortainerSettings: %v", err)
+	}
+	if !migrated {
+		t.Fatal("expected migration to happen")
+	}
+
+	// Instance should exist.
+	inst, err := s.GetPortainerInstance("p1")
+	if err != nil {
+		t.Fatalf("GetPortainerInstance: %v", err)
+	}
+	if inst.URL != "https://portainer.example.com" {
+		t.Errorf("URL = %q", inst.URL)
+	}
+	if inst.Token != "ptr_old_token" {
+		t.Errorf("Token = %q", inst.Token)
+	}
+	if !inst.Enabled {
+		t.Error("expected enabled=true")
+	}
+	if inst.Name != "Portainer" {
+		t.Errorf("Name = %q, want Portainer", inst.Name)
+	}
+
+	// Old settings should be cleared.
+	if v, _ := s.LoadSetting(SettingPortainerURL); v != "" {
+		t.Errorf("old URL not cleared: %q", v)
+	}
+	if v, _ := s.LoadSetting(SettingPortainerToken); v != "" {
+		t.Errorf("old token not cleared: %q", v)
+	}
+	if v, _ := s.LoadSetting(SettingPortainerEnabled); v != "" {
+		t.Errorf("old enabled not cleared: %q", v)
+	}
+}
+
+func TestPortainerMigration_NoOldSettings(t *testing.T) {
+	s := testStore(t)
+
+	migrated, err := s.MigratePortainerSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated {
+		t.Error("should not migrate when no old settings exist")
+	}
+}
+
+func TestPortainerMigration_AlreadyMigrated(t *testing.T) {
+	s := testStore(t)
+
+	// Old settings exist but instance already exists (re-run safety).
+	_ = s.SaveSetting(SettingPortainerURL, "https://portainer.example.com")
+	_ = s.SaveSetting(SettingPortainerToken, "ptr_token")
+	_ = s.SavePortainerInstance(PortainerInstance{ID: "p1", Name: "Already"})
+
+	migrated, err := s.MigratePortainerSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated {
+		t.Error("should skip migration when instances already exist")
 	}
 }
