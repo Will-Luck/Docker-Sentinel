@@ -329,18 +329,10 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pendingNames := make(map[string]bool)
-	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.Key()] = true
-	}
-
-	total, running, pending := len(containers), 0, 0
+	total, running := len(containers), 0
 	for _, c := range containers {
 		if c.State == "running" {
 			running++
-		}
-		if pendingNames[containerName(c)] {
-			pending++
 		}
 	}
 
@@ -349,11 +341,6 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		services, err := s.deps.Swarm.ListServices(r.Context())
 		if err == nil {
 			total += len(services)
-			for _, svc := range services {
-				if pendingNames[svc.Name] {
-					pending++
-				}
-			}
 		}
 	}
 
@@ -364,17 +351,13 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 			if rc.State == "running" {
 				running++
 			}
-			queueKey := rc.HostID + "::" + rc.Name
-			if pendingNames[queueKey] {
-				pending++
-			}
 		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total":   total,
 		"running": running,
-		"pending": pending,
+		"pending": len(s.deps.Queue.List()),
 	})
 }
 
