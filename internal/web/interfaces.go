@@ -333,6 +333,10 @@ type PortainerProvider interface {
 	Endpoints(ctx context.Context, instanceID string) ([]PortainerEndpoint, error)
 	AllEndpoints(ctx context.Context, instanceID string) ([]PortainerEndpoint, error)
 	EndpointContainers(ctx context.Context, instanceID string, endpointID int) ([]PortainerContainerInfo, error)
+	// ConnectInstance creates a scanner for the given instance config at runtime.
+	ConnectInstance(id, url, token string) error
+	// DisconnectInstance removes the scanner for the given instance.
+	DisconnectInstance(id string)
 }
 
 // PortainerInstanceStore persists Portainer instance configuration.

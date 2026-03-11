@@ -3,6 +3,7 @@ package portainer
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,10 +20,19 @@ type Client struct {
 }
 
 func NewClient(baseURL, token string) *Client {
+	// Always skip TLS verification for Portainer connections.
+	// Portainer instances commonly use self-signed certs, especially
+	// in homelab and private network setups.
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed Portainer certs
+	}
 	return &Client{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		token:      token,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
+		httpClient: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 

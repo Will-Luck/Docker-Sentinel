@@ -272,6 +272,19 @@ func (a *multiPortainerAdapter) Remove(id string) {
 	delete(a.scanners, id)
 }
 
+// ConnectInstance creates a portainer.Scanner for the given instance and stores it.
+func (a *multiPortainerAdapter) ConnectInstance(id, url, token string) error {
+	pc := portainer.NewClient(url, token)
+	ps := portainer.NewScanner(pc)
+	a.Set(id, ps)
+	return nil
+}
+
+// DisconnectInstance removes the scanner for the given instance.
+func (a *multiPortainerAdapter) DisconnectInstance(id string) {
+	a.Remove(id)
+}
+
 func (a *multiPortainerAdapter) get(id string) (*portainer.Scanner, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
