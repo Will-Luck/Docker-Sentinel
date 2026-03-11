@@ -91,6 +91,11 @@ func (s *Server) apiCreatePortainerInstance(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Create a live scanner for the new instance.
+	if s.deps.Portainer != nil && inst.Token != "" && inst.URL != "" {
+		_ = s.deps.Portainer.ConnectInstance(inst.ID, inst.URL, inst.Token)
+	}
+
 	s.logEvent(r, "settings", "", "Portainer instance created: "+body.Name)
 	// Return with redacted token.
 	if inst.Token != "" {
@@ -148,6 +153,13 @@ func (s *Server) apiUpdatePortainerInstance(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Reconnect scanner with updated credentials.
+	if s.deps.Portainer != nil && existing.Token != "" && existing.URL != "" && existing.Enabled {
+		_ = s.deps.Portainer.ConnectInstance(existing.ID, existing.URL, existing.Token)
+	} else if s.deps.Portainer != nil && !existing.Enabled {
+		s.deps.Portainer.DisconnectInstance(existing.ID)
+	}
+
 	s.logEvent(r, "settings", "", "Portainer instance updated: "+existing.Name)
 	if existing.Token != "" {
 		existing.Token = "***"
@@ -173,6 +185,11 @@ func (s *Server) apiDeletePortainerInstance(w http.ResponseWriter, r *http.Reque
 	if err := s.deps.PortainerInstances.DeletePortainerInstance(id); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete instance: "+err.Error())
 		return
+	}
+
+	// Remove the live scanner.
+	if s.deps.Portainer != nil {
+		s.deps.Portainer.DisconnectInstance(id)
 	}
 
 	s.logEvent(r, "settings", "", "Portainer instance deleted: "+inst.Name)

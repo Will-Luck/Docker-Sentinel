@@ -209,7 +209,7 @@ if (savedTab) {
 // --- Portainer multi-instance functions ---
 
 function loadPortainerInstances() {
-    fetch('/api/portainer/instances', {headers: {'X-CSRF-Token': csrfToken}})
+    fetch('/api/portainer/instances', {headers: {'X-CSRF-Token': csrfToken()}})
     .then(function(r) { return r.json(); })
     .then(function(instances) {
         var container = document.getElementById('portainer-instances');
@@ -229,7 +229,7 @@ function loadPortainerInstances() {
 function addPortainerInstance() {
     fetch('/api/portainer/instances', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({name: 'New Instance', url: '', token: '', enabled: true})
     })
     .then(function(r) { return r.json(); })
@@ -257,7 +257,7 @@ function savePortainerInstance(id) {
 
     fetch('/api/portainer/instances/' + id, {
         method: 'PUT',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify(body)
     })
     .then(function(r) { return r.json(); })
@@ -275,7 +275,7 @@ function testPortainerInstance(id) {
 
     fetch('/api/portainer/instances/' + id + '/test', {
         method: 'POST',
-        headers: {'X-CSRF-Token': csrfToken}
+        headers: {'X-CSRF-Token': csrfToken()}
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -296,7 +296,7 @@ function removePortainerInstance(id, name) {
 
     fetch('/api/portainer/instances/' + id, {
         method: 'DELETE',
-        headers: {'X-CSRF-Token': csrfToken}
+        headers: {'X-CSRF-Token': csrfToken()}
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -310,7 +310,7 @@ function removePortainerInstance(id, name) {
 function togglePortainerEndpoint(instanceId, endpointId, enabled) {
     fetch('/api/portainer/instances/' + instanceId + '/endpoints/' + endpointId, {
         method: 'PUT',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({enabled: enabled})
     })
     .then(function(r) { return r.json(); })
@@ -493,7 +493,7 @@ function onNPMToggle(enabled) {
     toggleFields('npm-fields', enabled);
     fetch('/api/settings/npm-enabled', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({enabled: enabled})
     })
     .then(function(r) { return r.json(); })
@@ -508,7 +508,7 @@ function saveNPMURL() {
     var url = (document.getElementById('npm-url') || {}).value || '';
     fetch('/api/settings/npm-url', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({url: url})
     })
     .then(function(r) { return r.json(); })
@@ -524,7 +524,7 @@ function saveNPMCredentials() {
     var password = (document.getElementById('npm-password') || {}).value || '';
     fetch('/api/settings/npm-credentials', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({email: email, password: password})
     })
     .then(function(r) { return r.json(); })
@@ -540,7 +540,7 @@ function testNPMConnection() {
     if (btn) btn.disabled = true;
     fetch('/api/settings/npm-test', {
         method: 'POST',
-        headers: {'X-CSRF-Token': csrfToken}
+        headers: {'X-CSRF-Token': csrfToken()}
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -556,7 +556,7 @@ function syncNPM() {
     if (btn) btn.disabled = true;
     fetch('/api/settings/npm-sync', {
         method: 'POST',
-        headers: {'X-CSRF-Token': csrfToken}
+        headers: {'X-CSRF-Token': csrfToken()}
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
