@@ -2,6 +2,7 @@ package portainer
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -37,6 +38,17 @@ type Endpoint struct {
 // IsDocker returns true if this endpoint is a Docker environment we can scan.
 func (e Endpoint) IsDocker() bool {
 	return e.Type == EndpointDocker || e.Type == EndpointAgentDocker || e.Type == EndpointEdgeAgent
+}
+
+// IsLocalSocket returns true if this endpoint connects via the local Docker socket.
+// These endpoints duplicate what Sentinel monitors directly and should be blocked.
+func (e Endpoint) IsLocalSocket() bool {
+	if strings.HasPrefix(e.URL, "unix://") {
+		return true
+	}
+	// Empty URL with Docker environment type means local socket mount.
+	// Agent (type 2) and Edge (type 4) endpoints always have a URL.
+	return e.URL == "" && e.Type == EndpointDocker
 }
 
 // StackType mirrors Portainer's stack type enum.
