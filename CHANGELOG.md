@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container whose Docker ID matches a locally-monitored container.
 - **Portainer API token help text.** Corrected the path from "Settings > Users >
   Access tokens" to "My account > Access tokens".
+- **Portainer container detail page 404.** Clicking a Portainer container in
+  the pending updates queue returned "Container not found" because the detail
+  handler only knew about local and cluster containers. Now resolves Portainer
+  containers via the Portainer API.
+- **Dashboard stat card count mismatch.** The "Updates Pending" stat card only
+  counted local containers, while the nav badge counted all queue items
+  including Portainer. Both now use the full queue length. Removed the
+  redundant checkmark icon from the zero-state.
 
 ### Changed
 - **Portainer integration descriptions.** Updated the vague "view endpoints"
