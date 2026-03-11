@@ -756,7 +756,13 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 
 	if u.portainer != nil {
-		u.scanPortainerEndpoints(ctx, mode, &result, filters, reserve)
+		// Collect local container IDs so the Portainer scan can skip containers
+		// that Sentinel already monitors via the local Docker socket.
+		localIDs := make(map[string]bool, len(containers))
+		for _, c := range containers {
+			localIDs[c.ID] = true
+		}
+		u.scanPortainerEndpoints(ctx, mode, &result, filters, reserve, localIDs)
 	}
 
 	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf(

@@ -81,12 +81,12 @@
                     <h2>Portainer Integration</h2>
                 </div>
                 <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
-                    <p class="accordion-intro">Connect to a Portainer instance to view endpoints and containers from the Portainer dashboard.</p>
+                    <p class="accordion-intro">Monitor and update containers on Portainer-managed Docker hosts. Sentinel scans Portainer endpoints for available updates and can auto-update or queue them, using Portainer's API as the transport layer. Useful for managing hosts where Sentinel doesn't have direct Docker socket access.</p>
                     <div class="settings-rows">
                         <div class="setting-row">
                             <div class="setting-info">
                                 <div class="setting-label">Enable Portainer</div>
-                                <div class="setting-desc">Show the Portainer dashboard and scan Portainer-managed containers. Requires a restart after changing URL or token.</div>
+                                <div class="setting-desc">Scan Portainer endpoints for container updates and apply policies (auto, manual, pinned). Stack containers are redeployed via Portainer; standalone containers are updated individually.</div>
                             </div>
                             <label class="toggle-switch-label">
                                 <input type="checkbox" id="portainer-enabled" class="channel-toggle" onchange="onPortainerToggle(this.checked)">
@@ -106,7 +106,7 @@
                         <div class="setting-row">
                             <div class="setting-info">
                                 <div class="setting-label">API Token</div>
-                                <div class="setting-desc">Portainer API access token (Settings &#8250; Users &#8250; Access tokens).</div>
+                                <div class="setting-desc">Portainer API access token (My account &#8250; Access tokens).</div>
                             </div>
                             <input type="password" id="portainer-token" class="setting-input" placeholder="ptr_..." onchange="savePortainerToken()">
                         </div>
@@ -253,7 +253,7 @@ function onPortainerToggle(enabled) {
     .then(function(r) { return r.json(); })
     .then(function(d) {
         if (d.error) { showToast(d.error, 'error'); return; }
-        showToast('Portainer ' + (enabled ? 'enabled' : 'disabled') + ' - restart to apply');
+        showToast('Portainer ' + (enabled ? 'enabled' : 'disabled'));
     })
     .catch(function() { showToast('Failed to save', 'error'); });
 }

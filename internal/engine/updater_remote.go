@@ -256,7 +256,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 
 // scanPortainerEndpoints iterates Portainer endpoints and scans their containers.
 // Registry checks run server-side; updates are dispatched via PortainerScanner.
-func (u *Updater) scanPortainerEndpoints(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int) {
+func (u *Updater) scanPortainerEndpoints(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
 	u.portainer.ResetCache()
 
 	endpoints, err := u.portainer.Endpoints(ctx)
@@ -274,12 +274,12 @@ func (u *Updater) scanPortainerEndpoints(ctx context.Context, mode ScanMode, res
 		if ctx.Err() != nil {
 			return
 		}
-		u.scanPortainerEndpoint(ctx, ep, mode, result, filters, reserve)
+		u.scanPortainerEndpoint(ctx, ep, mode, result, filters, reserve, localIDs)
 	}
 }
 
 // scanPortainerEndpoint scans a single Portainer endpoint's containers for updates.
-func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpointInfo, mode ScanMode, result *ScanResult, filters []string, reserve int) {
+func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpointInfo, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
 	containers, err := u.portainer.EndpointContainers(ctx, ep.ID)
 	if err != nil {
 		u.log.Error("failed to list Portainer endpoint containers", "endpoint", ep.Name, "error", err)
@@ -297,6 +297,15 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 	for _, c := range containers {
 		if ctx.Err() != nil {
 			return
+		}
+
+		// Skip containers that Sentinel already monitors via the local Docker socket.
+		// This prevents duplicate queue entries when a Portainer endpoint points at
+		// the same Docker daemon Sentinel runs on.
+		if localIDs[c.ID] {
+			u.log.Debug("skipping Portainer container already monitored locally",
+				"endpoint", ep.Name, "name", c.Name, "id", c.ID[:12])
+			continue
 		}
 
 		result.Total++

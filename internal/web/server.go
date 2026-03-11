@@ -60,15 +60,16 @@ type Dependencies struct {
 	AboutStore          AboutStore
 	HookStore           HookStore
 	ReleaseSources      ReleaseSourceStore
-	ImageManager        ImageManager                                   // nil when not available
-	Swarm               SwarmProvider                                  // nil when not in Swarm mode
-	Cluster             *ClusterController                             // thread-safe proxy; always non-nil, use .Enabled() to check
-	Portainer           PortainerProvider                              // nil when Portainer not configured
-	NPM                 NPMProvider                                    // nil when NPM not configured; set by NPMInitFunc on first successful test
-	NPMInitFunc         func(ctx context.Context) (NPMProvider, error) // creates NPM provider from saved settings
-	Backup              BackupManager                                  // nil when backup not configured
-	PortConfigs         PortConfigStore                                // nil when store not available
-	VersionScope        VersionScopeUpdater                            // nil-safe: updates checker's default scope at runtime
+	ImageManager        ImageManager                                         // nil when not available
+	Swarm               SwarmProvider                                        // nil when not in Swarm mode
+	Cluster             *ClusterController                                   // thread-safe proxy; always non-nil, use .Enabled() to check
+	Portainer           PortainerProvider                                    // nil when Portainer not configured; set by PortainerInitFunc on first successful test
+	PortainerInitFunc   func(ctx context.Context) (PortainerProvider, error) // creates Portainer provider from saved settings
+	NPM                 NPMProvider                                          // nil when NPM not configured; set by NPMInitFunc on first successful test
+	NPMInitFunc         func(ctx context.Context) (NPMProvider, error)       // creates NPM provider from saved settings
+	Backup              BackupManager                                        // nil when backup not configured
+	PortConfigs         PortConfigStore                                      // nil when store not available
+	VersionScope        VersionScopeUpdater                                  // nil-safe: updates checker's default scope at runtime
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
