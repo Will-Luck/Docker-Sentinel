@@ -142,6 +142,98 @@ func (s *Store) MigratePortainerSettings() (bool, error) {
 	return true, nil
 }
 
+// MigratePortainerKeys rewrites HostID fields in queue and history entries
+// from the old format "portainer:{epID}" to "portainer:{instanceID}:{epID}".
+// Queue: single JSON array under key "pending" — unmarshal, rewrite HostIDs, re-save.
+// History: each value is a JSON UpdateRecord — rewrite HostID in each.
+func (s *Store) MigratePortainerKeys(instanceID string) error {
+	prefix := "portainer:"
+	newPrefix := "portainer:" + instanceID + ":"
+
+	// --- Queue migration ---
+	data, err := s.LoadPendingQueue()
+	if err != nil {
+		return fmt.Errorf("load queue: %w", err)
+	}
+	if data != nil {
+		var items []json.RawMessage
+		if json.Unmarshal(data, &items) == nil {
+			changed := false
+			for i, raw := range items {
+				var m map[string]interface{}
+				if json.Unmarshal(raw, &m) != nil {
+					continue
+				}
+				hostID, _ := m["host_id"].(string)
+				if !strings.HasPrefix(hostID, prefix) {
+					continue
+				}
+				rest := hostID[len(prefix):]
+				// Skip already-migrated entries (rest starts with instance ID prefix like "p1:").
+				if len(rest) > 0 && rest[0] == 'p' {
+					continue
+				}
+				m["host_id"] = newPrefix + rest
+				rewritten, err := json.Marshal(m)
+				if err != nil {
+					continue
+				}
+				items[i] = rewritten
+				changed = true
+			}
+			if changed {
+				newData, err := json.Marshal(items)
+				if err != nil {
+					return fmt.Errorf("marshal queue: %w", err)
+				}
+				if err := s.SavePendingQueue(newData); err != nil {
+					return fmt.Errorf("save queue: %w", err)
+				}
+			}
+		}
+	}
+
+	// --- History migration ---
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b, err := bucket(tx, bucketHistory)
+		if err != nil {
+			return err
+		}
+		type kv struct{ key, val []byte }
+		var rewrites []kv
+		if err := b.ForEach(func(k, v []byte) error {
+			var rec UpdateRecord
+			if json.Unmarshal(v, &rec) != nil {
+				return nil
+			}
+			if !strings.HasPrefix(rec.HostID, prefix) {
+				return nil
+			}
+			rest := rec.HostID[len(prefix):]
+			if len(rest) > 0 && rest[0] == 'p' {
+				return nil // already migrated
+			}
+			rec.HostID = newPrefix + rest
+			newVal, err := json.Marshal(rec)
+			if err != nil {
+				return nil
+			}
+			keyCopy := make([]byte, len(k))
+			copy(keyCopy, k)
+			rewrites = append(rewrites, kv{key: keyCopy, val: newVal})
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, rw := range rewrites {
+			if err := b.Put(rw.key, rw.val); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // NextPortainerID returns the next available instance ID (p1, p2, ...).
 // Scans existing keys to find the highest numeric suffix and increments.
 func (s *Store) NextPortainerID() (string, error) {
