@@ -250,37 +250,80 @@ func (m *clusterManager) Stop() {
 	m.log.Info("cluster gRPC server stopped")
 }
 
-// portainerAdapter bridges portainer.Scanner to web.PortainerProvider.
-type portainerAdapter struct {
-	scanner *portainer.Scanner
+// multiPortainerAdapter bridges multiple portainer.Scanner instances to web.PortainerProvider.
+type multiPortainerAdapter struct {
+	mu       sync.RWMutex
+	scanners map[string]*portainer.Scanner // keyed by instance ID
 }
 
-func (a *portainerAdapter) TestConnection(ctx context.Context) error {
-	return a.scanner.Client().TestConnection(ctx)
+func newMultiPortainerAdapter() *multiPortainerAdapter {
+	return &multiPortainerAdapter{scanners: make(map[string]*portainer.Scanner)}
 }
 
-func (a *portainerAdapter) Endpoints(ctx context.Context) ([]web.PortainerEndpoint, error) {
-	eps, err := a.scanner.Endpoints(ctx)
+func (a *multiPortainerAdapter) Set(id string, scanner *portainer.Scanner) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.scanners[id] = scanner
+}
+
+func (a *multiPortainerAdapter) Remove(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.scanners, id)
+}
+
+func (a *multiPortainerAdapter) get(id string) (*portainer.Scanner, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	s, ok := a.scanners[id]
+	if !ok {
+		return nil, fmt.Errorf("portainer instance %q not connected", id)
+	}
+	return s, nil
+}
+
+func (a *multiPortainerAdapter) TestConnection(ctx context.Context, instanceID string) error {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return err
+	}
+	return s.Client().TestConnection(ctx)
+}
+
+func (a *multiPortainerAdapter) Endpoints(ctx context.Context, instanceID string) ([]web.PortainerEndpoint, error) {
+	s, err := a.get(instanceID)
 	if err != nil {
 		return nil, err
 	}
-	return convertPortainerEndpoints(eps), nil
-}
-
-func (a *portainerAdapter) AllEndpoints(ctx context.Context) ([]web.PortainerEndpoint, error) {
-	eps, err := a.scanner.AllEndpoints(ctx)
+	eps, err := s.Endpoints(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return convertPortainerEndpoints(eps), nil
+	return convertPortainerEndpoints(eps, instanceID), nil
 }
 
-func (a *portainerAdapter) EndpointContainers(ctx context.Context, endpointID int) ([]web.PortainerContainerInfo, error) {
-	ep, err := a.findEndpoint(ctx, endpointID)
+func (a *multiPortainerAdapter) AllEndpoints(ctx context.Context, instanceID string) ([]web.PortainerEndpoint, error) {
+	s, err := a.get(instanceID)
 	if err != nil {
 		return nil, err
 	}
-	containers, err := a.scanner.EndpointContainers(ctx, ep)
+	eps, err := s.AllEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return convertPortainerEndpoints(eps, instanceID), nil
+}
+
+func (a *multiPortainerAdapter) EndpointContainers(ctx context.Context, instanceID string, endpointID int) ([]web.PortainerContainerInfo, error) {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return nil, err
+	}
+	ep, err := findEndpoint(ctx, s, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	containers, err := s.EndpointContainers(ctx, ep)
 	if err != nil {
 		return nil, err
 	}
@@ -296,13 +339,15 @@ func (a *portainerAdapter) EndpointContainers(ctx context.Context, endpointID in
 			EndpointName: c.EndpointName,
 			StackID:      c.StackID,
 			StackName:    c.StackName,
+			InstanceID:   instanceID,
 		})
 	}
 	return out, nil
 }
 
-func (a *portainerAdapter) findEndpoint(ctx context.Context, endpointID int) (portainer.Endpoint, error) {
-	all, err := a.scanner.AllEndpoints(ctx)
+// findEndpoint looks up a single endpoint by ID from a scanner's full endpoint list.
+func findEndpoint(ctx context.Context, scanner *portainer.Scanner, endpointID int) (portainer.Endpoint, error) {
+	all, err := scanner.AllEndpoints(ctx)
 	if err != nil {
 		return portainer.Endpoint{}, err
 	}
@@ -314,7 +359,7 @@ func (a *portainerAdapter) findEndpoint(ctx context.Context, endpointID int) (po
 	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
 }
 
-func convertPortainerEndpoints(eps []portainer.Endpoint) []web.PortainerEndpoint {
+func convertPortainerEndpoints(eps []portainer.Endpoint, instanceID string) []web.PortainerEndpoint {
 	out := make([]web.PortainerEndpoint, 0, len(eps))
 	for _, ep := range eps {
 		status := "down"
@@ -322,13 +367,90 @@ func convertPortainerEndpoints(eps []portainer.Endpoint) []web.PortainerEndpoint
 			status = "up"
 		}
 		out = append(out, web.PortainerEndpoint{
-			ID:     ep.ID,
-			Name:   ep.Name,
-			URL:    ep.URL,
-			Status: status,
+			ID:         ep.ID,
+			Name:       ep.Name,
+			URL:        ep.URL,
+			Type:       int(ep.Type),
+			Status:     status,
+			InstanceID: instanceID,
 		})
 	}
 	return out
+}
+
+// portainerInstanceStoreAdapter bridges store.Store to web.PortainerInstanceStore.
+type portainerInstanceStoreAdapter struct {
+	store *store.Store
+}
+
+func (a *portainerInstanceStoreAdapter) ListPortainerInstances() ([]web.PortainerInstanceConfig, error) {
+	instances, err := a.store.ListPortainerInstances()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.PortainerInstanceConfig, 0, len(instances))
+	for _, inst := range instances {
+		out = append(out, convertStoreInstance(inst))
+	}
+	return out, nil
+}
+
+func (a *portainerInstanceStoreAdapter) GetPortainerInstance(id string) (web.PortainerInstanceConfig, error) {
+	inst, err := a.store.GetPortainerInstance(id)
+	if err != nil {
+		return web.PortainerInstanceConfig{}, err
+	}
+	return convertStoreInstance(inst), nil
+}
+
+func (a *portainerInstanceStoreAdapter) SavePortainerInstance(cfg web.PortainerInstanceConfig) error {
+	inst := store.PortainerInstance{
+		ID:      cfg.ID,
+		Name:    cfg.Name,
+		URL:     cfg.URL,
+		Token:   cfg.Token,
+		Enabled: cfg.Enabled,
+	}
+	if len(cfg.Endpoints) > 0 {
+		inst.Endpoints = make(map[string]store.EndpointConfig, len(cfg.Endpoints))
+		for k, v := range cfg.Endpoints {
+			inst.Endpoints[k] = store.EndpointConfig{
+				Enabled: v.Enabled,
+				Blocked: v.Blocked,
+				Reason:  v.Reason,
+			}
+		}
+	}
+	return a.store.SavePortainerInstance(inst)
+}
+
+func (a *portainerInstanceStoreAdapter) DeletePortainerInstance(id string) error {
+	return a.store.DeletePortainerInstance(id)
+}
+
+func (a *portainerInstanceStoreAdapter) NextPortainerID() (string, error) {
+	return a.store.NextPortainerID()
+}
+
+func convertStoreInstance(inst store.PortainerInstance) web.PortainerInstanceConfig {
+	cfg := web.PortainerInstanceConfig{
+		ID:      inst.ID,
+		Name:    inst.Name,
+		URL:     inst.URL,
+		Token:   inst.Token,
+		Enabled: inst.Enabled,
+	}
+	if len(inst.Endpoints) > 0 {
+		cfg.Endpoints = make(map[string]web.EndpointCfg, len(inst.Endpoints))
+		for k, v := range inst.Endpoints {
+			cfg.Endpoints[k] = web.EndpointCfg{
+				Enabled: v.Enabled,
+				Blocked: v.Blocked,
+				Reason:  v.Reason,
+			}
+		}
+	}
+	return cfg
 }
 
 // portainerScannerAdapter bridges portainer.Scanner to engine.PortainerScanner.
@@ -352,7 +474,7 @@ func (a *portainerScannerAdapter) Endpoints(ctx context.Context) ([]engine.Porta
 }
 
 func (a *portainerScannerAdapter) EndpointContainers(ctx context.Context, endpointID int) ([]engine.PortainerContainerResult, error) {
-	ep, err := a.findEndpoint(ctx, endpointID)
+	ep, err := findEndpoint(ctx, a.scanner, endpointID)
 	if err != nil {
 		return nil, err
 	}
@@ -386,19 +508,6 @@ func (a *portainerScannerAdapter) RedeployStack(ctx context.Context, stackID, en
 
 func (a *portainerScannerAdapter) UpdateStandaloneContainer(ctx context.Context, endpointID int, containerID, newImage string) error {
 	return a.scanner.UpdateStandaloneContainer(ctx, endpointID, containerID, newImage)
-}
-
-func (a *portainerScannerAdapter) findEndpoint(ctx context.Context, endpointID int) (portainer.Endpoint, error) {
-	all, err := a.scanner.AllEndpoints(ctx)
-	if err != nil {
-		return portainer.Endpoint{}, err
-	}
-	for _, ep := range all {
-		if ep.ID == endpointID {
-			return ep, nil
-		}
-	}
-	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
 }
 
 // --- NPM adapter ---
