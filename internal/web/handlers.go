@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -506,7 +507,87 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	var view containerView
 	var image string // for changelog/version lookups
 
-	if hostFilter != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if strings.HasPrefix(hostFilter, "portainer:") && s.deps.Portainer != nil {
+		// Portainer container: look up from Portainer endpoint.
+		epIDStr := strings.TrimPrefix(hostFilter, "portainer:")
+		epID, err := strconv.Atoi(epIDStr)
+		if err != nil {
+			s.renderError(w, http.StatusBadRequest, "Bad Request", "Invalid Portainer endpoint ID.")
+			return
+		}
+		containers, err := s.deps.Portainer.EndpointContainers(r.Context(), epID)
+		if err != nil {
+			s.deps.Log.Error("failed to list Portainer containers", "endpoint", epID, "error", err)
+			s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load Portainer containers.")
+			return
+		}
+		var pc *PortainerContainerInfo
+		for _, c := range containers {
+			if c.Name == name {
+				pc = &c
+				break
+			}
+		}
+		if pc == nil {
+			s.renderError(w, http.StatusNotFound, "Container Not Found",
+				"The container \""+name+"\" was not found on Portainer endpoint "+epIDStr+". It may have been removed.")
+			return
+		}
+
+		queueKey := hostFilter + "::" + name
+		policy := s.resolvedPolicy(pc.Labels, queueKey)
+		tag := registry.ExtractTag(pc.Image)
+		if tag == "" {
+			if idx := strings.LastIndex(pc.Image, "/"); idx >= 0 {
+				tag = pc.Image[idx+1:]
+			} else {
+				tag = pc.Image
+			}
+		}
+		var resolved string
+		if _, isSemver := registry.ParseSemVer(tag); !isSemver {
+			if v := pc.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
+				resolved = v
+			}
+		}
+		var newestVersion string
+		var hasUpdate bool
+		if pend, ok := s.deps.Queue.Get(queueKey); ok {
+			hasUpdate = true
+			if len(pend.NewerVersions) > 0 {
+				newestVersion = pend.NewerVersions[0]
+			}
+		}
+		var detailSeverity string
+		if hasUpdate {
+			if newestVersion == "" {
+				detailSeverity = "build"
+			} else {
+				detailSeverity = classifySeverity(tag, newestVersion)
+				if detailSeverity == "" && resolved != "" {
+					detailSeverity = classifySeverity(resolved, newestVersion)
+				}
+			}
+		}
+
+		view = containerView{
+			Name:            pc.Name,
+			Image:           pc.Image,
+			Tag:             tag,
+			ResolvedVersion: resolved,
+			NewestVersion:   newestVersion,
+			Policy:          policy,
+			State:           pc.State,
+			HasUpdate:       hasUpdate,
+			DigestOnly:      hasUpdate && newestVersion == "",
+			Severity:        detailSeverity,
+			IsSelf:          pc.Labels["sentinel.self"] == "true",
+			HostID:          hostFilter,
+			HostName:        pc.EndpointName,
+			Registry:        registry.RegistryHost(pc.Image),
+		}
+		image = pc.Image
+	} else if hostFilter != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		// Remote container: look up from cluster cache.
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
