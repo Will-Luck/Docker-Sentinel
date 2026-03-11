@@ -1,7 +1,9 @@
 package store
 
 import (
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestPortainerInstance_SaveAndGet(t *testing.T) {
@@ -386,5 +388,76 @@ func TestPortainerMigration_AlreadyMigrated(t *testing.T) {
 	}
 	if migrated {
 		t.Error("should skip migration when instances already exist")
+	}
+}
+
+func TestPortainerMigration_QueueHostIDRewrite(t *testing.T) {
+	s := testStore(t)
+
+	oldJSON := `[{"container_name":"nginx","host_id":"portainer:3","current_image":"nginx:1.25"}]`
+	if err := s.SavePendingQueue([]byte(oldJSON)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.MigratePortainerKeys("p1"); err != nil {
+		t.Fatalf("MigratePortainerKeys: %v", err)
+	}
+
+	data, err := s.LoadPendingQueue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"portainer:p1:3"`) {
+		t.Errorf("expected portainer:p1:3 in queue, got: %s", data)
+	}
+	if strings.Contains(string(data), `"host_id":"portainer:3"`) {
+		t.Error("old host_id portainer:3 still present")
+	}
+}
+
+func TestPortainerMigration_HistoryHostIDRewrite(t *testing.T) {
+	s := testStore(t)
+
+	rec := UpdateRecord{
+		Timestamp:     time.Now(),
+		ContainerName: "nginx",
+		HostID:        "portainer:5",
+		OldImage:      "nginx:1.24",
+		NewImage:      "nginx:1.25",
+		Outcome:       "success",
+	}
+	if err := s.RecordUpdate(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.MigratePortainerKeys("p1"); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := s.ListHistory(10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if records[0].HostID != "portainer:p1:5" {
+		t.Errorf("HostID = %q, want portainer:p1:5", records[0].HostID)
+	}
+}
+
+func TestPortainerMigration_SkipsAlreadyMigrated(t *testing.T) {
+	s := testStore(t)
+
+	newJSON := `[{"container_name":"nginx","host_id":"portainer:p1:3","current_image":"nginx:1.25"}]`
+	_ = s.SavePendingQueue([]byte(newJSON))
+
+	if err := s.MigratePortainerKeys("p1"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := s.LoadPendingQueue()
+	if strings.Contains(string(data), "portainer:p1:p1") {
+		t.Error("double-migrated: portainer:p1:p1 found")
 	}
 }
