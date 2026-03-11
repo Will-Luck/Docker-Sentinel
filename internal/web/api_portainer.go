@@ -2,7 +2,9 @@ package web
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -232,14 +234,17 @@ func (s *Server) apiTestPortainerInstance(w http.ResponseWriter, r *http.Request
 	}
 
 	// Populate endpoint config for newly discovered endpoints.
-	// Auto-block local socket endpoints to prevent duplicate monitoring.
+	// Auto-block local socket endpoints only when the Portainer instance
+	// is on the same host as Sentinel (otherwise unix:// just means
+	// "local to that Portainer", which is a valid remote Docker host).
+	sameHost := isLocalPortainerInstance(inst.URL)
 	if inst.Endpoints == nil {
 		inst.Endpoints = make(map[string]EndpointCfg)
 	}
 	for _, ep := range endpoints {
 		epKey := strconv.Itoa(ep.ID)
 		if _, exists := inst.Endpoints[epKey]; !exists {
-			if isLocalSocketEndpoint(ep) {
+			if sameHost && isLocalSocketEndpoint(ep) {
 				inst.Endpoints[epKey] = EndpointCfg{
 					Enabled: false,
 					Blocked: true,
@@ -254,6 +259,11 @@ func (s *Server) apiTestPortainerInstance(w http.ResponseWriter, r *http.Request
 	// Auto-enable on successful test.
 	inst.Enabled = true
 	_ = s.deps.PortainerInstances.SavePortainerInstance(inst)
+
+	// Reconnect so the engine picks up the updated endpoint config.
+	if s.deps.Portainer != nil && inst.Token != "" && inst.URL != "" {
+		_ = s.deps.Portainer.ConnectInstance(inst.ID, inst.URL, inst.Token)
+	}
 
 	s.logEvent(r, "settings", "", "Portainer instance tested successfully: "+inst.Name)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -325,6 +335,11 @@ func (s *Server) apiUpdatePortainerEndpoint(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Refresh engine's endpoint config so scan respects the change.
+	if s.deps.Portainer != nil && inst.Token != "" && inst.URL != "" {
+		_ = s.deps.Portainer.ConnectInstance(inst.ID, inst.URL, inst.Token)
+	}
+
 	s.logEvent(r, "settings", "", "Portainer endpoint "+epIDStr+" updated on instance "+inst.Name)
 	writeJSON(w, http.StatusOK, cfg)
 }
@@ -364,4 +379,50 @@ func isLocalSocketEndpoint(ep PortainerEndpoint) bool {
 	}
 	// Empty URL with Docker environment type (1) means local socket mount.
 	return ep.URL == "" && ep.Type == 1
+}
+
+// isLocalPortainerInstance checks whether the Portainer instance URL points to
+// the same machine Sentinel is running on. We extract the hostname from the
+// URL, resolve it to IP addresses, and compare against all local network
+// interface addresses. This lets us auto-block only the local Docker socket
+// endpoint for co-located Portainer instances while leaving remote ones alone.
+func isLocalPortainerInstance(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return false
+	}
+
+	// Resolve the Portainer host to IP addresses.
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		// If DNS fails, fall back to treating the host as a literal IP.
+		ips = []string{host}
+	}
+
+	// Gather all local interface addresses.
+	localAddrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	localIPs := make(map[string]bool)
+	for _, addr := range localAddrs {
+		if ipNet, ok := addr.(*net.IPNet); ok {
+			localIPs[ipNet.IP.String()] = true
+		}
+	}
+
+	// Also treat common loopback names as local.
+	localIPs["127.0.0.1"] = true
+	localIPs["::1"] = true
+
+	for _, ip := range ips {
+		if localIPs[ip] {
+			return true
+		}
+	}
+	return false
 }

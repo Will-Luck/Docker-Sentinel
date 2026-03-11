@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -254,6 +255,8 @@ func (m *clusterManager) Stop() {
 type multiPortainerAdapter struct {
 	mu       sync.RWMutex
 	scanners map[string]*portainer.Scanner // keyed by instance ID
+	engine   *engine.Updater               // nil until wired up
+	store    *store.Store                  // nil until wired up
 }
 
 func newMultiPortainerAdapter() *multiPortainerAdapter {
@@ -272,17 +275,49 @@ func (a *multiPortainerAdapter) Remove(id string) {
 	delete(a.scanners, id)
 }
 
-// ConnectInstance creates a portainer.Scanner for the given instance and stores it.
+// ConnectInstance creates a portainer.Scanner for the given instance and
+// registers it with both the web adapter (for API calls) and the engine
+// (for scan cycles). This allows instances added at runtime to be scanned
+// without a restart.
 func (a *multiPortainerAdapter) ConnectInstance(id, url, token string) error {
 	pc := portainer.NewClient(url, token)
 	ps := portainer.NewScanner(pc)
 	a.Set(id, ps)
+
+	// Also register with the engine so scans pick it up.
+	if a.engine != nil {
+		ei := engine.PortainerInstance{
+			ID:      id,
+			Scanner: &portainerScannerAdapter{scanner: ps},
+		}
+		// Pull name and endpoint config from store if available.
+		if a.store != nil {
+			if inst, err := a.store.GetPortainerInstance(id); err == nil {
+				ei.Name = inst.Name
+				if len(inst.Endpoints) > 0 {
+					ei.Endpoints = make(map[int]engine.EndpointConfig)
+					for k, v := range inst.Endpoints {
+						epID, _ := strconv.Atoi(k)
+						ei.Endpoints[epID] = engine.EndpointConfig{
+							Enabled: v.Enabled,
+							Blocked: v.Blocked,
+						}
+					}
+				}
+			}
+		}
+		a.engine.AddPortainerInstance(ei)
+	}
 	return nil
 }
 
-// DisconnectInstance removes the scanner for the given instance.
+// DisconnectInstance removes the scanner for the given instance from both
+// the web adapter and the engine.
 func (a *multiPortainerAdapter) DisconnectInstance(id string) {
 	a.Remove(id)
+	if a.engine != nil {
+		a.engine.RemovePortainerInstance(id)
+	}
 }
 
 func (a *multiPortainerAdapter) get(id string) (*portainer.Scanner, error) {
