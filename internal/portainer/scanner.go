@@ -60,7 +60,7 @@ func (s *Scanner) Endpoints(ctx context.Context) ([]Endpoint, error) {
 	}
 	var out []Endpoint
 	for _, ep := range all {
-		if ep.IsDocker() && ep.Status == StatusUp {
+		if ep.IsDocker() && ep.Status == StatusUp && !ep.IsLocalSocket() {
 			out = append(out, ep)
 		}
 	}

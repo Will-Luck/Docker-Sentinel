@@ -232,13 +232,22 @@ func (s *Server) apiTestPortainerInstance(w http.ResponseWriter, r *http.Request
 	}
 
 	// Populate endpoint config for newly discovered endpoints.
+	// Auto-block local socket endpoints to prevent duplicate monitoring.
 	if inst.Endpoints == nil {
 		inst.Endpoints = make(map[string]EndpointCfg)
 	}
 	for _, ep := range endpoints {
 		epKey := strconv.Itoa(ep.ID)
 		if _, exists := inst.Endpoints[epKey]; !exists {
-			inst.Endpoints[epKey] = EndpointCfg{Enabled: true}
+			if isLocalSocketEndpoint(ep) {
+				inst.Endpoints[epKey] = EndpointCfg{
+					Enabled: false,
+					Blocked: true,
+					Reason:  "local Docker socket (duplicates direct monitoring)",
+				}
+			} else {
+				inst.Endpoints[epKey] = EndpointCfg{Enabled: true}
+			}
 		}
 	}
 
@@ -344,4 +353,15 @@ func (s *Server) apiPortainerContainers(w http.ResponseWriter, r *http.Request) 
 		containers = []PortainerContainerInfo{}
 	}
 	writeJSON(w, http.StatusOK, containers)
+}
+
+// isLocalSocketEndpoint returns true if the endpoint connects via the local
+// Docker socket. These endpoints duplicate what Sentinel monitors directly.
+// Mirrors portainer.Endpoint.IsLocalSocket() without importing the package.
+func isLocalSocketEndpoint(ep PortainerEndpoint) bool {
+	if strings.HasPrefix(ep.URL, "unix://") {
+		return true
+	}
+	// Empty URL with Docker environment type (1) means local socket mount.
+	return ep.URL == "" && ep.Type == 1
 }
