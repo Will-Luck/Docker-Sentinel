@@ -81,7 +81,8 @@ func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
 	defer r.mu.RUnlock()
 
 	for _, h := range r.hosts {
-		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+		domain := bestDomain(h.DomainNames)
+		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
 		if r.sentinelHost != "" && !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
@@ -100,8 +101,8 @@ func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
 		}
 
 		return &ResolvedURL{
-			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
-			Domain:      h.DomainNames[0],
+			URL:         fmt.Sprintf("%s://%s", scheme, domain),
+			Domain:      domain,
 			ProxyHostID: h.ID,
 		}
 	}
@@ -116,7 +117,8 @@ func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 
 	out := make(map[uint16]ResolvedURL)
 	for _, h := range r.hosts {
-		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+		domain := bestDomain(h.DomainNames)
+		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
 		if r.sentinelHost != "" && !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
@@ -140,8 +142,8 @@ func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 		}
 
 		out[port] = ResolvedURL{
-			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
-			Domain:      h.DomainNames[0],
+			URL:         fmt.Sprintf("%s://%s", scheme, domain),
+			Domain:      domain,
 			ProxyHostID: h.ID,
 		}
 	}
@@ -156,7 +158,8 @@ func (r *Resolver) LookupForHost(hostPort uint16, hostAddr string) *ResolvedURL 
 	defer r.mu.RUnlock()
 
 	for _, h := range r.hosts {
-		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+		domain := bestDomain(h.DomainNames)
+		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
 		if hostAddr != "" && !strings.EqualFold(h.ForwardHost, hostAddr) {
@@ -175,8 +178,8 @@ func (r *Resolver) LookupForHost(hostPort uint16, hostAddr string) *ResolvedURL 
 		}
 
 		return &ResolvedURL{
-			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
-			Domain:      h.DomainNames[0],
+			URL:         fmt.Sprintf("%s://%s", scheme, domain),
+			Domain:      domain,
 			ProxyHostID: h.ID,
 		}
 	}
@@ -192,7 +195,8 @@ func (r *Resolver) AllMappingsGrouped() map[string]map[uint16]ResolvedURL {
 
 	out := make(map[string]map[uint16]ResolvedURL)
 	for _, h := range r.hosts {
-		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+		domain := bestDomain(h.DomainNames)
+		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
 		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 {
@@ -218,12 +222,24 @@ func (r *Resolver) AllMappingsGrouped() map[string]map[uint16]ResolvedURL {
 		}
 
 		hostMap[port] = ResolvedURL{
-			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
-			Domain:      h.DomainNames[0],
+			URL:         fmt.Sprintf("%s://%s", scheme, domain),
+			Domain:      domain,
 			ProxyHostID: h.ID,
 		}
 	}
 	return out
+}
+
+// bestDomain picks the first non-wildcard domain from a proxy host's domain
+// list. Wildcard entries like "*.s3.garage.example.com" are valid for NPM
+// routing but produce broken URLs. Returns "" if all domains are wildcards.
+func bestDomain(domains []string) string {
+	for _, d := range domains {
+		if !strings.HasPrefix(d, "*") {
+			return d
+		}
+	}
+	return ""
 }
 
 // LastSync returns the time of the last successful sync.
