@@ -38,6 +38,9 @@ var (
 	bucketClusterConfigCache = []byte("cluster_config_cache")
 	bucketClusterRevoked     = []byte("cluster_revoked")
 	bucketDigestEquiv        = []byte("digest_equivalence")
+
+	// Multi-instance Portainer
+	bucketPortainerInstances = []byte("portainer_instances")
 )
 
 // Cluster settings keys (stored in bucketSettings).
@@ -145,7 +148,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketPortConfig, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked, bucketDigestEquiv} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketPortConfig, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked, bucketDigestEquiv, bucketPortainerInstances} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
