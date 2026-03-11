@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Connectors page redesigned.** Portainer tab now shows instance cards with
   add/remove/test/configure workflow, replacing the single URL+token form.
 
+### Fixed
+- **Portainer runtime scanner creation.** Adding a Portainer instance via the
+  UI now creates a live scanner immediately. Previously, instances added after
+  boot had no scanner until the next restart.
+- **Portainer TLS verification.** Portainer connections now skip TLS certificate
+  verification, fixing failures with self-signed certs (standard in homelab and
+  private network setups).
+- **Connectors page CSRF token.** Fixed `csrfToken` function reference being
+  passed as a header value instead of being called, which broke all fetch
+  requests on the connectors page.
+
 ### Changed
 - **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
   to `portainer:instanceID:N`. Existing queue and history entries are
