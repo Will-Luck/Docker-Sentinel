@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Connectors page CSRF token.** Fixed `csrfToken` function reference being
   passed as a header value instead of being called, which broke all fetch
   requests on the connectors page.
+- **Local socket endpoints not blocked.** `IsLocalSocket()` was defined but
+  never called. Now auto-blocks local Docker socket endpoints during Test
+  Connection and excludes them from scanning.
 
 ### Changed
 - **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
