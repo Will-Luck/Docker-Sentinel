@@ -1597,6 +1597,12 @@ details[open] > .accordion-header .accordion-chevron {
   overflow: visible !important;
   text-overflow: unset !important;
 }
+.scan-summary-row td:nth-child(3) {
+  text-align: center;
+}
+.scan-summary-row td:nth-child(4) {
+  text-align: center;
+}
 .container-link {
   color: var(--accent);
   text-decoration: none;
