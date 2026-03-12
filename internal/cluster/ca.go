@@ -148,11 +148,13 @@ func (ca *CA) IssueCert(name string, pub crypto.PublicKey, isServer bool) (certP
 
 // IssueServerCert generates a new ECDSA P-256 key pair and issues a server
 // certificate signed by this CA. The cert includes SANs for localhost,
-// loopback IPs, and the host's private network IPs.
+// loopback IPs, the host's private network IPs, and any extra addresses
+// provided in extraAddrs (IPs or hostnames, e.g. the Docker host's
+// externally-reachable IP that agents connect to).
 //
 // Returns the cert and key as PEM-encoded byte slices (suitable for
 // tls.X509KeyPair or writing to disk).
-func (ca *CA) IssueServerCert() (certPEM, keyPEM []byte, err error) {
+func (ca *CA) IssueServerCert(extraAddrs ...string) (certPEM, keyPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate server key: %w", err)
@@ -164,6 +166,16 @@ func (ca *CA) IssueServerCert() (certPEM, keyPEM []byte, err error) {
 	serial, err := randomSerial()
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate serial: %w", err)
+	}
+
+	ips := privateIPs()
+	dns := []string{"localhost"}
+	for _, addr := range extraAddrs {
+		if ip := net.ParseIP(addr); ip != nil {
+			ips = append(ips, ip)
+		} else if addr != "" {
+			dns = append(dns, addr)
+		}
 	}
 
 	now := time.Now()
@@ -180,8 +192,8 @@ func (ca *CA) IssueServerCert() (certPEM, keyPEM []byte, err error) {
 		},
 		BasicConstraintsValid: true,
 
-		DNSNames:    []string{"localhost"},
-		IPAddresses: privateIPs(),
+		DNSNames:    dns,
+		IPAddresses: ips,
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)

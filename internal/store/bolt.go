@@ -50,6 +50,7 @@ const (
 	SettingClusterGracePeriod      = "cluster_grace_period"       // e.g. "30m"
 	SettingClusterRemotePolicy     = "cluster_remote_policy"      // "auto" / "manual" / "pinned"
 	SettingClusterAutoUpdateAgents = "cluster_auto_update_agents" // "true" / "false"
+	SettingClusterAdvertise        = "cluster_advertise"          // comma-separated IPs/hostnames for TLS SANs
 )
 
 // Portainer settings keys (stored in bucketSettings).

@@ -53,14 +53,15 @@ type Config struct {
 	MetricsTextfile     string // SENTINEL_METRICS_TEXTFILE — path for node_exporter textfile collector
 
 	// Cluster / multi-host
-	Mode               string        // "server" or "agent" — set via subcommand or SENTINEL_MODE env
-	ClusterEnabled     bool          // server: whether to start the gRPC listener
-	ClusterPort        string        // gRPC port (default "9443")
-	ClusterDataDir     string        // CA/cert storage directory (default "/data/cluster")
-	ServerAddr         string        // agent: server gRPC address (host:port)
-	EnrollToken        string        // agent: one-time enrollment token
-	HostName           string        // agent: human-readable label for this host
-	GracePeriodOffline time.Duration // agent: time before switching to autonomous mode (default 30m)
+	Mode                 string        // "server" or "agent" — set via subcommand or SENTINEL_MODE env
+	ClusterEnabled       bool          // server: whether to start the gRPC listener
+	ClusterPort          string        // gRPC port (default "9443")
+	ClusterDataDir       string        // CA/cert storage directory (default "/data/cluster")
+	ClusterAdvertiseAddr string        // server: extra IPs/hostnames for TLS cert SANs (comma-separated)
+	ServerAddr           string        // agent: server gRPC address (host:port)
+	EnrollToken          string        // agent: one-time enrollment token
+	HostName             string        // agent: human-readable label for this host
+	GracePeriodOffline   time.Duration // agent: time before switching to autonomous mode (default 30m)
 
 	// Portainer integration
 	PortainerURL   string
@@ -144,14 +145,15 @@ func Load() *Config {
 		maintenanceWindow:   envStr("SENTINEL_MAINTENANCE_WINDOW", ""),
 
 		// Cluster / multi-host
-		Mode:               envStr("SENTINEL_MODE", ""),
-		ClusterEnabled:     envBool("SENTINEL_CLUSTER", false),
-		ClusterPort:        envStr("SENTINEL_CLUSTER_PORT", "9443"),
-		ClusterDataDir:     envStr("SENTINEL_CLUSTER_DIR", "/data/cluster"),
-		ServerAddr:         envStr("SENTINEL_SERVER_ADDR", ""),
-		EnrollToken:        envStr("SENTINEL_ENROLL_TOKEN", ""),
-		HostName:           envStr("SENTINEL_HOST_NAME", ""),
-		GracePeriodOffline: envDuration("SENTINEL_GRACE_PERIOD_OFFLINE", 30*time.Minute),
+		Mode:                 envStr("SENTINEL_MODE", ""),
+		ClusterEnabled:       envBool("SENTINEL_CLUSTER", false),
+		ClusterPort:          envStr("SENTINEL_CLUSTER_PORT", "9443"),
+		ClusterDataDir:       envStr("SENTINEL_CLUSTER_DIR", "/data/cluster"),
+		ClusterAdvertiseAddr: envStr("SENTINEL_CLUSTER_ADVERTISE", ""),
+		ServerAddr:           envStr("SENTINEL_SERVER_ADDR", ""),
+		EnrollToken:          envStr("SENTINEL_ENROLL_TOKEN", ""),
+		HostName:             envStr("SENTINEL_HOST_NAME", ""),
+		GracePeriodOffline:   envDuration("SENTINEL_GRACE_PERIOD_OFFLINE", 30*time.Minute),
 
 		// Portainer integration
 		PortainerURL:   envStr("SENTINEL_PORTAINER_URL", ""),
@@ -262,6 +264,7 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_CLUSTER":              fmt.Sprintf("%t", c.ClusterEnabled),
 		"SENTINEL_CLUSTER_PORT":         c.ClusterPort,
 		"SENTINEL_CLUSTER_DIR":          c.ClusterDataDir,
+		"SENTINEL_CLUSTER_ADVERTISE":    c.ClusterAdvertiseAddr,
 		"SENTINEL_SERVER_ADDR":          c.ServerAddr,
 		"SENTINEL_HOST_NAME":            c.HostName,
 		"SENTINEL_GRACE_PERIOD_OFFLINE": c.GracePeriodOffline.String(),

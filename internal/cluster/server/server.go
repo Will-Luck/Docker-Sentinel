@@ -152,19 +152,21 @@ func (s *Server) SetHistoryRecorder(h HistoryRecorder) {
 }
 
 // Start starts the gRPC server with mTLS on the given address.
+// extraSANs are additional IPs or hostnames to include in the server
+// certificate (e.g. the Docker host's external IP that agents connect to).
 //
 // TLS is configured with VerifyClientCertIfGiven so that enrollment
 // (which happens before the agent has a cert) can proceed unauthenticated.
 // AgentService methods check for a valid client cert and reject calls
 // without one.
-func (s *Server) Start(addr string) error {
+func (s *Server) Start(addr string, extraSANs ...string) error {
 	// Load persisted hosts before accepting connections.
 	if err := s.registry.LoadFromStore(); err != nil {
 		return fmt.Errorf("load registry: %w", err)
 	}
 
 	// Issue an ephemeral server certificate from our CA.
-	certPEM, keyPEM, err := s.ca.IssueServerCert()
+	certPEM, keyPEM, err := s.ca.IssueServerCert(extraSANs...)
 	if err != nil {
 		return fmt.Errorf("issue server cert: %w", err)
 	}
