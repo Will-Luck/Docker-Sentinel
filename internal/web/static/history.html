@@ -102,9 +102,17 @@
                     <tbody>
                         {{if .History}}
                             {{range $i, $r := .History}}
+                            {{if eq $r.Outcome "scan_summary"}}
+                            <tr class="history-row scan-summary-row" data-outcome="scan_summary">
+                                <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
+                                <td colspan="2" class="scan-summary-text">{{if $r.Error}}{{$r.Error}}{{else}}&mdash;{{end}}</td>
+                                <td><span class="badge badge-info" title="Summary of the last completed scan">Summary</span></td>
+                                <td class="mono">{{fmtDuration $r.Duration}}</td>
+                            </tr>
+                            {{else}}
                             <tr class="container-row history-row" data-outcome="{{$r.Outcome}}" onclick="onRowClick(event, 'history-{{$i}}')">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
-                                <td>{{if eq $r.Outcome "scan_summary"}}{{if $r.Error}}{{$r.Error}}{{else}}&mdash;{{end}}{{else}}<a href="{{serviceOrContainer $r.Type $r.ContainerName $r.HostID}}" class="container-link">{{$r.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}{{end}}</td>
+                                <td><a href="{{serviceOrContainer $r.Type $r.ContainerName $r.HostID}}" class="container-link">{{$r.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td class="cell-image mono">
                                     {{$oldTag := imageTag $r.OldImage}}{{$newTag := imageTag $r.NewImage}}
                                     {{if and $oldTag $newTag (ne $oldTag $newTag)}}
@@ -141,8 +149,6 @@
                                         <span class="badge badge-muted" title="Image pulled but container was not restarted">Pulled</span>
                                     {{else if eq $r.Outcome "identical"}}
                                         <span class="badge badge-info" title="New image was pulled but is identical to the current one">Image Identical</span>
-                                    {{else if eq $r.Outcome "scan_summary"}}
-                                        <span class="badge badge-info" title="Summary of the last completed scan">Scan Summary</span>
                                     {{else}}
                                         <span class="badge badge-muted">{{$r.Outcome}}</span>
                                     {{end}}
@@ -175,6 +181,7 @@
                                     </div>
                                 </td>
                             </tr>
+                            {{end}}
                             {{end}}
                         {{else}}
                             <tr>
@@ -263,10 +270,13 @@
                 var existingCount = document.querySelectorAll('.container-row').length;
                 records.forEach(function(r, i) {
                     var idx = existingCount + i;
+                    var isScanSummary = r.outcome === 'scan_summary';
                     var tr = document.createElement('tr');
-                    tr.className = 'container-row history-row';
+                    tr.className = isScanSummary ? 'history-row scan-summary-row' : 'container-row history-row';
                     tr.setAttribute('data-outcome', r.outcome || '');
-                    tr.setAttribute('onclick', "onRowClick(event, 'history-" + idx + "')");
+                    if (!isScanSummary) {
+                        tr.setAttribute('onclick', "onRowClick(event, 'history-" + idx + "')");
+                    }
                     // Respect active filter.
                     if (_historyFilter !== 'all') {
                         var grp = OUTCOME_GROUPS[_historyFilter] || [];
@@ -281,7 +291,9 @@
                     tdTime.textContent = ago;
 
                     var tdName = document.createElement('td');
-                    if (r.outcome === 'scan_summary') {
+                    if (isScanSummary) {
+                        tdName.colSpan = 2;
+                        tdName.className = 'scan-summary-text';
                         tdName.textContent = r.error || '\u2014';
                     } else {
                         var link = document.createElement('a');
@@ -333,43 +345,46 @@
 
                     tr.appendChild(tdTime);
                     tr.appendChild(tdName);
-                    tr.appendChild(tdVersion);
+                    if (!isScanSummary) tr.appendChild(tdVersion);
                     tr.appendChild(tdOutcome);
                     tr.appendChild(tdDur);
                     tbody.appendChild(tr);
 
-                    var detail = document.createElement('tr');
-                    detail.className = 'accordion-panel';
-                    detail.id = 'accordion-history-' + idx;
-                    detail.style.display = 'none';
-                    var detailTd = document.createElement('td');
-                    detailTd.colSpan = 5;
-                    var content = document.createElement('div');
-                    content.className = 'accordion-content';
-                    var grid = document.createElement('div');
-                    grid.className = 'accordion-grid';
+                    // Scan summary rows have no accordion detail panel.
+                    if (!isScanSummary) {
+                        var detail = document.createElement('tr');
+                        detail.className = 'accordion-panel';
+                        detail.id = 'accordion-history-' + idx;
+                        detail.style.display = 'none';
+                        var detailTd = document.createElement('td');
+                        detailTd.colSpan = 5;
+                        var content = document.createElement('div');
+                        content.className = 'accordion-content';
+                        var grid = document.createElement('div');
+                        grid.className = 'accordion-grid';
 
-                    var sec1 = document.createElement('div');
-                    sec1.className = 'accordion-section';
-                    appendLabelValue(sec1, 'Timestamp', ts.toISOString());
-                    appendLabelValue(sec1, 'Old Image', r.old_image || '');
-                    appendLabelValue(sec1, 'New Image', r.new_image || '');
+                        var sec1 = document.createElement('div');
+                        sec1.className = 'accordion-section';
+                        appendLabelValue(sec1, 'Timestamp', ts.toISOString());
+                        appendLabelValue(sec1, 'Old Image', r.old_image || '');
+                        appendLabelValue(sec1, 'New Image', r.new_image || '');
 
-                    var sec2 = document.createElement('div');
-                    sec2.className = 'accordion-section';
-                    appendLabelValue(sec2, 'Old Digest', r.old_digest || '-');
-                    appendLabelValue(sec2, 'New Digest', r.new_digest || '-');
-                    if (r.error) {
-                        var errVal = appendLabelValue(sec2, 'Error', r.error);
-                        errVal.style.color = 'var(--error)';
+                        var sec2 = document.createElement('div');
+                        sec2.className = 'accordion-section';
+                        appendLabelValue(sec2, 'Old Digest', r.old_digest || '-');
+                        appendLabelValue(sec2, 'New Digest', r.new_digest || '-');
+                        if (r.error) {
+                            var errVal = appendLabelValue(sec2, 'Error', r.error);
+                            errVal.style.color = 'var(--error)';
+                        }
+
+                        grid.appendChild(sec1);
+                        grid.appendChild(sec2);
+                        content.appendChild(grid);
+                        detailTd.appendChild(content);
+                        detail.appendChild(detailTd);
+                        tbody.appendChild(detail);
                     }
-
-                    grid.appendChild(sec1);
-                    grid.appendChild(sec2);
-                    content.appendChild(grid);
-                    detailTd.appendChild(content);
-                    detail.appendChild(detailTd);
-                    tbody.appendChild(detail);
                 });
 
                 lastHistoryTimestamp = records[records.length - 1].timestamp;
@@ -386,7 +401,7 @@
 
     function badgeForHist(outcome) {
         var map = {success:'badge-success',rollback:'badge-error',rollback_success:'badge-warning',rollback_failed:'badge-error',failed:'badge-error',partial:'badge-warning',rate_limited:'badge-warning',check_failed:'badge-warning',dry_run:'badge-muted',pull_only:'badge-muted',identical:'badge-info',scan_summary:'badge-info'};
-        var label = {success:'Updated',rollback:'Rolled Back',rollback_success:'Rollback OK',rollback_failed:'Rollback Failed',failed:'Failed',partial:'Updated (partial)',rate_limited:'Rate Limited',check_failed:'Check Failed',dry_run:'Simulated',pull_only:'Pulled',identical:'Image Identical',scan_summary:'Scan Summary'};
+        var label = {success:'Updated',rollback:'Rolled Back',rollback_success:'Rollback OK',rollback_failed:'Rollback Failed',failed:'Failed',partial:'Updated (partial)',rate_limited:'Rate Limited',check_failed:'Check Failed',dry_run:'Simulated',pull_only:'Pulled',identical:'Image Identical',scan_summary:'Summary'};
         var tips = {success:'Container updated and running healthy',rollback:'Update failed health check, restored previous version',rollback_success:'Successfully restored previous version',rollback_failed:'Attempted rollback but restoration also failed',failed:'Update failed, container may be unhealthy',partial:'Container updated but post-update cleanup had issues',rate_limited:'Registry throttled the request, will retry next scan',check_failed:'Could not reach the registry to check for updates',dry_run:'Would have updated in normal mode (dry run enabled)',pull_only:'Image pulled but container was not restarted',identical:'New image was pulled but is identical to the current one',scan_summary:'Summary of the last completed scan'};
         var cls = map[outcome] || 'badge-muted';
         var txt = label[outcome] || outcome;
