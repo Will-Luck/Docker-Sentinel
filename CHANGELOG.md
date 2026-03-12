@@ -66,6 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broken `/container/history-0` URLs when clicked. Now render with colspan
   spanning Container + Version columns, non-clickable, with proper text
   wrapping and column alignment at all viewport widths.
+- **Images page column alignment.** Size, Status, and Actions columns were
+  left-aligned while their content (numbers, badges, buttons) sat off-centre.
+  Size is now right-aligned, Status and Actions are centred. Unused badge
+  changed from grey to red for better visibility.
 - **Portainer connector: hot-reload without restart.** Saving Portainer URL
   and API token in the UI now takes effect immediately. Previously the test
   button always returned "not configured" because the provider was only
