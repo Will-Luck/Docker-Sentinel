@@ -124,6 +124,11 @@ type ContainerCreateResponse struct {
 	Warnings []string `json:"Warnings"`
 }
 
+// ImageInspect is a minimal subset of Docker image inspect returned via Portainer's proxy.
+type ImageInspect struct {
+	RepoDigests []string `json:"RepoDigests"`
+}
+
 // InspectResponse is a minimal subset of container inspect data needed for recreation.
 type InspectResponse struct {
 	ID     string `json:"Id"`

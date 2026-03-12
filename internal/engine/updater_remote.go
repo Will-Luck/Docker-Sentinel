@@ -360,11 +360,9 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, inst *PortainerInst
 			}
 		}
 
-		// No image digest available from the Portainer list API — pass "" so
-		// CheckVersionedWithDigest falls back to a full registry check.
 		semverScope := docker.ContainerSemverScope(c.Labels)
 		includeRE, excludeRE := docker.ContainerTagFilters(c.Labels)
-		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, "", semverScope, includeRE, excludeRE)
+		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest, semverScope, includeRE, excludeRE)
 		if check.Error != nil {
 			u.log.Warn("registry check failed for Portainer container",
 				"endpoint", ep.Name, "name", c.Name, "error", check.Error)

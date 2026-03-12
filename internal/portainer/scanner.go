@@ -15,6 +15,7 @@ type PortainerContainer struct {
 	Name         string
 	Image        string
 	ImageID      string
+	ImageDigest  string // repo digest from image inspect (e.g. "postgres@sha256:...")
 	State        string
 	Labels       map[string]string
 	EndpointID   int
@@ -104,6 +105,31 @@ func (s *Scanner) EndpointContainers(ctx context.Context, ep Endpoint) ([]Portai
 		return nil, err
 	}
 
+	// Fetch repo digests per unique image, deduped by ImageID.
+	digestByImageID := make(map[string]string, len(raw))
+	for _, c := range raw {
+		if _, seen := digestByImageID[c.ImageID]; seen {
+			continue
+		}
+		digestByImageID[c.ImageID] = "" // placeholder
+		img, err := s.client.InspectImage(ctx, ep.ID, c.ImageID)
+		if err != nil || len(img.RepoDigests) == 0 {
+			continue
+		}
+		// Pick the first repo digest matching the container's image name.
+		repo := strings.SplitN(c.Image, ":", 2)[0]
+		for _, rd := range img.RepoDigests {
+			if strings.HasPrefix(rd, repo+"@") {
+				digestByImageID[c.ImageID] = rd
+				break
+			}
+		}
+		// If no match by repo name, use the first one.
+		if digestByImageID[c.ImageID] == "" {
+			digestByImageID[c.ImageID] = img.RepoDigests[0]
+		}
+	}
+
 	out := make([]PortainerContainer, 0, len(raw))
 	for _, c := range raw {
 		pc := PortainerContainer{
@@ -111,6 +137,7 @@ func (s *Scanner) EndpointContainers(ctx context.Context, ep Endpoint) ([]Portai
 			Name:         c.Name(),
 			Image:        c.Image,
 			ImageID:      c.ImageID,
+			ImageDigest:  digestByImageID[c.ImageID],
 			State:        c.State,
 			Labels:       c.Labels,
 			EndpointID:   ep.ID,
