@@ -187,15 +187,32 @@ func (s *Scanner) UpdateStandaloneContainer(ctx context.Context, endpointID int,
 // server (CE or EE). Used to detect when we'd be updating Portainer through
 // its own API, which would kill it mid-request.
 func IsPortainerImage(image string) bool {
-	// Normalise: strip any registry prefix (ghcr.io/, docker.io/, etc.)
 	repo := image
+
+	// Strip tag/digest suffix so they don't interfere with matching.
+	if at := strings.Index(repo, "@"); at >= 0 {
+		repo = repo[:at]
+	}
+	if colon := strings.LastIndex(repo, ":"); colon >= 0 {
+		// Only strip if after the last slash (it's a tag, not a port).
+		if slash := strings.LastIndex(repo, "/"); colon > slash {
+			repo = repo[:colon]
+		}
+	}
+
+	// Strip registry prefix (contains a dot or colon before the first slash).
+	// Handles ghcr.io/, docker.io/, index.docker.io/, myregistry:5000/, etc.
 	if i := strings.Index(repo, "/"); i >= 0 {
-		// Check if the part before / looks like a registry (contains a dot or colon).
 		prefix := repo[:i]
 		if strings.ContainsAny(prefix, ".:") {
 			repo = repo[i+1:]
 		}
 	}
+
+	// Strip Docker Hub "library/" prefix for official images.
+	// Docker canonicalises e.g. "nginx" to "index.docker.io/library/nginx".
+	repo = strings.TrimPrefix(repo, "library/")
+
 	return strings.HasPrefix(repo, "portainer/portainer")
 }
 
