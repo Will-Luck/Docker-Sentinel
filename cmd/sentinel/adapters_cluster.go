@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -217,8 +219,22 @@ func (m *clusterManager) Start() error {
 	}
 	m.srv.SetHistoryRecorder(m.db)
 
+	// Read advertise addresses for TLS cert SANs. Inside Docker, the container
+	// only sees its bridge network IPs, but agents connect via the host's
+	// external IP. Check env var first, then DB setting.
+	adv, _ := m.db.LoadSetting(store.SettingClusterAdvertise)
+	if adv == "" {
+		adv = os.Getenv("SENTINEL_CLUSTER_ADVERTISE")
+	}
+	var extraSANs []string
+	for _, s := range strings.Split(adv, ",") {
+		if t := strings.TrimSpace(s); t != "" {
+			extraSANs = append(extraSANs, t)
+		}
+	}
+
 	addr := net.JoinHostPort("", port)
-	if err := m.srv.Start(addr); err != nil {
+	if err := m.srv.Start(addr, extraSANs...); err != nil {
 		m.srv = nil
 		return fmt.Errorf("start gRPC: %w", err)
 	}
