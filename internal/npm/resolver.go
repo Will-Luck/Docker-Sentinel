@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,29 +34,16 @@ func NewResolver(client *Client, localAddrs map[string]bool, log *slog.Logger) *
 	}
 }
 
-// DetectLocalAddrs builds a set of local IP addresses by querying network
-// interfaces. The machine hostname and "localhost" are included. Any extra
-// values (e.g. from SENTINEL_HOST) are added to the set. Empty strings in
-// extra are ignored.
+// DetectLocalAddrs builds a set of addresses the Docker host is reachable on.
+// Only addresses useful for NPM ForwardHost matching are included: explicit
+// SENTINEL_HOST values and the Docker host IP (via host.docker.internal).
+//
+// Container-local addresses (172.17.x.x, hostname, localhost) are excluded
+// because NPM proxies never use them as ForwardHost. If no routable address
+// can be determined, an empty set is returned, which disables host filtering
+// in Lookup() so all NPM proxies are considered (the safe fallback).
 func DetectLocalAddrs(extra ...string) map[string]bool {
 	addrs := make(map[string]bool)
-
-	// Network interfaces — the primary source of truth.
-	if ifaces, err := net.InterfaceAddrs(); err == nil {
-		for _, a := range ifaces {
-			ip, _, _ := net.ParseCIDR(a.String())
-			if ip != nil {
-				addrs[strings.ToLower(ip.String())] = true
-			}
-		}
-	}
-
-	// Machine hostname — NPM ForwardHost might use it.
-	if hostname, err := os.Hostname(); err == nil && hostname != "" {
-		addrs[strings.ToLower(hostname)] = true
-	}
-
-	addrs["localhost"] = true
 
 	// Docker host detection: host.docker.internal resolves to the Docker
 	// host IP on Docker Desktop and on containers started with
