@@ -557,14 +557,15 @@ func (a *portainerScannerAdapter) EndpointContainers(ctx context.Context, endpoi
 	out := make([]engine.PortainerContainerResult, 0, len(containers))
 	for _, c := range containers {
 		out = append(out, engine.PortainerContainerResult{
-			ID:         c.ID,
-			Name:       c.Name,
-			Image:      c.Image,
-			State:      c.State,
-			Labels:     c.Labels,
-			EndpointID: c.EndpointID,
-			StackID:    c.StackID,
-			StackName:  c.StackName,
+			ID:          c.ID,
+			Name:        c.Name,
+			Image:       c.Image,
+			ImageDigest: c.ImageDigest,
+			State:       c.State,
+			Labels:      c.Labels,
+			EndpointID:  c.EndpointID,
+			StackID:     c.StackID,
+			StackName:   c.StackName,
 		})
 	}
 	return out, nil

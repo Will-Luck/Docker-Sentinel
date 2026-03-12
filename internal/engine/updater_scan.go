@@ -76,14 +76,15 @@ type PortainerEndpointInfo struct {
 
 // PortainerContainerResult is a container from a Portainer-managed environment.
 type PortainerContainerResult struct {
-	ID         string
-	Name       string
-	Image      string
-	State      string
-	Labels     map[string]string
-	EndpointID int
-	StackID    int
-	StackName  string
+	ID          string
+	Name        string
+	Image       string
+	ImageDigest string // repo digest from Portainer image inspect
+	State       string
+	Labels      map[string]string
+	EndpointID  int
+	StackID     int
+	StackName   string
 }
 
 // EndpointConfig holds per-endpoint user and auto-detected settings.

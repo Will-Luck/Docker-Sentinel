@@ -38,7 +38,7 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "restart"); err != nil {
 				s.deps.Log.Error("remote restart failed", "name", name, "host", hostID, "error", err)
@@ -125,7 +125,7 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "stop"); err != nil {
 				s.deps.Log.Error("remote stop failed", "name", name, "host", hostID, "error", err)
@@ -212,7 +212,7 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "start"); err != nil {
 				s.deps.Log.Error("remote start failed", "name", name, "host", hostID, "error", err)
@@ -294,7 +294,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
 			if c.HostID == hostID && c.Name == name {
@@ -528,7 +528,7 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RollbackRemoteContainer(context.Background(), hostID, name); err != nil {
 				s.deps.Log.Error("remote rollback failed", "name", name, "host", hostID, "error", err)
@@ -602,7 +602,7 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote container if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
 			if c.HostID == hostID && c.Name == name {
@@ -842,7 +842,7 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
 			if c.HostID == hostID && c.Name == name {

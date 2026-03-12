@@ -81,6 +81,17 @@ func (c *Client) InspectContainer(ctx context.Context, endpointID int, container
 	return &resp, nil
 }
 
+// InspectImage returns image metadata via Portainer's Docker proxy.
+// The imageID should be the full sha256 image ID from the container list.
+func (c *Client) InspectImage(ctx context.Context, endpointID int, imageID string) (*ImageInspect, error) {
+	var resp ImageInspect
+	path := fmt.Sprintf("/api/endpoints/%d/docker/images/%s/json", endpointID, url.PathEscape(imageID))
+	if err := c.get(ctx, path, &resp); err != nil {
+		return nil, fmt.Errorf("inspect image: %w", err)
+	}
+	return &resp, nil
+}
+
 func (c *Client) StopContainer(ctx context.Context, endpointID int, containerID string) error {
 	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/%s/stop", endpointID, containerID)
 	return c.post(ctx, path, nil)

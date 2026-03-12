@@ -150,14 +150,14 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		start := time.Now()
 		var err error
-		if update.HostID != "" && s.deps.Cluster.Enabled() {
+		if strings.HasPrefix(update.HostID, "portainer:") && s.deps.Portainer != nil {
+			// Portainer-managed container — route through Portainer API.
+			err = s.approvePortainerUpdate(ctx, update, approveTarget)
+		} else if update.HostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 			// Remote container — dispatch to the agent via cluster.
 			s.markRemoteUpdating(update.HostID, update.ContainerName)
 			err = s.deps.Cluster.UpdateRemoteContainer(ctx, update.HostID, update.ContainerName, approveTarget, update.RemoteDigest)
 			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(update.HostID, update.ContainerName) })
-		} else if strings.HasPrefix(update.HostID, "portainer:") && s.deps.Portainer != nil {
-			// Portainer-managed container — route through Portainer API.
-			err = s.approvePortainerUpdate(ctx, update, approveTarget)
 		} else if update.Type == "service" && s.deps.Swarm != nil {
 			err = s.deps.Swarm.UpdateService(ctx, update.ContainerID, update.ContainerName, approveTarget)
 		} else {
