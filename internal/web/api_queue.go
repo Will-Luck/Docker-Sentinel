@@ -183,6 +183,22 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 				HostID:        update.HostID,
 				HostName:      update.HostName,
 			})
+		} else if update.HostID != "" {
+			// Record success for remote updates (Portainer, cluster agent, swarm).
+			// Local updates record their own history inside UpdateContainer().
+			s.deps.Log.Info("remote update succeeded", "name", name, "host", update.HostID)
+			_ = s.deps.Store.RecordUpdate(UpdateRecord{
+				Timestamp:     start,
+				ContainerName: update.ContainerName,
+				OldImage:      update.CurrentImage,
+				OldDigest:     update.CurrentDigest,
+				NewImage:      approveTarget,
+				Outcome:       "success",
+				Duration:      time.Since(start),
+				Type:          update.Type,
+				HostID:        update.HostID,
+				HostName:      update.HostName,
+			})
 		}
 	}()
 

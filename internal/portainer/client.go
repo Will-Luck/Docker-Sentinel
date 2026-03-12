@@ -102,9 +102,54 @@ func (c *Client) RemoveContainer(ctx context.Context, endpointID int, containerI
 	return c.delete(ctx, path)
 }
 
+// PullImage pulls an image on the given endpoint via Portainer's Docker proxy.
+// Docker's POST /images/create returns a streaming response with JSON progress
+// objects. We must drain the full stream to ensure the pull completes before
+// returning, otherwise subsequent operations (like create container) will fail
+// with "no such image". A dedicated HTTP client without the 30s timeout is used
+// since pulls can take minutes for large images.
 func (c *Client) PullImage(ctx context.Context, endpointID int, image, tag string) error {
-	path := fmt.Sprintf("/api/endpoints/%d/docker/images/create?fromImage=%s&tag=%s", endpointID, url.QueryEscape(image), url.QueryEscape(tag))
-	return c.post(ctx, path, nil)
+	path := fmt.Sprintf("/api/endpoints/%d/docker/images/create?fromImage=%s&tag=%s",
+		endpointID, url.QueryEscape(image), url.QueryEscape(tag))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-API-Key", c.token)
+
+	// No client-level timeout; context cancellation handles the deadline.
+	streamClient := &http.Client{Transport: c.httpClient.Transport}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("portainer API error %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// Drain the streaming JSON response. Each line is a progress object;
+	// if any contain an "error" field, the pull failed.
+	dec := json.NewDecoder(resp.Body)
+	var lastErr string
+	for {
+		var obj struct {
+			Error string `json:"error"`
+		}
+		if err := dec.Decode(&obj); err != nil {
+			break // io.EOF or malformed tail
+		}
+		if obj.Error != "" {
+			lastErr = obj.Error
+		}
+	}
+	if lastErr != "" {
+		return fmt.Errorf("pull failed: %s", lastErr)
+	}
+	return nil
 }
 
 func (c *Client) CreateContainer(ctx context.Context, endpointID int, name string, body interface{}) (string, error) {

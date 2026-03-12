@@ -362,6 +362,9 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, inst *PortainerInst
 
 		semverScope := docker.ContainerSemverScope(c.Labels)
 		includeRE, excludeRE := docker.ContainerTagFilters(c.Labels)
+		u.log.Debug("checking Portainer container",
+			"endpoint", ep.Name, "name", c.Name, "image", c.Image,
+			"semverScope", string(semverScope), "digest", c.ImageDigest[:min(len(c.ImageDigest), 30)])
 		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest, semverScope, includeRE, excludeRE)
 		if check.Error != nil {
 			u.log.Warn("registry check failed for Portainer container",
@@ -369,7 +372,15 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, inst *PortainerInst
 			continue
 		}
 
-		if check.IsLocal || !check.UpdateAvailable {
+		if check.IsLocal {
+			u.log.Debug("Portainer container treated as local",
+				"endpoint", ep.Name, "name", c.Name, "image", c.Image)
+			continue
+		}
+		if !check.UpdateAvailable {
+			u.log.Debug("Portainer container up to date",
+				"endpoint", ep.Name, "name", c.Name, "image", c.Image,
+				"newerVersions", len(check.NewerVersions))
 			continue
 		}
 
