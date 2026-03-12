@@ -732,6 +732,13 @@ details[open] > .accordion-header .accordion-chevron {
     overflow: visible !important;
     text-overflow: unset !important;
 }
+/* colspan shifts nth-child by one — fix Outcome + Duration alignment */
+.scan-summary-row td:nth-child(3) {
+    text-align: center;
+}
+.scan-summary-row td:nth-child(4) {
+    text-align: center;
+}
 
 .container-link {
     color: var(--accent);
