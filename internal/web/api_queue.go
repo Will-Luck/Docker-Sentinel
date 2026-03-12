@@ -175,6 +175,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 				ContainerName: update.ContainerName,
 				OldImage:      update.CurrentImage,
 				OldDigest:     update.CurrentDigest,
+				NewImage:      approveTarget,
 				Outcome:       "failed",
 				Duration:      time.Since(start),
 				Error:         err.Error(),
