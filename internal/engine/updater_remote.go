@@ -256,11 +256,19 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 
 // scanPortainerInstances iterates all configured Portainer instances and their endpoints.
 func (u *Updater) scanPortainerInstances(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
-	for i := range u.portainerInstances {
+	// Snapshot the slice under read lock so mutations from HTTP handlers
+	// (Add/Remove/SetPortainerInstances) don't reallocate the backing array
+	// while we hold pointers into it.
+	u.portainerMu.RLock()
+	instances := make([]PortainerInstance, len(u.portainerInstances))
+	copy(instances, u.portainerInstances)
+	u.portainerMu.RUnlock()
+
+	for i := range instances {
 		if ctx.Err() != nil {
 			return
 		}
-		inst := &u.portainerInstances[i]
+		inst := &instances[i]
 		inst.Scanner.ResetCache()
 
 		endpoints, err := inst.Scanner.Endpoints(ctx)
