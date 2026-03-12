@@ -393,6 +393,30 @@ func (a *multiPortainerAdapter) EndpointContainers(ctx context.Context, instance
 	return out, nil
 }
 
+func (a *multiPortainerAdapter) UpdateStandaloneContainer(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return err
+	}
+	return s.UpdateStandaloneContainer(ctx, endpointID, containerID, newImage)
+}
+
+func (a *multiPortainerAdapter) RedeployStack(ctx context.Context, instanceID string, stackID, endpointID int) error {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return err
+	}
+	return s.RedeployStack(ctx, stackID, endpointID)
+}
+
+func (a *multiPortainerAdapter) UpdatePortainerSelf(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return err
+	}
+	return s.UpdatePortainerSelf(ctx, endpointID, containerID, newImage)
+}
+
 // findEndpoint looks up a single endpoint by ID from a scanner's full endpoint list.
 func findEndpoint(ctx context.Context, scanner *portainer.Scanner, endpointID int) (portainer.Endpoint, error) {
 	all, err := scanner.AllEndpoints(ctx)

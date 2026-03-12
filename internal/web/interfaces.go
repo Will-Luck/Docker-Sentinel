@@ -337,6 +337,16 @@ type PortainerProvider interface {
 	ConnectInstance(id, url, token string) error
 	// DisconnectInstance removes the scanner for the given instance.
 	DisconnectInstance(id string)
+	// UpdateStandaloneContainer recreates a standalone (non-stack) container
+	// on the given Portainer endpoint with a new image.
+	UpdateStandaloneContainer(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error
+	// RedeployStack triggers a stack redeploy via the Portainer API.
+	RedeployStack(ctx context.Context, instanceID string, stackID, endpointID int) error
+	// UpdatePortainerSelf updates a Portainer container using the official
+	// portainer-updater helper, which bypasses the Portainer API by talking
+	// directly to the Docker socket. Required because updating Portainer
+	// through its own API kills the API mid-request.
+	UpdatePortainerSelf(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error
 }
 
 // PortainerInstanceStore persists Portainer instance configuration.

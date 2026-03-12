@@ -15,6 +15,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	portainerPkg "github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
@@ -610,6 +611,12 @@ func containerName(c container.Summary) string {
 // isSentinel returns true if the container appears to be Sentinel itself.
 func isSentinel(labels map[string]string) bool {
 	return labels["sentinel.self"] == "true"
+}
+
+// isPortainerSelf returns true if the image is Portainer itself.
+// Updating Portainer through its own API kills the API mid-request.
+func isPortainerSelf(image string) bool {
+	return portainerPkg.IsPortainerImage(image)
 }
 
 // cloneConfig creates a shallow copy of the container config with cloned labels.
