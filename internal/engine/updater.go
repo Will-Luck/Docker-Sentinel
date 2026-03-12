@@ -72,6 +72,7 @@ type Updater struct {
 	deps               *deps.Graph                // optional: dependency graph (rebuilt each scan)
 	cluster            ClusterScanner             // optional: nil = single-host mode
 	haDiscovery        *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
+	portainerMu        sync.RWMutex
 	portainerInstances []PortainerInstance
 	imgScanner         ImageScanner       // optional: trivy vulnerability scanner
 	imgVerifier        ImageVerifier      // optional: cosign signature verifier
@@ -143,11 +144,15 @@ func (u *Updater) SetHADiscovery(h *notify.HADiscovery) {
 
 // SetPortainerInstances replaces the full list of Portainer instances.
 func (u *Updater) SetPortainerInstances(instances []PortainerInstance) {
+	u.portainerMu.Lock()
+	defer u.portainerMu.Unlock()
 	u.portainerInstances = instances
 }
 
 // AddPortainerInstance appends or replaces a single instance by ID.
 func (u *Updater) AddPortainerInstance(inst PortainerInstance) {
+	u.portainerMu.Lock()
+	defer u.portainerMu.Unlock()
 	for i, existing := range u.portainerInstances {
 		if existing.ID == inst.ID {
 			u.portainerInstances[i] = inst
@@ -159,6 +164,8 @@ func (u *Updater) AddPortainerInstance(inst PortainerInstance) {
 
 // RemovePortainerInstance removes an instance by ID.
 func (u *Updater) RemovePortainerInstance(id string) {
+	u.portainerMu.Lock()
+	defer u.portainerMu.Unlock()
 	for i, inst := range u.portainerInstances {
 		if inst.ID == id {
 			u.portainerInstances = append(u.portainerInstances[:i], u.portainerInstances[i+1:]...)
