@@ -5951,7 +5951,7 @@
       row.appendChild(createdCell);
       var useCell = document.createElement("td");
       var badge = document.createElement("span");
-      badge.className = img.in_use ? "badge badge-success" : "badge badge-muted";
+      badge.className = img.in_use ? "badge badge-success" : "badge badge-error";
       badge.textContent = img.in_use ? "In Use" : "Unused";
       useCell.appendChild(badge);
       row.appendChild(useCell);
