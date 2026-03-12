@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -310,17 +311,18 @@ func (s *Server) resolvePortURLs(name, hostAddr, hostID string, ports []PortMapp
 	urls := make(map[uint16]string)
 
 	// Layer NPM auto-discovery.
-	// For local containers (hostID empty), use Lookup() which matches against
-	// the resolver's configured sentinelHost IP. LookupForHost(hostAddr) fails
-	// when hostAddr is a domain (from the HTTP Host header) because NPM stores
-	// ForwardHost as an IP, not a domain.
+	// For local containers, prefer LookupForHost when hostAddr is an IP so we
+	// only match NPM proxies forwarding to this specific host (prevents
+	// cross-host port shadowing, e.g. port 8080 on .57 vs .64). Fall back to
+	// Lookup() when hostAddr is a domain (NPM stores ForwardHost as IPs).
 	if s.deps.NPM != nil {
+		localIP := hostID == "" && net.ParseIP(hostAddr) != nil
 		for _, p := range ports {
 			var r *NPMResolvedURL
-			if hostID == "" {
-				r = s.deps.NPM.Lookup(p.HostPort)
-			} else {
+			if hostID != "" || localIP {
 				r = s.deps.NPM.LookupForHost(p.HostPort, hostAddr)
+			} else {
+				r = s.deps.NPM.Lookup(p.HostPort)
 			}
 			if r != nil {
 				urls[p.HostPort] = r.URL
