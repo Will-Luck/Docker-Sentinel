@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hostname, and `host.docker.internal` DNS. `SENTINEL_HOST` is still honoured
   as an additive override for containerised deployments where bridge networking
   hides the host's LAN IP.
+- **Failed approvals missing from history.** When an approved update failed
+  (e.g. Portainer agent disconnected, network error), only a log line was
+  written. The update vanished from the queue with no history record. Now
+  records a "failed" entry with the error message and elapsed duration.
 - **History page scan summary display.** Scan summary rows were rendered as
   regular container rows, causing truncated text in the Container column and
   broken `/container/history-0` URLs when clicked. Now render with colspan

@@ -148,6 +148,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 	// Route to service updater, remote agent, or local container updater.
 	go func() {
 		ctx := context.Background()
+		start := time.Now()
 		var err error
 		if update.HostID != "" && s.deps.Cluster.Enabled() {
 			// Remote container — dispatch to the agent via cluster.
@@ -169,6 +170,18 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			s.deps.Log.Error("approved update failed", "name", name, "error", err)
+			_ = s.deps.Store.RecordUpdate(UpdateRecord{
+				Timestamp:     start,
+				ContainerName: update.ContainerName,
+				OldImage:      update.CurrentImage,
+				OldDigest:     update.CurrentDigest,
+				Outcome:       "failed",
+				Duration:      time.Since(start),
+				Error:         err.Error(),
+				Type:          update.Type,
+				HostID:        update.HostID,
+				HostName:      update.HostName,
+			})
 		}
 	}()
 
