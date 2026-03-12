@@ -1,12 +1,14 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // handlePortainer renders the Portainer connectors page.
@@ -396,8 +398,16 @@ func isLocalPortainerInstance(rawURL string) bool {
 		return false
 	}
 
-	// Resolve the Portainer host to IP addresses.
-	ips, err := net.LookupHost(host)
+	// Fast path for common loopback addresses.
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+
+	// Resolve the Portainer host to IP addresses with a timeout so a slow
+	// or unreachable DNS server doesn't block the HTTP handler indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupHost(ctx, host)
 	if err != nil {
 		// If DNS fails, fall back to treating the host as a literal IP.
 		ips = []string{host}
