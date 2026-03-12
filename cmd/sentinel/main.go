@@ -665,10 +665,12 @@ func main() {
 		}
 	}
 	npmEnabled, _ := db.LoadSetting(store.SettingNPMEnabled)
+	npmLocalAddrs := npm.DetectLocalAddrs(cfg.HostAddress)
+	log.Info("npm local address detection", "count", len(npmLocalAddrs), "sentinel_host", cfg.HostAddress)
 	var npmProvider *npmAdapter
 	if npmURL != "" && npmEmail != "" && npmPassword != "" && npmEnabled == "true" {
 		npmClient := npm.NewClient(npmURL, npmEmail, npmPassword)
-		npmResolver := npm.NewResolver(npmClient, cfg.HostAddress, log.Logger)
+		npmResolver := npm.NewResolver(npmClient, npmLocalAddrs, log.Logger)
 		go npmResolver.Run(ctx)
 		npmProvider = &npmAdapter{resolver: npmResolver}
 		log.Info("npm integration enabled", "url", npmURL)
@@ -787,7 +789,7 @@ func main() {
 			if err := c.TestConnection(initCtx); err != nil {
 				return nil, err
 			}
-			r := npm.NewResolver(c, cfg.HostAddress, log.Logger)
+			r := npm.NewResolver(c, npmLocalAddrs, log.Logger)
 			go r.Run(ctx) // use the app-level context, not the request context
 			log.Info("npm integration enabled (hot)", "url", u)
 			return &npmAdapter{resolver: r}, nil

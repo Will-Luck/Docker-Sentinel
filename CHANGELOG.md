@@ -49,19 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container from the Pending Updates queue previously fell through to the
   local Docker daemon (which can't reach remote containers). Now routes
   through the Portainer API, with Portainer image detection for self-update.
-
-### Changed
-- **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
-  to `portainer:instanceID:N`. Existing queue and history entries are
-  automatically migrated on first boot.
-- **Portainer settings storage.** Old flat settings (`portainer_url`,
-  `portainer_token`, `portainer_enabled`) are migrated to a structured
-  `portainer_instances` BoltDB bucket on first boot. The migration is
-  idempotent and safe to re-run.
-
-## [2.11.2] - 2026-03-11
-
-### Fixed
+- **NPM resolver cross-host port shadowing.** When multiple NPM proxy hosts
+  forwarded the same port to different IPs (e.g. port 8080 on both .57 and
+  .64), the resolver matched the lowest NPM ID regardless of which host the
+  container actually ran on. Replaced the single `SENTINEL_HOST` string match
+  with auto-detection of local network addresses via `net.InterfaceAddrs()`,
+  hostname, and `host.docker.internal` DNS. `SENTINEL_HOST` is still honoured
+  as an additive override for containerised deployments where bridge networking
+  hides the host's LAN IP.
 - **Portainer connector: hot-reload without restart.** Saving Portainer URL
   and API token in the UI now takes effect immediately. Previously the test
   button always returned "not configured" because the provider was only
@@ -87,6 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redundant checkmark icon from the zero-state.
 
 ### Changed
+- **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
+  to `portainer:instanceID:N`. Existing queue and history entries are
+  automatically migrated on first boot.
+- **Portainer settings storage.** Old flat settings (`portainer_url`,
+  `portainer_token`, `portainer_enabled`) are migrated to a structured
+  `portainer_instances` BoltDB bucket on first boot. The migration is
+  idempotent and safe to re-run.
 - **Portainer integration descriptions.** Updated the vague "view endpoints"
   description to accurately explain that Sentinel scans Portainer endpoints
   for updates, applies policies, and can redeploy stacks or update standalone

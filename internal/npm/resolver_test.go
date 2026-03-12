@@ -13,9 +13,17 @@ import (
 	"testing"
 )
 
-// fakeHosts builds a resolver pre-loaded with proxy hosts (no HTTP client needed).
-func fakeResolver(sentinelHost string, hosts []ProxyHost) *Resolver {
-	r := &Resolver{sentinelHost: sentinelHost}
+// fakeResolver builds a resolver pre-loaded with proxy hosts (no HTTP client needed).
+// Pass one or more host strings to build a localAddrs set, or none for unfiltered.
+func fakeResolver(hosts []ProxyHost, localHosts ...string) *Resolver {
+	var addrs map[string]bool
+	if len(localHosts) > 0 {
+		addrs = make(map[string]bool)
+		for _, h := range localHosts {
+			addrs[strings.ToLower(h)] = true
+		}
+	}
+	r := &Resolver{localAddrs: addrs}
 	r.hosts = hosts
 	return r
 }
@@ -25,9 +33,9 @@ func TestLookupForHost_MatchesProvidedAddr(t *testing.T) {
 		{ID: 1, DomainNames: []string{"radarr.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 62100, Enabled: true},
 		{ID: 2, DomainNames: []string{"sonarr.example.com"}, ForwardHost: "192.168.1.61", ForwardPort: 62100, Enabled: true},
 	}
-	r := fakeResolver("192.168.1.57", hosts)
+	r := fakeResolver(hosts, "192.168.1.57")
 
-	// LookupForHost should match the provided host, not the resolver's sentinelHost.
+	// LookupForHost should match the provided host, not the resolver's local addrs.
 	got := r.LookupForHost(62100, "192.168.1.61")
 	if got == nil {
 		t.Fatal("expected match for .61:62100, got nil")
@@ -47,9 +55,9 @@ func TestLookupForHost_EmptyAddr_MatchesAll(t *testing.T) {
 	hosts := []ProxyHost{
 		{ID: 1, DomainNames: []string{"app.example.com"}, ForwardHost: "10.0.0.1", ForwardPort: 8080, Enabled: true},
 	}
-	r := fakeResolver("", hosts)
+	r := fakeResolver(hosts)
 
-	// Empty hostAddr should match all hosts (same as empty sentinelHost).
+	// Empty hostAddr should match all hosts (no local addr filtering).
 	got := r.LookupForHost(8080, "")
 	if got == nil {
 		t.Fatal("expected match with empty hostAddr, got nil")
@@ -63,7 +71,7 @@ func TestLookupForHost_HTTPS_CertificateID(t *testing.T) {
 	hosts := []ProxyHost{
 		{ID: 1, DomainNames: []string{"secure.example.com"}, ForwardHost: "10.0.0.1", ForwardPort: 443, Enabled: true, CertificateID: 5},
 	}
-	r := fakeResolver("", hosts)
+	r := fakeResolver(hosts)
 
 	got := r.LookupForHost(443, "10.0.0.1")
 	if got == nil {
@@ -81,8 +89,8 @@ func TestAllMappingsGrouped_GroupsByHost(t *testing.T) {
 		{ID: 3, DomainNames: []string{"plex.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 32400, Enabled: true},
 		{ID: 4, DomainNames: []string{"disabled.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 9999, Enabled: false},
 	}
-	// sentinelHost is set but AllMappingsGrouped should ignore it.
-	r := fakeResolver("192.168.1.57", hosts)
+	// localAddrs is set but AllMappingsGrouped should ignore it.
+	r := fakeResolver(hosts, "192.168.1.57")
 
 	grouped := r.AllMappingsGrouped()
 
@@ -118,7 +126,7 @@ func TestAllMappingsGrouped_FirstMatchWinsPerHost(t *testing.T) {
 		{ID: 1, DomainNames: []string{"first.example.com"}, ForwardHost: "10.0.0.1", ForwardPort: 8080, Enabled: true},
 		{ID: 2, DomainNames: []string{"second.example.com"}, ForwardHost: "10.0.0.1", ForwardPort: 8080, Enabled: true},
 	}
-	r := fakeResolver("", hosts)
+	r := fakeResolver(hosts)
 
 	grouped := r.AllMappingsGrouped()
 	host := grouped["10.0.0.1"]
@@ -133,14 +141,14 @@ func TestLookup_BackwardsCompatible(t *testing.T) {
 		{ID: 1, DomainNames: []string{"local.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
 		{ID: 2, DomainNames: []string{"remote.example.com"}, ForwardHost: "192.168.1.61", ForwardPort: 8080, Enabled: true},
 	}
-	r := fakeResolver("192.168.1.57", hosts)
+	r := fakeResolver(hosts, "192.168.1.57")
 
 	got := r.Lookup(8080)
 	if got == nil {
 		t.Fatal("expected match, got nil")
 	}
 	if got.Domain != "local.example.com" {
-		t.Errorf("expected Lookup to match sentinelHost, got %s", got.Domain)
+		t.Errorf("expected Lookup to match local address, got %s", got.Domain)
 	}
 }
 
@@ -190,7 +198,7 @@ func TestSyncAndLookup_ExactMatch(t *testing.T) {
 
 	client := NewClient(srv.URL, "admin@example.com", "password123")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, "192.168.1.57", log)
+	resolver := NewResolver(client, map[string]bool{"192.168.1.57": true}, log)
 
 	err := resolver.Sync(context.Background())
 	if err != nil {
@@ -223,7 +231,7 @@ func TestSyncAndLookup_NoMatch(t *testing.T) {
 
 	client := NewClient(srv.URL, "admin@example.com", "password123")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, "192.168.1.57", log)
+	resolver := NewResolver(client, map[string]bool{"192.168.1.57": true}, log)
 
 	_ = resolver.Sync(context.Background())
 
@@ -245,7 +253,7 @@ func TestSyncAndLookup_DisabledHostSkipped(t *testing.T) {
 
 	client := NewClient(srv.URL, "admin@example.com", "password123")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, "192.168.1.57", log)
+	resolver := NewResolver(client, map[string]bool{"192.168.1.57": true}, log)
 
 	_ = resolver.Sync(context.Background())
 
@@ -265,7 +273,7 @@ func TestSync_AuthFailure(t *testing.T) {
 
 	client := NewClient(srv.URL, "wrong@example.com", "badpassword")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, "192.168.1.57", log)
+	resolver := NewResolver(client, map[string]bool{"192.168.1.57": true}, log)
 
 	err := resolver.Sync(context.Background())
 	if err == nil {
@@ -293,8 +301,8 @@ func TestAllMappings_ReturnsMatchedPorts(t *testing.T) {
 		{ID: 2, DomainNames: []string{"app2.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 9090, Enabled: true, ForwardScheme: "https"},
 		{ID: 3, DomainNames: []string{"other.example.com"}, ForwardHost: "10.0.0.1", ForwardPort: 3000, Enabled: true},
 	}
-	// sentinelHost filters to .57 only.
-	r := fakeResolver("192.168.1.57", hosts)
+	// localAddrs filters to .57 only.
+	r := fakeResolver(hosts, "192.168.1.57")
 
 	mappings := r.AllMappings()
 
@@ -339,7 +347,7 @@ func TestAllMappingsGrouped_ViaHTTPTest(t *testing.T) {
 
 	client := NewClient(srv.URL, "admin@example.com", "password123")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, "", log) // empty sentinelHost
+	resolver := NewResolver(client, nil, log) // nil = no filtering
 
 	_ = resolver.Sync(context.Background())
 
@@ -371,7 +379,7 @@ func TestLookup_EmptyDomainNamesSkipped(t *testing.T) {
 		{ID: 1, DomainNames: []string{}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
 		{ID: 2, DomainNames: []string{"fallback.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
 	}
-	r := fakeResolver("192.168.1.57", hosts)
+	r := fakeResolver(hosts, "192.168.1.57")
 
 	got := r.Lookup(8080)
 	if got == nil {
@@ -411,15 +419,60 @@ func TestFlexBool_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestLookup_LocalAddrsPreventsCrossHostShadowing(t *testing.T) {
+	// Regression test: port 8080 exists on both .57 and .64.
+	// Without localAddrs filtering, the lower-ID host (.64) shadows .57.
+	hosts := []ProxyHost{
+		{ID: 38, DomainNames: []string{"amp.example.com"}, ForwardHost: "192.168.1.64", ForwardPort: 8080, Enabled: true},
+		{ID: 64, DomainNames: []string{"as.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
+	}
+	r := fakeResolver(hosts, "192.168.1.57")
+
+	got := r.Lookup(8080)
+	if got == nil {
+		t.Fatal("expected match for .57:8080, got nil")
+	}
+	if got.Domain != "as.example.com" {
+		t.Errorf("expected as.example.com (local host), got %s (cross-host shadow)", got.Domain)
+	}
+}
+
+func TestDetectLocalAddrs_IncludesLoopback(t *testing.T) {
+	addrs := DetectLocalAddrs()
+	if !addrs["127.0.0.1"] {
+		t.Error("expected 127.0.0.1 in detected addresses")
+	}
+	if !addrs["localhost"] {
+		t.Error("expected localhost in detected addresses")
+	}
+}
+
+func TestDetectLocalAddrs_IncludesExtra(t *testing.T) {
+	addrs := DetectLocalAddrs("10.99.99.99", "MY-HOST")
+	if !addrs["10.99.99.99"] {
+		t.Error("expected extra IP in detected addresses")
+	}
+	if !addrs["my-host"] {
+		t.Error("expected extra hostname (lowercased) in detected addresses")
+	}
+}
+
+func TestDetectLocalAddrs_EmptyExtraIgnored(t *testing.T) {
+	addrs := DetectLocalAddrs("")
+	if addrs[""] {
+		t.Error("empty string should not be in detected addresses")
+	}
+}
+
 func TestLastSync_ZeroBeforeSync(t *testing.T) {
-	r := fakeResolver("", nil)
+	r := fakeResolver(nil)
 	if !r.LastSync().IsZero() {
 		t.Errorf("LastSync() should be zero before any sync, got %v", r.LastSync())
 	}
 }
 
 func TestLastError_NilBeforeSync(t *testing.T) {
-	r := fakeResolver("", nil)
+	r := fakeResolver(nil)
 	if r.LastError() != nil {
 		t.Errorf("LastError() should be nil before any sync, got %v", r.LastError())
 	}

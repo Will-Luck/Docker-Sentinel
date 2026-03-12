@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,9 +15,9 @@ import (
 // Resolver maintains an in-memory cache of NPM proxy hosts and resolves
 // container ports to domain URLs.
 type Resolver struct {
-	client       *Client
-	sentinelHost string // SENTINEL_HOST value for matching forward_host
-	log          *slog.Logger
+	client     *Client
+	localAddrs map[string]bool // set of local IPs/hostnames (lowercase) for filtering
+	log        *slog.Logger
 
 	mu       sync.RWMutex
 	hosts    []ProxyHost
@@ -23,13 +25,57 @@ type Resolver struct {
 	syncErr  error
 }
 
-// NewResolver creates a resolver that matches proxy hosts against sentinelHost.
-func NewResolver(client *Client, sentinelHost string, log *slog.Logger) *Resolver {
+// NewResolver creates a resolver that matches proxy hosts whose ForwardHost
+// is in the localAddrs set. Pass nil or empty to match all hosts (unfiltered).
+func NewResolver(client *Client, localAddrs map[string]bool, log *slog.Logger) *Resolver {
 	return &Resolver{
-		client:       client,
-		sentinelHost: sentinelHost,
-		log:          log,
+		client:     client,
+		localAddrs: localAddrs,
+		log:        log,
 	}
+}
+
+// DetectLocalAddrs builds a set of local IP addresses by querying network
+// interfaces. The machine hostname and "localhost" are included. Any extra
+// values (e.g. from SENTINEL_HOST) are added to the set. Empty strings in
+// extra are ignored.
+func DetectLocalAddrs(extra ...string) map[string]bool {
+	addrs := make(map[string]bool)
+
+	// Network interfaces — the primary source of truth.
+	if ifaces, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range ifaces {
+			ip, _, _ := net.ParseCIDR(a.String())
+			if ip != nil {
+				addrs[strings.ToLower(ip.String())] = true
+			}
+		}
+	}
+
+	// Machine hostname — NPM ForwardHost might use it.
+	if hostname, err := os.Hostname(); err == nil && hostname != "" {
+		addrs[strings.ToLower(hostname)] = true
+	}
+
+	addrs["localhost"] = true
+
+	// Docker host detection: host.docker.internal resolves to the Docker
+	// host IP on Docker Desktop and on containers started with
+	// --add-host=host.docker.internal:host-gateway.
+	if ips, err := net.LookupHost("host.docker.internal"); err == nil {
+		for _, ip := range ips {
+			addrs[strings.ToLower(ip)] = true
+		}
+	}
+
+	// Explicit overrides (SENTINEL_HOST, etc.).
+	for _, h := range extra {
+		if h != "" {
+			addrs[strings.ToLower(h)] = true
+		}
+	}
+
+	return addrs
 }
 
 // Run syncs proxy hosts immediately then every 5 minutes until ctx is cancelled.
@@ -85,7 +131,7 @@ func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
 		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
-		if r.sentinelHost != "" && !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
+		if len(r.localAddrs) > 0 && !r.localAddrs[strings.ToLower(h.ForwardHost)] {
 			continue
 		}
 		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 || uint16(h.ForwardPort) != hostPort {
@@ -109,8 +155,8 @@ func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
 	return nil
 }
 
-// AllMappings returns all matched port-to-URL mappings for the sentinel host.
-// When sentinelHost is empty, all enabled proxy hosts are returned.
+// AllMappings returns all matched port-to-URL mappings for local addresses.
+// When localAddrs is empty, all enabled proxy hosts are returned.
 func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -121,7 +167,7 @@ func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
-		if r.sentinelHost != "" && !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
+		if len(r.localAddrs) > 0 && !r.localAddrs[strings.ToLower(h.ForwardHost)] {
 			continue
 		}
 
@@ -151,8 +197,8 @@ func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 }
 
 // LookupForHost resolves a host port to its NPM proxy URL, matching against
-// the provided hostAddr instead of the resolver's sentinelHost. When hostAddr
-// is empty, all hosts match (same as empty sentinelHost behaviour).
+// the provided hostAddr instead of the resolver's local address set. When
+// hostAddr is empty, all hosts match (no filtering).
 func (r *Resolver) LookupForHost(hostPort uint16, hostAddr string) *ResolvedURL {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
