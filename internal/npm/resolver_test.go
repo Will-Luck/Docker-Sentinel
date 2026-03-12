@@ -437,13 +437,14 @@ func TestLookup_LocalAddrsPreventsCrossHostShadowing(t *testing.T) {
 	}
 }
 
-func TestDetectLocalAddrs_IncludesLoopback(t *testing.T) {
+func TestDetectLocalAddrs_EmptyWithoutExplicitHost(t *testing.T) {
 	addrs := DetectLocalAddrs()
-	if !addrs["127.0.0.1"] {
-		t.Error("expected 127.0.0.1 in detected addresses")
-	}
-	if !addrs["localhost"] {
-		t.Error("expected localhost in detected addresses")
+	// Without SENTINEL_HOST or host.docker.internal, the set should be
+	// empty (or only contain Docker host IPs), which disables filtering.
+	// Container-local addresses (127.0.0.1, hostname) should NOT be included
+	// because they never match NPM ForwardHost values.
+	if addrs["localhost"] {
+		t.Error("localhost should not be in detected addresses (not useful for NPM matching)")
 	}
 }
 
