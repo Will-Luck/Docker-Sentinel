@@ -93,6 +93,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counted local containers, while the nav badge counted all queue items
   including Portainer. Both now use the full queue length. Removed the
   redundant checkmark icon from the zero-state.
+- **Filter bar missing bottom border.** The filter bar on multiple pages lacked
+  a visual divider separating it from the table content below.
+- **Remote container history/snapshot key mismatch.** History and snapshot
+  lookups for cluster and Portainer containers used the plain container name
+  instead of the scoped `hostID::name` key, returning empty results.
+- **NPM port URLs for all containers.** NPM URL resolution matched every
+  container against Sentinel's own domain when no `SENTINEL_HOST` was set,
+  causing all containers to show the same proxy URL.
+- **NPM wildcard domain resolution.** Proxy hosts with wildcard domains
+  (e.g. `*.s3.garage.example.com`) produced broken URLs. Now skips wildcard
+  entries and picks the first non-wildcard domain.
 
 ### Changed
 - **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
