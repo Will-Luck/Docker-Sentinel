@@ -1587,6 +1587,16 @@ details[open] > .accordion-header .accordion-chevron {
   border-left-color: var(--error);
   background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
 }
+.scan-summary-row {
+  border-left: 3px solid transparent;
+}
+.scan-summary-text {
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+}
 .container-link {
   color: var(--accent);
   text-decoration: none;
