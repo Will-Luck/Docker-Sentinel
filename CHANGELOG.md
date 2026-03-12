@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hostname, and `host.docker.internal` DNS. `SENTINEL_HOST` is still honoured
   as an additive override for containerised deployments where bridge networking
   hides the host's LAN IP.
+- **History page scan summary display.** Scan summary rows were rendered as
+  regular container rows, causing truncated text in the Container column and
+  broken `/container/history-0` URLs when clicked. Now render with colspan
+  spanning Container + Version columns, non-clickable, with proper text
+  wrapping and column alignment at all viewport widths.
 - **Portainer connector: hot-reload without restart.** Saving Portainer URL
   and API token in the UI now takes effect immediately. Previously the test
   button always returned "not configured" because the provider was only
