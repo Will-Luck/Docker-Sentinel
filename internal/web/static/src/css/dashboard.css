@@ -1221,13 +1221,13 @@ table.managing .td-checkbox {
 .cell-image-id,
 .table-images .th-id      { width: 18%; }
 .cell-image-size,
-.table-images .th-size    { width: 10%; }
+.table-images .th-size    { width: 10%; text-align: right; }
 .table-images .th-created,
 .table-images td:nth-last-child(3) { width: 12%; } /* Created */
 .table-images .th-status,
-.table-images td:nth-last-child(2) { width: 10%; } /* Status */
+.table-images td:nth-last-child(2) { width: 10%; text-align: center; } /* Status */
 .table-images .th-actions,
-.table-images td:last-child { width: 10%; }         /* Actions */
+.table-images td:last-child { width: 10%; text-align: center; }         /* Actions */
 .table-images .th-select  { width: 40px; }
 
 .cell-image-tags {
