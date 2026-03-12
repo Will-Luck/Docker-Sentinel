@@ -169,8 +169,8 @@ func (s *Store) MigratePortainerKeys(instanceID string) error {
 					continue
 				}
 				rest := hostID[len(prefix):]
-				// Skip already-migrated entries (rest starts with instance ID prefix like "p1:").
-				if len(rest) > 0 && rest[0] == 'p' {
+				// Skip already-migrated entries (new format has instanceID:epID, i.e. contains a colon).
+				if strings.Contains(rest, ":") {
 					continue
 				}
 				m["host_id"] = newPrefix + rest
@@ -210,7 +210,7 @@ func (s *Store) MigratePortainerKeys(instanceID string) error {
 				return nil
 			}
 			rest := rec.HostID[len(prefix):]
-			if len(rest) > 0 && rest[0] == 'p' {
+			if strings.Contains(rest, ":") {
 				return nil // already migrated
 			}
 			rec.HostID = newPrefix + rest
