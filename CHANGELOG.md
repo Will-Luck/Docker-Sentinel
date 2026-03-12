@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   maintenance support (same as cluster hosts).
 - **Connectors page redesigned.** Portainer tab now shows instance cards with
   add/remove/test/configure workflow, replacing the single URL+token form.
+- **Portainer self-update via portainer-updater.** Portainer containers detected
+  by Sentinel can now be safely updated without crashing the Portainer API.
+  Uses the official `portainer/portainer-updater` helper container, which mounts
+  the Docker socket directly and survives the Portainer stop/recreate cycle.
+  Works for both queue approvals and manual "update to version" actions.
 
 ### Fixed
 - **Portainer runtime scanner creation.** Adding a Portainer instance via the
@@ -40,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with both the web layer and the engine, so runtime-added instances are
   scanned immediately. Endpoint config changes (enabled/blocked) are also
   synced to the engine without requiring a restart.
+- **Queue approval for Portainer containers.** Approving a Portainer-managed
+  container from the Pending Updates queue previously fell through to the
+  local Docker daemon (which can't reach remote containers). Now routes
+  through the Portainer API, with Portainer image detection for self-update.
 
 ### Changed
 - **Queue/history key format.** Portainer HostIDs changed from `portainer:N`

@@ -229,6 +229,33 @@ func TestScanner_RedeployStack(t *testing.T) {
 	}
 }
 
+func TestIsPortainerImage(t *testing.T) {
+	tests := []struct {
+		image string
+		want  bool
+	}{
+		{"portainer/portainer-ce:latest", true},
+		{"portainer/portainer-ce:2.20.3", true},
+		{"portainer/portainer-ee:latest", true},
+		{"portainer/portainer:latest", true},
+		{"ghcr.io/portainer/portainer-ce:latest", true},
+		{"docker.io/portainer/portainer-ce:2.20", true},
+		{"nginx:latest", false},
+		{"portainerfake/something:latest", false},
+		{"myregistry:5000/portainer/portainer-ce:latest", true},
+		{"redis:7", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.image, func(t *testing.T) {
+			got := IsPortainerImage(tt.image)
+			if got != tt.want {
+				t.Errorf("IsPortainerImage(%q) = %v, want %v", tt.image, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseImageTag(t *testing.T) {
 	tests := []struct {
 		input     string

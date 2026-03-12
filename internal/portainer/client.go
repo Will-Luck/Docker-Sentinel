@@ -110,6 +110,18 @@ func (c *Client) StartContainer(ctx context.Context, endpointID int, containerID
 	return c.post(ctx, path, nil)
 }
 
+// WaitContainer blocks until the container exits and returns its exit code.
+func (c *Client) WaitContainer(ctx context.Context, endpointID int, containerID string) (int, error) {
+	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/%s/wait", endpointID, containerID)
+	var resp struct {
+		StatusCode int `json:"StatusCode"`
+	}
+	if err := c.postJSON(ctx, path, nil, &resp); err != nil {
+		return -1, err
+	}
+	return resp.StatusCode, nil
+}
+
 func (c *Client) get(ctx context.Context, path string, out interface{}) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
@@ -164,6 +176,32 @@ func (c *Client) delete(ctx context.Context, path string) error {
 	}
 	req.Header.Set("X-API-Key", c.token)
 	return c.do(req, nil)
+}
+
+// WaitForRecovery polls the Portainer API until it responds successfully
+// or the timeout expires. Used after updating Portainer itself, since the
+// API goes down during the container recreation.
+func (c *Client) WaitForRecovery(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return fmt.Errorf("portainer did not recover within %v", timeout)
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := c.TestConnection(checkCtx)
+			cancel()
+			if err == nil {
+				return nil
+			}
+		}
+	}
 }
 
 func (c *Client) do(req *http.Request, out interface{}) error {

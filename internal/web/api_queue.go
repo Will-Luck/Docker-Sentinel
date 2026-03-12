@@ -5,11 +5,15 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
@@ -143,16 +147,20 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 	// Use a detached context because r.Context() is cancelled when the handler returns.
 	// Route to service updater, remote agent, or local container updater.
 	go func() {
+		ctx := context.Background()
 		var err error
 		if update.HostID != "" && s.deps.Cluster.Enabled() {
 			// Remote container — dispatch to the agent via cluster.
 			s.markRemoteUpdating(update.HostID, update.ContainerName)
-			err = s.deps.Cluster.UpdateRemoteContainer(context.Background(), update.HostID, update.ContainerName, approveTarget, update.RemoteDigest)
+			err = s.deps.Cluster.UpdateRemoteContainer(ctx, update.HostID, update.ContainerName, approveTarget, update.RemoteDigest)
 			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(update.HostID, update.ContainerName) })
+		} else if strings.HasPrefix(update.HostID, "portainer:") && s.deps.Portainer != nil {
+			// Portainer-managed container — route through Portainer API.
+			err = s.approvePortainerUpdate(ctx, update, approveTarget)
 		} else if update.Type == "service" && s.deps.Swarm != nil {
-			err = s.deps.Swarm.UpdateService(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
+			err = s.deps.Swarm.UpdateService(ctx, update.ContainerID, update.ContainerName, approveTarget)
 		} else {
-			err = s.deps.Updater.UpdateContainer(context.Background(), update.ContainerID, update.ContainerName, approveTarget)
+			err = s.deps.Updater.UpdateContainer(ctx, update.ContainerID, update.ContainerName, approveTarget)
 		}
 		if errors.Is(err, engine.ErrUpdateInProgress) {
 			s.deps.Queue.Add(update)
@@ -171,6 +179,61 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		"name":    name,
 		"message": "update started for " + name,
 	})
+}
+
+// approvePortainerUpdate routes a Portainer-managed queue approval through the
+// correct Portainer API path: stack redeploy, portainer-updater self-update,
+// or standalone container recreation.
+func (s *Server) approvePortainerUpdate(ctx context.Context, update PendingUpdate, approveTarget string) error {
+	parts := strings.SplitN(strings.TrimPrefix(update.HostID, "portainer:"), ":", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid portainer host format: %s", update.HostID)
+	}
+	instanceID := parts[0]
+	epID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return fmt.Errorf("invalid endpoint ID %q: %w", parts[1], err)
+	}
+
+	s.markRemoteUpdating(update.HostID, update.ContainerName)
+	defer time.AfterFunc(5*time.Second, func() {
+		s.clearRemoteUpdating(update.HostID, update.ContainerName)
+		s.deps.EventBus.Publish(events.SSEEvent{
+			Type:          events.EventContainerState,
+			ContainerName: update.ContainerName,
+			HostID:        update.HostID,
+			Timestamp:     time.Now(),
+		})
+	})
+
+	// Look up the container on the Portainer endpoint to get its current state.
+	containers, err := s.deps.Portainer.EndpointContainers(ctx, instanceID, epID)
+	if err != nil {
+		return fmt.Errorf("list portainer containers: %w", err)
+	}
+	var pc *PortainerContainerInfo
+	for i := range containers {
+		if containers[i].Name == update.ContainerName {
+			pc = &containers[i]
+			break
+		}
+	}
+	if pc == nil {
+		return fmt.Errorf("container %q not found on portainer endpoint %d", update.ContainerName, epID)
+	}
+
+	targetImage := approveTarget
+	if targetImage == "" {
+		targetImage = pc.Image
+	}
+
+	if pc.StackID != 0 {
+		return s.deps.Portainer.RedeployStack(ctx, instanceID, pc.StackID, epID)
+	}
+	if portainer.IsPortainerImage(pc.Image) {
+		return s.deps.Portainer.UpdatePortainerSelf(ctx, instanceID, epID, pc.ID, targetImage)
+	}
+	return s.deps.Portainer.UpdateStandaloneContainer(ctx, instanceID, epID, pc.ID, targetImage)
 }
 
 // apiIgnoreVersion ignores a specific version for a container and removes it from the queue.

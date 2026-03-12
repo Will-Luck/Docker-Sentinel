@@ -330,8 +330,10 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, inst *PortainerInst
 			continue
 		}
 
-		// Sentinel on Portainer-managed hosts is checked for updates but never auto-updated.
-		remoteSelf := isSentinel(c.Labels)
+		// Sentinel or Portainer itself on Portainer-managed hosts: checked for
+		// updates but never auto-updated or manually updated via Sentinel.
+		// Updating Portainer through its own API kills the API mid-request.
+		remoteSelf := isSentinel(c.Labels) || isPortainerSelf(c.Image)
 
 		if MatchesFilter(c.Name, filters) {
 			u.log.Debug("skipping filtered Portainer container", "endpoint", ep.Name, "name", c.Name)

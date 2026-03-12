@@ -301,6 +301,66 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fallback: search Portainer endpoint containers.
+	if targetView == nil && strings.HasPrefix(hostFilter, "portainer:") && s.deps.Portainer != nil {
+		parts := strings.SplitN(strings.TrimPrefix(hostFilter, "portainer:"), ":", 2)
+		if len(parts) == 2 {
+			instanceID := parts[0]
+			epID, _ := strconv.Atoi(parts[1])
+			pContainers, pErr := s.deps.Portainer.EndpointContainers(r.Context(), instanceID, epID)
+			if pErr == nil {
+				for _, c := range pContainers {
+					if c.Name != name {
+						continue
+					}
+					tag := registry.ExtractTag(c.Image)
+					if tag == "" {
+						if idx := strings.LastIndex(c.Image, "/"); idx >= 0 {
+							tag = c.Image[idx+1:]
+						} else {
+							tag = c.Image
+						}
+					}
+					queueKey := hostFilter + "::" + c.Name
+					policy := s.resolvedPolicy(c.Labels, queueKey)
+					var newestVersion string
+					var hasUpdate bool
+					if pend, ok := s.deps.Queue.Get(queueKey); ok {
+						hasUpdate = true
+						if len(pend.NewerVersions) > 0 {
+							newestVersion = pend.NewerVersions[0]
+						}
+					}
+					var severity string
+					if hasUpdate {
+						if newestVersion == "" {
+							severity = "build"
+						} else {
+							severity = classifySeverity(tag, newestVersion)
+						}
+					}
+					v := containerView{
+						Name:          c.Name,
+						Image:         c.Image,
+						Tag:           tag,
+						NewestVersion: newestVersion,
+						Registry:      registry.RegistryHost(c.Image),
+						Policy:        policy,
+						State:         c.State,
+						HasUpdate:     hasUpdate,
+						DigestOnly:    hasUpdate && newestVersion == "",
+						Severity:      severity,
+						HostID:        hostFilter,
+						HostName:      c.InstanceName,
+						Maintenance:   s.isRemoteUpdating(hostFilter, c.Name),
+					}
+					targetView = &v
+					break
+				}
+			}
+		}
+	}
+
 	if targetView == nil {
 		writeError(w, http.StatusNotFound, "container not found")
 		return
