@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Docker socket directly and survives the Portainer stop/recreate cycle.
   Works for both queue approvals and manual "update to version" actions.
 
+### Improved
+- **Agent CA mismatch detection.** When the server's TLS CA has changed (volume
+  deleted, host migration), agents now detect the `x509` certificate error and
+  log a single clear ERROR message with fix steps: stop the agent, delete the
+  cluster data directory, and re-enroll with a fresh token. Subsequent reconnect
+  attempts log only at WARN level to avoid flooding.
+- **Cluster page troubleshooting for all disconnected hosts.** The troubleshoot
+  section now appears for every disconnected host, not just those with a known
+  disconnect category. A new generic fallback covers the three common causes:
+  agent not running, network issue, and CA certificate mismatch after server
+  volume recreation.
+
 ### Fixed
 - **Portainer runtime scanner creation.** Adding a Portainer instance via the
   UI now creates a live scanner immediately. Previously, instances added after
