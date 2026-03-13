@@ -101,6 +101,7 @@ func NewTestConfig() *Config {
 		latestAutoUpdate: true,
 		imageCleanup:     true,
 		dependencyAware:  true,
+		showStopped:      true,
 	}
 }
 
@@ -139,7 +140,7 @@ func Load() *Config {
 		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
 		MetricsTextfile:     envStr("SENTINEL_METRICS_TEXTFILE", ""),
 		imageBackup:         envBool("SENTINEL_IMAGE_BACKUP", false),
-		showStopped:         envBool("SENTINEL_SHOW_STOPPED", false),
+		showStopped:         envBool("SENTINEL_SHOW_STOPPED", true),
 		removeVolumes:       envBool("SENTINEL_REMOVE_VOLUMES", false),
 		scanConcurrency:     envInt("SENTINEL_SCAN_CONCURRENCY", 1),
 		maintenanceWindow:   envStr("SENTINEL_MAINTENANCE_WINDOW", ""),
