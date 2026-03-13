@@ -398,8 +398,12 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 	}
 	// Add Portainer container keys (portainer:<instanceID>:<endpointID>::name format).
-	for i := range u.portainerInstances {
-		inst := &u.portainerInstances[i]
+	u.portainerMu.RLock()
+	portainerSnapshot := make([]PortainerInstance, len(u.portainerInstances))
+	copy(portainerSnapshot, u.portainerInstances)
+	u.portainerMu.RUnlock()
+	for i := range portainerSnapshot {
+		inst := &portainerSnapshot[i]
 		endpoints, epErr := inst.Scanner.Endpoints(ctx)
 		if epErr != nil {
 			continue
@@ -776,7 +780,10 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.scanRemoteHosts(ctx, mode, &result, filters, reserve)
 	}
 
-	if len(u.portainerInstances) > 0 {
+	u.portainerMu.RLock()
+	hasPortainer := len(u.portainerInstances) > 0
+	u.portainerMu.RUnlock()
+	if hasPortainer {
 		// Collect local container IDs so the Portainer scan can skip containers
 		// that Sentinel already monitors via the local Docker socket.
 		localIDs := make(map[string]bool, len(containers))
