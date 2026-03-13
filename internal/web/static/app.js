@@ -2529,6 +2529,17 @@
       }
       _sseHasConnected = true;
       setConnectionStatus(true);
+      if (document.getElementById("container-table")) {
+        var updatingBadges = document.querySelectorAll(".badge-updating");
+        for (var i = 0; i < updatingBadges.length; i++) {
+          var row = updatingBadges[i].closest("tr.container-row");
+          if (row) {
+            var n = row.getAttribute("data-name");
+            var h = row.getAttribute("data-host") || "";
+            if (n) updateContainerRow(n, h);
+          }
+        }
+      }
     });
     es.addEventListener("container_update", function(e) {
       try {
