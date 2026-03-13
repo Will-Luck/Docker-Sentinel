@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -300,6 +301,66 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fallback: search Portainer endpoint containers.
+	if targetView == nil && strings.HasPrefix(hostFilter, "portainer:") && s.deps.Portainer != nil {
+		parts := strings.SplitN(strings.TrimPrefix(hostFilter, "portainer:"), ":", 2)
+		if len(parts) == 2 {
+			instanceID := parts[0]
+			epID, _ := strconv.Atoi(parts[1])
+			pContainers, pErr := s.deps.Portainer.EndpointContainers(r.Context(), instanceID, epID)
+			if pErr == nil {
+				for _, c := range pContainers {
+					if c.Name != name {
+						continue
+					}
+					tag := registry.ExtractTag(c.Image)
+					if tag == "" {
+						if idx := strings.LastIndex(c.Image, "/"); idx >= 0 {
+							tag = c.Image[idx+1:]
+						} else {
+							tag = c.Image
+						}
+					}
+					queueKey := hostFilter + "::" + c.Name
+					policy := s.resolvedPolicy(c.Labels, queueKey)
+					var newestVersion string
+					var hasUpdate bool
+					if pend, ok := s.deps.Queue.Get(queueKey); ok {
+						hasUpdate = true
+						if len(pend.NewerVersions) > 0 {
+							newestVersion = pend.NewerVersions[0]
+						}
+					}
+					var severity string
+					if hasUpdate {
+						if newestVersion == "" {
+							severity = "build"
+						} else {
+							severity = classifySeverity(tag, newestVersion)
+						}
+					}
+					v := containerView{
+						Name:          c.Name,
+						Image:         c.Image,
+						Tag:           tag,
+						NewestVersion: newestVersion,
+						Registry:      registry.RegistryHost(c.Image),
+						Policy:        policy,
+						State:         c.State,
+						HasUpdate:     hasUpdate,
+						DigestOnly:    hasUpdate && newestVersion == "",
+						Severity:      severity,
+						HostID:        hostFilter,
+						HostName:      c.InstanceName,
+						Maintenance:   s.isRemoteUpdating(hostFilter, c.Name),
+					}
+					targetView = &v
+					break
+				}
+			}
+		}
+	}
+
 	if targetView == nil {
 		writeError(w, http.StatusNotFound, "container not found")
 		return
@@ -329,18 +390,10 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pendingNames := make(map[string]bool)
-	for _, p := range s.deps.Queue.List() {
-		pendingNames[p.Key()] = true
-	}
-
-	total, running, pending := len(containers), 0, 0
+	total, running := len(containers), 0
 	for _, c := range containers {
 		if c.State == "running" {
 			running++
-		}
-		if pendingNames[containerName(c)] {
-			pending++
 		}
 	}
 
@@ -349,11 +402,6 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		services, err := s.deps.Swarm.ListServices(r.Context())
 		if err == nil {
 			total += len(services)
-			for _, svc := range services {
-				if pendingNames[svc.Name] {
-					pending++
-				}
-			}
 		}
 	}
 
@@ -364,17 +412,13 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 			if rc.State == "running" {
 				running++
 			}
-			queueKey := rc.HostID + "::" + rc.Name
-			if pendingNames[queueKey] {
-				pending++
-			}
 		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total":   total,
 		"running": running,
-		"pending": pending,
+		"pending": len(s.deps.Queue.List()),
 	})
 }
 
@@ -473,9 +517,15 @@ func (s *Server) isPortainerEnabled() bool {
 	if s.deps.Portainer != nil {
 		return true
 	}
-	if s.deps.SettingsStore != nil {
-		v, _ := s.deps.SettingsStore.LoadSetting(store.SettingPortainerEnabled)
-		return v == "true"
+	if s.deps.PortainerInstances != nil {
+		instances, err := s.deps.PortainerInstances.ListPortainerInstances()
+		if err == nil {
+			for _, inst := range instances {
+				if inst.Enabled {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
@@ -523,7 +573,94 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	var view containerView
 	var image string // for changelog/version lookups
 
-	if hostFilter != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if strings.HasPrefix(hostFilter, "portainer:") && s.deps.Portainer != nil {
+		// Portainer container: parse "portainer:instanceID:epID" or legacy "portainer:epID".
+		parts := strings.SplitN(strings.TrimPrefix(hostFilter, "portainer:"), ":", 2)
+		var instanceID, epIDStr string
+		if len(parts) == 2 {
+			instanceID = parts[0]
+			epIDStr = parts[1]
+		} else {
+			epIDStr = parts[0]
+		}
+		epID, err := strconv.Atoi(epIDStr)
+		if err != nil {
+			s.renderError(w, http.StatusBadRequest, "Bad Request", "Invalid Portainer endpoint ID.")
+			return
+		}
+		containers, err := s.deps.Portainer.EndpointContainers(r.Context(), instanceID, epID)
+		if err != nil {
+			s.deps.Log.Error("failed to list Portainer containers", "endpoint", epID, "error", err)
+			s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load Portainer containers.")
+			return
+		}
+		var pc *PortainerContainerInfo
+		for _, c := range containers {
+			if c.Name == name {
+				pc = &c
+				break
+			}
+		}
+		if pc == nil {
+			s.renderError(w, http.StatusNotFound, "Container Not Found",
+				"The container \""+name+"\" was not found on Portainer endpoint "+epIDStr+". It may have been removed.")
+			return
+		}
+
+		queueKey := hostFilter + "::" + name
+		policy := s.resolvedPolicy(pc.Labels, queueKey)
+		tag := registry.ExtractTag(pc.Image)
+		if tag == "" {
+			if idx := strings.LastIndex(pc.Image, "/"); idx >= 0 {
+				tag = pc.Image[idx+1:]
+			} else {
+				tag = pc.Image
+			}
+		}
+		var resolved string
+		if _, isSemver := registry.ParseSemVer(tag); !isSemver {
+			if v := pc.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
+				resolved = v
+			}
+		}
+		var newestVersion string
+		var hasUpdate bool
+		if pend, ok := s.deps.Queue.Get(queueKey); ok {
+			hasUpdate = true
+			if len(pend.NewerVersions) > 0 {
+				newestVersion = pend.NewerVersions[0]
+			}
+		}
+		var detailSeverity string
+		if hasUpdate {
+			if newestVersion == "" {
+				detailSeverity = "build"
+			} else {
+				detailSeverity = classifySeverity(tag, newestVersion)
+				if detailSeverity == "" && resolved != "" {
+					detailSeverity = classifySeverity(resolved, newestVersion)
+				}
+			}
+		}
+
+		view = containerView{
+			Name:            pc.Name,
+			Image:           pc.Image,
+			Tag:             tag,
+			ResolvedVersion: resolved,
+			NewestVersion:   newestVersion,
+			Policy:          policy,
+			State:           pc.State,
+			HasUpdate:       hasUpdate,
+			DigestOnly:      hasUpdate && newestVersion == "",
+			Severity:        detailSeverity,
+			IsSelf:          pc.Labels["sentinel.self"] == "true",
+			HostID:          hostFilter,
+			HostName:        pc.EndpointName,
+			Registry:        registry.RegistryHost(pc.Image),
+		}
+		image = pc.Image
+	} else if hostFilter != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		// Remote container: look up from cluster cache.
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
@@ -688,10 +825,17 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		image = found.Image
 	}
 
+	// Use the scoped key for history/snapshot lookups so Portainer and cluster
+	// containers find their records (stored as "portainer:3::name" or "hostID::name").
+	historyKey := name
+	if hostFilter != "" {
+		historyKey = hostFilter + "::" + name
+	}
+
 	// Gather history.
-	history, err := s.deps.Store.ListHistoryByContainer(name, 50)
+	history, err := s.deps.Store.ListHistoryByContainer(historyKey, 50)
 	if err != nil {
-		s.deps.Log.Warn("failed to list history for container", "name", name, "error", err)
+		s.deps.Log.Warn("failed to list history for container", "name", historyKey, "error", err)
 	}
 	if history == nil {
 		history = []UpdateRecord{}
@@ -700,7 +844,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	// Gather snapshots (nil-check dependency).
 	var snapshots []SnapshotEntry
 	if s.deps.Snapshots != nil {
-		storeEntries, err := s.deps.Snapshots.ListSnapshots(name)
+		storeEntries, err := s.deps.Snapshots.ListSnapshots(historyKey)
 		if err != nil {
 			s.deps.Log.Warn("failed to list snapshots", "name", name, "error", err)
 		}

@@ -532,6 +532,16 @@ func main() {
 		}
 	}
 
+	// Collect local Docker Engine ID for source deduplication.
+	// If two sources (local + Portainer + cluster agent) point at the same
+	// daemon, the overlap checker uses this ID to auto-block duplicates.
+	if eid, err := client.EngineID(ctx); err != nil {
+		log.Warn("failed to get local Docker Engine ID", "error", err)
+	} else {
+		_ = db.SaveSetting("local_engine_id", eid)
+		log.Info("local Docker Engine ID", "engine_id", eid)
+	}
+
 	// Detect Swarm mode.
 	isSwarm := client.IsSwarmManager(ctx)
 	if isSwarm {
@@ -598,27 +608,51 @@ func main() {
 		}
 	})
 
-	// Portainer integration.
-	portainerURL := cfg.PortainerURL
-	portainerToken := cfg.PortainerToken
-	if portainerURL == "" {
-		if v, err := db.LoadSetting(store.SettingPortainerURL); err == nil && v != "" {
-			portainerURL = v
+	// Portainer multi-instance migration + init.
+	if migrated, err := db.MigratePortainerSettings(); err != nil {
+		log.Error("portainer settings migration failed", "error", err)
+	} else if migrated {
+		if err := db.MigratePortainerKeys("p1"); err != nil {
+			log.Error("portainer key migration failed", "error", err)
+		} else {
+			log.Info("migrated old portainer settings to instance record")
 		}
 	}
-	if portainerToken == "" {
-		if v, err := db.LoadSetting(store.SettingPortainerToken); err == nil && v != "" {
-			portainerToken = v
+
+	portainerAdapter := newMultiPortainerAdapter()
+	portainerAdapter.engine = updater
+	portainerAdapter.store = db
+	var enginePortainerInstances []engine.PortainerInstance
+	instances, _ := db.ListPortainerInstances()
+	for _, inst := range instances {
+		if !inst.Enabled || inst.URL == "" || inst.Token == "" {
+			continue
 		}
-	}
-	portainerEnabled, _ := db.LoadSetting(store.SettingPortainerEnabled)
-	var portainerProvider *portainerAdapter
-	if portainerURL != "" && portainerToken != "" && portainerEnabled == "true" {
-		pc := portainerpkg.NewClient(portainerURL, portainerToken)
+		pc := portainerpkg.NewClient(inst.URL, inst.Token)
 		ps := portainerpkg.NewScanner(pc)
-		portainerProvider = &portainerAdapter{scanner: ps}
-		updater.SetPortainerScanner(&portainerScannerAdapter{scanner: ps})
-		log.Info("portainer integration enabled", "url", portainerURL)
+		portainerAdapter.Set(inst.ID, ps)
+
+		// Build engine instance with endpoint configs.
+		ei := engine.PortainerInstance{
+			ID:      inst.ID,
+			Name:    inst.Name,
+			Scanner: &portainerScannerAdapter{scanner: ps},
+		}
+		if len(inst.Endpoints) > 0 {
+			ei.Endpoints = make(map[int]engine.EndpointConfig)
+			for k, v := range inst.Endpoints {
+				epID, _ := strconv.Atoi(k)
+				ei.Endpoints[epID] = engine.EndpointConfig{
+					Enabled: v.Enabled,
+					Blocked: v.Blocked,
+				}
+			}
+		}
+		enginePortainerInstances = append(enginePortainerInstances, ei)
+		log.Info("portainer instance loaded", "id", inst.ID, "name", inst.Name, "url", inst.URL)
+	}
+	if len(enginePortainerInstances) > 0 {
+		updater.SetPortainerInstances(enginePortainerInstances)
 	}
 
 	// NPM integration.
@@ -641,10 +675,12 @@ func main() {
 		}
 	}
 	npmEnabled, _ := db.LoadSetting(store.SettingNPMEnabled)
+	npmLocalAddrs := npm.DetectLocalAddrs(cfg.HostAddress)
+	log.Info("npm local address detection", "count", len(npmLocalAddrs), "sentinel_host", cfg.HostAddress)
 	var npmProvider *npmAdapter
 	if npmURL != "" && npmEmail != "" && npmPassword != "" && npmEnabled == "true" {
 		npmClient := npm.NewClient(npmURL, npmEmail, npmPassword)
-		npmResolver := npm.NewResolver(npmClient, cfg.HostAddress, log.Logger)
+		npmResolver := npm.NewResolver(npmClient, npmLocalAddrs, log.Logger)
 		go npmResolver.Run(ctx)
 		npmProvider = &npmAdapter{resolver: npmResolver}
 		log.Info("npm integration enabled", "url", npmURL)
@@ -743,9 +779,8 @@ func main() {
 		if isSwarm {
 			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
 		}
-		if portainerProvider != nil {
-			webDeps.Portainer = portainerProvider
-		}
+		webDeps.Portainer = portainerAdapter
+		webDeps.PortainerInstances = &portainerInstanceStoreAdapter{store: db}
 		if npmProvider != nil {
 			webDeps.NPM = npmProvider
 		}
@@ -764,7 +799,7 @@ func main() {
 			if err := c.TestConnection(initCtx); err != nil {
 				return nil, err
 			}
-			r := npm.NewResolver(c, cfg.HostAddress, log.Logger)
+			r := npm.NewResolver(c, npmLocalAddrs, log.Logger)
 			go r.Run(ctx) // use the app-level context, not the request context
 			log.Info("npm integration enabled (hot)", "url", u)
 			return &npmAdapter{resolver: r}, nil

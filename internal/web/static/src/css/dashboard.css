@@ -129,14 +129,15 @@
 .section-separator {
     border: none;
 }
+.section-separator td {
+    border-top: 2px solid var(--border);
+}
 
 .section-divider {
     display: flex;
     align-items: center;
     gap: var(--sp-3);
     padding: var(--sp-3) var(--sp-4);
-    border-top: 2px solid var(--border);
-    margin-top: var(--sp-2);
 }
 
 .section-divider .expand-icon {
@@ -721,6 +722,25 @@ details[open] > .accordion-header .accordion-chevron {
     background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
 }
 
+/* Scan summary rows in history: non-clickable, subdued styling */
+.scan-summary-row {
+    border-left: 3px solid transparent;
+}
+.scan-summary-text {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: unset !important;
+}
+/* colspan shifts nth-child by one — fix Outcome + Duration alignment */
+.scan-summary-row td:nth-child(3) {
+    text-align: center;
+}
+.scan-summary-row td:nth-child(4) {
+    text-align: center;
+}
+
 .container-link {
     color: var(--accent);
     text-decoration: none;
@@ -1202,13 +1222,13 @@ table.managing .td-checkbox {
 .cell-image-id,
 .table-images .th-id      { width: 18%; }
 .cell-image-size,
-.table-images .th-size    { width: 10%; }
+.table-images .th-size    { width: 10%; text-align: right; }
 .table-images .th-created,
 .table-images td:nth-last-child(3) { width: 12%; } /* Created */
 .table-images .th-status,
-.table-images td:nth-last-child(2) { width: 10%; } /* Status */
+.table-images td:nth-last-child(2) { width: 10%; text-align: center; } /* Status */
 .table-images .th-actions,
-.table-images td:last-child { width: 10%; }         /* Actions */
+.table-images td:last-child { width: 10%; text-align: center; }         /* Actions */
 .table-images .th-select  { width: 40px; }
 
 .cell-image-tags {

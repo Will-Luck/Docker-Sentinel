@@ -74,6 +74,16 @@ type Server struct {
 	// corresponding response from the agent. Multiple concurrent requests
 	// per host are supported.
 	pending map[string]chan *proto.AgentMessage
+
+	// onEngineID is called when an agent reports its Docker Engine ID.
+	// Set by the web layer to trigger Portainer endpoint overlap checks.
+	onEngineID func(hostID, hostName, engineID string)
+}
+
+// SetOnEngineID registers a callback that fires when an agent reports
+// its Docker Engine ID. Used by the web layer for source deduplication.
+func (s *Server) SetOnEngineID(fn func(hostID, hostName, engineID string)) {
+	s.onEngineID = fn
 }
 
 // agentStream tracks an active bidirectional stream with an agent.
@@ -152,19 +162,21 @@ func (s *Server) SetHistoryRecorder(h HistoryRecorder) {
 }
 
 // Start starts the gRPC server with mTLS on the given address.
+// extraSANs are additional IPs or hostnames to include in the server
+// certificate (e.g. the Docker host's external IP that agents connect to).
 //
 // TLS is configured with VerifyClientCertIfGiven so that enrollment
 // (which happens before the agent has a cert) can proceed unauthenticated.
 // AgentService methods check for a valid client cert and reject calls
 // without one.
-func (s *Server) Start(addr string) error {
+func (s *Server) Start(addr string, extraSANs ...string) error {
 	// Load persisted hosts before accepting connections.
 	if err := s.registry.LoadFromStore(); err != nil {
 		return fmt.Errorf("load registry: %w", err)
 	}
 
 	// Issue an ephemeral server certificate from our CA.
-	certPEM, keyPEM, err := s.ca.IssueServerCert()
+	certPEM, keyPEM, err := s.ca.IssueServerCert(extraSANs...)
 	if err != nil {
 		return fmt.Errorf("issue server cert: %w", err)
 	}

@@ -38,6 +38,9 @@ var (
 	bucketClusterConfigCache = []byte("cluster_config_cache")
 	bucketClusterRevoked     = []byte("cluster_revoked")
 	bucketDigestEquiv        = []byte("digest_equivalence")
+
+	// Multi-instance Portainer
+	bucketPortainerInstances = []byte("portainer_instances")
 )
 
 // Cluster settings keys (stored in bucketSettings).
@@ -47,6 +50,7 @@ const (
 	SettingClusterGracePeriod      = "cluster_grace_period"       // e.g. "30m"
 	SettingClusterRemotePolicy     = "cluster_remote_policy"      // "auto" / "manual" / "pinned"
 	SettingClusterAutoUpdateAgents = "cluster_auto_update_agents" // "true" / "false"
+	SettingClusterAdvertise        = "cluster_advertise"          // comma-separated IPs/hostnames for TLS SANs
 )
 
 // Portainer settings keys (stored in bucketSettings).
@@ -145,7 +149,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketPortConfig, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked, bucketDigestEquiv} {
+		for _, b := range [][]byte{bucketSnapshots, bucketHistory, bucketState, bucketQueue, bucketPolicies, bucketLogs, bucketSettings, bucketNotifyState, bucketNotifyPrefs, bucketIgnoredVersions, bucketRegistryCreds, bucketRateLimits, bucketGHCRAlternatives, bucketHooks, bucketReleaseSources, bucketNotifyTemplates, bucketPortConfig, bucketClusterHosts, bucketClusterTokens, bucketClusterJournal, bucketClusterConfigCache, bucketClusterRevoked, bucketDigestEquiv, bucketPortainerInstances} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -581,6 +585,18 @@ func (s *Store) SaveSetting(key, value string) error {
 			return err
 		}
 		return b.Put([]byte(key), []byte(value))
+	})
+}
+
+// DeleteSetting removes a setting key from the settings bucket.
+// Deleting a non-existent key is a silent no-op (BoltDB behaviour).
+func (s *Store) DeleteSetting(key string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b, err := bucket(tx, bucketSettings)
+		if err != nil {
+			return err
+		}
+		return b.Delete([]byte(key))
 	})
 }
 

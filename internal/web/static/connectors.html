@@ -74,51 +74,16 @@
             <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-npm" data-tab="npm">Nginx Proxy Manager</button>
         </div>
 
-        <!-- Portainer tab (same content as was in settings) -->
+        <!-- Portainer tab -->
         <div class="tab-panel active" id="tab-portainer" role="tabpanel">
             <div class="card">
-                <div class="card-header">
-                    <h2>Portainer Integration</h2>
+                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+                    <h2>Portainer Instances</h2>
+                    <button class="btn btn-success btn-sm" onclick="addPortainerInstance()">+ Add Instance</button>
                 </div>
                 <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
-                    <p class="accordion-intro">Connect to a Portainer instance to view endpoints and containers from the Portainer dashboard.</p>
-                    <div class="settings-rows">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Enable Portainer</div>
-                                <div class="setting-desc">Show the Portainer dashboard and scan Portainer-managed containers. Requires a restart after changing URL or token.</div>
-                            </div>
-                            <label class="toggle-switch-label">
-                                <input type="checkbox" id="portainer-enabled" class="channel-toggle" onchange="onPortainerToggle(this.checked)">
-                                <span id="portainer-enabled-text" class="toggle-switch-text">Off</span>
-                            </label>
-                        </div>
-                    </div>
-                    <div id="portainer-fields" class="cluster-fields disabled">
-                    <div class="settings-rows">
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Portainer URL</div>
-                                <div class="setting-desc">Base URL of your Portainer instance, e.g. https://portainer.example.com</div>
-                            </div>
-                            <input type="text" id="portainer-url" class="setting-input" placeholder="https://portainer.example.com" onchange="savePortainerURL()">
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">API Token</div>
-                                <div class="setting-desc">Portainer API access token (Settings &#8250; Users &#8250; Access tokens).</div>
-                            </div>
-                            <input type="password" id="portainer-token" class="setting-input" placeholder="ptr_..." onchange="savePortainerToken()">
-                        </div>
-                        <div class="setting-row">
-                            <div class="setting-info">
-                                <div class="setting-label">Connection</div>
-                                <div class="setting-desc">Test connectivity with the current URL and token.</div>
-                            </div>
-                            <button class="btn btn-info" id="portainer-test-btn" onclick="testPortainerConnection()">Test Connection</button>
-                        </div>
-                    </div>
-                    </div>
+                    <p class="accordion-intro">Connect to one or more Portainer instances to monitor and update containers on remote Docker hosts. Each instance can have multiple endpoints; local socket endpoints are auto-detected and blocked to avoid duplicating what Sentinel monitors directly.</p>
+                    <div id="portainer-instances"></div>
                 </div>
             </div>
         </div>
@@ -241,67 +206,318 @@ if (savedTab) {
     if (btn) btn.click();
 }
 
-// --- Portainer functions ---
-function onPortainerToggle(enabled) {
-    updateToggleText('portainer-enabled-text', enabled);
-    toggleFields('portainer-fields', enabled);
-    fetch('/api/settings/portainer-enabled', {
+// --- Portainer multi-instance functions ---
+
+function loadPortainerInstances() {
+    fetch('/api/portainer/instances', {headers: {'X-CSRF-Token': csrfToken()}})
+    .then(function(r) { return r.json(); })
+    .then(function(instances) {
+        var container = document.getElementById('portainer-instances');
+        if (!container) return;
+        container.innerHTML = '';
+        if (!instances || instances.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:var(--sp-6)">No Portainer instances configured. Click "+ Add Instance" to get started.</p>';
+            return;
+        }
+        instances.forEach(function(inst) {
+            renderInstanceCard(container, inst);
+        });
+    })
+    .catch(function() { showToast('Failed to load Portainer instances', 'error'); });
+}
+
+function addPortainerInstance() {
+    fetch('/api/portainer/instances', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
+        body: JSON.stringify({name: 'New Instance', url: '', token: '', enabled: true})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Instance added');
+        loadPortainerInstances();
+    })
+    .catch(function() { showToast('Failed to add instance', 'error'); });
+}
+
+function savePortainerInstance(id) {
+    var card = document.querySelector('[data-instance-id="' + id + '"]');
+    if (!card) return;
+    var name = card.querySelector('.inst-name').value;
+    var url = card.querySelector('.inst-url').value;
+    var token = card.querySelector('.inst-token').value;
+    var enabled = card.querySelector('.inst-enabled').checked;
+
+    var body = {name: name, url: url, enabled: enabled};
+    // Only send token if user changed it (not the redacted placeholder).
+    if (token && token !== '***') {
+        body.token = token;
+    }
+
+    fetch('/api/portainer/instances/' + id, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
+        body: JSON.stringify(body)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Instance saved');
+    })
+    .catch(function() { showToast('Failed to save', 'error'); });
+}
+
+function testPortainerInstance(id) {
+    var card = document.querySelector('[data-instance-id="' + id + '"]');
+    var btn = card ? card.querySelector('.inst-test-btn') : null;
+    if (btn) btn.disabled = true;
+
+    fetch('/api/portainer/instances/' + id + '/test', {
+        method: 'POST',
+        headers: {'X-CSRF-Token': csrfToken()}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) {
+            showToast('Connection failed: ' + d.error, 'error');
+        } else {
+            showToast('Connected \u2014 ' + (d.endpoints ? d.endpoints.length : 0) + ' endpoint(s) found');
+            // Reload to show endpoint list.
+            loadPortainerInstances();
+        }
+    })
+    .catch(function() { showToast('Connection failed', 'error'); })
+    .finally(function() { if (btn) btn.disabled = false; });
+}
+
+function removePortainerInstance(id, name) {
+    if (!confirm('Remove Portainer instance "' + name + '"? This cannot be undone.')) return;
+
+    fetch('/api/portainer/instances/' + id, {
+        method: 'DELETE',
+        headers: {'X-CSRF-Token': csrfToken()}
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Instance removed');
+        loadPortainerInstances();
+    })
+    .catch(function() { showToast('Failed to remove', 'error'); });
+}
+
+function forceEnableEndpoint(instanceId, endpointId) {
+    fetch('/api/portainer/instances/' + instanceId + '/endpoints/' + endpointId, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
+        body: JSON.stringify({force_allow: true})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Endpoint force-enabled (override active)');
+        loadPortainerInstances();
+    })
+    .catch(function() { showToast('Failed to force-enable endpoint', 'error'); });
+}
+
+function togglePortainerEndpoint(instanceId, endpointId, enabled) {
+    fetch('/api/portainer/instances/' + instanceId + '/endpoints/' + endpointId, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({enabled: enabled})
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
         if (d.error) { showToast(d.error, 'error'); return; }
-        showToast('Portainer ' + (enabled ? 'enabled' : 'disabled') + ' - restart to apply');
+        showToast('Endpoint ' + (enabled ? 'enabled' : 'disabled'));
     })
-    .catch(function() { showToast('Failed to save', 'error'); });
+    .catch(function() { showToast('Failed to update', 'error'); });
 }
 
-function savePortainerURL() {
-    var url = (document.getElementById('portainer-url') || {}).value || '';
-    fetch('/api/settings/portainer-url', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
-        body: JSON.stringify({url: url})
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.error) { showToast(d.error, 'error'); return; }
-        showToast('Portainer URL saved');
-    })
-    .catch(function() { showToast('Failed to save', 'error'); });
+function buildSettingRow(labelText, descText) {
+    var info = document.createElement('div');
+    info.className = 'setting-info';
+    var label = document.createElement('div');
+    label.className = 'setting-label';
+    label.textContent = labelText;
+    var desc = document.createElement('div');
+    desc.className = 'setting-desc';
+    desc.textContent = descText;
+    info.appendChild(label);
+    info.appendChild(desc);
+    return info;
 }
 
-function savePortainerToken() {
-    var token = (document.getElementById('portainer-token') || {}).value || '';
-    fetch('/api/settings/portainer-token', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
-        body: JSON.stringify({token: token})
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.error) { showToast(d.error, 'error'); return; }
-        showToast('Portainer token saved');
-    })
-    .catch(function() { showToast('Failed to save', 'error'); });
-}
+function renderInstanceCard(container, inst) {
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.instanceId = inst.id;
+    card.style.marginBottom = 'var(--sp-4)';
+    card.style.border = '1px solid var(--border)';
 
-function testPortainerConnection() {
-    var btn = document.getElementById('portainer-test-btn');
-    if (btn) btn.disabled = true;
-    fetch('/api/settings/portainer-test', {
-        method: 'POST',
-        headers: {'X-CSRF-Token': csrfToken}
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.error) { showToast('Connection failed: ' + d.error, 'error'); }
-        else { showToast('Connection successful'); }
-    })
-    .catch(function() { showToast('Connection failed', 'error'); })
-    .finally(function() { if (btn) btn.disabled = false; });
+    // Header row with name, enabled toggle, and remove button.
+    var header = document.createElement('div');
+    header.className = 'card-header';
+    header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:var(--sp-3) var(--sp-4)';
+
+    var left = document.createElement('div');
+    left.style.cssText = 'display:flex;align-items:center;gap:var(--sp-3)';
+
+    var nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.className = 'setting-input inst-name';
+    nameInput.value = inst.name;
+    nameInput.style.cssText = 'width:200px;font-weight:600';
+    nameInput.onchange = function() { savePortainerInstance(inst.id); };
+    left.appendChild(nameInput);
+
+    var toggleLabel = document.createElement('label');
+    toggleLabel.className = 'toggle-switch-label';
+    toggleLabel.style.margin = '0';
+    var toggleInput = document.createElement('input');
+    toggleInput.type = 'checkbox';
+    toggleInput.className = 'channel-toggle inst-enabled';
+    toggleInput.checked = inst.enabled;
+    toggleInput.onchange = function() { savePortainerInstance(inst.id); };
+    var toggleText = document.createElement('span');
+    toggleText.className = 'toggle-switch-text';
+    toggleText.textContent = inst.enabled ? 'On' : 'Off';
+    toggleInput.addEventListener('change', function() {
+        toggleText.textContent = this.checked ? 'On' : 'Off';
+    });
+    toggleLabel.appendChild(toggleInput);
+    toggleLabel.appendChild(toggleText);
+    left.appendChild(toggleLabel);
+
+    var removeBtn = document.createElement('button');
+    removeBtn.className = 'btn btn-danger btn-sm';
+    removeBtn.textContent = 'Remove';
+    removeBtn.onclick = function() { removePortainerInstance(inst.id, inst.name); };
+
+    header.appendChild(left);
+    header.appendChild(removeBtn);
+    card.appendChild(header);
+
+    // Body with URL, token, test button.
+    var body = document.createElement('div');
+    body.style.padding = 'var(--sp-3) var(--sp-4)';
+
+    var rows = document.createElement('div');
+    rows.className = 'settings-rows';
+
+    // URL row.
+    var urlRow = document.createElement('div');
+    urlRow.className = 'setting-row';
+    urlRow.appendChild(buildSettingRow('URL', 'Base URL of this Portainer instance'));
+    var urlInput = document.createElement('input');
+    urlInput.type = 'text';
+    urlInput.className = 'setting-input inst-url';
+    urlInput.placeholder = 'https://portainer.example.com';
+    urlInput.value = inst.url || '';
+    urlInput.onchange = function() { savePortainerInstance(inst.id); };
+    urlRow.appendChild(urlInput);
+    rows.appendChild(urlRow);
+
+    // Token row.
+    var tokenRow = document.createElement('div');
+    tokenRow.className = 'setting-row';
+    tokenRow.appendChild(buildSettingRow('API Token', 'Portainer API access token'));
+    var tokenInput = document.createElement('input');
+    tokenInput.type = 'password';
+    tokenInput.className = 'setting-input inst-token';
+    tokenInput.placeholder = 'ptr_...';
+    tokenInput.value = inst.token || '';
+    tokenInput.onchange = function() { savePortainerInstance(inst.id); };
+    tokenRow.appendChild(tokenInput);
+    rows.appendChild(tokenRow);
+
+    // Test button row.
+    var testRow = document.createElement('div');
+    testRow.className = 'setting-row';
+    testRow.appendChild(buildSettingRow('Connection', 'Test connectivity and discover endpoints'));
+    var testBtn = document.createElement('button');
+    testBtn.className = 'btn btn-info inst-test-btn';
+    testBtn.textContent = 'Test Connection';
+    testBtn.onclick = function() { testPortainerInstance(inst.id); };
+    testRow.appendChild(testBtn);
+    rows.appendChild(testRow);
+
+    body.appendChild(rows);
+
+    // Endpoints section (if any).
+    if (inst.endpoints && Object.keys(inst.endpoints).length > 0) {
+        var epSection = document.createElement('div');
+        epSection.style.cssText = 'margin-top:var(--sp-3);border-top:1px solid var(--border);padding-top:var(--sp-3)';
+        var epTitle = document.createElement('div');
+        epTitle.style.cssText = 'font-weight:600;margin-bottom:var(--sp-2);font-size:0.9rem';
+        epTitle.textContent = 'Endpoints';
+        epSection.appendChild(epTitle);
+
+        Object.keys(inst.endpoints).sort().forEach(function(epId) {
+            var ep = inst.endpoints[epId];
+            var epRow = document.createElement('div');
+            epRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:var(--sp-1) 0';
+
+            var epLabel = document.createElement('span');
+            epLabel.textContent = 'Endpoint ' + epId;
+
+            var isOverlapBlock = ep.blocked && ep.reason && ep.reason.indexOf('monitored by') !== -1;
+
+            if (ep.blocked) {
+                epLabel.style.cssText = 'color:var(--text-muted);text-decoration:line-through';
+                epLabel.textContent += ' (blocked: ' + (ep.reason || 'local socket') + ')';
+            }
+
+            if (ep.blocked && isOverlapBlock) {
+                // Overlap-blocked: show label + Force Enable button.
+                var epRight = document.createElement('div');
+                epRight.style.cssText = 'display:flex;align-items:center;gap:var(--sp-2)';
+                var forceBtn = document.createElement('button');
+                forceBtn.className = 'btn btn-sm';
+                forceBtn.textContent = 'Force Enable';
+                forceBtn.title = 'Override auto-block and monitor this endpoint anyway';
+                forceBtn.onclick = (function(iid, eid) {
+                    return function() { forceEnableEndpoint(iid, eid); };
+                })(inst.id, epId);
+                epRight.appendChild(forceBtn);
+                epRow.appendChild(epLabel);
+                epRow.appendChild(epRight);
+            } else if (ep.blocked) {
+                // Local socket or other hard block: no override.
+                epRow.appendChild(epLabel);
+            } else {
+                var epToggle = document.createElement('label');
+                epToggle.className = 'toggle-switch-label';
+                epToggle.style.margin = '0';
+                var epCheck = document.createElement('input');
+                epCheck.type = 'checkbox';
+                epCheck.className = 'channel-toggle';
+                epCheck.checked = ep.enabled;
+                epCheck.onchange = function() {
+                    togglePortainerEndpoint(inst.id, epId, this.checked);
+                };
+                var epText = document.createElement('span');
+                epText.className = 'toggle-switch-text';
+                epText.textContent = ep.enabled ? 'On' : 'Off';
+                epCheck.addEventListener('change', function() {
+                    epText.textContent = this.checked ? 'On' : 'Off';
+                });
+                epToggle.appendChild(epCheck);
+                epToggle.appendChild(epText);
+                epRow.appendChild(epLabel);
+                epRow.appendChild(epToggle);
+            }
+
+            epSection.appendChild(epRow);
+        });
+
+        body.appendChild(epSection);
+    }
+
+    card.appendChild(body);
+    container.appendChild(card);
 }
 
 // --- NPM functions ---
@@ -310,7 +526,7 @@ function onNPMToggle(enabled) {
     toggleFields('npm-fields', enabled);
     fetch('/api/settings/npm-enabled', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({enabled: enabled})
     })
     .then(function(r) { return r.json(); })
@@ -325,7 +541,7 @@ function saveNPMURL() {
     var url = (document.getElementById('npm-url') || {}).value || '';
     fetch('/api/settings/npm-url', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({url: url})
     })
     .then(function(r) { return r.json(); })
@@ -341,7 +557,7 @@ function saveNPMCredentials() {
     var password = (document.getElementById('npm-password') || {}).value || '';
     fetch('/api/settings/npm-credentials', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({email: email, password: password})
     })
     .then(function(r) { return r.json(); })
@@ -357,7 +573,7 @@ function testNPMConnection() {
     if (btn) btn.disabled = true;
     fetch('/api/settings/npm-test', {
         method: 'POST',
-        headers: {'X-CSRF-Token': csrfToken}
+        headers: {'X-CSRF-Token': csrfToken()}
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -373,7 +589,7 @@ function syncNPM() {
     if (btn) btn.disabled = true;
     fetch('/api/settings/npm-sync', {
         method: 'POST',
-        headers: {'X-CSRF-Token': csrfToken}
+        headers: {'X-CSRF-Token': csrfToken()}
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
@@ -488,22 +704,13 @@ function updateToggleText(id, enabled) {
 
 // Load current values
 (function() {
+    // Portainer instances (multi-instance API).
+    loadPortainerInstances();
+
+    // NPM settings (still single-instance via /api/settings).
     fetch('/api/settings')
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            // Portainer
-            var pUrl = document.getElementById('portainer-url');
-            if (pUrl && d['SENTINEL_PORTAINER_URL']) pUrl.value = d['SENTINEL_PORTAINER_URL'];
-            if (pUrl && d['portainer_url']) pUrl.value = d['portainer_url'];
-            var pEnabled = d['portainer_enabled'] === 'true';
-            var pToggle = document.getElementById('portainer-enabled');
-            if (pToggle) {
-                pToggle.checked = pEnabled;
-                updateToggleText('portainer-enabled-text', pEnabled);
-                toggleFields('portainer-fields', pEnabled);
-            }
-
-            // NPM
             var nUrl = document.getElementById('npm-url');
             if (nUrl && d['npm_url']) nUrl.value = d['npm_url'];
             if (nUrl && d['SENTINEL_NPM_URL']) nUrl.value = d['SENTINEL_NPM_URL'];
@@ -535,6 +742,22 @@ function updateToggleText(id, enabled) {
             }
         })
         .catch(function() {});
+
+    // Listen for source overlap SSE events to show toast + refresh endpoints.
+    function onSSEReady() {
+        if (window.sseSource) {
+            window.sseSource.addEventListener('source_overlap', function(e) {
+                try {
+                    var data = JSON.parse(e.data);
+                    showToast(data.message || 'Source overlap detected', 'warning');
+                    loadPortainerInstances();
+                } catch (_) {}
+            });
+        } else {
+            setTimeout(onSSEReady, 200);
+        }
+    }
+    onSSEReady();
 })();
     </script>
 </body>

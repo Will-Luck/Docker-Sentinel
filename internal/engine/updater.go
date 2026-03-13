@@ -52,37 +52,38 @@ func finaliseStageIsDestructive(stage string) bool {
 
 // Updater performs container scanning and update operations.
 type Updater struct {
-	docker           docker.API
-	checker          *registry.Checker
-	store            *store.Store
-	queue            *Queue
-	cfg              *config.Config
-	log              *logging.Logger
-	clock            clock.Clock
-	notifier         *notify.Multi
-	events           *events.Bus
-	settings         SettingsReader
-	rateTracker      *registry.RateLimitTracker // optional: rate limit awareness
-	rateSaver        func([]byte) error         // optional: persist rate limits after scan
-	ghcrCache        *registry.GHCRCache        // optional: GHCR alternative detection cache
-	ghcrSaver        func([]byte) error         // optional: persist GHCR cache after checks
-	updating         sync.Map                   // map[string]*sync.Mutex — per-container update locks
-	activeUpdates    atomic.Int32               // tracks number of in-progress updates for IsIdle()
-	hooks            *hooks.Runner              // optional: lifecycle hook runner
-	deps             *deps.Graph                // optional: dependency graph (rebuilt each scan)
-	cluster          ClusterScanner             // optional: nil = single-host mode
-	haDiscovery      *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
-	portainer        PortainerScanner           // optional: nil = no Portainer integration
-	imgScanner       ImageScanner               // optional: trivy vulnerability scanner
-	imgVerifier      ImageVerifier              // optional: cosign signature verifier
-	scanMode         scanner.ScanMode           // disabled/pre-update/post-update
-	verifyMode       verify.Mode                // disabled/warn/enforce
-	severityThresh   scanner.Severity           // block threshold for pre-update scans
-	ghcrWg           sync.WaitGroup             // tracks background GHCR alternative checks
-	ghcrRunning      atomic.Bool                // prevents concurrent GHCR checks
-	ghcrCancel       context.CancelFunc         // cancels the running GHCR check on shutdown
-	selfUpdateQueued atomic.Bool                // set when a self-update is queued during scan
-	selfUpdateKey    atomic.Value               // stores queue key (string) of the self-update entry
+	docker             docker.API
+	checker            *registry.Checker
+	store              *store.Store
+	queue              *Queue
+	cfg                *config.Config
+	log                *logging.Logger
+	clock              clock.Clock
+	notifier           *notify.Multi
+	events             *events.Bus
+	settings           SettingsReader
+	rateTracker        *registry.RateLimitTracker // optional: rate limit awareness
+	rateSaver          func([]byte) error         // optional: persist rate limits after scan
+	ghcrCache          *registry.GHCRCache        // optional: GHCR alternative detection cache
+	ghcrSaver          func([]byte) error         // optional: persist GHCR cache after checks
+	updating           sync.Map                   // map[string]*sync.Mutex — per-container update locks
+	activeUpdates      atomic.Int32               // tracks number of in-progress updates for IsIdle()
+	hooks              *hooks.Runner              // optional: lifecycle hook runner
+	deps               *deps.Graph                // optional: dependency graph (rebuilt each scan)
+	cluster            ClusterScanner             // optional: nil = single-host mode
+	haDiscovery        *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
+	portainerMu        sync.RWMutex
+	portainerInstances []PortainerInstance
+	imgScanner         ImageScanner       // optional: trivy vulnerability scanner
+	imgVerifier        ImageVerifier      // optional: cosign signature verifier
+	scanMode           scanner.ScanMode   // disabled/pre-update/post-update
+	verifyMode         verify.Mode        // disabled/warn/enforce
+	severityThresh     scanner.Severity   // block threshold for pre-update scans
+	ghcrWg             sync.WaitGroup     // tracks background GHCR alternative checks
+	ghcrRunning        atomic.Bool        // prevents concurrent GHCR checks
+	ghcrCancel         context.CancelFunc // cancels the running GHCR check on shutdown
+	selfUpdateQueued   atomic.Bool        // set when a self-update is queued during scan
+	selfUpdateKey      atomic.Value       // stores queue key (string) of the self-update entry
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -141,10 +142,36 @@ func (u *Updater) SetHADiscovery(h *notify.HADiscovery) {
 	u.haDiscovery = h
 }
 
-// SetPortainerScanner attaches a Portainer scanner for remote endpoint scanning.
-// When nil (the default), Portainer scanning is skipped entirely.
-func (u *Updater) SetPortainerScanner(ps PortainerScanner) {
-	u.portainer = ps
+// SetPortainerInstances replaces the full list of Portainer instances.
+func (u *Updater) SetPortainerInstances(instances []PortainerInstance) {
+	u.portainerMu.Lock()
+	defer u.portainerMu.Unlock()
+	u.portainerInstances = instances
+}
+
+// AddPortainerInstance appends or replaces a single instance by ID.
+func (u *Updater) AddPortainerInstance(inst PortainerInstance) {
+	u.portainerMu.Lock()
+	defer u.portainerMu.Unlock()
+	for i, existing := range u.portainerInstances {
+		if existing.ID == inst.ID {
+			u.portainerInstances[i] = inst
+			return
+		}
+	}
+	u.portainerInstances = append(u.portainerInstances, inst)
+}
+
+// RemovePortainerInstance removes an instance by ID.
+func (u *Updater) RemovePortainerInstance(id string) {
+	u.portainerMu.Lock()
+	defer u.portainerMu.Unlock()
+	for i, inst := range u.portainerInstances {
+		if inst.ID == id {
+			u.portainerInstances = append(u.portainerInstances[:i], u.portainerInstances[i+1:]...)
+			return
+		}
+	}
 }
 
 // SetScanner attaches a vulnerability scanner (Trivy).

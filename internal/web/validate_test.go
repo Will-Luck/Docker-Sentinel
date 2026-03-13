@@ -84,8 +84,6 @@ func TestValidSettingKeys(t *testing.T) {
 		"default_notify_mode",
 		// Webhook.
 		"webhook_enabled", "webhook_secret",
-		// Portainer.
-		"portainer_enabled", "portainer_url", "portainer_token",
 		// Docker TLS.
 		"docker_tls_ca", "docker_tls_cert", "docker_tls_key",
 		// Cluster.

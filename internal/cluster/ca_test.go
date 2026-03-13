@@ -180,6 +180,41 @@ func TestIssueServerCert(t *testing.T) {
 	verifyCertChain(t, ca, cert)
 }
 
+func TestIssueServerCert_ExtraSANs(t *testing.T) {
+	ca := mustCA(t)
+
+	certPEM, _, err := ca.IssueServerCert("192.168.1.57", "sen.example.com")
+	if err != nil {
+		t.Fatalf("IssueServerCert with extra SANs failed: %v", err)
+	}
+
+	cert := mustParseCertPEM(t, certPEM)
+
+	// Should include the extra IP.
+	foundExtra := false
+	for _, ip := range cert.IPAddresses {
+		if ip.Equal(net.ParseIP("192.168.1.57")) {
+			foundExtra = true
+			break
+		}
+	}
+	if !foundExtra {
+		t.Error("server cert should include extra IP 192.168.1.57 in IP SANs")
+	}
+
+	// Should include the extra hostname.
+	foundDNS := false
+	for _, name := range cert.DNSNames {
+		if name == "sen.example.com" {
+			foundDNS = true
+			break
+		}
+	}
+	if !foundDNS {
+		t.Error("server cert should include extra DNS 'sen.example.com' in DNS SANs")
+	}
+}
+
 func TestIssueCert_AgentIsClientOnly(t *testing.T) {
 	ca := mustCA(t)
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // PortainerContainer is a container enriched with endpoint and stack membership.
@@ -14,6 +15,7 @@ type PortainerContainer struct {
 	Name         string
 	Image        string
 	ImageID      string
+	ImageDigest  string // repo digest from image inspect (e.g. "postgres@sha256:...")
 	State        string
 	Labels       map[string]string
 	EndpointID   int
@@ -103,6 +105,31 @@ func (s *Scanner) EndpointContainers(ctx context.Context, ep Endpoint) ([]Portai
 		return nil, err
 	}
 
+	// Fetch repo digests per unique image, deduped by ImageID.
+	digestByImageID := make(map[string]string, len(raw))
+	for _, c := range raw {
+		if _, seen := digestByImageID[c.ImageID]; seen {
+			continue
+		}
+		digestByImageID[c.ImageID] = "" // placeholder
+		img, err := s.client.InspectImage(ctx, ep.ID, c.ImageID)
+		if err != nil || len(img.RepoDigests) == 0 {
+			continue
+		}
+		// Pick the first repo digest matching the container's image name.
+		repo := strings.SplitN(c.Image, ":", 2)[0]
+		for _, rd := range img.RepoDigests {
+			if strings.HasPrefix(rd, repo+"@") {
+				digestByImageID[c.ImageID] = rd
+				break
+			}
+		}
+		// If no match by repo name, use the first one.
+		if digestByImageID[c.ImageID] == "" {
+			digestByImageID[c.ImageID] = img.RepoDigests[0]
+		}
+	}
+
 	out := make([]PortainerContainer, 0, len(raw))
 	for _, c := range raw {
 		pc := PortainerContainer{
@@ -110,6 +137,7 @@ func (s *Scanner) EndpointContainers(ctx context.Context, ep Endpoint) ([]Portai
 			Name:         c.Name(),
 			Image:        c.Image,
 			ImageID:      c.ImageID,
+			ImageDigest:  digestByImageID[c.ImageID],
 			State:        c.State,
 			Labels:       c.Labels,
 			EndpointID:   ep.ID,
@@ -180,6 +208,113 @@ func (s *Scanner) UpdateStandaloneContainer(ctx context.Context, endpointID int,
 	}
 
 	return nil
+}
+
+// IsPortainerImage returns true if the image reference belongs to a Portainer
+// server (CE or EE). Used to detect when we'd be updating Portainer through
+// its own API, which would kill it mid-request.
+func IsPortainerImage(image string) bool {
+	repo := image
+
+	// Strip tag/digest suffix so they don't interfere with matching.
+	if at := strings.Index(repo, "@"); at >= 0 {
+		repo = repo[:at]
+	}
+	if colon := strings.LastIndex(repo, ":"); colon >= 0 {
+		// Only strip if after the last slash (it's a tag, not a port).
+		if slash := strings.LastIndex(repo, "/"); colon > slash {
+			repo = repo[:colon]
+		}
+	}
+
+	// Strip registry prefix (contains a dot or colon before the first slash).
+	// Handles ghcr.io/, docker.io/, index.docker.io/, myregistry:5000/, etc.
+	if i := strings.Index(repo, "/"); i >= 0 {
+		prefix := repo[:i]
+		if strings.ContainsAny(prefix, ".:") {
+			repo = repo[i+1:]
+		}
+	}
+
+	// Strip Docker Hub "library/" prefix for official images.
+	// Docker canonicalises e.g. "nginx" to "index.docker.io/library/nginx".
+	repo = strings.TrimPrefix(repo, "library/")
+
+	return strings.HasPrefix(repo, "portainer/portainer")
+}
+
+// UpdatePortainerSelf updates a Portainer container by launching the official
+// portainer-updater helper container via the Docker proxy. The helper talks
+// directly to the Docker socket (not the Portainer API), so it survives
+// the Portainer container being stopped and recreated.
+//
+// Note: this only works when the Docker socket is at /var/run/docker.sock on
+// the endpoint host. Edge agent endpoints are not supported.
+func (s *Scanner) UpdatePortainerSelf(ctx context.Context, endpointID int, containerID, newImage string) error {
+	const (
+		updaterImage = "portainer/portainer-updater"
+		updaterTag   = "latest"
+		recoveryWait = 3 * time.Minute
+	)
+
+	// 1. Pull the portainer-updater image via Docker proxy (Portainer still alive).
+	if err := s.client.PullImage(ctx, endpointID, updaterImage, updaterTag); err != nil {
+		return fmt.Errorf("pull portainer-updater: %w", err)
+	}
+
+	// 2. Also pre-pull the target Portainer image so the updater doesn't have to.
+	targetImage, targetTag := parseImageTag(newImage)
+	if err := s.client.PullImage(ctx, endpointID, targetImage, targetTag); err != nil {
+		return fmt.Errorf("pre-pull target image %s: %w", newImage, err)
+	}
+
+	// 3. Create the updater container with Docker socket mounted.
+	name := fmt.Sprintf("sentinel-portainer-updater-%d", time.Now().Unix())
+	body := buildUpdaterBody(newImage)
+	updaterID, err := s.client.CreateContainer(ctx, endpointID, name, body)
+	if err != nil {
+		return fmt.Errorf("create portainer-updater: %w", err)
+	}
+
+	// 4. Start the updater (Portainer still alive at this point).
+	if err := s.client.StartContainer(ctx, endpointID, updaterID); err != nil {
+		// Clean up orphaned updater container.
+		_ = s.client.RemoveContainer(ctx, endpointID, updaterID)
+		return fmt.Errorf("start portainer-updater: %w", err)
+	}
+
+	// 5. Wait for Portainer to recover. The updater stops the old Portainer,
+	// recreates it, and starts the new one. The API goes down and comes back.
+	if err := s.client.WaitForRecovery(ctx, recoveryWait); err != nil {
+		return fmt.Errorf("portainer recovery: %w", err)
+	}
+
+	// 6. Clean up the updater container (should have auto-removed, but just in case).
+	_ = s.client.RemoveContainer(ctx, endpointID, updaterID)
+
+	return nil
+}
+
+// buildUpdaterBody creates the container config for portainer-updater.
+// The updater runs with Docker socket access and auto-removes on exit.
+func buildUpdaterBody(targetImage string) interface{} {
+	type hostConfig struct {
+		AutoRemove bool     `json:"AutoRemove"`
+		Binds      []string `json:"Binds"`
+	}
+	type body struct {
+		Image      string     `json:"Image"`
+		Cmd        []string   `json:"Cmd"`
+		HostConfig hostConfig `json:"HostConfig"`
+	}
+	return body{
+		Image: "portainer/portainer-updater:latest",
+		Cmd:   []string{"portainer", "--image", targetImage},
+		HostConfig: hostConfig{
+			AutoRemove: true,
+			Binds:      []string{"/var/run/docker.sock:/var/run/docker.sock"},
+		},
+	}
 }
 
 // cachedStacks returns stacks from cache, fetching once per scan cycle.
