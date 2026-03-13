@@ -25,9 +25,11 @@ type PortainerInstance struct {
 // An endpoint can be individually enabled/disabled or blocked
 // (e.g. if the Portainer API reports it as unreachable).
 type EndpointConfig struct {
-	Enabled bool   `json:"enabled"`
-	Blocked bool   `json:"blocked,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	Blocked    bool   `json:"blocked,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	EngineID   string `json:"engine_id,omitempty"`   // Docker Engine ID for source dedup
+	ForceAllow bool   `json:"force_allow,omitempty"` // user override for auto-blocked endpoints
 }
 
 // SavePortainerInstance upserts a Portainer instance record.

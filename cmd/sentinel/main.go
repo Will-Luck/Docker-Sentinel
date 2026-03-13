@@ -532,6 +532,16 @@ func main() {
 		}
 	}
 
+	// Collect local Docker Engine ID for source deduplication.
+	// If two sources (local + Portainer + cluster agent) point at the same
+	// daemon, the overlap checker uses this ID to auto-block duplicates.
+	if eid, err := client.EngineID(ctx); err != nil {
+		log.Warn("failed to get local Docker Engine ID", "error", err)
+	} else {
+		_ = db.SaveSetting("local_engine_id", eid)
+		log.Info("local Docker Engine ID", "engine_id", eid)
+	}
+
 	// Detect Swarm mode.
 	isSwarm := client.IsSwarmManager(ctx)
 	if isSwarm {

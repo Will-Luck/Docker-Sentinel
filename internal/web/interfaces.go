@@ -242,6 +242,7 @@ type ClusterHost struct {
 	DisconnectAt  time.Time `json:"disconnect_at,omitempty"`
 	DisconnectErr string    `json:"disconnect_err,omitempty"`
 	DisconnectCat string    `json:"disconnect_cat,omitempty"`
+	EngineID      string    `json:"engine_id,omitempty"` // Docker Engine ID for source dedup
 }
 
 // SwarmProvider provides Swarm service operations for the dashboard.
@@ -347,6 +348,9 @@ type PortainerProvider interface {
 	// directly to the Docker socket. Required because updating Portainer
 	// through its own API kills the API mid-request.
 	UpdatePortainerSelf(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error
+	// EndpointEngineID returns the Docker Engine ID for a specific endpoint,
+	// queried via Portainer's Docker proxy. Used for source deduplication.
+	EndpointEngineID(ctx context.Context, instanceID string, endpointID int) (string, error)
 }
 
 // PortainerInstanceStore persists Portainer instance configuration.
@@ -370,9 +374,11 @@ type PortainerInstanceConfig struct {
 
 // EndpointCfg mirrors store.EndpointConfig.
 type EndpointCfg struct {
-	Enabled bool   `json:"enabled"`
-	Blocked bool   `json:"blocked,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	Blocked    bool   `json:"blocked,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	EngineID   string `json:"engine_id,omitempty"`
+	ForceAllow bool   `json:"force_allow,omitempty"`
 }
 
 // NPMProvider provides NPM (Nginx Proxy Manager) proxy host resolution.

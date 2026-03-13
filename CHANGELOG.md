@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Source deduplication.** When the same Docker host is reachable via multiple
+  sources (local socket, cluster agent, Portainer connector), Sentinel now
+  detects the overlap using Docker Engine IDs and auto-blocks the lower-priority
+  source. Priority order: local > cluster agent > Portainer. Blocked endpoints
+  show the overlap reason on the Connectors page with a "Force Enable" button
+  for user overrides. Cluster agents report their Engine ID in the StateReport
+  proto; Portainer endpoints are probed via the Docker info API on Test
+  Connection. An SSE `source_overlap` event notifies the dashboard in real time.
 - **Multi-instance Portainer support.** Connect to multiple Portainer servers,
   each with per-endpoint enable/disable toggles. Local Docker socket endpoints
   are auto-detected and blocked to prevent duplicate monitoring.

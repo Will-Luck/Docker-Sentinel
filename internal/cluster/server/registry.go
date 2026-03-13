@@ -235,6 +235,33 @@ func (r *Registry) SetDisconnected(hostID string, err error) {
 	}
 }
 
+// UpdateEngineID stores the Docker Engine ID reported by an agent.
+// Persisted to BoltDB so the overlap checker can compare across sources.
+func (r *Registry) UpdateEngineID(hostID, engineID string) error {
+	r.mu.Lock()
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("host %s not found", hostID)
+	}
+	if hs.Info.EngineID == engineID {
+		r.mu.Unlock()
+		return nil // no change
+	}
+	hs.Info.EngineID = engineID
+	data, err := json.Marshal(hs.Info)
+	r.mu.Unlock()
+
+	if err != nil {
+		return fmt.Errorf("marshal host info: %w", err)
+	}
+	if err := r.store.SaveClusterHost(hostID, data); err != nil {
+		return fmt.Errorf("persist engine ID: %w", err)
+	}
+	r.log.Info("stored engine ID", "hostID", hostID, "engine_id", engineID)
+	return nil
+}
+
 // UpdateContainers replaces the known container list for a host.
 // Only stored in memory -- the server doesn't persist remote container lists
 // because the agent will re-report them on reconnection.
