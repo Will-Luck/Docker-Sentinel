@@ -3,12 +3,15 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 )
 
 // handlePortainer renders the Portainer connectors page.
@@ -243,19 +246,58 @@ func (s *Server) apiTestPortainerInstance(w http.ResponseWriter, r *http.Request
 	if inst.Endpoints == nil {
 		inst.Endpoints = make(map[string]EndpointCfg)
 	}
+
+	// Collect Engine IDs from each endpoint for source deduplication.
+	endpointEngineIDs := make(map[int]string)
+	if s.deps.Portainer != nil {
+		for _, ep := range endpoints {
+			eid, err := s.deps.Portainer.EndpointEngineID(r.Context(), id, ep.ID)
+			if err != nil {
+				s.deps.Log.Warn("failed to get engine ID for endpoint",
+					"instance", id, "endpoint", ep.ID, "error", err)
+				continue
+			}
+			endpointEngineIDs[ep.ID] = eid
+		}
+	}
+
+	var overlapBlocked []string
 	for _, ep := range endpoints {
 		epKey := strconv.Itoa(ep.ID)
-		if _, exists := inst.Endpoints[epKey]; !exists {
-			if sameHost && isLocalSocketEndpoint(ep) {
-				inst.Endpoints[epKey] = EndpointCfg{
-					Enabled: false,
-					Blocked: true,
-					Reason:  "local Docker socket (duplicates direct monitoring)",
-				}
-			} else {
-				inst.Endpoints[epKey] = EndpointCfg{Enabled: true}
+		cfg := inst.Endpoints[epKey]
+		isNew := cfg == (EndpointCfg{})
+		// Always update Engine ID if we got one.
+		if eid, ok := endpointEngineIDs[ep.ID]; ok {
+			cfg.EngineID = eid
+		}
+		if isNew {
+			cfg.Enabled = true
+		}
+		// Auto-block: local socket on same host (existing logic).
+		if isNew && sameHost && isLocalSocketEndpoint(ep) {
+			cfg.Enabled = false
+			cfg.Blocked = true
+			cfg.Reason = "local Docker socket (duplicates direct monitoring)"
+		}
+		// Auto-block: Engine ID overlap with higher-priority source.
+		if !cfg.ForceAllow {
+			if overlap := s.findEngineOverlap(cfg.EngineID); overlap != nil {
+				cfg.Blocked = true
+				cfg.Enabled = false
+				cfg.Reason = fmt.Sprintf("monitored by %s (%s)", overlap.Type, overlap.Name)
+				overlapBlocked = append(overlapBlocked, fmt.Sprintf("%s (endpoint %s)", ep.Name, epKey))
 			}
 		}
+		inst.Endpoints[epKey] = cfg
+	}
+
+	// Notify dashboard about auto-blocked endpoints.
+	if len(overlapBlocked) > 0 {
+		s.deps.EventBus.Publish(events.SSEEvent{
+			Type:      events.EventSourceOverlap,
+			Message:   fmt.Sprintf("auto-blocked %d endpoint(s) due to source overlap: %s", len(overlapBlocked), strings.Join(overlapBlocked, ", ")),
+			Timestamp: time.Now(),
+		})
 	}
 
 	// Auto-enable on successful test.
@@ -308,9 +350,10 @@ func (s *Server) apiUpdatePortainerEndpoint(w http.ResponseWriter, r *http.Reque
 	}
 
 	var body struct {
-		Enabled *bool   `json:"enabled"`
-		Blocked *bool   `json:"blocked"`
-		Reason  *string `json:"reason"`
+		Enabled    *bool   `json:"enabled"`
+		Blocked    *bool   `json:"blocked"`
+		Reason     *string `json:"reason"`
+		ForceAllow *bool   `json:"force_allow"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -329,6 +372,15 @@ func (s *Server) apiUpdatePortainerEndpoint(w http.ResponseWriter, r *http.Reque
 	}
 	if body.Reason != nil {
 		cfg.Reason = *body.Reason
+	}
+	if body.ForceAllow != nil {
+		cfg.ForceAllow = *body.ForceAllow
+		if *body.ForceAllow {
+			// User is overriding the auto-block.
+			cfg.Blocked = false
+			cfg.Reason = ""
+			cfg.Enabled = true
+		}
 	}
 	inst.Endpoints[epIDStr] = cfg
 
@@ -370,6 +422,39 @@ func (s *Server) apiPortainerContainers(w http.ResponseWriter, r *http.Request) 
 		containers = []PortainerContainerInfo{}
 	}
 	writeJSON(w, http.StatusOK, containers)
+}
+
+// overlapSource describes a higher-priority source monitoring the same Docker daemon.
+type overlapSource struct {
+	Type string // "local", "cluster"
+	Name string // human-readable name (e.g. "this host", "test-server-2")
+}
+
+// findEngineOverlap checks whether the given Engine ID is already monitored
+// by a higher-priority source (local > cluster > Portainer).
+// Returns nil if no overlap is found.
+func (s *Server) findEngineOverlap(engineID string) *overlapSource {
+	if engineID == "" {
+		return nil
+	}
+
+	// Check local Engine ID.
+	if s.deps.SettingsStore != nil {
+		if localEID, err := s.deps.SettingsStore.LoadSetting("local_engine_id"); err == nil && localEID == engineID {
+			return &overlapSource{Type: "local", Name: "this host"}
+		}
+	}
+
+	// Check cluster agent Engine IDs.
+	if s.deps.Cluster != nil {
+		for _, host := range s.deps.Cluster.AllHosts() {
+			if host.EngineID == engineID {
+				return &overlapSource{Type: "cluster", Name: host.Name}
+			}
+		}
+	}
+
+	return nil
 }
 
 // isLocalSocketEndpoint returns true if the endpoint connects via the local

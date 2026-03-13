@@ -92,6 +92,19 @@ func (c *Client) InspectImage(ctx context.Context, endpointID int, imageID strin
 	return &resp, nil
 }
 
+// EndpointEngineID queries Docker system info through Portainer's proxy
+// and returns the Docker Engine ID. Used for source deduplication.
+func (c *Client) EndpointEngineID(ctx context.Context, endpointID int) (string, error) {
+	var info struct {
+		ID string `json:"ID"`
+	}
+	path := fmt.Sprintf("/api/endpoints/%d/docker/info", endpointID)
+	if err := c.get(ctx, path, &info); err != nil {
+		return "", fmt.Errorf("docker info (endpoint %d): %w", endpointID, err)
+	}
+	return info.ID, nil
+}
+
 func (c *Client) StopContainer(ctx context.Context, endpointID int, containerID string) error {
 	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/%s/stop", endpointID, containerID)
 	return c.post(ctx, path, nil)

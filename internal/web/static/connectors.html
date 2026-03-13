@@ -307,6 +307,21 @@ function removePortainerInstance(id, name) {
     .catch(function() { showToast('Failed to remove', 'error'); });
 }
 
+function forceEnableEndpoint(instanceId, endpointId) {
+    fetch('/api/portainer/instances/' + instanceId + '/endpoints/' + endpointId, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
+        body: JSON.stringify({force_allow: true})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { showToast(d.error, 'error'); return; }
+        showToast('Endpoint force-enabled (override active)');
+        loadPortainerInstances();
+    })
+    .catch(function() { showToast('Failed to force-enable endpoint', 'error'); });
+}
+
 function togglePortainerEndpoint(instanceId, endpointId, enabled) {
     fetch('/api/portainer/instances/' + instanceId + '/endpoints/' + endpointId, {
         method: 'PUT',
@@ -447,12 +462,30 @@ function renderInstanceCard(container, inst) {
 
             var epLabel = document.createElement('span');
             epLabel.textContent = 'Endpoint ' + epId;
+
+            var isOverlapBlock = ep.blocked && ep.reason && ep.reason.indexOf('monitored by') !== -1;
+
             if (ep.blocked) {
                 epLabel.style.cssText = 'color:var(--text-muted);text-decoration:line-through';
                 epLabel.textContent += ' (blocked: ' + (ep.reason || 'local socket') + ')';
             }
 
-            if (ep.blocked) {
+            if (ep.blocked && isOverlapBlock) {
+                // Overlap-blocked: show label + Force Enable button.
+                var epRight = document.createElement('div');
+                epRight.style.cssText = 'display:flex;align-items:center;gap:var(--sp-2)';
+                var forceBtn = document.createElement('button');
+                forceBtn.className = 'btn btn-sm';
+                forceBtn.textContent = 'Force Enable';
+                forceBtn.title = 'Override auto-block and monitor this endpoint anyway';
+                forceBtn.onclick = (function(iid, eid) {
+                    return function() { forceEnableEndpoint(iid, eid); };
+                })(inst.id, epId);
+                epRight.appendChild(forceBtn);
+                epRow.appendChild(epLabel);
+                epRow.appendChild(epRight);
+            } else if (ep.blocked) {
+                // Local socket or other hard block: no override.
                 epRow.appendChild(epLabel);
             } else {
                 var epToggle = document.createElement('label');
@@ -709,6 +742,22 @@ function updateToggleText(id, enabled) {
             }
         })
         .catch(function() {});
+
+    // Listen for source overlap SSE events to show toast + refresh endpoints.
+    function onSSEReady() {
+        if (window.sseSource) {
+            window.sseSource.addEventListener('source_overlap', function(e) {
+                try {
+                    var data = JSON.parse(e.data);
+                    showToast(data.message || 'Source overlap detected', 'warning');
+                    loadPortainerInstances();
+                } catch (_) {}
+            });
+        } else {
+            setTimeout(onSSEReady, 200);
+        }
+    }
+    onSSEReady();
 })();
     </script>
 </body>

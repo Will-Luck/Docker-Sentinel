@@ -1644,6 +1644,7 @@ type StateReport struct {
 	Timestamp         *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	AgentVersion      string                 `protobuf:"bytes,4,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
 	SupportedFeatures []string               `protobuf:"bytes,5,rep,name=supported_features,json=supportedFeatures,proto3" json:"supported_features,omitempty"`
+	EngineId          string                 `protobuf:"bytes,6,opt,name=engine_id,json=engineId,proto3" json:"engine_id,omitempty"` // Docker Engine ID for source deduplication
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1711,6 +1712,13 @@ func (x *StateReport) GetSupportedFeatures() []string {
 		return x.SupportedFeatures
 	}
 	return nil
+}
+
+func (x *StateReport) GetEngineId() string {
+	if x != nil {
+		return x.EngineId
+	}
+	return ""
 }
 
 type StateAck struct {
@@ -2302,7 +2310,7 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12%\n" +
 	"\x0econtainer_name\x18\x02 \x01(\tR\rcontainerName\x12\x18\n" +
 	"\aoutcome\x18\x03 \x01(\tR\aoutcome\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xf5\x01\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\x92\x02\n" +
 	"\vStateReport\x12\x17\n" +
 	"\ahost_id\x18\x01 \x01(\tR\x06hostId\x12?\n" +
 	"\n" +
@@ -2310,7 +2318,8 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"containers\x128\n" +
 	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12#\n" +
 	"\ragent_version\x18\x04 \x01(\tR\fagentVersion\x12-\n" +
-	"\x12supported_features\x18\x05 \x03(\tR\x11supportedFeatures\"@\n" +
+	"\x12supported_features\x18\x05 \x03(\tR\x11supportedFeatures\x12\x1b\n" +
+	"\tengine_id\x18\x06 \x01(\tR\bengineId\"@\n" +
 	"\bStateAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"\xb8\x01\n" +

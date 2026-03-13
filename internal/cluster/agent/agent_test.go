@@ -228,6 +228,10 @@ func (m *mockDocker) ContainerLogs(_ context.Context, id string, _ int) (string,
 	return m.logResults[id], nil
 }
 
+func (m *mockDocker) EngineID(_ context.Context) (string, error) {
+	return "mock-engine-id", nil
+}
+
 // ---------------------------------------------------------------------------
 // Policy Resolution
 // ---------------------------------------------------------------------------

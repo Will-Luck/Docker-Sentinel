@@ -74,6 +74,16 @@ type Server struct {
 	// corresponding response from the agent. Multiple concurrent requests
 	// per host are supported.
 	pending map[string]chan *proto.AgentMessage
+
+	// onEngineID is called when an agent reports its Docker Engine ID.
+	// Set by the web layer to trigger Portainer endpoint overlap checks.
+	onEngineID func(hostID, hostName, engineID string)
+}
+
+// SetOnEngineID registers a callback that fires when an agent reports
+// its Docker Engine ID. Used by the web layer for source deduplication.
+func (s *Server) SetOnEngineID(fn func(hostID, hostName, engineID string)) {
+	s.onEngineID = fn
 }
 
 // agentStream tracks an active bidirectional stream with an agent.

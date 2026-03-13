@@ -59,6 +59,7 @@ type DockerAPI interface {
 	ImageDigest(ctx context.Context, imageRef string) (string, error)
 	ExecContainer(ctx context.Context, id string, cmd []string, timeout int) (int, string, error)
 	ContainerLogs(ctx context.Context, id string, lines int) (string, error)
+	EngineID(ctx context.Context) (string, error)
 }
 
 // Config holds agent-specific configuration.
@@ -103,6 +104,8 @@ type Agent struct {
 	// Zero value means currently connected.
 	offlineSince time.Time
 
+	engineID string // Docker Engine ID for source dedup
+
 	dedup    *dedup
 	policies *policyCache
 	journal  *journal
@@ -145,6 +148,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Restore cached policies so autonomous mode has them immediately.
 	if err := a.loadPolicyCache(); err != nil {
 		a.log.Warn("failed to load policy cache, using defaults", "error", err)
+	}
+
+	// Collect Engine ID for source deduplication. Non-fatal if it fails —
+	// the hub will just skip overlap detection for this agent.
+	if eid, err := a.docker.EngineID(ctx); err != nil {
+		a.log.Warn("failed to get Docker Engine ID", "error", err)
+	} else {
+		a.engineID = eid
+		a.log.Info("collected Docker Engine ID", "engine_id", eid)
 	}
 
 	// Step 1: Enroll if we don't have certs yet.
@@ -250,6 +262,7 @@ func (a *Agent) runSession(ctx context.Context) error {
 		Timestamp:         timestamppb.Now(),
 		AgentVersion:      a.cfg.Version,
 		SupportedFeatures: supportedFeatures,
+		EngineId:          a.engineID,
 	})
 	if err != nil {
 		return fmt.Errorf("report state: %w", err)

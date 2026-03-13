@@ -47,6 +47,7 @@ func (a *clusterAdapter) AllHosts() []web.ClusterHost {
 				DisconnectAt:  hs.DisconnectAt,
 				DisconnectErr: hs.DisconnectErr,
 				DisconnectCat: hs.DisconnectCat,
+				EngineID:      hs.Info.EngineID,
 			})
 		}
 	}
@@ -71,6 +72,7 @@ func (a *clusterAdapter) GetHost(id string) (web.ClusterHost, bool) {
 		DisconnectAt:  hs.DisconnectAt,
 		DisconnectErr: hs.DisconnectErr,
 		DisconnectCat: hs.DisconnectCat,
+		EngineID:      hs.Info.EngineID,
 	}, true
 }
 
@@ -245,8 +247,57 @@ func (m *clusterManager) Start() error {
 	// Swap provider in controller — handlers see it immediately.
 	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv, store: m.db})
 
+	// Wire Engine ID callback for source deduplication. When an agent
+	// reports its Engine ID, check if any Portainer endpoints monitor
+	// the same daemon and auto-block them.
+	m.srv.SetOnEngineID(func(hostID, hostName, engineID string) {
+		m.autoBlockOverlappingEndpoints(hostID, hostName, engineID)
+	})
+
 	m.log.Info("cluster gRPC server started", "addr", addr)
 	return nil
+}
+
+// autoBlockOverlappingEndpoints scans all Portainer instances for endpoints
+// whose Engine ID matches the newly connected cluster agent. Auto-blocks
+// any matches (unless force-allowed) since cluster agent has higher priority.
+func (m *clusterManager) autoBlockOverlappingEndpoints(hostID, hostName, engineID string) {
+	if engineID == "" {
+		return
+	}
+	instances, err := m.db.ListPortainerInstances()
+	if err != nil {
+		m.log.Warn("overlap check: failed to list Portainer instances", "error", err)
+		return
+	}
+	for _, inst := range instances {
+		changed := false
+		for epKey, cfg := range inst.Endpoints {
+			if cfg.EngineID == engineID && !cfg.ForceAllow && !cfg.Blocked {
+				cfg.Blocked = true
+				cfg.Enabled = false
+				label := hostName
+				if label == "" {
+					label = hostID
+				}
+				cfg.Reason = fmt.Sprintf("monitored by cluster agent '%s'", label)
+				inst.Endpoints[epKey] = cfg
+				changed = true
+				m.log.Info("auto-blocked Portainer endpoint due to Engine ID overlap",
+					"instance", inst.ID, "endpoint", epKey, "agent", label)
+			}
+		}
+		if changed {
+			if err := m.db.SavePortainerInstance(inst); err != nil {
+				m.log.Warn("overlap check: failed to save instance", "instance", inst.ID, "error", err)
+			}
+			m.bus.Publish(events.SSEEvent{
+				Type:      events.EventSourceOverlap,
+				Message:   fmt.Sprintf("auto-blocked Portainer endpoint(s) on '%s' -- monitored by cluster agent '%s'", inst.Name, hostName),
+				Timestamp: time.Now(),
+			})
+		}
+	}
 }
 
 func (m *clusterManager) Stop() {
@@ -431,6 +482,14 @@ func (a *multiPortainerAdapter) UpdatePortainerSelf(ctx context.Context, instanc
 		return err
 	}
 	return s.UpdatePortainerSelf(ctx, endpointID, containerID, newImage)
+}
+
+func (a *multiPortainerAdapter) EndpointEngineID(ctx context.Context, instanceID string, endpointID int) (string, error) {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return "", err
+	}
+	return s.Client().EndpointEngineID(ctx, endpointID)
 }
 
 // findEndpoint looks up a single endpoint by ID from a scanner's full endpoint list.
