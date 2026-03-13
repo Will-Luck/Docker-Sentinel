@@ -2307,13 +2307,18 @@
             })(),
             (function() {
               var td = document.createElement("td");
-              td.className = "mono";
+              td.className = "col-image mono";
               td.textContent = task.Tag || "";
               return td;
             })(),
-            document.createElement("td"),
             (function() {
               var td = document.createElement("td");
+              td.className = "col-policy";
+              return td;
+            })(),
+            (function() {
+              var td = document.createElement("td");
+              td.className = "col-status";
               td.innerHTML = stateBadge;
               return td;
             })(),
@@ -2321,8 +2326,7 @@
               var td = document.createElement("td");
               td.className = "col-ports";
               return td;
-            })(),
-            document.createElement("td")
+            })()
           ];
           for (var ci = 0; ci < cells.length; ci++) tr.appendChild(cells[ci]);
           taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
@@ -2333,13 +2337,13 @@
           for (var t = cached.length - 1; t >= 0; t--) {
             var tr = document.createElement("tr");
             tr.className = "svc-task-row";
-            tr.innerHTML = '<td></td><td class="svc-node">' + escapeHTML(cached[t].NodeText || "") + '</td><td class="mono">' + escapeHTML(cached[t].Tag || "") + '</td><td></td><td><span class="badge badge-error">shutdown</span></td><td></td>';
+            tr.innerHTML = '<td></td><td class="svc-node">' + escapeHTML(cached[t].NodeText || "") + '</td><td class="col-image mono">' + escapeHTML(cached[t].Tag || "") + '</td><td class="col-policy"></td><td class="col-status"><span class="badge badge-error">shutdown</span></td><td class="col-ports"></td>';
             taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
           }
         } else {
           var tr = document.createElement("tr");
           tr.className = "svc-task-row";
-          tr.innerHTML = '<td></td><td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 \u2014 no active tasks</td><td></td>';
+          tr.innerHTML = '<td></td><td colspan="5" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 \u2014 no active tasks</td>';
           taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
         }
       }
