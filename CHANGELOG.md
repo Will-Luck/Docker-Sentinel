@@ -43,10 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   volume recreation.
 
 ### Fixed
-- **Swarm task row columns misaligned (#64).** JS-created task rows had 7 cells
-  (extra actions column) vs the 6-column table header, pushing status badges
-  right. Also missing `col-status` / `col-policy` classes so the centering CSS
-  rules didn't apply. Shutdown badges now align properly under the Status header.
+- **Swarm service table shrinks when services stopped (#64).** The server-side
+  "Service scaled to 0" placeholder row had `colspan="6"` after an empty
+  checkbox cell, creating a 7-column total in a 6-column `table-layout:fixed`
+  table. This forced the browser to redistribute column widths, visibly
+  shrinking the table whenever any swarm service was at 0 replicas. Changed to
+  `colspan="5"` (1 + 5 = 6). Also fixed JS-created task rows that had the wrong
+  cell count and missing `col-*` classes for column alignment.
 - **Stopped containers hidden by default on dashboard (#63).** Fresh databases
   had no `show_stopped` setting in BoltDB, but `LoadSetting` returns an empty
   string with no error for missing keys. The handler treated this as `false`,
