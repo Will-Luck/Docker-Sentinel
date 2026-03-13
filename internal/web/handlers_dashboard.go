@@ -379,10 +379,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		pendingNames[p.Key()] = true
 	}
 
-	// Check if stopped containers should be shown (opt-in setting).
-	showStopped := false
+	// Check if stopped containers should be shown (default: true).
+	// LoadSetting returns ("", nil) for missing keys, so only override when
+	// the value is explicitly set — otherwise the default stands.
+	showStopped := true
 	if s.deps.SettingsStore != nil {
-		if v, err := s.deps.SettingsStore.LoadSetting("show_stopped"); err == nil {
+		if v, err := s.deps.SettingsStore.LoadSetting("show_stopped"); err == nil && v != "" {
 			showStopped = v == "true"
 		}
 	}
@@ -394,7 +396,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Exclude stopped containers unless the setting is enabled.
+		// Exclude stopped containers if the user disabled them in settings.
 		if !showStopped && c.State != "running" {
 			continue
 		}
