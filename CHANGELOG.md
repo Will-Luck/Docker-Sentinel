@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   volume recreation.
 
 ### Fixed
+- **Stopped swarm tasks vanish on page refresh (#65).** When a swarm service is
+  scaled to 0, Docker removes all tasks within seconds. On page refresh, the
+  server-side template received no task data and showed a generic "Service
+  scaled to 0" placeholder instead of the actual task rows with node names and
+  SHUTDOWN badges. Added an in-memory task cache to `swarmAdapter` that
+  preserves the last-seen running tasks per service. When a service has 0
+  desired replicas and Docker returns no tasks, the cache serves them with
+  state overridden to "shutdown". The JS-side `_svcTaskCache` still handles
+  the instant UI update during scale-down; the server cache handles persistence
+  across page refreshes.
 - **Swarm service table shrinks when services stopped (#64).** The server-side
   "Service scaled to 0" placeholder row had `colspan="6"` after an empty
   checkbox cell, creating a 7-column total in a 6-column `table-layout:fixed`
