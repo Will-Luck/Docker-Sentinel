@@ -5,7 +5,7 @@ All notable changes to Docker-Sentinel are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.12.0] - 2026-03-13
 
 ### Added
 - **Source deduplication.** When the same Docker host is reachable via multiple
@@ -166,6 +166,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **NPM wildcard domain resolution.** Proxy hosts with wildcard domains
   (e.g. `*.s3.garage.example.com`) produced broken URLs. Now skips wildcard
   entries and picks the first non-wildcard domain.
+- **Data race in `Scan()` on `portainerInstances`.** The prune loop and length
+  guard in `Scan()` read `portainerInstances` without holding `portainerMu`,
+  while HTTP handlers mutate the slice concurrently via `Add`/`Remove`. The
+  prune loop took pointers into the slice, risking dangling pointers if a
+  concurrent append reallocated the backing array. Now snapshots under `RLock`,
+  matching the pattern already used in `scanPortainerInstances`.
+- **Portainer endpoint `ForceAllow` and `EngineID` lost on save.** The store
+  adapter conversion between `web.EndpointCfg` and `store.EndpointConfig`
+  only copied `Enabled`, `Blocked`, and `Reason`, silently dropping `EngineID`
+  and `ForceAllow`. This caused manually force-allowed endpoints to revert to
+  blocked on the next test/reconnect, and Engine ID deduplication to fail after
+  a restart.
+- **Endpoint existence check fragile.** Used `cfg == (EndpointCfg{})` to detect
+  new endpoints, which would fail at compile time if a non-comparable field
+  (slice, map) were added. Replaced with the map `ok` idiom.
 
 ### Changed
 - **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
