@@ -238,6 +238,22 @@ function initSSE() {
         }
         _sseHasConnected = true;
         setConnectionStatus(true);
+
+        // Catch-up: refresh any rows still showing "Updating" status.
+        // If the update completed between server-side page render and this
+        // SSE connection being established, the container_update event was
+        // lost. Re-fetching the row picks up the current maintenance state.
+        if (document.getElementById("container-table")) {
+            var updatingBadges = document.querySelectorAll(".badge-updating");
+            for (var i = 0; i < updatingBadges.length; i++) {
+                var row = updatingBadges[i].closest("tr.container-row");
+                if (row) {
+                    var n = row.getAttribute("data-name");
+                    var h = row.getAttribute("data-host") || "";
+                    if (n) updateContainerRow(n, h);
+                }
+            }
+        }
     });
 
     es.addEventListener("container_update", function (e) {

@@ -86,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separator. Added a more-specific `.host-group tr:last-child` override.
   Also moved the Swarm Services section-divider border from the inner div
   to the `<td>` so it spans the full table width in `border-collapse` mode.
+- **Dashboard stuck on "Updating" after queue approval.** Approving updates
+  from the Pending Updates page and navigating to the Dashboard could leave
+  containers showing "Updating" indefinitely. The update completed and
+  cleared the maintenance flag, but the SSE event was published before the
+  Dashboard's EventSource connection was established -- a classic missed-event
+  race. Added a catch-up fetch on SSE connect: the Dashboard now scans for
+  any rows still showing "Updating" and re-fetches their current state from
+  the server, picking up the cleared maintenance flag.
 - **Images page column alignment.** Size, Status, and Actions columns were
   left-aligned while their content (numbers, badges, buttons) sat off-centre.
   Size is now right-aligned, Status and Actions are centred. Unused badge
