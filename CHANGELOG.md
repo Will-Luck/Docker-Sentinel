@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   volume recreation.
 
 ### Fixed
+- **Stopped containers hidden by default on dashboard (#63).** Fresh databases
+  had no `show_stopped` setting in BoltDB, but `LoadSetting` returns an empty
+  string with no error for missing keys. The handler treated this as `false`,
+  hiding all non-running containers. Now only an explicit user preference
+  overrides the default (show all).
 - **Portainer runtime scanner creation.** Adding a Portainer instance via the
   UI now creates a live scanner immediately. Previously, instances added after
   boot had no scanner until the next restart.
