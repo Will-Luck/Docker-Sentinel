@@ -562,9 +562,11 @@ func (a *portainerInstanceStoreAdapter) SavePortainerInstance(cfg web.PortainerI
 		inst.Endpoints = make(map[string]store.EndpointConfig, len(cfg.Endpoints))
 		for k, v := range cfg.Endpoints {
 			inst.Endpoints[k] = store.EndpointConfig{
-				Enabled: v.Enabled,
-				Blocked: v.Blocked,
-				Reason:  v.Reason,
+				Enabled:    v.Enabled,
+				Blocked:    v.Blocked,
+				Reason:     v.Reason,
+				EngineID:   v.EngineID,
+				ForceAllow: v.ForceAllow,
 			}
 		}
 	}
@@ -591,9 +593,11 @@ func convertStoreInstance(inst store.PortainerInstance) web.PortainerInstanceCon
 		cfg.Endpoints = make(map[string]web.EndpointCfg, len(inst.Endpoints))
 		for k, v := range inst.Endpoints {
 			cfg.Endpoints[k] = web.EndpointCfg{
-				Enabled: v.Enabled,
-				Blocked: v.Blocked,
-				Reason:  v.Reason,
+				Enabled:    v.Enabled,
+				Blocked:    v.Blocked,
+				Reason:     v.Reason,
+				EngineID:   v.EngineID,
+				ForceAllow: v.ForceAllow,
 			}
 		}
 	}

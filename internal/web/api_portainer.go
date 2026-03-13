@@ -264,8 +264,8 @@ func (s *Server) apiTestPortainerInstance(w http.ResponseWriter, r *http.Request
 	var overlapBlocked []string
 	for _, ep := range endpoints {
 		epKey := strconv.Itoa(ep.ID)
-		cfg := inst.Endpoints[epKey]
-		isNew := cfg == (EndpointCfg{})
+		cfg, found := inst.Endpoints[epKey]
+		isNew := !found
 		// Always update Engine ID if we got one.
 		if eid, ok := endpointEngineIDs[ep.ID]; ok {
 			cfg.EngineID = eid
