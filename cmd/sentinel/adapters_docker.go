@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/swarm"
@@ -209,6 +210,13 @@ func swarmPorts(svc swarm.Service) []web.PortMapping {
 type swarmAdapter struct {
 	client  *docker.Client
 	updater *engine.Updater
+
+	// taskCache preserves the last-seen tasks per service name so that
+	// scaled-to-0 services still show their task rows as "shutdown"
+	// instead of disappearing.  Docker removes tasks within seconds of
+	// a scale-to-0, so this cache is the only source of truth.
+	taskCacheMu sync.Mutex
+	taskCache   map[string][]web.TaskInfo
 }
 
 func (a *swarmAdapter) IsSwarmMode() bool {
@@ -328,6 +336,28 @@ func (a *swarmAdapter) ListServiceDetail(ctx context.Context) ([]web.ServiceDeta
 				})
 			}
 		}
+
+		// Cache running tasks so we can show them as "shutdown" after
+		// a scale-to-0 (Docker removes tasks within seconds).
+		svcName := svc.Spec.Name
+		a.taskCacheMu.Lock()
+		if len(taskInfos) > 0 {
+			if a.taskCache == nil {
+				a.taskCache = make(map[string][]web.TaskInfo)
+			}
+			a.taskCache[svcName] = taskInfos
+		} else if desired == 0 {
+			// Scaled to 0 with no live tasks: serve cached tasks as shutdown.
+			if cached, ok := a.taskCache[svcName]; ok {
+				taskInfos = make([]web.TaskInfo, len(cached))
+				for i, t := range cached {
+					taskInfos[i] = t
+					taskInfos[i].State = "shutdown"
+					taskInfos[i].Error = ""
+				}
+			}
+		}
+		a.taskCacheMu.Unlock()
 
 		result = append(result, web.ServiceDetail{
 			ServiceSummary: summary,
