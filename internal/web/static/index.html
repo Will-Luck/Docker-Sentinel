@@ -311,7 +311,6 @@
                                 {{end}}
                             </td>
                             <td class="col-ports cell-ports">{{$svcPortURLs := .PortURLs}}{{range $i, $p := .Ports}}<a class="port-chip{{if ge $i 2}} port-hidden{{end}}" {{if and $svcPortURLs (index $svcPortURLs $p.HostPort)}}href="{{index $svcPortURLs $p.HostPort}}"{{end}} data-port="{{$p.HostPort}}" target="_blank" rel="noopener" onclick="event.stopPropagation()">{{$p.HostPort}}:{{$p.ContainerPort}}</a>{{end}}{{if gt (len .Ports) 2}}<span class="port-toggle" onclick="togglePorts(this, event)">+{{sub (len .Ports) 2}} more</span>{{end}}</td>
-                            <td class="col-actions"></td>
                         </tr>
 
                         {{if .Tasks}}
@@ -331,7 +330,6 @@
                                 {{end}}
                             </td>
                             <td class="col-ports"></td>
-                            <td class="col-actions"></td>
                         </tr>
                         {{end}}
                         {{else if eq .DesiredReplicas 0}}
