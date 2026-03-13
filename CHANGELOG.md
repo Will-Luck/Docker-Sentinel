@@ -74,6 +74,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broken `/container/history-0` URLs when clicked. Now render with colspan
   spanning Container + Version columns, non-clickable, with proper text
   wrapping and column alignment at all viewport widths.
+- **Dashboard table squashed when Swarm Services present (#62).** Swarm
+  service rows had a phantom 7th `col-actions` cell that regular container
+  rows and the thead did not. With `table-layout: fixed`, this created an
+  invisible extra column that stole ~300px of width, pushing the entire table
+  left and preventing dividers from spanning the full UI width. Removed the
+  unused cells so all rows consistently have 6 columns.
+- **Host-group dividers not spanning full width (#62).** The `tbody
+  tr:last-child { border-bottom: none }` rule removed the bottom border from
+  each host-group's last row, so consecutive host groups had no visible
+  separator. Added a more-specific `.host-group tr:last-child` override.
+  Also moved the Swarm Services section-divider border from the inner div
+  to the `<td>` so it spans the full table width in `border-collapse` mode.
 - **Images page column alignment.** Size, Status, and Actions columns were
   left-aligned while their content (numbers, badges, buttons) sat off-centre.
   Size is now right-aligned, Status and Actions are centred. Unused badge
