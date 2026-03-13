@@ -203,6 +203,7 @@ message StateReport {
   google.protobuf.Timestamp timestamp = 3;
   string agent_version = 4;
   repeated string supported_features = 5;
+  string engine_id = 6;  // Docker Engine ID for source deduplication
 }
 
 message StateAck {

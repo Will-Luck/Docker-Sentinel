@@ -4,8 +4,8 @@
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| v2.10.x  | Yes                |
-| < v2.10  | No                 |
+| Latest   | Yes                |
+| Older    | No                 |
 
 Only the latest minor release receives security patches. Please upgrade to the latest version before reporting issues.
 
@@ -13,7 +13,7 @@ Only the latest minor release receives security patches. Please upgrade to the l
 
 **Do not open a public issue for security vulnerabilities.**
 
-Email **security@pphserv.uk** with:
+Instead, [open a private security advisory](https://github.com/Will-Luck/Docker-Sentinel/security/advisories/new) on GitHub. Include:
 
 - A description of the vulnerability
 - Steps to reproduce

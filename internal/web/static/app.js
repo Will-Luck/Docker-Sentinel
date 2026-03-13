@@ -2307,13 +2307,18 @@
             })(),
             (function() {
               var td = document.createElement("td");
-              td.className = "mono";
+              td.className = "col-image mono";
               td.textContent = task.Tag || "";
               return td;
             })(),
-            document.createElement("td"),
             (function() {
               var td = document.createElement("td");
+              td.className = "col-policy";
+              return td;
+            })(),
+            (function() {
+              var td = document.createElement("td");
+              td.className = "col-status";
               td.innerHTML = stateBadge;
               return td;
             })(),
@@ -2321,8 +2326,7 @@
               var td = document.createElement("td");
               td.className = "col-ports";
               return td;
-            })(),
-            document.createElement("td")
+            })()
           ];
           for (var ci = 0; ci < cells.length; ci++) tr.appendChild(cells[ci]);
           taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
@@ -2333,13 +2337,13 @@
           for (var t = cached.length - 1; t >= 0; t--) {
             var tr = document.createElement("tr");
             tr.className = "svc-task-row";
-            tr.innerHTML = '<td></td><td class="svc-node">' + escapeHTML(cached[t].NodeText || "") + '</td><td class="mono">' + escapeHTML(cached[t].Tag || "") + '</td><td></td><td><span class="badge badge-error">shutdown</span></td><td></td>';
+            tr.innerHTML = '<td></td><td class="svc-node">' + escapeHTML(cached[t].NodeText || "") + '</td><td class="col-image mono">' + escapeHTML(cached[t].Tag || "") + '</td><td class="col-policy"></td><td class="col-status"><span class="badge badge-error">shutdown</span></td><td class="col-ports"></td>';
             taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
           }
         } else {
           var tr = document.createElement("tr");
           tr.className = "svc-task-row";
-          tr.innerHTML = '<td></td><td colspan="4" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 \u2014 no active tasks</td><td></td>';
+          tr.innerHTML = '<td></td><td colspan="5" class="text-muted" style="padding:var(--sp-3)">Service scaled to 0 \u2014 no active tasks</td>';
           taskHeader.parentNode.insertBefore(tr, taskHeader.nextSibling);
         }
       }
@@ -2464,8 +2468,8 @@
     var pendingEl = stats.querySelectorAll(".stat-value")[2];
     if (!pendingEl) return;
     if (pending === 0 || pending === "0") {
-      pendingEl.className = "stat-value success stat-all-clear";
-      pendingEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> 0';
+      pendingEl.className = "stat-value success";
+      pendingEl.textContent = "0";
     } else {
       pendingEl.className = "stat-value warning";
       pendingEl.textContent = pending;
@@ -2529,6 +2533,17 @@
       }
       _sseHasConnected = true;
       setConnectionStatus(true);
+      if (document.getElementById("container-table")) {
+        var updatingBadges = document.querySelectorAll(".badge-updating");
+        for (var i = 0; i < updatingBadges.length; i++) {
+          var row = updatingBadges[i].closest("tr.container-row");
+          if (row) {
+            var n = row.getAttribute("data-name");
+            var h = row.getAttribute("data-host") || "";
+            if (n) updateContainerRow(n, h);
+          }
+        }
+      }
     });
     es.addEventListener("container_update", function(e) {
       try {
@@ -5951,7 +5966,7 @@
       row.appendChild(createdCell);
       var useCell = document.createElement("td");
       var badge = document.createElement("span");
-      badge.className = img.in_use ? "badge badge-success" : "badge badge-muted";
+      badge.className = img.in_use ? "badge badge-success" : "badge badge-error";
       badge.textContent = img.in_use ? "In Use" : "Unused";
       useCell.appendChild(badge);
       row.appendChild(useCell);

@@ -254,41 +254,59 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 	}
 }
 
-// scanPortainerEndpoints iterates Portainer endpoints and scans their containers.
-// Registry checks run server-side; updates are dispatched via PortainerScanner.
-func (u *Updater) scanPortainerEndpoints(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int) {
-	u.portainer.ResetCache()
+// scanPortainerInstances iterates all configured Portainer instances and their endpoints.
+func (u *Updater) scanPortainerInstances(ctx context.Context, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
+	// Snapshot the slice under read lock so mutations from HTTP handlers
+	// (Add/Remove/SetPortainerInstances) don't reallocate the backing array
+	// while we hold pointers into it.
+	u.portainerMu.RLock()
+	instances := make([]PortainerInstance, len(u.portainerInstances))
+	copy(instances, u.portainerInstances)
+	u.portainerMu.RUnlock()
 
-	endpoints, err := u.portainer.Endpoints(ctx)
-	if err != nil {
-		u.log.Error("failed to list Portainer endpoints", "error", err)
-		return
-	}
-	if len(endpoints) == 0 {
-		return
-	}
-
-	u.log.Info("scanning Portainer endpoints", "count", len(endpoints))
-
-	for _, ep := range endpoints {
+	for i := range instances {
 		if ctx.Err() != nil {
 			return
 		}
-		u.scanPortainerEndpoint(ctx, ep, mode, result, filters, reserve)
+		inst := &instances[i]
+		inst.Scanner.ResetCache()
+
+		endpoints, err := inst.Scanner.Endpoints(ctx)
+		if err != nil {
+			u.log.Warn("failed to list Portainer endpoints", "instance", inst.Name, "error", err)
+			continue
+		}
+
+		u.log.Info("scanning Portainer instance", "instance", inst.Name, "endpoints", len(endpoints))
+
+		for _, ep := range endpoints {
+			if ctx.Err() != nil {
+				return
+			}
+			// Skip blocked or disabled endpoints.
+			if cfg, ok := inst.Endpoints[ep.ID]; ok {
+				if cfg.Blocked || !cfg.Enabled {
+					u.log.Debug("skipping disabled/blocked Portainer endpoint",
+						"instance", inst.Name, "endpoint", ep.Name)
+					continue
+				}
+			}
+			u.scanPortainerEndpoint(ctx, inst, ep, mode, result, filters, reserve, localIDs)
+		}
 	}
 }
 
 // scanPortainerEndpoint scans a single Portainer endpoint's containers for updates.
-func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpointInfo, mode ScanMode, result *ScanResult, filters []string, reserve int) {
-	containers, err := u.portainer.EndpointContainers(ctx, ep.ID)
+func (u *Updater) scanPortainerEndpoint(ctx context.Context, inst *PortainerInstance, ep PortainerEndpointInfo, mode ScanMode, result *ScanResult, filters []string, reserve int, localIDs map[string]bool) {
+	containers, err := inst.Scanner.EndpointContainers(ctx, ep.ID)
 	if err != nil {
-		u.log.Error("failed to list Portainer endpoint containers", "endpoint", ep.Name, "error", err)
+		u.log.Error("failed to list Portainer endpoint containers", "instance", inst.Name, "endpoint", ep.Name, "error", err)
 		return
 	}
 
-	u.log.Info("scanning Portainer endpoint", "endpoint", ep.Name, "containers", len(containers))
+	u.log.Info("scanning Portainer endpoint", "instance", inst.Name, "endpoint", ep.Name, "containers", len(containers))
 
-	hostID := fmt.Sprintf("portainer:%d", ep.ID)
+	hostID := fmt.Sprintf("portainer:%s:%d", inst.ID, ep.ID)
 	remoteDefault := u.cfg.DefaultPolicy()
 
 	// Track redeployed stacks to avoid re-triggering the same stack multiple times.
@@ -297,6 +315,15 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 	for _, c := range containers {
 		if ctx.Err() != nil {
 			return
+		}
+
+		// Skip containers that Sentinel already monitors via the local Docker socket.
+		// This prevents duplicate queue entries when a Portainer endpoint points at
+		// the same Docker daemon Sentinel runs on.
+		if localIDs[c.ID] {
+			u.log.Debug("skipping Portainer container already monitored locally",
+				"endpoint", ep.Name, "name", c.Name, "id", c.ID[:12])
+			continue
 		}
 
 		result.Total++
@@ -311,8 +338,10 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 			continue
 		}
 
-		// Sentinel on Portainer-managed hosts is checked for updates but never auto-updated.
-		remoteSelf := isSentinel(c.Labels)
+		// Sentinel or Portainer itself on Portainer-managed hosts: checked for
+		// updates but never auto-updated or manually updated via Sentinel.
+		// Updating Portainer through its own API kills the API mid-request.
+		remoteSelf := isSentinel(c.Labels) || isPortainerSelf(c.Image)
 
 		if MatchesFilter(c.Name, filters) {
 			u.log.Debug("skipping filtered Portainer container", "endpoint", ep.Name, "name", c.Name)
@@ -331,18 +360,27 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 			}
 		}
 
-		// No image digest available from the Portainer list API — pass "" so
-		// CheckVersionedWithDigest falls back to a full registry check.
 		semverScope := docker.ContainerSemverScope(c.Labels)
 		includeRE, excludeRE := docker.ContainerTagFilters(c.Labels)
-		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, "", semverScope, includeRE, excludeRE)
+		u.log.Debug("checking Portainer container",
+			"endpoint", ep.Name, "name", c.Name, "image", c.Image,
+			"semverScope", string(semverScope), "digest", c.ImageDigest[:min(len(c.ImageDigest), 30)])
+		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest, semverScope, includeRE, excludeRE)
 		if check.Error != nil {
 			u.log.Warn("registry check failed for Portainer container",
 				"endpoint", ep.Name, "name", c.Name, "error", check.Error)
 			continue
 		}
 
-		if check.IsLocal || !check.UpdateAvailable {
+		if check.IsLocal {
+			u.log.Debug("Portainer container treated as local",
+				"endpoint", ep.Name, "name", c.Name, "image", c.Image)
+			continue
+		}
+		if !check.UpdateAvailable {
+			u.log.Debug("Portainer container up to date",
+				"endpoint", ep.Name, "name", c.Name, "image", c.Image,
+				"newerVersions", len(check.NewerVersions))
 			continue
 		}
 
@@ -449,13 +487,13 @@ func (u *Updater) scanPortainerEndpoint(ctx context.Context, ep PortainerEndpoin
 					result.Updated++
 					continue
 				}
-				updateErr = u.portainer.RedeployStack(ctx, c.StackID, ep.ID)
+				updateErr = inst.Scanner.RedeployStack(ctx, c.StackID, ep.ID)
 				if updateErr == nil {
 					redeployedStacks[c.StackID] = true
 				}
 			} else {
 				// Standalone container.
-				updateErr = u.portainer.UpdateStandaloneContainer(ctx, ep.ID, c.ID, scanTarget)
+				updateErr = inst.Scanner.UpdateStandaloneContainer(ctx, ep.ID, c.ID, scanTarget)
 			}
 
 			outcome := "success"

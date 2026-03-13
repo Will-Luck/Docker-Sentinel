@@ -337,8 +337,9 @@ h4 {
   align-items: center;
   width: 100%;
   margin-top: var(--sp-3);
-  padding-top: var(--sp-3);
+  padding: var(--sp-3) 0;
   border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 .filter-pill {
   padding: 4px 12px;
@@ -568,6 +569,9 @@ tbody tr:hover {
 }
 tbody tr:last-child {
   border-bottom: none;
+}
+.host-group tr:last-child {
+  border-bottom: 1px solid var(--border);
 }
 .svc-header {
   border-bottom: 1px solid var(--border) !important;
@@ -1092,13 +1096,14 @@ input[type=checkbox] {
 .section-separator {
   border: none;
 }
+.section-separator td {
+  border-top: 2px solid var(--border);
+}
 .section-divider {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-3) var(--sp-4);
-  border-top: 2px solid var(--border);
-  margin-top: var(--sp-2);
 }
 .section-divider .expand-icon {
   font-size: 0.9rem;
@@ -1586,6 +1591,22 @@ details[open] > .accordion-header .accordion-chevron {
   border-left-color: var(--error);
   background: light-dark(rgba(179, 38, 30, 0.06), rgba(242, 184, 181, 0.06));
 }
+.scan-summary-row {
+  border-left: 3px solid transparent;
+}
+.scan-summary-text {
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+}
+.scan-summary-row td:nth-child(3) {
+  text-align: center;
+}
+.scan-summary-row td:nth-child(4) {
+  text-align: center;
+}
 .container-link {
   color: var(--accent);
   text-decoration: none;
@@ -1989,6 +2010,7 @@ table.managing .td-checkbox {
 .cell-image-size,
 .table-images .th-size {
   width: 10%;
+  text-align: right;
 }
 .table-images .th-created,
 .table-images td:nth-last-child(3) {
@@ -1997,10 +2019,12 @@ table.managing .td-checkbox {
 .table-images .th-status,
 .table-images td:nth-last-child(2) {
   width: 10%;
+  text-align: center;
 }
 .table-images .th-actions,
 .table-images td:last-child {
   width: 10%;
+  text-align: center;
 }
 .table-images .th-select {
   width: 40px;

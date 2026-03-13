@@ -7,6 +7,179 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Source deduplication.** When the same Docker host is reachable via multiple
+  sources (local socket, cluster agent, Portainer connector), Sentinel now
+  detects the overlap using Docker Engine IDs and auto-blocks the lower-priority
+  source. Priority order: local > cluster agent > Portainer. Blocked endpoints
+  show the overlap reason on the Connectors page with a "Force Enable" button
+  for user overrides. Cluster agents report their Engine ID in the StateReport
+  proto; Portainer endpoints are probed via the Docker info API on Test
+  Connection. An SSE `source_overlap` event notifies the dashboard in real time.
+- **Multi-instance Portainer support.** Connect to multiple Portainer servers,
+  each with per-endpoint enable/disable toggles. Local Docker socket endpoints
+  are auto-detected and blocked to prevent duplicate monitoring.
+- **Portainer containers on dashboard.** Portainer endpoint containers appear
+  as host groups on the dashboard, with full policy, queue, severity, and
+  maintenance support (same as cluster hosts).
+- **Connectors page redesigned.** Portainer tab now shows instance cards with
+  add/remove/test/configure workflow, replacing the single URL+token form.
+- **Portainer self-update via portainer-updater.** Portainer containers detected
+  by Sentinel can now be safely updated without crashing the Portainer API.
+  Uses the official `portainer/portainer-updater` helper container, which mounts
+  the Docker socket directly and survives the Portainer stop/recreate cycle.
+  Works for both queue approvals and manual "update to version" actions.
+
+### Improved
+- **Agent CA mismatch detection.** When the server's TLS CA has changed (volume
+  deleted, host migration), agents now detect the `x509` certificate error and
+  log a single clear ERROR message with fix steps: stop the agent, delete the
+  cluster data directory, and re-enroll with a fresh token. Subsequent reconnect
+  attempts log only at WARN level to avoid flooding.
+- **Cluster page troubleshooting for all disconnected hosts.** The troubleshoot
+  section now appears for every disconnected host, not just those with a known
+  disconnect category. A new generic fallback covers the three common causes:
+  agent not running, network issue, and CA certificate mismatch after server
+  volume recreation.
+
+### Fixed
+- **Stopped swarm tasks vanish on page refresh (#65).** When a swarm service is
+  scaled to 0, Docker removes all tasks within seconds. On page refresh, the
+  server-side template received no task data and showed a generic "Service
+  scaled to 0" placeholder instead of the actual task rows with node names and
+  SHUTDOWN badges. Added an in-memory task cache to `swarmAdapter` that
+  preserves the last-seen running tasks per service. When a service has 0
+  desired replicas and Docker returns no tasks, the cache serves them with
+  state overridden to "shutdown". The JS-side `_svcTaskCache` still handles
+  the instant UI update during scale-down; the server cache handles persistence
+  across page refreshes.
+- **Swarm service table shrinks when services stopped (#64).** The server-side
+  "Service scaled to 0" placeholder row had `colspan="6"` after an empty
+  checkbox cell, creating a 7-column total in a 6-column `table-layout:fixed`
+  table. This forced the browser to redistribute column widths, visibly
+  shrinking the table whenever any swarm service was at 0 replicas. Changed to
+  `colspan="5"` (1 + 5 = 6). Also fixed JS-created task rows that had the wrong
+  cell count and missing `col-*` classes for column alignment.
+- **Stopped containers hidden by default on dashboard (#63).** Fresh databases
+  had no `show_stopped` setting in BoltDB, but `LoadSetting` returns an empty
+  string with no error for missing keys. The handler treated this as `false`,
+  hiding all non-running containers. Now only an explicit user preference
+  overrides the default (show all).
+- **Portainer runtime scanner creation.** Adding a Portainer instance via the
+  UI now creates a live scanner immediately. Previously, instances added after
+  boot had no scanner until the next restart.
+- **Portainer TLS verification.** Portainer connections now skip TLS certificate
+  verification, fixing failures with self-signed certs (standard in homelab and
+  private network setups).
+- **Connectors page CSRF token.** Fixed `csrfToken` function reference being
+  passed as a header value instead of being called, which broke all fetch
+  requests on the connectors page.
+- **Local socket endpoints not blocked.** `IsLocalSocket()` was defined but
+  never called. Now auto-blocks local Docker socket endpoints during Test
+  Connection and excludes them from scanning.
+- **Smart local socket blocking.** `unix://` endpoints are only auto-blocked
+  when the Portainer instance runs on the same host as Sentinel. Previously
+  all `unix://` endpoints were blocked, which incorrectly disabled remote
+  Portainer instances whose Docker sockets are valid monitoring targets.
+- **Runtime Portainer instances not scanned.** Portainer instances added via
+  the UI after boot were saved to the store and had scanners for API calls,
+  but were invisible to the scan engine. Now `ConnectInstance` registers
+  with both the web layer and the engine, so runtime-added instances are
+  scanned immediately. Endpoint config changes (enabled/blocked) are also
+  synced to the engine without requiring a restart.
+- **Queue approval for Portainer containers.** Approving a Portainer-managed
+  container from the Pending Updates queue previously fell through to the
+  local Docker daemon (which can't reach remote containers). Now routes
+  through the Portainer API, with Portainer image detection for self-update.
+- **NPM resolver cross-host port shadowing.** When multiple NPM proxy hosts
+  forwarded the same port to different IPs (e.g. port 8080 on both .57 and
+  .64), the resolver matched the lowest NPM ID regardless of which host the
+  container actually ran on. Replaced the single `SENTINEL_HOST` string match
+  with auto-detection of local network addresses via `net.InterfaceAddrs()`,
+  hostname, and `host.docker.internal` DNS. `SENTINEL_HOST` is still honoured
+  as an additive override for containerised deployments where bridge networking
+  hides the host's LAN IP.
+- **Failed approvals missing from history.** When an approved update failed
+  (e.g. Portainer agent disconnected, network error), only a log line was
+  written. The update vanished from the queue with no history record. Now
+  records a "failed" entry with the error message and elapsed duration.
+- **History page scan summary display.** Scan summary rows were rendered as
+  regular container rows, causing truncated text in the Container column and
+  broken `/container/history-0` URLs when clicked. Now render with colspan
+  spanning Container + Version columns, non-clickable, with proper text
+  wrapping and column alignment at all viewport widths.
+- **Dashboard table squashed when Swarm Services present (#62).** Swarm
+  service rows had a phantom 7th `col-actions` cell that regular container
+  rows and the thead did not. With `table-layout: fixed`, this created an
+  invisible extra column that stole ~300px of width, pushing the entire table
+  left and preventing dividers from spanning the full UI width. Removed the
+  unused cells so all rows consistently have 6 columns.
+- **Host-group dividers not spanning full width (#62).** The `tbody
+  tr:last-child { border-bottom: none }` rule removed the bottom border from
+  each host-group's last row, so consecutive host groups had no visible
+  separator. Added a more-specific `.host-group tr:last-child` override.
+  Also moved the Swarm Services section-divider border from the inner div
+  to the `<td>` so it spans the full table width in `border-collapse` mode.
+- **Dashboard stuck on "Updating" after queue approval.** Approving updates
+  from the Pending Updates page and navigating to the Dashboard could leave
+  containers showing "Updating" indefinitely. The update completed and
+  cleared the maintenance flag, but the SSE event was published before the
+  Dashboard's EventSource connection was established -- a classic missed-event
+  race. Added a catch-up fetch on SSE connect: the Dashboard now scans for
+  any rows still showing "Updating" and re-fetches their current state from
+  the server, picking up the cleared maintenance flag.
+- **Images page column alignment.** Size, Status, and Actions columns were
+  left-aligned while their content (numbers, badges, buttons) sat off-centre.
+  Size is now right-aligned, Status and Actions are centred. Unused badge
+  changed from grey to red for better visibility.
+- **Portainer connector: hot-reload without restart.** Saving Portainer URL
+  and API token in the UI now takes effect immediately. Previously the test
+  button always returned "not configured" because the provider was only
+  created at startup. Uses the same factory pattern as the NPM connector.
+- **Portainer connector: stale credentials after token change.** The connection
+  test now always recreates the provider from current DB settings, so changing
+  the URL or token and re-testing uses the new values instead of the ones
+  from startup.
+- **Portainer duplicate queue entries.** When a Portainer endpoint pointed at
+  the same Docker socket Sentinel runs on, every container was scanned twice
+  (once locally, once via Portainer), creating duplicate queue entries. The
+  Portainer scan now collects local container IDs and skips any Portainer
+  container whose Docker ID matches a locally-monitored container.
+- **Portainer API token help text.** Corrected the path from "Settings > Users >
+  Access tokens" to "My account > Access tokens".
+- **Portainer container detail page 404.** Clicking a Portainer container in
+  the pending updates queue returned "Container not found" because the detail
+  handler only knew about local and cluster containers. Now resolves Portainer
+  containers via the Portainer API.
+- **Dashboard stat card count mismatch.** The "Updates Pending" stat card only
+  counted local containers, while the nav badge counted all queue items
+  including Portainer. Both now use the full queue length. Removed the
+  redundant checkmark icon from the zero-state.
+- **Filter bar missing bottom border.** The filter bar on multiple pages lacked
+  a visual divider separating it from the table content below.
+- **Remote container history/snapshot key mismatch.** History and snapshot
+  lookups for cluster and Portainer containers used the plain container name
+  instead of the scoped `hostID::name` key, returning empty results.
+- **NPM port URLs for all containers.** NPM URL resolution matched every
+  container against Sentinel's own domain when no `SENTINEL_HOST` was set,
+  causing all containers to show the same proxy URL.
+- **NPM wildcard domain resolution.** Proxy hosts with wildcard domains
+  (e.g. `*.s3.garage.example.com`) produced broken URLs. Now skips wildcard
+  entries and picks the first non-wildcard domain.
+
+### Changed
+- **Queue/history key format.** Portainer HostIDs changed from `portainer:N`
+  to `portainer:instanceID:N`. Existing queue and history entries are
+  automatically migrated on first boot.
+- **Portainer settings storage.** Old flat settings (`portainer_url`,
+  `portainer_token`, `portainer_enabled`) are migrated to a structured
+  `portainer_instances` BoltDB bucket on first boot. The migration is
+  idempotent and safe to re-run.
+- **Portainer integration descriptions.** Updated the vague "view endpoints"
+  description to accurately explain that Sentinel scans Portainer endpoints
+  for updates, applies policies, and can redeploy stacks or update standalone
+  containers via Portainer's API.
+
 ## [2.11.1] - 2026-03-10
 
 ### Fixed

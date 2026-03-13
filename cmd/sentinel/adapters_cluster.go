@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +47,7 @@ func (a *clusterAdapter) AllHosts() []web.ClusterHost {
 				DisconnectAt:  hs.DisconnectAt,
 				DisconnectErr: hs.DisconnectErr,
 				DisconnectCat: hs.DisconnectCat,
+				EngineID:      hs.Info.EngineID,
 			})
 		}
 	}
@@ -68,6 +72,7 @@ func (a *clusterAdapter) GetHost(id string) (web.ClusterHost, bool) {
 		DisconnectAt:  hs.DisconnectAt,
 		DisconnectErr: hs.DisconnectErr,
 		DisconnectCat: hs.DisconnectCat,
+		EngineID:      hs.Info.EngineID,
 	}, true
 }
 
@@ -216,8 +221,22 @@ func (m *clusterManager) Start() error {
 	}
 	m.srv.SetHistoryRecorder(m.db)
 
+	// Read advertise addresses for TLS cert SANs. Inside Docker, the container
+	// only sees its bridge network IPs, but agents connect via the host's
+	// external IP. Check env var first, then DB setting.
+	adv, _ := m.db.LoadSetting(store.SettingClusterAdvertise)
+	if adv == "" {
+		adv = os.Getenv("SENTINEL_CLUSTER_ADVERTISE")
+	}
+	var extraSANs []string
+	for _, s := range strings.Split(adv, ",") {
+		if t := strings.TrimSpace(s); t != "" {
+			extraSANs = append(extraSANs, t)
+		}
+	}
+
 	addr := net.JoinHostPort("", port)
-	if err := m.srv.Start(addr); err != nil {
+	if err := m.srv.Start(addr, extraSANs...); err != nil {
 		m.srv = nil
 		return fmt.Errorf("start gRPC: %w", err)
 	}
@@ -228,8 +247,57 @@ func (m *clusterManager) Start() error {
 	// Swap provider in controller — handlers see it immediately.
 	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv, store: m.db})
 
+	// Wire Engine ID callback for source deduplication. When an agent
+	// reports its Engine ID, check if any Portainer endpoints monitor
+	// the same daemon and auto-block them.
+	m.srv.SetOnEngineID(func(hostID, hostName, engineID string) {
+		m.autoBlockOverlappingEndpoints(hostID, hostName, engineID)
+	})
+
 	m.log.Info("cluster gRPC server started", "addr", addr)
 	return nil
+}
+
+// autoBlockOverlappingEndpoints scans all Portainer instances for endpoints
+// whose Engine ID matches the newly connected cluster agent. Auto-blocks
+// any matches (unless force-allowed) since cluster agent has higher priority.
+func (m *clusterManager) autoBlockOverlappingEndpoints(hostID, hostName, engineID string) {
+	if engineID == "" {
+		return
+	}
+	instances, err := m.db.ListPortainerInstances()
+	if err != nil {
+		m.log.Warn("overlap check: failed to list Portainer instances", "error", err)
+		return
+	}
+	for _, inst := range instances {
+		changed := false
+		for epKey, cfg := range inst.Endpoints {
+			if cfg.EngineID == engineID && !cfg.ForceAllow && !cfg.Blocked {
+				cfg.Blocked = true
+				cfg.Enabled = false
+				label := hostName
+				if label == "" {
+					label = hostID
+				}
+				cfg.Reason = fmt.Sprintf("monitored by cluster agent '%s'", label)
+				inst.Endpoints[epKey] = cfg
+				changed = true
+				m.log.Info("auto-blocked Portainer endpoint due to Engine ID overlap",
+					"instance", inst.ID, "endpoint", epKey, "agent", label)
+			}
+		}
+		if changed {
+			if err := m.db.SavePortainerInstance(inst); err != nil {
+				m.log.Warn("overlap check: failed to save instance", "instance", inst.ID, "error", err)
+			}
+			m.bus.Publish(events.SSEEvent{
+				Type:      events.EventSourceOverlap,
+				Message:   fmt.Sprintf("auto-blocked Portainer endpoint(s) on '%s' -- monitored by cluster agent '%s'", inst.Name, hostName),
+				Timestamp: time.Now(),
+			})
+		}
+	}
 }
 
 func (m *clusterManager) Stop() {
@@ -250,37 +318,127 @@ func (m *clusterManager) Stop() {
 	m.log.Info("cluster gRPC server stopped")
 }
 
-// portainerAdapter bridges portainer.Scanner to web.PortainerProvider.
-type portainerAdapter struct {
-	scanner *portainer.Scanner
+// multiPortainerAdapter bridges multiple portainer.Scanner instances to web.PortainerProvider.
+type multiPortainerAdapter struct {
+	mu       sync.RWMutex
+	scanners map[string]*portainer.Scanner // keyed by instance ID
+	engine   *engine.Updater               // nil until wired up
+	store    *store.Store                  // nil until wired up
 }
 
-func (a *portainerAdapter) TestConnection(ctx context.Context) error {
-	return a.scanner.Client().TestConnection(ctx)
+func newMultiPortainerAdapter() *multiPortainerAdapter {
+	return &multiPortainerAdapter{scanners: make(map[string]*portainer.Scanner)}
 }
 
-func (a *portainerAdapter) Endpoints(ctx context.Context) ([]web.PortainerEndpoint, error) {
-	eps, err := a.scanner.Endpoints(ctx)
+func (a *multiPortainerAdapter) Set(id string, scanner *portainer.Scanner) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.scanners[id] = scanner
+}
+
+func (a *multiPortainerAdapter) Remove(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.scanners, id)
+}
+
+// ConnectInstance creates a portainer.Scanner for the given instance and
+// registers it with both the web adapter (for API calls) and the engine
+// (for scan cycles). This allows instances added at runtime to be scanned
+// without a restart.
+func (a *multiPortainerAdapter) ConnectInstance(id, url, token string) error {
+	pc := portainer.NewClient(url, token)
+	ps := portainer.NewScanner(pc)
+	a.Set(id, ps)
+
+	// Also register with the engine so scans pick it up.
+	if a.engine != nil {
+		ei := engine.PortainerInstance{
+			ID:      id,
+			Scanner: &portainerScannerAdapter{scanner: ps},
+		}
+		// Pull name and endpoint config from store if available.
+		if a.store != nil {
+			if inst, err := a.store.GetPortainerInstance(id); err == nil {
+				ei.Name = inst.Name
+				if len(inst.Endpoints) > 0 {
+					ei.Endpoints = make(map[int]engine.EndpointConfig)
+					for k, v := range inst.Endpoints {
+						epID, _ := strconv.Atoi(k)
+						ei.Endpoints[epID] = engine.EndpointConfig{
+							Enabled: v.Enabled,
+							Blocked: v.Blocked,
+						}
+					}
+				}
+			}
+		}
+		a.engine.AddPortainerInstance(ei)
+	}
+	return nil
+}
+
+// DisconnectInstance removes the scanner for the given instance from both
+// the web adapter and the engine.
+func (a *multiPortainerAdapter) DisconnectInstance(id string) {
+	a.Remove(id)
+	if a.engine != nil {
+		a.engine.RemovePortainerInstance(id)
+	}
+}
+
+func (a *multiPortainerAdapter) get(id string) (*portainer.Scanner, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	s, ok := a.scanners[id]
+	if !ok {
+		return nil, fmt.Errorf("portainer instance %q not connected", id)
+	}
+	return s, nil
+}
+
+func (a *multiPortainerAdapter) TestConnection(ctx context.Context, instanceID string) error {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return err
+	}
+	return s.Client().TestConnection(ctx)
+}
+
+func (a *multiPortainerAdapter) Endpoints(ctx context.Context, instanceID string) ([]web.PortainerEndpoint, error) {
+	s, err := a.get(instanceID)
 	if err != nil {
 		return nil, err
 	}
-	return convertPortainerEndpoints(eps), nil
-}
-
-func (a *portainerAdapter) AllEndpoints(ctx context.Context) ([]web.PortainerEndpoint, error) {
-	eps, err := a.scanner.AllEndpoints(ctx)
+	eps, err := s.Endpoints(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return convertPortainerEndpoints(eps), nil
+	return convertPortainerEndpoints(eps, instanceID), nil
 }
 
-func (a *portainerAdapter) EndpointContainers(ctx context.Context, endpointID int) ([]web.PortainerContainerInfo, error) {
-	ep, err := a.findEndpoint(ctx, endpointID)
+func (a *multiPortainerAdapter) AllEndpoints(ctx context.Context, instanceID string) ([]web.PortainerEndpoint, error) {
+	s, err := a.get(instanceID)
 	if err != nil {
 		return nil, err
 	}
-	containers, err := a.scanner.EndpointContainers(ctx, ep)
+	eps, err := s.AllEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return convertPortainerEndpoints(eps, instanceID), nil
+}
+
+func (a *multiPortainerAdapter) EndpointContainers(ctx context.Context, instanceID string, endpointID int) ([]web.PortainerContainerInfo, error) {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return nil, err
+	}
+	ep, err := findEndpoint(ctx, s, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	containers, err := s.EndpointContainers(ctx, ep)
 	if err != nil {
 		return nil, err
 	}
@@ -296,13 +454,47 @@ func (a *portainerAdapter) EndpointContainers(ctx context.Context, endpointID in
 			EndpointName: c.EndpointName,
 			StackID:      c.StackID,
 			StackName:    c.StackName,
+			InstanceID:   instanceID,
 		})
 	}
 	return out, nil
 }
 
-func (a *portainerAdapter) findEndpoint(ctx context.Context, endpointID int) (portainer.Endpoint, error) {
-	all, err := a.scanner.AllEndpoints(ctx)
+func (a *multiPortainerAdapter) UpdateStandaloneContainer(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return err
+	}
+	return s.UpdateStandaloneContainer(ctx, endpointID, containerID, newImage)
+}
+
+func (a *multiPortainerAdapter) RedeployStack(ctx context.Context, instanceID string, stackID, endpointID int) error {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return err
+	}
+	return s.RedeployStack(ctx, stackID, endpointID)
+}
+
+func (a *multiPortainerAdapter) UpdatePortainerSelf(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return err
+	}
+	return s.UpdatePortainerSelf(ctx, endpointID, containerID, newImage)
+}
+
+func (a *multiPortainerAdapter) EndpointEngineID(ctx context.Context, instanceID string, endpointID int) (string, error) {
+	s, err := a.get(instanceID)
+	if err != nil {
+		return "", err
+	}
+	return s.Client().EndpointEngineID(ctx, endpointID)
+}
+
+// findEndpoint looks up a single endpoint by ID from a scanner's full endpoint list.
+func findEndpoint(ctx context.Context, scanner *portainer.Scanner, endpointID int) (portainer.Endpoint, error) {
+	all, err := scanner.AllEndpoints(ctx)
 	if err != nil {
 		return portainer.Endpoint{}, err
 	}
@@ -314,7 +506,7 @@ func (a *portainerAdapter) findEndpoint(ctx context.Context, endpointID int) (po
 	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
 }
 
-func convertPortainerEndpoints(eps []portainer.Endpoint) []web.PortainerEndpoint {
+func convertPortainerEndpoints(eps []portainer.Endpoint, instanceID string) []web.PortainerEndpoint {
 	out := make([]web.PortainerEndpoint, 0, len(eps))
 	for _, ep := range eps {
 		status := "down"
@@ -322,13 +514,94 @@ func convertPortainerEndpoints(eps []portainer.Endpoint) []web.PortainerEndpoint
 			status = "up"
 		}
 		out = append(out, web.PortainerEndpoint{
-			ID:     ep.ID,
-			Name:   ep.Name,
-			URL:    ep.URL,
-			Status: status,
+			ID:         ep.ID,
+			Name:       ep.Name,
+			URL:        ep.URL,
+			Type:       int(ep.Type),
+			Status:     status,
+			InstanceID: instanceID,
 		})
 	}
 	return out
+}
+
+// portainerInstanceStoreAdapter bridges store.Store to web.PortainerInstanceStore.
+type portainerInstanceStoreAdapter struct {
+	store *store.Store
+}
+
+func (a *portainerInstanceStoreAdapter) ListPortainerInstances() ([]web.PortainerInstanceConfig, error) {
+	instances, err := a.store.ListPortainerInstances()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]web.PortainerInstanceConfig, 0, len(instances))
+	for _, inst := range instances {
+		out = append(out, convertStoreInstance(inst))
+	}
+	return out, nil
+}
+
+func (a *portainerInstanceStoreAdapter) GetPortainerInstance(id string) (web.PortainerInstanceConfig, error) {
+	inst, err := a.store.GetPortainerInstance(id)
+	if err != nil {
+		return web.PortainerInstanceConfig{}, err
+	}
+	return convertStoreInstance(inst), nil
+}
+
+func (a *portainerInstanceStoreAdapter) SavePortainerInstance(cfg web.PortainerInstanceConfig) error {
+	inst := store.PortainerInstance{
+		ID:      cfg.ID,
+		Name:    cfg.Name,
+		URL:     cfg.URL,
+		Token:   cfg.Token,
+		Enabled: cfg.Enabled,
+	}
+	if len(cfg.Endpoints) > 0 {
+		inst.Endpoints = make(map[string]store.EndpointConfig, len(cfg.Endpoints))
+		for k, v := range cfg.Endpoints {
+			inst.Endpoints[k] = store.EndpointConfig{
+				Enabled:    v.Enabled,
+				Blocked:    v.Blocked,
+				Reason:     v.Reason,
+				EngineID:   v.EngineID,
+				ForceAllow: v.ForceAllow,
+			}
+		}
+	}
+	return a.store.SavePortainerInstance(inst)
+}
+
+func (a *portainerInstanceStoreAdapter) DeletePortainerInstance(id string) error {
+	return a.store.DeletePortainerInstance(id)
+}
+
+func (a *portainerInstanceStoreAdapter) NextPortainerID() (string, error) {
+	return a.store.NextPortainerID()
+}
+
+func convertStoreInstance(inst store.PortainerInstance) web.PortainerInstanceConfig {
+	cfg := web.PortainerInstanceConfig{
+		ID:      inst.ID,
+		Name:    inst.Name,
+		URL:     inst.URL,
+		Token:   inst.Token,
+		Enabled: inst.Enabled,
+	}
+	if len(inst.Endpoints) > 0 {
+		cfg.Endpoints = make(map[string]web.EndpointCfg, len(inst.Endpoints))
+		for k, v := range inst.Endpoints {
+			cfg.Endpoints[k] = web.EndpointCfg{
+				Enabled:    v.Enabled,
+				Blocked:    v.Blocked,
+				Reason:     v.Reason,
+				EngineID:   v.EngineID,
+				ForceAllow: v.ForceAllow,
+			}
+		}
+	}
+	return cfg
 }
 
 // portainerScannerAdapter bridges portainer.Scanner to engine.PortainerScanner.
@@ -352,7 +625,7 @@ func (a *portainerScannerAdapter) Endpoints(ctx context.Context) ([]engine.Porta
 }
 
 func (a *portainerScannerAdapter) EndpointContainers(ctx context.Context, endpointID int) ([]engine.PortainerContainerResult, error) {
-	ep, err := a.findEndpoint(ctx, endpointID)
+	ep, err := findEndpoint(ctx, a.scanner, endpointID)
 	if err != nil {
 		return nil, err
 	}
@@ -363,14 +636,15 @@ func (a *portainerScannerAdapter) EndpointContainers(ctx context.Context, endpoi
 	out := make([]engine.PortainerContainerResult, 0, len(containers))
 	for _, c := range containers {
 		out = append(out, engine.PortainerContainerResult{
-			ID:         c.ID,
-			Name:       c.Name,
-			Image:      c.Image,
-			State:      c.State,
-			Labels:     c.Labels,
-			EndpointID: c.EndpointID,
-			StackID:    c.StackID,
-			StackName:  c.StackName,
+			ID:          c.ID,
+			Name:        c.Name,
+			Image:       c.Image,
+			ImageDigest: c.ImageDigest,
+			State:       c.State,
+			Labels:      c.Labels,
+			EndpointID:  c.EndpointID,
+			StackID:     c.StackID,
+			StackName:   c.StackName,
 		})
 	}
 	return out, nil
@@ -386,19 +660,6 @@ func (a *portainerScannerAdapter) RedeployStack(ctx context.Context, stackID, en
 
 func (a *portainerScannerAdapter) UpdateStandaloneContainer(ctx context.Context, endpointID int, containerID, newImage string) error {
 	return a.scanner.UpdateStandaloneContainer(ctx, endpointID, containerID, newImage)
-}
-
-func (a *portainerScannerAdapter) findEndpoint(ctx context.Context, endpointID int) (portainer.Endpoint, error) {
-	all, err := a.scanner.AllEndpoints(ctx)
-	if err != nil {
-		return portainer.Endpoint{}, err
-	}
-	for _, ep := range all {
-		if ep.ID == endpointID {
-			return ep, nil
-		}
-	}
-	return portainer.Endpoint{}, fmt.Errorf("endpoint %d not found", endpointID)
 }
 
 // --- NPM adapter ---

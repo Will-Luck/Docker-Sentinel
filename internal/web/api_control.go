@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 )
 
 var validTag = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
@@ -35,7 +38,7 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "restart"); err != nil {
 				s.deps.Log.Error("remote restart failed", "name", name, "host", hostID, "error", err)
@@ -122,7 +125,7 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "stop"); err != nil {
 				s.deps.Log.Error("remote stop failed", "name", name, "host", hostID, "error", err)
@@ -209,7 +212,7 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RemoteContainerAction(context.Background(), hostID, name, "start"); err != nil {
 				s.deps.Log.Error("remote start failed", "name", name, "host", hostID, "error", err)
@@ -291,7 +294,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
 			if c.HostID == hostID && c.Name == name {
@@ -341,6 +344,101 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		s.logEvent(r, "update", name, "Remote update triggered on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "started",
+			"name":    name,
+			"message": "update started for " + name,
+		})
+		return
+	}
+
+	// Route to Portainer if host is "portainer:instanceID:epID".
+	if strings.HasPrefix(hostID, "portainer:") && s.deps.Portainer != nil {
+		parts := strings.SplitN(strings.TrimPrefix(hostID, "portainer:"), ":", 2)
+		if len(parts) != 2 {
+			writeError(w, http.StatusBadRequest, "invalid portainer host format, expected portainer:instanceID:endpointID")
+			return
+		}
+		instanceID := parts[0]
+		epID, err := strconv.Atoi(parts[1])
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid endpoint ID: "+parts[1])
+			return
+		}
+
+		containers, err := s.deps.Portainer.EndpointContainers(r.Context(), instanceID, epID)
+		if err != nil {
+			s.deps.Log.Error("failed to list portainer containers for update", "instance", instanceID, "endpoint", epID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to list portainer containers: "+err.Error())
+			return
+		}
+
+		var pc *PortainerContainerInfo
+		for i := range containers {
+			if containers[i].Name == name {
+				pc = &containers[i]
+				break
+			}
+		}
+		if pc == nil {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("container %q not found on portainer endpoint %d", name, epID))
+			return
+		}
+
+		queueKey := hostID + "::" + name
+		targetImage := pc.Image
+		if pending, ok := s.deps.Queue.Get(queueKey); ok && len(pending.NewerVersions) > 0 {
+			targetImage = webReplaceTag(pc.Image, pending.NewerVersions[0])
+		}
+
+		s.markRemoteUpdating(hostID, name)
+		go func() {
+			ctx := context.Background()
+			var updateErr error
+			if pc.StackID != 0 {
+				updateErr = s.deps.Portainer.RedeployStack(ctx, instanceID, pc.StackID, epID)
+			} else if portainer.IsPortainerImage(pc.Image) {
+				// Portainer itself: use the portainer-updater helper which
+				// talks directly to the Docker socket, bypassing the API.
+				updateErr = s.deps.Portainer.UpdatePortainerSelf(ctx, instanceID, epID, pc.ID, targetImage)
+			} else {
+				updateErr = s.deps.Portainer.UpdateStandaloneContainer(ctx, instanceID, epID, pc.ID, targetImage)
+			}
+
+			if updateErr != nil {
+				s.deps.Log.Error("portainer update failed", "name", name, "host", hostID, "error", updateErr)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: name,
+					HostID:        hostID,
+					Message:       "update failed on " + hostID + ": " + updateErr.Error(),
+					Timestamp:     time.Now(),
+				})
+			} else {
+				s.deps.Queue.Remove(queueKey)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: name,
+					HostID:        hostID,
+					Message:       "update successful: " + name,
+					Timestamp:     time.Now(),
+				})
+			}
+			// Delay clearing the updating marker so the first SSE-triggered row
+			// fetch still sees Maintenance=true. After the delay, fire a second
+			// event so the row refreshes to "Running".
+			time.AfterFunc(5*time.Second, func() {
+				s.clearRemoteUpdating(hostID, name)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerState,
+					ContainerName: name,
+					HostID:        hostID,
+					Timestamp:     time.Now(),
+				})
+			})
+		}()
+
+		s.logEvent(r, "update", name, "Portainer update triggered on "+hostID)
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "started",
 			"name":    name,
@@ -430,7 +528,7 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		go func() {
 			if err := s.deps.Cluster.RollbackRemoteContainer(context.Background(), hostID, name); err != nil {
 				s.deps.Log.Error("remote rollback failed", "name", name, "host", hostID, "error", err)
@@ -504,7 +602,7 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote container if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
 			if c.HostID == hostID && c.Name == name {
@@ -744,7 +842,7 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
-	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostID != "" && !strings.HasPrefix(hostID, "portainer:") && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
 			if c.HostID == hostID && c.Name == name {
@@ -778,6 +876,93 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		s.logEvent(r, "update_to_version", name, "Remote update to "+body.Tag+" on "+hostID)
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "started",
+			"name":    name,
+			"message": "Updating " + name + " to " + targetImage,
+		})
+		return
+	}
+
+	// Route to Portainer if host is "portainer:instanceID:epID".
+	if strings.HasPrefix(hostID, "portainer:") && s.deps.Portainer != nil {
+		parts := strings.SplitN(strings.TrimPrefix(hostID, "portainer:"), ":", 2)
+		if len(parts) != 2 {
+			writeError(w, http.StatusBadRequest, "invalid portainer host format, expected portainer:instanceID:endpointID")
+			return
+		}
+		instanceID := parts[0]
+		epID, err := strconv.Atoi(parts[1])
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid endpoint ID: "+parts[1])
+			return
+		}
+
+		containers, err := s.deps.Portainer.EndpointContainers(r.Context(), instanceID, epID)
+		if err != nil {
+			s.deps.Log.Error("failed to list portainer containers for version update", "instance", instanceID, "endpoint", epID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to list portainer containers: "+err.Error())
+			return
+		}
+
+		var pc *PortainerContainerInfo
+		for i := range containers {
+			if containers[i].Name == name {
+				pc = &containers[i]
+				break
+			}
+		}
+		if pc == nil {
+			writeError(w, http.StatusNotFound, fmt.Sprintf("container %q not found on portainer endpoint %d", name, epID))
+			return
+		}
+
+		targetImage := webReplaceTag(pc.Image, body.Tag)
+		queueKey := hostID + "::" + name
+
+		s.markRemoteUpdating(hostID, name)
+		go func() {
+			ctx := context.Background()
+			var updateErr error
+			if pc.StackID != 0 {
+				updateErr = s.deps.Portainer.RedeployStack(ctx, instanceID, pc.StackID, epID)
+			} else if portainer.IsPortainerImage(pc.Image) {
+				updateErr = s.deps.Portainer.UpdatePortainerSelf(ctx, instanceID, epID, pc.ID, targetImage)
+			} else {
+				updateErr = s.deps.Portainer.UpdateStandaloneContainer(ctx, instanceID, epID, pc.ID, targetImage)
+			}
+
+			if updateErr != nil {
+				s.deps.Log.Error("portainer version update failed", "name", name, "host", hostID, "tag", body.Tag, "error", updateErr)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: name,
+					HostID:        hostID,
+					Message:       "update to " + body.Tag + " failed on " + hostID + ": " + updateErr.Error(),
+					Timestamp:     time.Now(),
+				})
+			} else {
+				s.deps.Queue.Remove(queueKey)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerUpdate,
+					ContainerName: name,
+					HostID:        hostID,
+					Message:       "update successful: " + name,
+					Timestamp:     time.Now(),
+				})
+			}
+			time.AfterFunc(5*time.Second, func() {
+				s.clearRemoteUpdating(hostID, name)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:          events.EventContainerState,
+					ContainerName: name,
+					HostID:        hostID,
+					Timestamp:     time.Now(),
+				})
+			})
+		}()
+
+		s.logEvent(r, "update_to_version", name, "Portainer update to "+body.Tag+" on "+hostID)
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "started",
 			"name":    name,

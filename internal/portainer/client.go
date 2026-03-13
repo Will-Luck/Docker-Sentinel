@@ -3,6 +3,7 @@ package portainer
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,10 +20,19 @@ type Client struct {
 }
 
 func NewClient(baseURL, token string) *Client {
+	// Always skip TLS verification for Portainer connections.
+	// Portainer instances commonly use self-signed certs, especially
+	// in homelab and private network setups.
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed Portainer certs
+	}
 	return &Client{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		token:      token,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
+		httpClient: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: transport,
+		},
 	}
 }
 
@@ -71,6 +81,30 @@ func (c *Client) InspectContainer(ctx context.Context, endpointID int, container
 	return &resp, nil
 }
 
+// InspectImage returns image metadata via Portainer's Docker proxy.
+// The imageID should be the full sha256 image ID from the container list.
+func (c *Client) InspectImage(ctx context.Context, endpointID int, imageID string) (*ImageInspect, error) {
+	var resp ImageInspect
+	path := fmt.Sprintf("/api/endpoints/%d/docker/images/%s/json", endpointID, url.PathEscape(imageID))
+	if err := c.get(ctx, path, &resp); err != nil {
+		return nil, fmt.Errorf("inspect image: %w", err)
+	}
+	return &resp, nil
+}
+
+// EndpointEngineID queries Docker system info through Portainer's proxy
+// and returns the Docker Engine ID. Used for source deduplication.
+func (c *Client) EndpointEngineID(ctx context.Context, endpointID int) (string, error) {
+	var info struct {
+		ID string `json:"ID"`
+	}
+	path := fmt.Sprintf("/api/endpoints/%d/docker/info", endpointID)
+	if err := c.get(ctx, path, &info); err != nil {
+		return "", fmt.Errorf("docker info (endpoint %d): %w", endpointID, err)
+	}
+	return info.ID, nil
+}
+
 func (c *Client) StopContainer(ctx context.Context, endpointID int, containerID string) error {
 	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/%s/stop", endpointID, containerID)
 	return c.post(ctx, path, nil)
@@ -81,9 +115,54 @@ func (c *Client) RemoveContainer(ctx context.Context, endpointID int, containerI
 	return c.delete(ctx, path)
 }
 
+// PullImage pulls an image on the given endpoint via Portainer's Docker proxy.
+// Docker's POST /images/create returns a streaming response with JSON progress
+// objects. We must drain the full stream to ensure the pull completes before
+// returning, otherwise subsequent operations (like create container) will fail
+// with "no such image". A dedicated HTTP client without the 30s timeout is used
+// since pulls can take minutes for large images.
 func (c *Client) PullImage(ctx context.Context, endpointID int, image, tag string) error {
-	path := fmt.Sprintf("/api/endpoints/%d/docker/images/create?fromImage=%s&tag=%s", endpointID, url.QueryEscape(image), url.QueryEscape(tag))
-	return c.post(ctx, path, nil)
+	path := fmt.Sprintf("/api/endpoints/%d/docker/images/create?fromImage=%s&tag=%s",
+		endpointID, url.QueryEscape(image), url.QueryEscape(tag))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-API-Key", c.token)
+
+	// No client-level timeout; context cancellation handles the deadline.
+	streamClient := &http.Client{Transport: c.httpClient.Transport}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("portainer API error %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// Drain the streaming JSON response. Each line is a progress object;
+	// if any contain an "error" field, the pull failed.
+	dec := json.NewDecoder(resp.Body)
+	var lastErr string
+	for {
+		var obj struct {
+			Error string `json:"error"`
+		}
+		if err := dec.Decode(&obj); err != nil {
+			break // io.EOF or malformed tail
+		}
+		if obj.Error != "" {
+			lastErr = obj.Error
+		}
+	}
+	if lastErr != "" {
+		return fmt.Errorf("pull failed: %s", lastErr)
+	}
+	return nil
 }
 
 func (c *Client) CreateContainer(ctx context.Context, endpointID int, name string, body interface{}) (string, error) {
@@ -98,6 +177,18 @@ func (c *Client) CreateContainer(ctx context.Context, endpointID int, name strin
 func (c *Client) StartContainer(ctx context.Context, endpointID int, containerID string) error {
 	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/%s/start", endpointID, containerID)
 	return c.post(ctx, path, nil)
+}
+
+// WaitContainer blocks until the container exits and returns its exit code.
+func (c *Client) WaitContainer(ctx context.Context, endpointID int, containerID string) (int, error) {
+	path := fmt.Sprintf("/api/endpoints/%d/docker/containers/%s/wait", endpointID, containerID)
+	var resp struct {
+		StatusCode int `json:"StatusCode"`
+	}
+	if err := c.postJSON(ctx, path, nil, &resp); err != nil {
+		return -1, err
+	}
+	return resp.StatusCode, nil
 }
 
 func (c *Client) get(ctx context.Context, path string, out interface{}) error {
@@ -154,6 +245,32 @@ func (c *Client) delete(ctx context.Context, path string) error {
 	}
 	req.Header.Set("X-API-Key", c.token)
 	return c.do(req, nil)
+}
+
+// WaitForRecovery polls the Portainer API until it responds successfully
+// or the timeout expires. Used after updating Portainer itself, since the
+// API goes down during the container recreation.
+func (c *Client) WaitForRecovery(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return fmt.Errorf("portainer did not recover within %v", timeout)
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := c.TestConnection(checkCtx)
+			cancel()
+			if err == nil {
+				return nil
+			}
+		}
+	}
 }
 
 func (c *Client) do(req *http.Request, out interface{}) error {

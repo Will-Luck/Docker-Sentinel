@@ -22,7 +22,8 @@ const (
 	EventScanStart       EventType = "scan_start"
 	EventScanProgress    EventType = "scan_progress"
 	EventServiceUpdate   EventType = "service_update"
-	EventClusterHost     EventType = "cluster_host" // host connected/disconnected/enrolled
+	EventClusterHost     EventType = "cluster_host"   // host connected/disconnected/enrolled
+	EventSourceOverlap   EventType = "source_overlap" // Portainer endpoint auto-blocked due to Engine ID overlap
 )
 
 // SSEEvent is a single event published through the bus and streamed to SSE clients.

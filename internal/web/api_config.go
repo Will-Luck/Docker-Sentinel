@@ -36,7 +36,6 @@ const redactedPlaceholder = "***REDACTED***"
 // Using a whitelist instead of substring matching avoids false positives
 // (e.g. docker_tls_key is a file path, not a secret).
 var sensitiveKeys = map[string]bool{
-	"portainer_token":       true,
 	"webhook_secret":        true,
 	"notification_config":   true, // contains provider credentials
 	"notification_channels": true, // channel settings may contain tokens
@@ -86,11 +85,6 @@ var validSettingKeys = map[string]bool{
 	// Webhook.
 	"webhook_enabled": true,
 	"webhook_secret":  true,
-
-	// Portainer.
-	"portainer_enabled": true,
-	"portainer_url":     true,
-	"portainer_token":   true,
 
 	// Docker TLS.
 	"docker_tls_ca":   true,

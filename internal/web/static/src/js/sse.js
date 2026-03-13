@@ -159,9 +159,8 @@ function updatePendingColor(pending) {
     var pendingEl = stats.querySelectorAll(".stat-value")[2];
     if (!pendingEl) return;
     if (pending === 0 || pending === "0") {
-        pendingEl.className = "stat-value success stat-all-clear";
-        // Static SVG checkmark icon — no user content, safe to use innerHTML.
-        pendingEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> 0';
+        pendingEl.className = "stat-value success";
+        pendingEl.textContent = "0";
     } else {
         pendingEl.className = "stat-value warning";
         pendingEl.textContent = pending;
@@ -239,6 +238,22 @@ function initSSE() {
         }
         _sseHasConnected = true;
         setConnectionStatus(true);
+
+        // Catch-up: refresh any rows still showing "Updating" status.
+        // If the update completed between server-side page render and this
+        // SSE connection being established, the container_update event was
+        // lost. Re-fetching the row picks up the current maintenance state.
+        if (document.getElementById("container-table")) {
+            var updatingBadges = document.querySelectorAll(".badge-updating");
+            for (var i = 0; i < updatingBadges.length; i++) {
+                var row = updatingBadges[i].closest("tr.container-row");
+                if (row) {
+                    var n = row.getAttribute("data-name");
+                    var h = row.getAttribute("data-host") || "";
+                    if (n) updateContainerRow(n, h);
+                }
+            }
+        }
     });
 
     es.addEventListener("container_update", function (e) {

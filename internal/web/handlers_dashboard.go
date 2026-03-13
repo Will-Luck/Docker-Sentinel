@@ -1,9 +1,11 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -309,9 +311,20 @@ func (s *Server) resolvePortURLs(name, hostAddr, hostID string, ports []PortMapp
 	urls := make(map[uint16]string)
 
 	// Layer NPM auto-discovery.
+	// For local containers, prefer LookupForHost when hostAddr is an IP so we
+	// only match NPM proxies forwarding to this specific host (prevents
+	// cross-host port shadowing, e.g. port 8080 on .57 vs .64). Fall back to
+	// Lookup() when hostAddr is a domain (NPM stores ForwardHost as IPs).
 	if s.deps.NPM != nil {
+		localIP := hostID == "" && net.ParseIP(hostAddr) != nil
 		for _, p := range ports {
-			if r := s.deps.NPM.LookupForHost(p.HostPort, hostAddr); r != nil {
+			var r *NPMResolvedURL
+			if hostID != "" || localIP {
+				r = s.deps.NPM.LookupForHost(p.HostPort, hostAddr)
+			} else {
+				r = s.deps.NPM.Lookup(p.HostPort)
+			}
+			if r != nil {
 				urls[p.HostPort] = r.URL
 			}
 		}
@@ -366,10 +379,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		pendingNames[p.Key()] = true
 	}
 
-	// Check if stopped containers should be shown (opt-in setting).
-	showStopped := false
+	// Check if stopped containers should be shown (default: true).
+	// LoadSetting returns ("", nil) for missing keys, so only override when
+	// the value is explicitly set — otherwise the default stands.
+	showStopped := true
 	if s.deps.SettingsStore != nil {
-		if v, err := s.deps.SettingsStore.LoadSetting("show_stopped"); err == nil {
+		if v, err := s.deps.SettingsStore.LoadSetting("show_stopped"); err == nil && v != "" {
 			showStopped = v == "true"
 		}
 	}
@@ -381,7 +396,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Exclude stopped containers unless the setting is enabled.
+		// Exclude stopped containers if the user disabled them in settings.
 		if !showStopped && c.State != "running" {
 			continue
 		}
@@ -616,9 +631,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		ColumnConfig:      template.JS(colConfigJSON), //nolint:gosec // server-controlled JSON from json.Marshal
 	}
 
-	// Build host groups when cluster mode is active. Each host gets its own
-	// accordion section on the dashboard containing its stacks/containers.
-	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	// Build host groups when cluster mode is active or Portainer instances exist.
+	// Each host gets its own accordion section on the dashboard.
+	hasMultiHost := (s.deps.Cluster != nil && s.deps.Cluster.Enabled()) ||
+		s.hasEnabledPortainerInstances()
+
+	if hasMultiHost {
 		// "local" group — this server's containers.
 		localGroup := hostGroup{
 			ID:        "local",
@@ -629,121 +647,126 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		data.HostGroups = []hostGroup{localGroup}
 
-		// Remote groups from cluster.
-		hosts := s.deps.Cluster.AllHosts()
-		remoteContainers := s.deps.Cluster.AllHostContainers()
+		// Cluster remote groups (only when cluster is active).
+		if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+			hosts := s.deps.Cluster.AllHosts()
+			remoteContainers := s.deps.Cluster.AllHostContainers()
 
-		// Build a host ID -> IP address lookup for port links.
-		hostAddr := make(map[string]string, len(hosts))
-		for _, h := range hosts {
-			hostAddr[h.ID] = extractIP(h.Address)
-		}
-
-		// Group remote containers by host ID, extracting tag/registry
-		// the same way we do for local containers.
-		byHost := make(map[string][]containerView)
-		for _, rc := range remoteContainers {
-			// Skip Swarm task containers — same as local filtering.
-			if _, isTask := rc.Labels["com.docker.swarm.task"]; isTask {
-				continue
+			// Build a host ID -> IP address lookup for port links.
+			hostAddr := make(map[string]string, len(hosts))
+			for _, h := range hosts {
+				hostAddr[h.ID] = extractIP(h.Address)
 			}
 
-			tag := registry.ExtractTag(rc.Image)
-			if tag == "" {
-				if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {
-					tag = rc.Image[idx+1:]
-				} else {
-					tag = rc.Image
+			// Group remote containers by host ID, extracting tag/registry
+			// the same way we do for local containers.
+			byHost := make(map[string][]containerView)
+			for _, rc := range remoteContainers {
+				// Skip Swarm task containers — same as local filtering.
+				if _, isTask := rc.Labels["com.docker.swarm.task"]; isTask {
+					continue
 				}
-			}
-			// Resolve policy the same way we do for local containers:
-			// label first, then DB override (keyed by hostID::name for remote).
-			policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
 
-			var newestVersion string
-			var hasUpdate bool
-			queueKey := rc.HostID + "::" + rc.Name
-			if pend, ok := s.deps.Queue.Get(queueKey); ok {
-				hasUpdate = true
-				if len(pend.NewerVersions) > 0 {
-					newestVersion = pend.NewerVersions[0]
+				tag := registry.ExtractTag(rc.Image)
+				if tag == "" {
+					if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {
+						tag = rc.Image[idx+1:]
+					} else {
+						tag = rc.Image
+					}
 				}
-			}
+				// Resolve policy the same way we do for local containers:
+				// label first, then DB override (keyed by hostID::name for remote).
+				policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
 
-			var rcSeverity string
-			if hasUpdate {
-				if newestVersion == "" {
-					rcSeverity = "build"
-				} else {
-					rcSeverity = classifySeverity(tag, newestVersion)
+				var newestVersion string
+				var hasUpdate bool
+				queueKey := rc.HostID + "::" + rc.Name
+				if pend, ok := s.deps.Queue.Get(queueKey); ok {
+					hasUpdate = true
+					if len(pend.NewerVersions) > 0 {
+						newestVersion = pend.NewerVersions[0]
+					}
 				}
-			}
 
-			cv := containerView{
-				Name:          rc.Name,
-				Image:         rc.Image,
-				Tag:           tag,
-				NewestVersion: newestVersion,
-				Registry:      registry.RegistryHost(rc.Image),
-				Policy:        policy,
-				State:         rc.State,
-				HasUpdate:     hasUpdate,
-				DigestOnly:    hasUpdate && newestVersion == "",
-				Severity:      rcSeverity,
-				IsSelf:        rc.Labels["sentinel.self"] == "true",
-				HostID:        rc.HostID,
-				HostName:      rc.HostName,
-				HostAddress:   hostAddr[rc.HostID],
-				Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
-				Ports:         rc.Ports,
-			}
-			cv.PortURLs = s.resolvePortURLs(rc.Name, hostAddr[rc.HostID], rc.HostID, rc.Ports)
-			byHost[rc.HostID] = append(byHost[rc.HostID], cv)
-		}
-
-		for _, h := range hosts {
-			containers := byHost[h.ID]
-			// Build a single "Standalone" stack for remote containers
-			// (we don't have stack labels for remote containers yet).
-			var remoteStacks []stackGroup
-			if len(containers) > 0 {
-				sg := stackGroup{
-					Name:       "Standalone",
-					Containers: containers,
+				var rcSeverity string
+				if hasUpdate {
+					if newestVersion == "" {
+						rcSeverity = "build"
+					} else {
+						rcSeverity = classifySeverity(tag, newestVersion)
+					}
 				}
+
+				cv := containerView{
+					Name:          rc.Name,
+					Image:         rc.Image,
+					Tag:           tag,
+					NewestVersion: newestVersion,
+					Registry:      registry.RegistryHost(rc.Image),
+					Policy:        policy,
+					State:         rc.State,
+					HasUpdate:     hasUpdate,
+					DigestOnly:    hasUpdate && newestVersion == "",
+					Severity:      rcSeverity,
+					IsSelf:        rc.Labels["sentinel.self"] == "true",
+					HostID:        rc.HostID,
+					HostName:      rc.HostName,
+					HostAddress:   hostAddr[rc.HostID],
+					Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
+					Ports:         rc.Ports,
+				}
+				cv.PortURLs = s.resolvePortURLs(rc.Name, hostAddr[rc.HostID], rc.HostID, rc.Ports)
+				byHost[rc.HostID] = append(byHost[rc.HostID], cv)
+			}
+
+			for _, h := range hosts {
+				containers := byHost[h.ID]
+				// Build a single "Standalone" stack for remote containers
+				// (we don't have stack labels for remote containers yet).
+				var remoteStacks []stackGroup
+				if len(containers) > 0 {
+					sg := stackGroup{
+						Name:       "Standalone",
+						Containers: containers,
+					}
+					for _, c := range containers {
+						if c.State == "running" {
+							sg.RunningCount++
+						} else {
+							sg.StoppedCount++
+						}
+						if c.HasUpdate {
+							sg.HasPending = true
+							sg.PendingCount++
+						}
+					}
+					remoteStacks = []stackGroup{sg}
+				}
+				data.HostGroups = append(data.HostGroups, hostGroup{
+					ID:        h.ID,
+					Name:      h.Name,
+					Address:   hostAddr[h.ID],
+					Connected: h.Connected,
+					Stacks:    remoteStacks,
+					Count:     len(containers),
+				})
+
+				// Update fleet-wide totals.
+				data.TotalContainers += len(containers)
 				for _, c := range containers {
 					if c.State == "running" {
-						sg.RunningCount++
-					} else {
-						sg.StoppedCount++
+						data.RunningContainers++
 					}
 					if c.HasUpdate {
-						sg.HasPending = true
-						sg.PendingCount++
+						data.PendingUpdates++
 					}
-				}
-				remoteStacks = []stackGroup{sg}
-			}
-			data.HostGroups = append(data.HostGroups, hostGroup{
-				ID:        h.ID,
-				Name:      h.Name,
-				Address:   hostAddr[h.ID],
-				Connected: h.Connected,
-				Stacks:    remoteStacks,
-				Count:     len(containers),
-			})
-
-			// Update fleet-wide totals.
-			data.TotalContainers += len(containers)
-			for _, c := range containers {
-				if c.State == "running" {
-					data.RunningContainers++
-				}
-				if c.HasUpdate {
-					data.PendingUpdates++
 				}
 			}
 		}
+
+		// Portainer host groups.
+		s.appendPortainerHostGroups(r.Context(), &data)
 	}
 
 	// Compute per-tab stats for the dashboard tab navigation.
@@ -786,8 +809,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.TabStats = append(data.TabStats, swarmStats)
 	}
 
-	// Cluster host tabs — one per remote host (skip "local", already added above).
-	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	// Cluster/Portainer host tabs — one per remote host (skip "local", already added above).
+	if len(data.HostGroups) > 0 {
 		for _, hg := range data.HostGroups {
 			if hg.ID == "local" {
 				continue
@@ -821,6 +844,172 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.withPortainer(&data)
 
 	s.renderTemplate(w, "index.html", data)
+}
+
+// hasEnabledPortainerInstances returns true if any Portainer instance has usable endpoints.
+func (s *Server) hasEnabledPortainerInstances() bool {
+	if s.deps.PortainerInstances == nil {
+		return false
+	}
+	instances, err := s.deps.PortainerInstances.ListPortainerInstances()
+	if err != nil {
+		return false
+	}
+	for _, inst := range instances {
+		if !inst.Enabled {
+			continue
+		}
+		for _, ep := range inst.Endpoints {
+			if ep.Enabled && !ep.Blocked {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// appendPortainerHostGroups adds Portainer-managed containers as host groups
+// on the dashboard, following the same pattern as cluster remote hosts.
+func (s *Server) appendPortainerHostGroups(ctx context.Context, data *pageData) {
+	if s.deps.PortainerInstances == nil || s.deps.Portainer == nil {
+		return
+	}
+	instances, err := s.deps.PortainerInstances.ListPortainerInstances()
+	if err != nil || len(instances) == 0 {
+		return
+	}
+
+	for _, inst := range instances {
+		if !inst.Enabled {
+			continue
+		}
+
+		// Count enabled endpoints to decide group naming.
+		enabledCount := 0
+		for _, cfg := range inst.Endpoints {
+			if cfg.Enabled && !cfg.Blocked {
+				enabledCount++
+			}
+		}
+		if enabledCount == 0 {
+			continue
+		}
+
+		// Fetch endpoint names once per instance.
+		epNames := make(map[int]string)
+		if eps, epErr := s.deps.Portainer.AllEndpoints(ctx, inst.ID); epErr == nil {
+			for _, ep := range eps {
+				epNames[ep.ID] = ep.Name
+			}
+		}
+
+		for epIDStr, epCfg := range inst.Endpoints {
+			if epCfg.Blocked || !epCfg.Enabled {
+				continue
+			}
+			epID, _ := strconv.Atoi(epIDStr)
+			containers, cErr := s.deps.Portainer.EndpointContainers(ctx, inst.ID, epID)
+			if cErr != nil {
+				continue
+			}
+
+			hostID := fmt.Sprintf("portainer:%s:%s", inst.ID, epIDStr)
+			var views []containerView
+
+			for _, c := range containers {
+				tag := registry.ExtractTag(c.Image)
+				if tag == "" {
+					if idx := strings.LastIndex(c.Image, "/"); idx >= 0 {
+						tag = c.Image[idx+1:]
+					} else {
+						tag = c.Image
+					}
+				}
+
+				queueKey := hostID + "::" + c.Name
+				policy := s.resolvedPolicy(c.Labels, queueKey)
+
+				var newestVersion string
+				var hasUpdate bool
+				if pend, ok := s.deps.Queue.Get(queueKey); ok {
+					hasUpdate = true
+					if len(pend.NewerVersions) > 0 {
+						newestVersion = pend.NewerVersions[0]
+					}
+				}
+
+				var severity string
+				if hasUpdate {
+					if newestVersion == "" {
+						severity = "build"
+					} else {
+						severity = classifySeverity(tag, newestVersion)
+					}
+				}
+
+				cv := containerView{
+					Name:          c.Name,
+					Image:         c.Image,
+					Tag:           tag,
+					NewestVersion: newestVersion,
+					Registry:      registry.RegistryHost(c.Image),
+					Policy:        policy,
+					State:         c.State,
+					HasUpdate:     hasUpdate,
+					DigestOnly:    hasUpdate && newestVersion == "",
+					Severity:      severity,
+					HostID:        hostID,
+					HostName:      inst.Name,
+					Maintenance:   s.isRemoteUpdating(hostID, c.Name),
+				}
+				views = append(views, cv)
+			}
+
+			if len(views) > 0 {
+				sg := stackGroup{Name: "Standalone", Containers: views}
+				for _, c := range views {
+					if c.State == "running" {
+						sg.RunningCount++
+					} else {
+						sg.StoppedCount++
+					}
+					if c.HasUpdate {
+						sg.HasPending = true
+						sg.PendingCount++
+					}
+				}
+
+				epName := epNames[epID]
+				if epName == "" {
+					epName = fmt.Sprintf("Endpoint %d", epID)
+				}
+
+				// Simplify name when only one endpoint on this instance.
+				groupName := inst.Name + " / " + epName
+				if enabledCount == 1 {
+					groupName = inst.Name
+				}
+
+				data.HostGroups = append(data.HostGroups, hostGroup{
+					ID:        hostID,
+					Name:      groupName,
+					Connected: true,
+					Stacks:    []stackGroup{sg},
+					Count:     len(views),
+				})
+
+				data.TotalContainers += len(views)
+				for _, c := range views {
+					if c.State == "running" {
+						data.RunningContainers++
+					}
+					if c.HasUpdate {
+						data.PendingUpdates++
+					}
+				}
+			}
+		}
+	}
 }
 
 // extractIP strips the port from a "host:port" address string.

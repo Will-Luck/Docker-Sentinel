@@ -20,6 +20,7 @@ func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
 		"grace_period":       "30m",
 		"remote_policy":      "manual",
 		"auto_update_agents": "false",
+		"advertise_addr":     "",
 	}
 
 	if s.deps.SettingsStore != nil {
@@ -29,6 +30,7 @@ func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
 			"grace_period":       store.SettingClusterGracePeriod,
 			"remote_policy":      store.SettingClusterRemotePolicy,
 			"auto_update_agents": store.SettingClusterAutoUpdateAgents,
+			"advertise_addr":     store.SettingClusterAdvertise,
 		}
 		for field, dbKey := range keys {
 			if v, err := s.deps.SettingsStore.LoadSetting(dbKey); err == nil && v != "" {
@@ -45,11 +47,12 @@ func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
 // start or stop the gRPC server dynamically.
 func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Enabled          *bool  `json:"enabled"`
-		Port             string `json:"port"`
-		GracePeriod      string `json:"grace_period"`
-		RemotePolicy     string `json:"remote_policy"`
-		AutoUpdateAgents *bool  `json:"auto_update_agents"`
+		Enabled          *bool   `json:"enabled"`
+		Port             string  `json:"port"`
+		GracePeriod      string  `json:"grace_period"`
+		RemotePolicy     string  `json:"remote_policy"`
+		AutoUpdateAgents *bool   `json:"auto_update_agents"`
+		AdvertiseAddr    *string `json:"advertise_addr"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -125,6 +128,13 @@ func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) 
 			val = "true"
 		}
 		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterAutoUpdateAgents, val); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+
+	if req.AdvertiseAddr != nil {
+		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterAdvertise, *req.AdvertiseAddr); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save setting")
 			return
 		}

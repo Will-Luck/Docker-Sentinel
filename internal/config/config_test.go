@@ -193,7 +193,7 @@ func TestBoolSettersAndGetters(t *testing.T) {
 		{"HooksWriteLabels", (*Config).SetHooksWriteLabels, (*Config).HooksWriteLabels, false},
 		{"DependencyAware", (*Config).SetDependencyAware, (*Config).DependencyAware, true},
 		{"ImageBackup", (*Config).SetImageBackup, (*Config).ImageBackup, false},
-		{"ShowStopped", (*Config).SetShowStopped, (*Config).ShowStopped, false},
+		{"ShowStopped", (*Config).SetShowStopped, (*Config).ShowStopped, true},
 		{"RemoveVolumes", (*Config).SetRemoveVolumes, (*Config).RemoveVolumes, false},
 	}
 	for _, tt := range tests {
@@ -339,7 +339,7 @@ func TestValuesCorrectness(t *testing.T) {
 		"SENTINEL_DEPS":               "true",
 		"SENTINEL_ROLLBACK_POLICY":    "manual",
 		"SENTINEL_IMAGE_BACKUP":       "false",
-		"SENTINEL_SHOW_STOPPED":       "false",
+		"SENTINEL_SHOW_STOPPED":       "true",
 		"SENTINEL_REMOVE_VOLUMES":     "false",
 		"SENTINEL_SCAN_CONCURRENCY":   "5",
 		"SENTINEL_MAINTENANCE_WINDOW": "02:00-06:00",

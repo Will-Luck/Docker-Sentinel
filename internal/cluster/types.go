@@ -21,7 +21,8 @@ type HostInfo struct {
 	EnrolledAt   time.Time `json:"enrolled_at"`
 	LastSeen     time.Time `json:"last_seen"`
 	AgentVersion string    `json:"agent_version"`
-	Features     []string  `json:"features,omitempty"` // supported feature flags
+	Features     []string  `json:"features,omitempty"`  // supported feature flags
+	EngineID     string    `json:"engine_id,omitempty"` // Docker Engine ID for source dedup
 }
 
 // EnrollRequest is sent by an agent to register with the server.

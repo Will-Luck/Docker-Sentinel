@@ -76,14 +76,30 @@ type PortainerEndpointInfo struct {
 
 // PortainerContainerResult is a container from a Portainer-managed environment.
 type PortainerContainerResult struct {
-	ID         string
-	Name       string
-	Image      string
-	State      string
-	Labels     map[string]string
-	EndpointID int
-	StackID    int
-	StackName  string
+	ID          string
+	Name        string
+	Image       string
+	ImageDigest string // repo digest from Portainer image inspect
+	State       string
+	Labels      map[string]string
+	EndpointID  int
+	StackID     int
+	StackName   string
+}
+
+// EndpointConfig holds per-endpoint user and auto-detected settings.
+type EndpointConfig struct {
+	Enabled bool
+	Blocked bool
+}
+
+// PortainerInstance represents a single Portainer server with its scanner
+// and per-endpoint configuration. The engine iterates all instances during scan.
+type PortainerInstance struct {
+	ID        string
+	Name      string
+	Scanner   PortainerScanner
+	Endpoints map[int]EndpointConfig
 }
 
 // HostContext identifies a remote host for scoped operations.
@@ -381,19 +397,28 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			}
 		}
 	}
-	// Add Portainer container keys (portainer:<endpointID>::name format).
-	if u.portainer != nil {
-		endpoints, epErr := u.portainer.Endpoints(ctx)
-		if epErr == nil {
-			for _, ep := range endpoints {
-				epContainers, ecErr := u.portainer.EndpointContainers(ctx, ep.ID)
-				if ecErr != nil {
-					continue
-				}
-				hostID := fmt.Sprintf("portainer:%d", ep.ID)
-				for _, pc := range epContainers {
-					liveNames[store.ScopedKey(hostID, pc.Name)] = true
-				}
+	// Add Portainer container keys (portainer:<instanceID>:<endpointID>::name format).
+	u.portainerMu.RLock()
+	portainerSnapshot := make([]PortainerInstance, len(u.portainerInstances))
+	copy(portainerSnapshot, u.portainerInstances)
+	u.portainerMu.RUnlock()
+	for i := range portainerSnapshot {
+		inst := &portainerSnapshot[i]
+		endpoints, epErr := inst.Scanner.Endpoints(ctx)
+		if epErr != nil {
+			continue
+		}
+		for _, ep := range endpoints {
+			if cfg, ok := inst.Endpoints[ep.ID]; ok && (cfg.Blocked || !cfg.Enabled) {
+				continue
+			}
+			epContainers, ecErr := inst.Scanner.EndpointContainers(ctx, ep.ID)
+			if ecErr != nil {
+				continue
+			}
+			hostID := fmt.Sprintf("portainer:%s:%d", inst.ID, ep.ID)
+			for _, pc := range epContainers {
+				liveNames[store.ScopedKey(hostID, pc.Name)] = true
 			}
 		}
 	}
@@ -755,8 +780,17 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.scanRemoteHosts(ctx, mode, &result, filters, reserve)
 	}
 
-	if u.portainer != nil {
-		u.scanPortainerEndpoints(ctx, mode, &result, filters, reserve)
+	u.portainerMu.RLock()
+	hasPortainer := len(u.portainerInstances) > 0
+	u.portainerMu.RUnlock()
+	if hasPortainer {
+		// Collect local container IDs so the Portainer scan can skip containers
+		// that Sentinel already monitors via the local Docker socket.
+		localIDs := make(map[string]bool, len(containers))
+		for _, c := range containers {
+			localIDs[c.ID] = true
+		}
+		u.scanPortainerInstances(ctx, mode, &result, filters, reserve, localIDs)
 	}
 
 	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf(

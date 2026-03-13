@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -13,9 +14,9 @@ import (
 // Resolver maintains an in-memory cache of NPM proxy hosts and resolves
 // container ports to domain URLs.
 type Resolver struct {
-	client       *Client
-	sentinelHost string // SENTINEL_HOST value for matching forward_host
-	log          *slog.Logger
+	client     *Client
+	localAddrs map[string]bool // set of local IPs/hostnames (lowercase) for filtering
+	log        *slog.Logger
 
 	mu       sync.RWMutex
 	hosts    []ProxyHost
@@ -23,13 +24,44 @@ type Resolver struct {
 	syncErr  error
 }
 
-// NewResolver creates a resolver that matches proxy hosts against sentinelHost.
-func NewResolver(client *Client, sentinelHost string, log *slog.Logger) *Resolver {
+// NewResolver creates a resolver that matches proxy hosts whose ForwardHost
+// is in the localAddrs set. Pass nil or empty to match all hosts (unfiltered).
+func NewResolver(client *Client, localAddrs map[string]bool, log *slog.Logger) *Resolver {
 	return &Resolver{
-		client:       client,
-		sentinelHost: sentinelHost,
-		log:          log,
+		client:     client,
+		localAddrs: localAddrs,
+		log:        log,
 	}
+}
+
+// DetectLocalAddrs builds a set of addresses the Docker host is reachable on.
+// Only addresses useful for NPM ForwardHost matching are included: explicit
+// SENTINEL_HOST values and the Docker host IP (via host.docker.internal).
+//
+// Container-local addresses (172.17.x.x, hostname, localhost) are excluded
+// because NPM proxies never use them as ForwardHost. If no routable address
+// can be determined, an empty set is returned, which disables host filtering
+// in Lookup() so all NPM proxies are considered (the safe fallback).
+func DetectLocalAddrs(extra ...string) map[string]bool {
+	addrs := make(map[string]bool)
+
+	// Docker host detection: host.docker.internal resolves to the Docker
+	// host IP on Docker Desktop and on containers started with
+	// --add-host=host.docker.internal:host-gateway.
+	if ips, err := net.LookupHost("host.docker.internal"); err == nil {
+		for _, ip := range ips {
+			addrs[strings.ToLower(ip)] = true
+		}
+	}
+
+	// Explicit overrides (SENTINEL_HOST, etc.).
+	for _, h := range extra {
+		if h != "" {
+			addrs[strings.ToLower(h)] = true
+		}
+	}
+
+	return addrs
 }
 
 // Run syncs proxy hosts immediately then every 5 minutes until ctx is cancelled.
@@ -81,10 +113,11 @@ func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
 	defer r.mu.RUnlock()
 
 	for _, h := range r.hosts {
-		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+		domain := bestDomain(h.DomainNames)
+		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
-		if r.sentinelHost != "" && !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
+		if len(r.localAddrs) > 0 && !r.localAddrs[strings.ToLower(h.ForwardHost)] {
 			continue
 		}
 		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 || uint16(h.ForwardPort) != hostPort {
@@ -100,26 +133,27 @@ func (r *Resolver) Lookup(hostPort uint16) *ResolvedURL {
 		}
 
 		return &ResolvedURL{
-			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
-			Domain:      h.DomainNames[0],
+			URL:         fmt.Sprintf("%s://%s", scheme, domain),
+			Domain:      domain,
 			ProxyHostID: h.ID,
 		}
 	}
 	return nil
 }
 
-// AllMappings returns all matched port-to-URL mappings for the sentinel host.
-// When sentinelHost is empty, all enabled proxy hosts are returned.
+// AllMappings returns all matched port-to-URL mappings for local addresses.
+// When localAddrs is empty, all enabled proxy hosts are returned.
 func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	out := make(map[uint16]ResolvedURL)
 	for _, h := range r.hosts {
-		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+		domain := bestDomain(h.DomainNames)
+		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
-		if r.sentinelHost != "" && !strings.EqualFold(h.ForwardHost, r.sentinelHost) {
+		if len(r.localAddrs) > 0 && !r.localAddrs[strings.ToLower(h.ForwardHost)] {
 			continue
 		}
 
@@ -140,8 +174,8 @@ func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 		}
 
 		out[port] = ResolvedURL{
-			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
-			Domain:      h.DomainNames[0],
+			URL:         fmt.Sprintf("%s://%s", scheme, domain),
+			Domain:      domain,
 			ProxyHostID: h.ID,
 		}
 	}
@@ -149,14 +183,15 @@ func (r *Resolver) AllMappings() map[uint16]ResolvedURL {
 }
 
 // LookupForHost resolves a host port to its NPM proxy URL, matching against
-// the provided hostAddr instead of the resolver's sentinelHost. When hostAddr
-// is empty, all hosts match (same as empty sentinelHost behaviour).
+// the provided hostAddr instead of the resolver's local address set. When
+// hostAddr is empty, all hosts match (no filtering).
 func (r *Resolver) LookupForHost(hostPort uint16, hostAddr string) *ResolvedURL {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	for _, h := range r.hosts {
-		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+		domain := bestDomain(h.DomainNames)
+		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
 		if hostAddr != "" && !strings.EqualFold(h.ForwardHost, hostAddr) {
@@ -175,8 +210,8 @@ func (r *Resolver) LookupForHost(hostPort uint16, hostAddr string) *ResolvedURL 
 		}
 
 		return &ResolvedURL{
-			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
-			Domain:      h.DomainNames[0],
+			URL:         fmt.Sprintf("%s://%s", scheme, domain),
+			Domain:      domain,
 			ProxyHostID: h.ID,
 		}
 	}
@@ -192,7 +227,8 @@ func (r *Resolver) AllMappingsGrouped() map[string]map[uint16]ResolvedURL {
 
 	out := make(map[string]map[uint16]ResolvedURL)
 	for _, h := range r.hosts {
-		if !bool(h.Enabled) || len(h.DomainNames) == 0 {
+		domain := bestDomain(h.DomainNames)
+		if !bool(h.Enabled) || domain == "" {
 			continue
 		}
 		if h.ForwardPort < 0 || h.ForwardPort > math.MaxUint16 {
@@ -218,12 +254,24 @@ func (r *Resolver) AllMappingsGrouped() map[string]map[uint16]ResolvedURL {
 		}
 
 		hostMap[port] = ResolvedURL{
-			URL:         fmt.Sprintf("%s://%s", scheme, h.DomainNames[0]),
-			Domain:      h.DomainNames[0],
+			URL:         fmt.Sprintf("%s://%s", scheme, domain),
+			Domain:      domain,
 			ProxyHostID: h.ID,
 		}
 	}
 	return out
+}
+
+// bestDomain picks the first non-wildcard domain from a proxy host's domain
+// list. Wildcard entries like "*.s3.garage.example.com" are valid for NPM
+// routing but produce broken URLs. Returns "" if all domains are wildcards.
+func bestDomain(domains []string) string {
+	for _, d := range domains {
+		if !strings.HasPrefix(d, "*") {
+			return d
+		}
+	}
+	return ""
 }
 
 // LastSync returns the time of the last successful sync.

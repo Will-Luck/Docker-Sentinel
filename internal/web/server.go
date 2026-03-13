@@ -60,15 +60,17 @@ type Dependencies struct {
 	AboutStore          AboutStore
 	HookStore           HookStore
 	ReleaseSources      ReleaseSourceStore
-	ImageManager        ImageManager                                   // nil when not available
-	Swarm               SwarmProvider                                  // nil when not in Swarm mode
-	Cluster             *ClusterController                             // thread-safe proxy; always non-nil, use .Enabled() to check
-	Portainer           PortainerProvider                              // nil when Portainer not configured
-	NPM                 NPMProvider                                    // nil when NPM not configured; set by NPMInitFunc on first successful test
-	NPMInitFunc         func(ctx context.Context) (NPMProvider, error) // creates NPM provider from saved settings
-	Backup              BackupManager                                  // nil when backup not configured
-	PortConfigs         PortConfigStore                                // nil when store not available
-	VersionScope        VersionScopeUpdater                            // nil-safe: updates checker's default scope at runtime
+	ImageManager        ImageManager                                         // nil when not available
+	Swarm               SwarmProvider                                        // nil when not in Swarm mode
+	Cluster             *ClusterController                                   // thread-safe proxy; always non-nil, use .Enabled() to check
+	Portainer           PortainerProvider                                    // nil when Portainer not configured; set by PortainerInitFunc on first successful test
+	PortainerInitFunc   func(ctx context.Context) (PortainerProvider, error) // creates Portainer provider from saved settings
+	PortainerInstances  PortainerInstanceStore                               // persists multi-instance Portainer configs
+	NPM                 NPMProvider                                          // nil when NPM not configured; set by NPMInitFunc on first successful test
+	NPMInitFunc         func(ctx context.Context) (NPMProvider, error)       // creates NPM provider from saved settings
+	Backup              BackupManager                                        // nil when backup not configured
+	PortConfigs         PortConfigStore                                      // nil when store not available
+	VersionScope        VersionScopeUpdater                                  // nil-safe: updates checker's default scope at runtime
 	MetricsEnabled      bool
 	Auth                *auth.Service
 	Version             string // formatted version string, e.g. "v2.0.1 (abc1234)"
@@ -481,14 +483,16 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettings))
 	s.mux.Handle("POST /api/settings/cluster", perm(auth.PermSettingsModify, s.apiClusterSettingsSave))
 
-	// Portainer
+	// Portainer multi-instance.
 	s.mux.Handle("GET /portainer", perm(auth.PermSettingsModify, s.handlePortainer))
-	s.mux.Handle("GET /api/portainer/endpoints", perm(auth.PermContainersView, s.apiPortainerEndpoints))
+	s.mux.Handle("GET /api/portainer/instances", perm(auth.PermSettingsModify, s.apiListPortainerInstances))
+	s.mux.Handle("POST /api/portainer/instances", perm(auth.PermSettingsModify, s.apiCreatePortainerInstance))
+	s.mux.Handle("PUT /api/portainer/instances/{id}", perm(auth.PermSettingsModify, s.apiUpdatePortainerInstance))
+	s.mux.Handle("DELETE /api/portainer/instances/{id}", perm(auth.PermSettingsModify, s.apiDeletePortainerInstance))
+	s.mux.Handle("POST /api/portainer/instances/{id}/test", perm(auth.PermSettingsModify, s.apiTestPortainerInstance))
+	s.mux.Handle("GET /api/portainer/instances/{id}/endpoints", perm(auth.PermContainersView, s.apiPortainerInstanceEndpoints))
+	s.mux.Handle("PUT /api/portainer/instances/{id}/endpoints/{epid}", perm(auth.PermSettingsModify, s.apiUpdatePortainerEndpoint))
 	s.mux.Handle("GET /api/portainer/endpoints/{id}/containers", perm(auth.PermContainersView, s.apiPortainerContainers))
-	s.mux.Handle("POST /api/settings/portainer-enabled", perm(auth.PermSettingsModify, s.apiSetPortainerEnabled))
-	s.mux.Handle("POST /api/settings/portainer-url", perm(auth.PermSettingsModify, s.apiSetPortainerURL))
-	s.mux.Handle("POST /api/settings/portainer-token", perm(auth.PermSettingsModify, s.apiSetPortainerToken))
-	s.mux.Handle("POST /api/settings/portainer-test", perm(auth.PermSettingsModify, s.apiTestPortainerConnection))
 
 	// NPM (Nginx Proxy Manager)
 	s.mux.Handle("GET /connectors", perm(auth.PermSettingsModify, s.handleConnectors))
