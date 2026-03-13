@@ -570,6 +570,9 @@ tbody tr:hover {
 tbody tr:last-child {
   border-bottom: none;
 }
+.host-group tr:last-child {
+  border-bottom: 1px solid var(--border);
+}
 .svc-header {
   border-bottom: 1px solid var(--border) !important;
 }
@@ -1093,13 +1096,14 @@ input[type=checkbox] {
 .section-separator {
   border: none;
 }
+.section-separator td {
+  border-top: 2px solid var(--border);
+}
 .section-divider {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-3) var(--sp-4);
-  border-top: 2px solid var(--border);
-  margin-top: var(--sp-2);
 }
 .section-divider .expand-icon {
   font-size: 0.9rem;
