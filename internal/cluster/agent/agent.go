@@ -106,6 +106,8 @@ type Agent struct {
 
 	engineID string // Docker Engine ID for source dedup
 
+	certErrLogged bool // suppress repeated CA mismatch guidance
+
 	dedup    *dedup
 	policies *policyCache
 	journal  *journal
@@ -229,6 +231,18 @@ func (a *Agent) Run(ctx context.Context) error {
 
 		wait := bo.next()
 		a.log.Warn("session ended, reconnecting", "error", err, "backoff", wait)
+
+		// Detect TLS certificate errors and log actionable guidance once.
+		// This typically happens when the server's CA was regenerated
+		// (volume deleted, host migration) while the agent still has
+		// the old CA certificate cached locally.
+		if err != nil && !a.certErrLogged && isCertError(err) {
+			a.certErrLogged = true
+			a.log.Error("server CA mismatch -- the server's TLS certificate has changed since this agent enrolled",
+				"fix", "re-enroll this agent: stop it, delete the cluster data directory, and restart with a fresh SENTINEL_ENROLL_TOKEN",
+				"data_dir", a.cfg.DataDir,
+			)
+		}
 
 		select {
 		case <-ctx.Done():
@@ -429,6 +443,17 @@ func (a *Agent) closeConn() {
 		a.conn.Close()
 		a.conn = nil
 	}
+}
+
+// isCertError returns true if the error indicates a TLS certificate
+// mismatch, typically caused by the server regenerating its CA after
+// a volume deletion or host migration.
+func isCertError(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "certificate signed by unknown authority") ||
+		strings.Contains(s, "certificate is not trusted") ||
+		strings.Contains(s, "x509:") ||
+		strings.Contains(s, "tls: failed to verify certificate")
 }
 
 // setConnected marks the agent as connected and clears the offline timer.

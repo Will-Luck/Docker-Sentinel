@@ -109,7 +109,7 @@
                     <span>Enrolled {{fmtTimeAgo .EnrolledAt}}</span>
                     {{if not .Connected}}<span class="text-muted">Last seen {{fmtTimeAgo .LastSeen}}</span>{{end}}
                 </div>
-                {{if and (not .Connected) .DisconnectCat}}
+                {{if not .Connected}}
                 <details class="host-troubleshoot" open>
                     <summary>
                         <span class="troubleshoot-icon">&#9888;</span>
@@ -129,19 +129,28 @@
                         {{else if eq .DisconnectCat "cert"}}
                         <p><strong>Certificate or enrollment issue</strong></p>
                         <ul>
-                            <li>The agent may have stale certificates from a previous enrollment</li>
+                            <li>The agent has stale certificates from a previous enrollment</li>
+                            <li>This happens when the server's data volume is deleted or the server is migrated to a new host</li>
                             <li>Generate a new enrollment token on this page</li>
                             <li>On the agent host, stop the container and remove its data volume</li>
                             <li>Redeploy with <code>SENTINEL_ENROLL_TOKEN=&lt;token&gt;</code> and <code>SENTINEL_SERVER_ADDR=&lt;this-server&gt;:{{$.ClusterPort}}</code></li>
-                            <li>Or access the agent's setup wizard at its web port to re-enroll</li>
                         </ul>
-                        {{else}}
+                        {{else if eq .DisconnectCat "server"}}
                         <p><strong>Server-side disconnect</strong></p>
                         <ul>
                             <li>This is usually normal (server restart, stream replaced by new connection)</li>
                             <li>The agent should reconnect automatically within 30 seconds</li>
                             <li>If it doesn't reconnect, check agent logs for errors</li>
                         </ul>
+                        {{else}}
+                        <p><strong>Agent not connecting</strong></p>
+                        <p>Common causes:</p>
+                        <ul>
+                            <li><strong>Agent not running</strong> &mdash; check it's up: <code>docker ps | grep sentinel</code></li>
+                            <li><strong>Network issue</strong> &mdash; verify the agent can reach this server on port {{$.ClusterPort}}</li>
+                            <li><strong>CA certificate mismatch</strong> &mdash; if the server's data volume was recreated, agents need re-enrolling: stop the agent, delete its data volume, and redeploy with a fresh <code>SENTINEL_ENROLL_TOKEN</code></li>
+                        </ul>
+                        <p class="text-muted">Check agent logs for details: <code>docker logs &lt;container&gt; --tail 50</code></p>
                         {{end}}
                         {{if not .DisconnectAt.IsZero}}
                         <p class="troubleshoot-time">Disconnected: {{.DisconnectAt.Format "Jan 2, 15:04:05"}}</p>
