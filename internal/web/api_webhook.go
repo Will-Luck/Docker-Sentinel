@@ -29,11 +29,11 @@ func (s *Server) apiWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate webhook secret from query param or header.
-	secret := r.URL.Query().Get("secret")
-	if secret == "" {
-		secret = r.Header.Get("X-Webhook-Secret")
-	}
+	// Validate webhook secret. The secret must be supplied in the
+	// X-Webhook-Secret header — query-string auth is rejected because
+	// proxies and access logs record URLs verbatim, leaking the secret
+	// into log aggregators and browser history.
+	secret := r.Header.Get("X-Webhook-Secret")
 
 	storedSecret, _ := s.deps.SettingsStore.LoadSetting(store.SettingWebhookSecret)
 	if storedSecret == "" || subtle.ConstantTimeCompare([]byte(secret), []byte(storedSecret)) != 1 {

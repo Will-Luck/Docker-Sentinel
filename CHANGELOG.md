@@ -20,6 +20,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JWE decryption with KW algorithms and empty `encrypted_key`). Sentinel's
   OIDC flow uses JWS-signed ID tokens, not JWE, so the exploit path is low
   practical risk.
+- **Webhook secret is header-only.** `POST /api/webhook` now requires
+  `X-Webhook-Secret`; the query-string fallback (`?secret=...`) has been
+  removed because proxies and access logs record URLs verbatim, leaking
+  the secret into log aggregators and browser history. Webhook clients
+  that previously used `?secret=` must migrate to the header.
+- **Atom feed accepts `Authorization: Bearer` and never echoes its
+  token.** `GET /api/history/feed` now prefers the `Authorization`
+  header for credentials; the legacy `?token=` query parameter still
+  works but the rendered feed's `<link rel="self">` is now a token-free
+  URL so cached feed bodies no longer leak credentials to other
+  subscribers.
+- **OIDC login uses nonce + PKCE.** The OIDC authorization request
+  now includes a 32-byte nonce and an S256 PKCE challenge; the
+  callback verifies the ID token's `nonce` claim matches (constant
+  time) and sends the `code_verifier` on the token exchange. This
+  closes two standard OAuth 2.1 replay classes: ID token replay
+  across sessions and code interception. All three OIDC transient
+  secrets (state/nonce/verifier) are stored in short-lived HttpOnly
+  cookies and cleared on every callback exit path.
+- **Logout is POST-only and CSRF-protected.** `POST /logout` is now
+  wrapped by the `authed()` middleware chain so the existing
+  double-submit CSRF token on HTML form submissions is validated.
+  `GET /logout` has been removed; the previous handler allowed any
+  cross-site `<img src="/logout">` to force a sign-out.
+- **OIDC callback error redirect is a fixed slug.** The callback no
+  longer reflects IdP-controlled error strings or Go `err.Error()`
+  text into `/login?error=...`; it now redirects to
+  `/login?error=sso_failed` and logs the full detail server-side.
+  This eliminates a reflected-XSS vector if the login template ever
+  rendered `{{.Error}}` in an unsafe context.
+
+### Documentation
+- **CSP comment corrected.** The `securityHeaders` comment previously
+  attributed `'unsafe-inline'` to htmx; in reality htmx isn't using
+  `hx-on*` attributes anywhere in the templates — the real reason
+  is ~160 inline `onclick=` handlers and ~180 inline `style=`
+  attributes. Updated the comment to describe the real constraint
+  and reference the follow-up hardening issue.
 
 ## [2.12.0] - 2026-03-13
 

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"testing"
 )
@@ -227,6 +229,100 @@ func TestGenerateOIDCState(t *testing.T) {
 		}
 		if len(decoded) != 16 {
 			t.Errorf("expected 16 bytes after decoding, got %d", len(decoded))
+		}
+	})
+}
+
+func TestGenerateOIDCNonce(t *testing.T) {
+	t.Run("returns 64-char hex string (32 bytes)", func(t *testing.T) {
+		nonce, err := GenerateOIDCNonce()
+		if err != nil {
+			t.Fatalf("GenerateOIDCNonce failed: %v", err)
+		}
+		if len(nonce) != 64 {
+			t.Errorf("expected 64-char hex string, got %d chars", len(nonce))
+		}
+		if _, err := hex.DecodeString(nonce); err != nil {
+			t.Errorf("nonce is not valid hex: %v", err)
+		}
+	})
+
+	t.Run("two calls produce different values", func(t *testing.T) {
+		a, err := GenerateOIDCNonce()
+		if err != nil {
+			t.Fatalf("first GenerateOIDCNonce failed: %v", err)
+		}
+		b, err := GenerateOIDCNonce()
+		if err != nil {
+			t.Fatalf("second GenerateOIDCNonce failed: %v", err)
+		}
+		if a == b {
+			t.Error("two generated nonces should not be identical")
+		}
+	})
+}
+
+func TestGeneratePKCEVerifier(t *testing.T) {
+	t.Run("returns 43-char base64url string", func(t *testing.T) {
+		verifier, err := GeneratePKCEVerifier()
+		if err != nil {
+			t.Fatalf("GeneratePKCEVerifier failed: %v", err)
+		}
+		// RFC 7636: 32 random bytes base64url-encoded without padding = 43 chars
+		if len(verifier) != 43 {
+			t.Errorf("expected 43-char verifier, got %d chars", len(verifier))
+		}
+		if _, err := base64.RawURLEncoding.DecodeString(verifier); err != nil {
+			t.Errorf("verifier is not valid base64url: %v", err)
+		}
+	})
+
+	t.Run("two calls produce different values", func(t *testing.T) {
+		a, err := GeneratePKCEVerifier()
+		if err != nil {
+			t.Fatalf("first GeneratePKCEVerifier failed: %v", err)
+		}
+		b, err := GeneratePKCEVerifier()
+		if err != nil {
+			t.Fatalf("second GeneratePKCEVerifier failed: %v", err)
+		}
+		if a == b {
+			t.Error("two generated verifiers should not be identical")
+		}
+	})
+}
+
+func TestPKCEChallengeFromVerifier(t *testing.T) {
+	t.Run("matches RFC 7636 S256 test vector", func(t *testing.T) {
+		// RFC 7636 Appendix B.
+		verifier := "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+		expected := "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+		got := PKCEChallengeFromVerifier(verifier)
+		if got != expected {
+			t.Errorf("challenge mismatch:\n  verifier: %q\n  expected: %q\n  got:      %q",
+				verifier, expected, got)
+		}
+	})
+
+	t.Run("is deterministic", func(t *testing.T) {
+		verifier, err := GeneratePKCEVerifier()
+		if err != nil {
+			t.Fatalf("GeneratePKCEVerifier failed: %v", err)
+		}
+		a := PKCEChallengeFromVerifier(verifier)
+		b := PKCEChallengeFromVerifier(verifier)
+		if a != b {
+			t.Error("PKCEChallengeFromVerifier must be deterministic for the same input")
+		}
+	})
+
+	t.Run("equals manual SHA256 + base64url", func(t *testing.T) {
+		verifier := "test-verifier-12345"
+		sum := sha256.Sum256([]byte(verifier))
+		expected := base64.RawURLEncoding.EncodeToString(sum[:])
+		got := PKCEChallengeFromVerifier(verifier)
+		if got != expected {
+			t.Errorf("challenge mismatch: expected %q, got %q", expected, got)
 		}
 	})
 }
