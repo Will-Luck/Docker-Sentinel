@@ -5,6 +5,22 @@ All notable changes to Docker-Sentinel are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- **Bumped `google.golang.org/grpc` 1.79.1 → 1.79.3** to close
+  [CVE-2026-33186](https://github.com/advisories/GHSA-p77j-4mvh-x3m3) (gRPC-Go
+  authorization bypass via missing leading slash in HTTP/2 `:path`).
+  Docker-Sentinel's cluster gRPC server uses mTLS with no path-based authz
+  interceptor, so the bypass has nothing to bypass — upgrade is for
+  supply-chain hygiene.
+- **Bumped `github.com/go-jose/go-jose/v4` 4.1.3 → 4.1.4** (indirect, via
+  `coreos/go-oidc/v3`) to close
+  [CVE-2026-34986](https://github.com/advisories/GHSA-78h2-9frx-2jm8) (panic in
+  JWE decryption with KW algorithms and empty `encrypted_key`). Sentinel's
+  OIDC flow uses JWS-signed ID tokens, not JWE, so the exploit path is low
+  practical risk.
+
 ## [2.12.0] - 2026-03-13
 
 ### Added
