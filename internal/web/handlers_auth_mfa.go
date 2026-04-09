@@ -3,7 +3,6 @@ package web
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 )
@@ -242,11 +241,13 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 
-	// Check for error from IdP.
+	// Check for error from IdP. The raw IdP error string is discarded from
+	// the redirect to avoid reflecting attacker-controlled content into
+	// the login page (finding J). Server-side logs retain full detail.
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		desc := r.URL.Query().Get("error_description")
 		s.deps.Log.Warn("OIDC login error from IdP", "error", errParam, "description", desc)
-		http.Redirect(w, r, "/login?error="+url.QueryEscape("SSO login failed: "+errParam), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?error=sso_failed", http.StatusSeeOther)
 		return
 	}
 
@@ -273,8 +274,10 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		ip, r.UserAgent(),
 	)
 	if err != nil {
+		// Discard err.Error() from the redirect URL (finding J). The detail
+		// is logged server-side; the user sees a generic slug.
 		s.deps.Log.Warn("OIDC login failed", "error", err, "username", userInfo.Username)
-		http.Redirect(w, r, "/login?error="+url.QueryEscape("SSO login failed: "+err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?error=sso_failed", http.StatusSeeOther)
 		return
 	}
 
