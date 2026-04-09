@@ -3,6 +3,9 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -88,21 +91,35 @@ func NewOIDCProvider(ctx context.Context, cfg OIDCConfig) (*OIDCProvider, error)
 	}, nil
 }
 
-// AuthURL generates the authorization URL with the given state parameter.
-func (p *OIDCProvider) AuthURL(state string) string {
+// AuthURL generates the authorization URL with CSRF state, OIDC nonce,
+// and PKCE code challenge (S256). The caller is responsible for
+// generating state/nonce/verifier with GenerateOIDCState,
+// GenerateOIDCNonce, and GeneratePKCEVerifier respectively, and for
+// storing them so the callback handler can pass the matching values to
+// Exchange.
+func (p *OIDCProvider) AuthURL(state, nonce, pkceChallenge string) string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return p.oauth2Cfg.AuthCodeURL(state)
+	opts := []oauth2.AuthCodeOption{
+		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.SetAuthURLParam("code_challenge", pkceChallenge),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	}
+	return p.oauth2Cfg.AuthCodeURL(state, opts...)
 }
 
-// Exchange trades an authorization code for tokens and extracts user info.
-func (p *OIDCProvider) Exchange(ctx context.Context, code string) (*OIDCUserInfo, error) {
+// Exchange trades an authorization code for tokens and extracts user
+// info. The pkceVerifier must match the code_challenge that was sent
+// to AuthURL. The expectedNonce must match the nonce claim in the
+// resulting ID token — mismatch indicates either a replay attempt or
+// a misconfigured IdP and the exchange is rejected.
+func (p *OIDCProvider) Exchange(ctx context.Context, code, pkceVerifier, expectedNonce string) (*OIDCUserInfo, error) {
 	p.mu.RLock()
 	cfg := p.oauth2Cfg
 	verifier := p.verifier
 	p.mu.RUnlock()
 
-	token, err := cfg.Exchange(ctx, code)
+	token, err := cfg.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", pkceVerifier))
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}
@@ -115,6 +132,16 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code string) (*OIDCUserInfo
 	idToken, err := verifier.Verify(ctx, rawIDToken)
 	if err != nil {
 		return nil, fmt.Errorf("token verification: %w", err)
+	}
+
+	// Reject when the ID token's nonce does not match the nonce we sent
+	// on the authorization request. The go-oidc verifier populates
+	// idToken.Nonce from the "nonce" claim but does not compare it
+	// automatically — that check is our responsibility. Constant-time
+	// comparison prevents timing-side-channel leakage of the nonce.
+	if expectedNonce == "" || idToken.Nonce == "" ||
+		subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(expectedNonce)) != 1 {
+		return nil, fmt.Errorf("id token nonce mismatch")
 	}
 
 	var claims struct {
@@ -232,6 +259,38 @@ func GenerateOIDCState() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// GenerateOIDCNonce creates a random 32-byte hex-encoded nonce for
+// binding an ID token to a specific login attempt, preventing token
+// replay across sessions.
+func GenerateOIDCNonce() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// GeneratePKCEVerifier creates a random code_verifier as described in
+// RFC 7636 (43 characters, base64url without padding). The verifier is
+// stored server-side until the callback phase and then sent with the
+// token exchange to prove the login session owns the original
+// authorization request.
+func GeneratePKCEVerifier() (string, error) {
+	// 32 bytes -> 43 base64url chars, well within the RFC 7636 range.
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// PKCEChallengeFromVerifier derives the S256 code_challenge from a
+// PKCE verifier: base64url(SHA256(verifier)) without padding.
+func PKCEChallengeFromVerifier(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // LoginWithOIDC finds or creates a user from OIDC claims and creates a session.
