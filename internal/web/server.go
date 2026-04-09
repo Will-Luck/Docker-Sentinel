@@ -304,8 +304,6 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /login", rateLimit(s.authLimiter, s.apiLogin))
 	s.mux.HandleFunc("GET /setup", s.handleSetup)
 	s.mux.HandleFunc("POST /setup", rateLimit(s.authLimiter, s.apiSetup))
-	s.mux.HandleFunc("POST /logout", s.handleLogout)
-	s.mux.HandleFunc("GET /logout", s.handleLogout)
 	s.mux.HandleFunc("POST /api/auth/passkeys/login/begin", rateLimit(s.authLimiter, s.apiPasskeyLoginBegin))
 	s.mux.HandleFunc("POST /api/auth/passkeys/login/finish", rateLimit(s.authLimiter, s.apiPasskeyLoginFinish))
 	s.mux.HandleFunc("GET /api/auth/passkeys/available", s.apiPasskeysAvailable)
@@ -318,6 +316,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/history/feed", s.apiHistoryFeed)
 
 	// --- Auth-only routes (authenticated, no specific permission) ---
+	// POST /logout is wrapped by authed() so the CSRF double-submit check
+	// applies. GET /logout is intentionally not registered — logout must be
+	// a state-changing POST to prevent attackers from forcing sign-out via
+	// an <img src="/logout"> tag. The HTML templates already submit a
+	// csrf_token form field from inside <form action="/logout">.
+	s.mux.Handle("POST /logout", authed(s.handleLogout))
 	s.mux.Handle("GET /account", authed(s.handleAccount))
 	s.mux.Handle("POST /api/auth/change-password", authed(s.apiChangePassword))
 	s.mux.Handle("GET /api/auth/sessions", authed(s.apiListSessions))

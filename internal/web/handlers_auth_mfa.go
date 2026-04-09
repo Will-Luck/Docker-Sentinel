@@ -3,7 +3,6 @@ package web
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 )
@@ -198,19 +197,55 @@ func (s *Server) apiOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to generate state", http.StatusInternalServerError)
 		return
 	}
+	nonce, err := auth.GenerateOIDCNonce()
+	if err != nil {
+		http.Error(w, "failed to generate nonce", http.StatusInternalServerError)
+		return
+	}
+	pkceVerifier, err := auth.GeneratePKCEVerifier()
+	if err != nil {
+		http.Error(w, "failed to generate PKCE verifier", http.StatusInternalServerError)
+		return
+	}
+	pkceChallenge := auth.PKCEChallengeFromVerifier(pkceVerifier)
 
-	// Store state in a short-lived cookie (10 min, HttpOnly).
+	// Store state, nonce, and PKCE verifier in short-lived HttpOnly
+	// cookies so the callback handler can validate them. The state
+	// prevents CSRF on the callback, the nonce binds the ID token to
+	// this login attempt, and the verifier proves the token exchange
+	// owns the original authorization request.
+	setOIDCCookie(w, "oidc_state", state, s.deps.Auth.CookieSecure)
+	setOIDCCookie(w, "oidc_nonce", nonce, s.deps.Auth.CookieSecure)
+	setOIDCCookie(w, "oidc_pkce", pkceVerifier, s.deps.Auth.CookieSecure)
+
+	http.Redirect(w, r, provider.AuthURL(state, nonce, pkceChallenge), http.StatusFound)
+}
+
+// setOIDCCookie writes a short-lived (10 minute) HttpOnly cookie used
+// by the OIDC login flow. SameSite=Lax is the tightest setting that
+// still works with the OIDC redirect_uri GET callback.
+func setOIDCCookie(w http.ResponseWriter, name, value string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "oidc_state",
-		Value:    state,
+		Name:     name,
+		Value:    value,
 		Path:     "/",
 		MaxAge:   600,
 		HttpOnly: true,
-		Secure:   s.deps.Auth.CookieSecure,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
 
-	http.Redirect(w, r, provider.AuthURL(state), http.StatusFound)
+// clearOIDCCookie removes a cookie previously set by setOIDCCookie.
+func clearOIDCCookie(w http.ResponseWriter, name string, secure bool) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // apiOIDCCallback handles the redirect from the Identity Provider.
@@ -221,32 +256,46 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify state from cookie.
+	// Verify state, nonce, and PKCE verifier cookies are all present
+	// before doing anything else. Missing cookies mean the login flow
+	// was not initiated from apiOIDCLogin — either a replay attempt
+	// or a broken browser session.
 	stateCookie, err := r.Cookie("oidc_state")
 	if err != nil || stateCookie.Value == "" {
 		http.Error(w, "missing state", http.StatusBadRequest)
 		return
 	}
+	nonceCookie, err := r.Cookie("oidc_nonce")
+	if err != nil || nonceCookie.Value == "" {
+		http.Error(w, "missing nonce", http.StatusBadRequest)
+		return
+	}
+	pkceCookie, err := r.Cookie("oidc_pkce")
+	if err != nil || pkceCookie.Value == "" {
+		http.Error(w, "missing PKCE verifier", http.StatusBadRequest)
+		return
+	}
+
+	// Always clear the OIDC cookies once we've captured their values,
+	// even if the flow fails later — they are single-use by design.
+	defer func() {
+		clearOIDCCookie(w, "oidc_state", s.deps.Auth.CookieSecure)
+		clearOIDCCookie(w, "oidc_nonce", s.deps.Auth.CookieSecure)
+		clearOIDCCookie(w, "oidc_pkce", s.deps.Auth.CookieSecure)
+	}()
+
 	if r.URL.Query().Get("state") != stateCookie.Value {
 		http.Error(w, "invalid state", http.StatusBadRequest)
 		return
 	}
 
-	// Clear the state cookie.
-	http.SetCookie(w, &http.Cookie{
-		Name:     "oidc_state",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   s.deps.Auth.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
-	})
-
-	// Check for error from IdP.
+	// Check for error from IdP. The raw IdP error string is discarded from
+	// the redirect to avoid reflecting attacker-controlled content into
+	// the login page (finding J). Server-side logs retain full detail.
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		desc := r.URL.Query().Get("error_description")
 		s.deps.Log.Warn("OIDC login error from IdP", "error", errParam, "description", desc)
-		http.Redirect(w, r, "/login?error="+url.QueryEscape("SSO login failed: "+errParam), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?error=sso_failed", http.StatusSeeOther)
 		return
 	}
 
@@ -257,10 +306,10 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userInfo, err := provider.Exchange(r.Context(), code)
+	userInfo, err := provider.Exchange(r.Context(), code, pkceCookie.Value, nonceCookie.Value)
 	if err != nil {
 		s.deps.Log.Warn("OIDC exchange failed", "error", err)
-		http.Redirect(w, r, "/login?error=SSO+authentication+failed", http.StatusSeeOther)
+		http.Redirect(w, r, "/login?error=sso_failed", http.StatusSeeOther)
 		return
 	}
 
@@ -273,8 +322,10 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		ip, r.UserAgent(),
 	)
 	if err != nil {
+		// Discard err.Error() from the redirect URL (finding J). The detail
+		// is logged server-side; the user sees a generic slug.
 		s.deps.Log.Warn("OIDC login failed", "error", err, "username", userInfo.Username)
-		http.Redirect(w, r, "/login?error="+url.QueryEscape("SSO login failed: "+err.Error()), http.StatusSeeOther)
+		http.Redirect(w, r, "/login?error=sso_failed", http.StatusSeeOther)
 		return
 	}
 

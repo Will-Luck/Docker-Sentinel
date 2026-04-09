@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 )
 
 // Atom 1.0 XML types.
@@ -36,11 +38,19 @@ type atomEntry struct {
 // Auth is via a query parameter token, validated against the API token store.
 // When auth is disabled (s.deps.Auth == nil), the feed is open.
 func (s *Server) apiHistoryFeed(w http.ResponseWriter, r *http.Request) {
-	// Validate token when auth is configured.
+	// Validate token when auth is configured. The Authorization: Bearer
+	// header is the preferred credential path because it is not logged by
+	// reverse proxies, CDNs, or browser history the way query-string
+	// tokens are. The ?token= query parameter is still accepted for
+	// legacy feed readers that cannot set headers. The self-link in the
+	// rendered feed never echoes the token (finding B).
 	if s.deps.Auth != nil && s.deps.Auth.AuthEnabled() {
-		token := r.URL.Query().Get("token")
+		token := auth.ExtractBearerToken(r.Header.Get("Authorization"))
 		if token == "" {
-			writeError(w, http.StatusUnauthorized, "missing token parameter")
+			token = r.URL.Query().Get("token")
+		}
+		if token == "" {
+			writeError(w, http.StatusUnauthorized, "missing token")
 			return
 		}
 		rc := s.deps.Auth.ValidateBearerToken(r.Context(), token)
@@ -63,10 +73,10 @@ func (s *Server) apiHistoryFeed(w http.ResponseWriter, r *http.Request) {
 		updated = records[0].Timestamp.UTC()
 	}
 
+	// Self-link never includes a token — cached feed bodies are served to
+	// other subscribers, so the URL in <link rel="self"> must not carry
+	// credentials.
 	selfURL := "/api/history/feed"
-	if q := r.URL.Query().Get("token"); q != "" {
-		selfURL += "?token=" + q
-	}
 
 	feed := atomFeed{
 		XMLNS:   "http://www.w3.org/2005/Atom",
