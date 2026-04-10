@@ -2386,9 +2386,7 @@
     var enc = encodeURIComponent(name);
     var url = "/api/containers/" + enc + "/row";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
-    fetch(url).then(function(r) {
-      return r.json();
-    }).then(function(data) {
+    authFetchJSON(url).then(function(data) {
       if (!data.html) return;
       updateStats2(data.total, data.running, data.pending);
       var temp = document.createElement("tbody");

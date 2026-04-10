@@ -898,7 +898,9 @@ func main() {
 
 		go func() {
 			<-ctx.Done()
-			_ = srv.Shutdown(context.Background())
+			shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutCancel()
+			_ = srv.Shutdown(shutCtx)
 		}()
 
 		go func() {
