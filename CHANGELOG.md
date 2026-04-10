@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-04-10
+
 ### Security
 - **Bumped `google.golang.org/grpc` 1.79.1 → 1.79.3** to close
   [CVE-2026-33186](https://github.com/advisories/GHSA-p77j-4mvh-x3m3) (gRPC-Go
@@ -50,6 +52,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/login?error=sso_failed` and logs the full detail server-side.
   This eliminates a reflected-XSS vector if the login template ever
   rendered `{{.Error}}` in an unsafe context.
+
+### Fixed
+- **Graceful shutdown timeout.** `srv.Shutdown` now uses a 10-second
+  bounded context instead of `context.Background()`. The unbounded
+  version could hang indefinitely on SIGTERM if any SSE client was
+  connected, because `http.Server.Shutdown` waits for all active
+  connections to drain but does not cancel request contexts.
+- **NPM client body close.** Replaced `defer resp.Body.Close()` inside
+  the retry loop with an immediate close before return.
+- **Frontend `authFetchJSON` helper.** New wrapper in `auth.js` checks
+  `r.ok` before parsing JSON. SSE `updateContainerRow` (the highest-
+  frequency dashboard fetch) now rejects on non-2xx instead of
+  silently parsing error bodies as data.
 
 ### Documentation
 - **CSP comment corrected.** The `securityHeaders` comment previously
@@ -668,6 +683,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [2.5.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.3.5...v2.4.0
 [2.3.5]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.3.4...v2.3.5
+[2.13.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.12.0...v2.13.0
 [2.3.4]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.3.3...v2.3.4
 [2.3.3]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.3.1...v2.3.2
