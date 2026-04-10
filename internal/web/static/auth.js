@@ -42,6 +42,28 @@ function authFetch(url, options) {
     });
 }
 
+/**
+ * authFetchJSON is a convenience wrapper around authFetch that also
+ * validates the HTTP status and parses the response as JSON in one
+ * step. Callers get a rejected promise on any non-2xx status, so
+ * silent data corruption from parsing error-body JSON as real data
+ * is eliminated.
+ *
+ * Use this for any fetch that expects a JSON response. The raw
+ * authFetch is still available for non-JSON responses (e.g. HTML
+ * fragment fetches used by SSE row replacement).
+ */
+function authFetchJSON(url, options) {
+    return authFetch(url, options).then(function(resp) {
+        if (!resp.ok) {
+            return resp.text().then(function(body) {
+                return Promise.reject(new Error("HTTP " + resp.status + ": " + body.substring(0, 200)));
+            });
+        }
+        return resp.json();
+    });
+}
+
 /* ------------------------------------------------------------
    2. Change Password
    ------------------------------------------------------------ */

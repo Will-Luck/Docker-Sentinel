@@ -51,8 +51,7 @@ function updateContainerRow(name, hostId) {
     var enc = encodeURIComponent(name);
     var url = "/api/containers/" + enc + "/row";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
-    fetch(url)
-        .then(function(r) { return r.json(); })
+    authFetchJSON(url)
         .then(function(data) {
             if (!data.html) return;
 

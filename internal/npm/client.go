@@ -146,8 +146,8 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		}
 
 		if resp.StatusCode >= 400 {
-			defer resp.Body.Close()
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			resp.Body.Close()
 			return nil, fmt.Errorf("npm API error %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 		}
 
