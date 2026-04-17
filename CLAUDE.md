@@ -75,3 +75,17 @@ internal/
 - **CI:** `.github/workflows/ci.yml` (lint + test), `release.yml` (Docker image on tag)
 - **Labels:** Containers use `sentinel.*` labels for policy, schedule, and hook config
 - **No docker-compose on host.** Containers deployed via `docker run` or Portainer.
+
+## Release workflow
+
+Gitea is the squash authority. All merges happen via Gitea PRs. Never squash-merge on GitHub -- squashing the same branch twice (once per remote) produces two different commits with identical content, and the next PR conflicts on shared files (`CHANGELOG.md` is a reliable offender).
+
+Remotes here: `origin` = Gitea, `github` = GitHub.
+
+1. Open the PR on Gitea (`origin`), get CI green, merge (squash).
+2. Smoke-test the merged `main` -- for Sentinel this usually means deploying to the .60/.61 test cluster via `/lucknet-ops:cluster-test` or an isolated container with demo targets.
+3. Fast-forward GitHub: `git push github origin/main:main`. No GitHub PR needed.
+4. Cut the release tag: move `[Unreleased]` -> `[X.Y.Z] - YYYY-MM-DD` in `CHANGELOG.md`, commit on `main`, `git tag -a vX.Y.Z -m "..."`, push tag to both remotes.
+5. Post-deploy: promote the production Sentinel on `.57` and run `/lucknet-ops:post-deploy`.
+
+External GitHub contributor? Pull their branch, push to Gitea, open a Gitea PR, squash there, fast-forward GitHub. Their GitHub PR auto-closes as "merged".
