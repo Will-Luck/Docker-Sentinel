@@ -37,7 +37,7 @@ func (b *flexBool) UnmarshalJSON(data []byte) error {
 
 // ResolvedURL is a URL resolved from an NPM proxy host match.
 type ResolvedURL struct {
-	URL         string // full URL (e.g. "https://radarr.lucknet.uk")
+	URL         string // full URL (e.g. "https://radarr.example.com")
 	Domain      string // primary domain (first entry)
 	ProxyHostID int    // NPM proxy host ID for reference
 }

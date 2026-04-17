@@ -5,7 +5,7 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
 DEV_TAG     := dev-$(shell date +%Y%m%d-%H%M)
 DEV_IMAGE   := docker-sentinel:$(DEV_TAG)
-DEV_HOST    := test1@192.168.1.60
+DEV_HOST    := user@192.0.2.10
 DEV_PORT    := 62850
 DEV_CONTAINER := sentinel-test
 DEV_SSH_KEY := $(shell mktemp)

@@ -46,7 +46,7 @@ type Config struct {
 	TLSAuto bool   // auto-generate self-signed certificate
 
 	// WebAuthn passkeys (all empty = disabled)
-	WebAuthnRPID        string // Relying Party ID (e.g. "192.168.1.57")
+	WebAuthnRPID        string // Relying Party ID (e.g. "192.0.2.10")
 	WebAuthnDisplayName string // RP display name shown by authenticators
 	WebAuthnOrigins     string // comma-separated allowed origins
 	MetricsEnabled      bool
