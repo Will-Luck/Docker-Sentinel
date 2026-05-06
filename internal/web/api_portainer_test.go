@@ -10,7 +10,7 @@ func TestIsLocalSocketEndpoint(t *testing.T) {
 	}{
 		{"unix socket", PortainerEndpoint{URL: "unix:///var/run/docker.sock"}, true},
 		{"empty URL docker type", PortainerEndpoint{URL: "", Type: 1}, true},
-		{"tcp endpoint", PortainerEndpoint{URL: "tcp://192.168.1.61:2375", Type: 1}, false},
+		{"tcp endpoint", PortainerEndpoint{URL: "tcp://203.0.113.61:2375", Type: 1}, false},
 		{"empty URL non-docker", PortainerEndpoint{URL: "", Type: 2}, false},
 	}
 	for _, tt := range tests {

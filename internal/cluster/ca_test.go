@@ -183,7 +183,7 @@ func TestIssueServerCert(t *testing.T) {
 func TestIssueServerCert_ExtraSANs(t *testing.T) {
 	ca := mustCA(t)
 
-	certPEM, _, err := ca.IssueServerCert("192.168.1.57", "sen.example.com")
+	certPEM, _, err := ca.IssueServerCert("203.0.113.57", "sen.example.com")
 	if err != nil {
 		t.Fatalf("IssueServerCert with extra SANs failed: %v", err)
 	}
@@ -193,13 +193,13 @@ func TestIssueServerCert_ExtraSANs(t *testing.T) {
 	// Should include the extra IP.
 	foundExtra := false
 	for _, ip := range cert.IPAddresses {
-		if ip.Equal(net.ParseIP("192.168.1.57")) {
+		if ip.Equal(net.ParseIP("203.0.113.57")) {
 			foundExtra = true
 			break
 		}
 	}
 	if !foundExtra {
-		t.Error("server cert should include extra IP 192.168.1.57 in IP SANs")
+		t.Error("server cert should include extra IP 203.0.113.57 in IP SANs")
 	}
 
 	// Should include the extra hostname.

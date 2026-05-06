@@ -30,13 +30,13 @@ func fakeResolver(hosts []ProxyHost, localHosts ...string) *Resolver {
 
 func TestLookupForHost_MatchesProvidedAddr(t *testing.T) {
 	hosts := []ProxyHost{
-		{ID: 1, DomainNames: []string{"radarr.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 62100, Enabled: true},
-		{ID: 2, DomainNames: []string{"sonarr.example.com"}, ForwardHost: "192.168.1.61", ForwardPort: 62100, Enabled: true},
+		{ID: 1, DomainNames: []string{"radarr.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 62100, Enabled: true},
+		{ID: 2, DomainNames: []string{"sonarr.example.com"}, ForwardHost: "203.0.113.61", ForwardPort: 62100, Enabled: true},
 	}
-	r := fakeResolver(hosts, "192.168.1.57")
+	r := fakeResolver(hosts, "203.0.113.57")
 
 	// LookupForHost should match the provided host, not the resolver's local addrs.
-	got := r.LookupForHost(62100, "192.168.1.61")
+	got := r.LookupForHost(62100, "203.0.113.61")
 	if got == nil {
 		t.Fatal("expected match for .61:62100, got nil")
 	}
@@ -84,13 +84,13 @@ func TestLookupForHost_HTTPS_CertificateID(t *testing.T) {
 
 func TestAllMappingsGrouped_GroupsByHost(t *testing.T) {
 	hosts := []ProxyHost{
-		{ID: 1, DomainNames: []string{"radarr.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 62100, Enabled: true},
-		{ID: 2, DomainNames: []string{"sonarr.example.com"}, ForwardHost: "192.168.1.61", ForwardPort: 62200, Enabled: true},
-		{ID: 3, DomainNames: []string{"plex.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 32400, Enabled: true},
-		{ID: 4, DomainNames: []string{"disabled.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 9999, Enabled: false},
+		{ID: 1, DomainNames: []string{"radarr.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 62100, Enabled: true},
+		{ID: 2, DomainNames: []string{"sonarr.example.com"}, ForwardHost: "203.0.113.61", ForwardPort: 62200, Enabled: true},
+		{ID: 3, DomainNames: []string{"plex.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 32400, Enabled: true},
+		{ID: 4, DomainNames: []string{"disabled.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 9999, Enabled: false},
 	}
 	// localAddrs is set but AllMappingsGrouped should ignore it.
-	r := fakeResolver(hosts, "192.168.1.57")
+	r := fakeResolver(hosts, "203.0.113.57")
 
 	grouped := r.AllMappingsGrouped()
 
@@ -100,7 +100,7 @@ func TestAllMappingsGrouped_GroupsByHost(t *testing.T) {
 	}
 
 	// .57 should have two mappings (disabled one excluded).
-	host57 := grouped["192.168.1.57"]
+	host57 := grouped["203.0.113.57"]
 	if len(host57) != 2 {
 		t.Errorf("expected 2 mappings for .57, got %d", len(host57))
 	}
@@ -112,7 +112,7 @@ func TestAllMappingsGrouped_GroupsByHost(t *testing.T) {
 	}
 
 	// .61 should have one mapping.
-	host61 := grouped["192.168.1.61"]
+	host61 := grouped["203.0.113.61"]
 	if len(host61) != 1 {
 		t.Errorf("expected 1 mapping for .61, got %d", len(host61))
 	}
@@ -138,10 +138,10 @@ func TestAllMappingsGrouped_FirstMatchWinsPerHost(t *testing.T) {
 func TestLookup_BackwardsCompatible(t *testing.T) {
 	// Verify the original Lookup method still works identically.
 	hosts := []ProxyHost{
-		{ID: 1, DomainNames: []string{"local.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
-		{ID: 2, DomainNames: []string{"remote.example.com"}, ForwardHost: "192.168.1.61", ForwardPort: 8080, Enabled: true},
+		{ID: 1, DomainNames: []string{"local.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: true},
+		{ID: 2, DomainNames: []string{"remote.example.com"}, ForwardHost: "203.0.113.61", ForwardPort: 8080, Enabled: true},
 	}
-	r := fakeResolver(hosts, "192.168.1.57")
+	r := fakeResolver(hosts, "203.0.113.57")
 
 	got := r.Lookup(8080)
 	if got == nil {
@@ -189,8 +189,8 @@ func fakeNPMServer(t *testing.T, hosts []ProxyHost, authFail bool) *httptest.Ser
 
 func TestSyncAndLookup_ExactMatch(t *testing.T) {
 	hosts := []ProxyHost{
-		{ID: 1, DomainNames: []string{"app.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true, ForwardScheme: "http"},
-		{ID: 2, DomainNames: []string{"api.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 9090, Enabled: true, ForwardScheme: "http"},
+		{ID: 1, DomainNames: []string{"app.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: true, ForwardScheme: "http"},
+		{ID: 2, DomainNames: []string{"api.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 9090, Enabled: true, ForwardScheme: "http"},
 	}
 
 	srv := fakeNPMServer(t, hosts, false)
@@ -198,7 +198,7 @@ func TestSyncAndLookup_ExactMatch(t *testing.T) {
 
 	client := NewClient(srv.URL, "admin@example.com", "password123")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, map[string]bool{"192.168.1.57": true}, log)
+	resolver := NewResolver(client, map[string]bool{"203.0.113.57": true}, log)
 
 	err := resolver.Sync(context.Background())
 	if err != nil {
@@ -223,7 +223,7 @@ func TestSyncAndLookup_ExactMatch(t *testing.T) {
 
 func TestSyncAndLookup_NoMatch(t *testing.T) {
 	hosts := []ProxyHost{
-		{ID: 1, DomainNames: []string{"app.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
+		{ID: 1, DomainNames: []string{"app.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: true},
 	}
 
 	srv := fakeNPMServer(t, hosts, false)
@@ -231,7 +231,7 @@ func TestSyncAndLookup_NoMatch(t *testing.T) {
 
 	client := NewClient(srv.URL, "admin@example.com", "password123")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, map[string]bool{"192.168.1.57": true}, log)
+	resolver := NewResolver(client, map[string]bool{"203.0.113.57": true}, log)
 
 	_ = resolver.Sync(context.Background())
 
@@ -244,8 +244,8 @@ func TestSyncAndLookup_NoMatch(t *testing.T) {
 
 func TestSyncAndLookup_DisabledHostSkipped(t *testing.T) {
 	hosts := []ProxyHost{
-		{ID: 1, DomainNames: []string{"disabled.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: false},
-		{ID: 2, DomainNames: []string{"enabled.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
+		{ID: 1, DomainNames: []string{"disabled.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: false},
+		{ID: 2, DomainNames: []string{"enabled.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: true},
 	}
 
 	srv := fakeNPMServer(t, hosts, false)
@@ -253,7 +253,7 @@ func TestSyncAndLookup_DisabledHostSkipped(t *testing.T) {
 
 	client := NewClient(srv.URL, "admin@example.com", "password123")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, map[string]bool{"192.168.1.57": true}, log)
+	resolver := NewResolver(client, map[string]bool{"203.0.113.57": true}, log)
 
 	_ = resolver.Sync(context.Background())
 
@@ -273,7 +273,7 @@ func TestSync_AuthFailure(t *testing.T) {
 
 	client := NewClient(srv.URL, "wrong@example.com", "badpassword")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := NewResolver(client, map[string]bool{"192.168.1.57": true}, log)
+	resolver := NewResolver(client, map[string]bool{"203.0.113.57": true}, log)
 
 	err := resolver.Sync(context.Background())
 	if err == nil {
@@ -297,12 +297,12 @@ func TestSync_AuthFailure(t *testing.T) {
 
 func TestAllMappings_ReturnsMatchedPorts(t *testing.T) {
 	hosts := []ProxyHost{
-		{ID: 1, DomainNames: []string{"app1.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true, ForwardScheme: "http"},
-		{ID: 2, DomainNames: []string{"app2.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 9090, Enabled: true, ForwardScheme: "https"},
+		{ID: 1, DomainNames: []string{"app1.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: true, ForwardScheme: "http"},
+		{ID: 2, DomainNames: []string{"app2.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 9090, Enabled: true, ForwardScheme: "https"},
 		{ID: 3, DomainNames: []string{"other.example.com"}, ForwardHost: "10.0.0.1", ForwardPort: 3000, Enabled: true},
 	}
 	// localAddrs filters to .57 only.
-	r := fakeResolver(hosts, "192.168.1.57")
+	r := fakeResolver(hosts, "203.0.113.57")
 
 	mappings := r.AllMappings()
 
@@ -376,10 +376,10 @@ func TestAllMappingsGrouped_ViaHTTPTest(t *testing.T) {
 
 func TestLookup_EmptyDomainNamesSkipped(t *testing.T) {
 	hosts := []ProxyHost{
-		{ID: 1, DomainNames: []string{}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
-		{ID: 2, DomainNames: []string{"fallback.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
+		{ID: 1, DomainNames: []string{}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: true},
+		{ID: 2, DomainNames: []string{"fallback.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: true},
 	}
-	r := fakeResolver(hosts, "192.168.1.57")
+	r := fakeResolver(hosts, "203.0.113.57")
 
 	got := r.Lookup(8080)
 	if got == nil {
@@ -424,9 +424,9 @@ func TestLookup_LocalAddrsPreventsCrossHostShadowing(t *testing.T) {
 	// Without localAddrs filtering, the lower-ID host (.64) shadows .57.
 	hosts := []ProxyHost{
 		{ID: 38, DomainNames: []string{"amp.example.com"}, ForwardHost: "192.168.1.64", ForwardPort: 8080, Enabled: true},
-		{ID: 64, DomainNames: []string{"as.example.com"}, ForwardHost: "192.168.1.57", ForwardPort: 8080, Enabled: true},
+		{ID: 64, DomainNames: []string{"as.example.com"}, ForwardHost: "203.0.113.57", ForwardPort: 8080, Enabled: true},
 	}
-	r := fakeResolver(hosts, "192.168.1.57")
+	r := fakeResolver(hosts, "203.0.113.57")
 
 	got := r.Lookup(8080)
 	if got == nil {

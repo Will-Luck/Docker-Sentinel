@@ -17,7 +17,7 @@ func TestValidateServiceURL(t *testing.T) {
 		{name: "loopback IPv4", url: "http://127.0.0.1:8080", wantErr: true},
 		{name: "loopback IPv6", url: "http://[::1]:8080", wantErr: true},
 		{name: "unspecified address", url: "http://0.0.0.0:8080", wantErr: true},
-		{name: "private LAN allowed", url: "http://192.168.1.57:62453", wantErr: false},
+		{name: "private LAN allowed", url: "http://192.168.99.57:62453", wantErr: false},
 		{name: "private 10.x allowed", url: "https://10.0.0.1:9443", wantErr: false},
 		{name: "no scheme or host", url: "not-a-url", wantErr: true},
 	}
