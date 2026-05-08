@@ -112,7 +112,7 @@
                             <input type="radio" name="policy" value="auto" {{if eq .Container.Policy "auto"}}checked{{end}}>
                             <div class="notify-option-content">
                                 <span class="notify-option-title">Auto</span>
-                                <span class="notify-option-desc">Automatically pull and apply updates when detected. The container will be recreated with the new image.</span>
+                                <span class="notify-option-desc">Pull and apply detected updates that fall within your Version Scope (Settings → Update Policy). The container will be recreated with the new image.</span>
                             </div>
                         </label>
                         <label class="notify-option">
@@ -126,7 +126,7 @@
                             <input type="radio" name="policy" value="pinned" {{if eq .Container.Policy "pinned"}}checked{{end}}>
                             <div class="notify-option-content">
                                 <span class="notify-option-title">Pinned</span>
-                                <span class="notify-option-desc">Skip this container entirely during scans. No update checks, no notifications. Use when you want to stay on a specific version.</span>
+                                <span class="notify-option-desc">Skip queueing and auto-update for this container. Update checks still run; notifications still fire unless silenced separately. Use when you want to stay on a specific version.</span>
                             </div>
                         </label>
                     </div>

@@ -221,6 +221,24 @@ func NewerVersionsScoped(current string, tags []string, scope, defaultScope dock
 		if versionSchemeMismatch(cur, sv) {
 			continue
 		}
+
+		// NEW-1: a less-specific current tag is the implicit "all children" pointer.
+		// cur=2026.4 is equivalent to 2026.4.* ; cur=1 is equivalent to 1.*.*. The
+		// floating tag tracks the latest descendant digest via the digest path, so
+		// skip same-subtree candidates here to stop them flagging as "newer" forever.
+		if cur.Parts < sv.Parts {
+			switch cur.Parts {
+			case 1:
+				if sv.Major == cur.Major {
+					continue
+				}
+			case 2:
+				if sv.Major == cur.Major && sv.Minor == cur.Minor {
+					continue
+				}
+			}
+		}
+
 		// Scope constraint: calver is exempt from scope filtering.
 		if !curIsCalver {
 			switch scope {
@@ -267,6 +285,31 @@ func NewerVersionsScoped(current string, tags []string, scope, defaultScope dock
 	sort.Slice(newer, func(i, j int) bool {
 		return newer[j].LessThan(newer[i])
 	})
+
+	// NEW-2: dedup semantically equivalent versions, keeping the more-specific
+	// representation. e.g. {2026.5.1, 2026.5, 2026.5.0} -> {2026.5.1, 2026.5.0}.
+	// Pre-release suffix is part of the key so 2026.5.0-rc1 and 2026.5.0 stay
+	// as separate entries.
+	if len(newer) > 1 {
+		type dedupKey struct {
+			Major, Minor, Patch int
+			Pre                 string
+		}
+		out := newer[:0]
+		seen := make(map[dedupKey]int)
+		for _, sv := range newer {
+			key := dedupKey{sv.Major, sv.Minor, sv.Patch, sv.Pre}
+			if idx, ok := seen[key]; ok {
+				if sv.Parts > out[idx].Parts {
+					out[idx] = sv
+				}
+				continue
+			}
+			seen[key] = len(out)
+			out = append(out, sv)
+		}
+		newer = out
+	}
 
 	return newer
 }

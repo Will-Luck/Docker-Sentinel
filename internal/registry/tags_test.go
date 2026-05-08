@@ -125,12 +125,15 @@ func TestNewerVersions(t *testing.T) {
 
 	newer := NewerVersions("1.25", tags)
 
-	if len(newer) != 3 {
-		t.Fatalf("NewerVersions returned %d items, want 3 (v1.27.0, 1.26.0, 1.25.1)", len(newer))
+	// NEW-1: same-subtree (1.25.x) is skipped because cur=1.25 is a floating
+	// 2-part pointer that already tracks its descendants by digest. Only
+	// cross-minor candidates remain.
+	if len(newer) != 2 {
+		t.Fatalf("NewerVersions returned %d items, want 2 (v1.27.0, 1.26.0): %v", len(newer), rawVersions(newer))
 	}
 
 	// Should be sorted newest first.
-	expected := []string{"v1.27.0", "1.26.0", "1.25.1"}
+	expected := []string{"v1.27.0", "1.26.0"}
 	for i, sv := range newer {
 		if sv.Raw != expected[i] {
 			t.Errorf("newer[%d].Raw = %q, want %q", i, sv.Raw, expected[i])
@@ -224,10 +227,10 @@ func TestNewerVersionsScoped(t *testing.T) {
 		{"3part_minor_widens", "v1.13.3", docker.ScopeMinor, []string{"1.15.0", "1.14.0", "1.13.5", "1.13.4"}},
 		{"3part_major_all", "v1.13.3", docker.ScopeMajor, []string{"2.0.0", "1.15.0", "1.14.0", "1.13.5", "1.13.4"}},
 		// 2-part current: default is same-major; patch narrows to same major.minor
-		{"2part_default_same_major", "1.13", docker.ScopeDefault, []string{"1.15.0", "1.14.0", "1.13.4", "1.13.5"}},
-		{"2part_patch_narrows", "1.13", docker.ScopePatch, []string{"1.13.4", "1.13.5"}},
-		{"2part_minor_same_as_default", "1.13", docker.ScopeMinor, []string{"1.15.0", "1.14.0", "1.13.4", "1.13.5"}},
-		{"2part_major_all", "1.13", docker.ScopeMajor, []string{"2.0.0", "1.15.0", "1.14.0", "1.13.4", "1.13.5"}},
+		{"2part_default_same_major", "1.13", docker.ScopeDefault, []string{"1.15.0", "1.14.0"}},
+		{"2part_patch_narrows", "1.13", docker.ScopePatch, nil},
+		{"2part_minor_same_as_default", "1.13", docker.ScopeMinor, []string{"1.15.0", "1.14.0"}},
+		{"2part_major_all", "1.13", docker.ScopeMajor, []string{"2.0.0", "1.15.0", "1.14.0"}},
 	}
 
 	for _, tt := range tests {
@@ -261,12 +264,12 @@ func TestNewerVersionsScopedStrict(t *testing.T) {
 	}{
 		// Strict mode tests.
 		{"strict_3part_no_updates", "v1.13.3", docker.ScopeDefault, docker.ScopeStrict, nil},
-		{"strict_2part_patch_only", "1.13", docker.ScopeDefault, docker.ScopeStrict, []string{"1.13.4", "1.13.5"}},
+		{"strict_2part_patch_only", "1.13", docker.ScopeDefault, docker.ScopeStrict, nil},
 		// Per-container scope overrides global strict.
 		{"strict_override_minor", "v1.13.3", docker.ScopeMinor, docker.ScopeStrict, []string{"1.15.0", "1.14.0", "1.13.5", "1.13.4"}},
 		{"strict_override_major", "v1.13.3", docker.ScopeMajor, docker.ScopeStrict, []string{"2.0.0", "1.15.0", "1.14.0", "1.13.5", "1.13.4"}},
 		// Default (relaxed) unchanged.
-		{"relaxed_2part_same_major", "1.13", docker.ScopeDefault, docker.ScopeDefault, []string{"1.15.0", "1.14.0", "1.13.4", "1.13.5"}},
+		{"relaxed_2part_same_major", "1.13", docker.ScopeDefault, docker.ScopeDefault, []string{"1.15.0", "1.14.0"}},
 		{"relaxed_3part_patch_only", "v1.13.3", docker.ScopeDefault, docker.ScopeDefault, []string{"1.13.5", "1.13.4"}},
 	}
 
@@ -292,29 +295,29 @@ func TestNewerVersionsScopedStrict(t *testing.T) {
 func TestNewerVersionsStrictOnePart(t *testing.T) {
 	tags := []string{"1.0.0", "1.1.0", "1.2.0", "2.0.0", "2.1.0", "3.0.0"}
 
-	// Strict + 1-part tag → minor+patch only (same major).
+	// NEW-1: cur=1 (Parts=1) is a floating major-version pointer; same-major
+	// candidates (1.x.x) are skipped because the floating tag tracks them by
+	// digest. Strict mode further restricts to same-major, leaving nothing.
 	got := NewerVersionsScoped("1", tags, docker.ScopeDefault, docker.ScopeStrict)
-	expected := []string{"1.2.0", "1.1.0"}
-	if len(got) != len(expected) {
-		t.Fatalf("strict 1-part: got %d versions, want %d: %v", len(got), len(expected), rawVersions(got))
-	}
-	for _, sv := range got {
-		found := false
-		for _, exp := range expected {
-			if sv.Raw == exp {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("unexpected version %q in results", sv.Raw)
-		}
+	if len(got) != 0 {
+		t.Fatalf("strict 1-part: got %d versions, want 0: %v", len(got), rawVersions(got))
 	}
 
-	// Relaxed + 1-part tag → all newer (no scope filter).
+	// Relaxed + 1-part tag: same-major skipped by NEW-1; cross-major candidates
+	// (2.0.0, 2.1.0, 3.0.0) remain.
 	got = NewerVersionsScoped("1", tags, docker.ScopeDefault, docker.ScopeDefault)
-	if len(got) != 5 {
-		t.Fatalf("relaxed 1-part: got %d versions, want 5: %v", len(got), rawVersions(got))
+	expected := []string{"3.0.0", "2.1.0", "2.0.0"}
+	if len(got) != len(expected) {
+		t.Fatalf("relaxed 1-part: got %d versions, want %d: %v", len(got), len(expected), rawVersions(got))
+	}
+	gotSet := make(map[string]bool, len(got))
+	for _, sv := range got {
+		gotSet[sv.Raw] = true
+	}
+	for _, exp := range expected {
+		if !gotSet[exp] {
+			t.Errorf("expected %q in results, got %v", exp, rawVersions(got))
+		}
 	}
 }
 
@@ -324,6 +327,66 @@ func rawVersions(svs []SemVer) []string {
 		out[i] = sv.Raw
 	}
 	return out
+}
+
+// TestNewerVersionsScoped_FloatingTagAndDedup covers the NEW-1 (same-subtree skip)
+// and NEW-2 (dedup equivalent versions) fixes from the 2026-05-08 #82 fix-batch.
+func TestNewerVersionsScoped_FloatingTagAndDedup(t *testing.T) {
+	tests := []struct {
+		name     string
+		current  string
+		tags     []string
+		expected []string
+	}{
+		{
+			name:     "NEW-1_calver_floating_2part",
+			current:  "2026.4",
+			tags:     []string{"2026.4", "2026.4.0", "2026.4.4", "2026.5", "2026.5.1"},
+			expected: []string{"2026.5.1", "2026.5"},
+		},
+		{
+			name:     "NEW-1_semver_floating_1part",
+			current:  "1",
+			tags:     []string{"1", "1.25.0", "1.25.5", "2.0.0"},
+			expected: []string{"2.0.0"},
+		},
+		{
+			name:     "NEW-1_boundary_2part_equal_3part_zero",
+			current:  "2026.4",
+			tags:     []string{"2026.4.0"},
+			expected: nil,
+		},
+		{
+			name:     "NEW-2_dedup_calver_2_and_3_part",
+			current:  "2026.3",
+			tags:     []string{"2026.4", "2026.4.0", "2026.5.0", "2026.5"},
+			expected: []string{"2026.5.0", "2026.4.0"},
+		},
+		{
+			name:     "NEW-2_pre_release_retained_distinct",
+			current:  "2026.4.0",
+			tags:     []string{"2026.4.1", "2026.4.1-rc1"},
+			expected: []string{"2026.4.1", "2026.4.1-rc1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewerVersionsScoped(tt.current, tt.tags, docker.ScopeDefault, docker.ScopeDefault)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("got %d versions, want %d: %v", len(got), len(tt.expected), rawVersions(got))
+			}
+			gotSet := make(map[string]bool, len(got))
+			for _, sv := range got {
+				gotSet[sv.Raw] = true
+			}
+			for _, exp := range tt.expected {
+				if !gotSet[exp] {
+					t.Errorf("expected %q in results, got %v", exp, rawVersions(got))
+				}
+			}
+		})
+	}
 }
 
 func TestFilterTags(t *testing.T) {
