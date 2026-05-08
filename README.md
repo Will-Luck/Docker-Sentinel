@@ -1,5 +1,12 @@
 # Docker-Sentinel
 
+> **Maintenance Mode**
+>
+> As of 2026-05-08, this project is in maintenance mode. v2.12.2 is the
+> final feature release. Bug-fix PRs and security issues will still be
+> reviewed. New features will not be added. See
+> [`MAINTENANCE.md`](MAINTENANCE.md) for the full policy.
+
 [![CI](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/Will-Luck/Docker-Sentinel/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Will-Luck/Docker-Sentinel)](https://github.com/Will-Luck/Docker-Sentinel/releases/latest)
 [![License](https://img.shields.io/github/license/Will-Luck/Docker-Sentinel)](LICENSE)
