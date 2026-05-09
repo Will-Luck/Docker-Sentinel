@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.1] - 2026-05-09
+
 ### Fixed
 - Floating-tag detection now treats less-specific tags as equivalent to their more-specific children. A container running `2026.4` no longer permanently flags `2026.4.x` patches as "newer versions"; only `2026.5.x` and beyond count. Same logic for 1-part tags like `nginx:1`. ([#82](https://github.com/Will-Luck/Docker-Sentinel/discussions/82))
 - `NewerVersions` no longer lists semantically equivalent versions as separate entries (e.g. `2026.5` and `2026.5.0` collapse to a single entry, keeping the more-specific representation). Pre-release suffixes remain distinct.
