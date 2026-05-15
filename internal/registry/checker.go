@@ -95,9 +95,33 @@ func (c *Checker) Check(ctx context.Context, imageRef string) CheckResult {
 
 	remoteDigest, err := c.docker.DistributionDigest(ctx, imageRef)
 	if err != nil {
-		// Auth failures or 404s mean we can't check — treat as no update.
-		c.log.Debug("failed to get remote digest, treating as local", "image", imageRef, "error", err)
-		result.IsLocal = true
+		// IsLocalImage rejects bare names (no slash, no dot) so that genuinely
+		// locally built images like "myapp" can fall through to the registry
+		// check and "fail gracefully" here. For that case, IsLocal=true silently
+		// is correct — the image likely isn't on any registry.
+		// For registry-prefixed images (contain "/" or "."), a DistributionDigest
+		// error is a real auth/network/registry failure operators need to see;
+		// previously this was masked by IsLocal=true.
+		ref := imageRef
+		if i := strings.Index(ref, "@"); i >= 0 {
+			ref = ref[:i]
+		}
+		// Strip the tag, but only when the colon is in the tag position
+		// (after the last slash). For host:port/repo:tag refs the first
+		// colon belongs to the port and must not be stripped — that's the
+		// bug from the cycle-3 reroll where localhost:5000/repo:v1 was
+		// being misclassified as a bare name.
+		if i := strings.LastIndex(ref, ":"); i >= 0 && i > strings.LastIndex(ref, "/") {
+			ref = ref[:i]
+		}
+		bareName := !strings.Contains(ref, "/") && !strings.Contains(ref, ".")
+		if bareName {
+			c.log.Debug("registry check failed for bare-name image, treating as local", "image", imageRef, "error", err)
+			result.IsLocal = true
+		} else {
+			c.log.Warn("registry check failed", "image", imageRef, "error", err)
+			result.Error = err
+		}
 		return result
 	}
 	result.RemoteDigest = remoteDigest

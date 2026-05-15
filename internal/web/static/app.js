@@ -2516,31 +2516,61 @@
     var es = new EventSource("/api/events");
     window.sseSource = es;
     var _sseHasConnected = false;
+    var _sseCatchUpTimer = null;
     es.addEventListener("connected", function() {
       if (localStorage.getItem("sentinel-self-updating")) {
         localStorage.removeItem("sentinel-self-updating");
         window.location.reload();
         return;
       }
-      if (_sseHasConnected) {
-        var isDashboard = !!document.getElementById("container-table");
-        if (isDashboard) {
-          window.location.reload();
-          return;
-        }
-      }
+      var wasReconnect = _sseHasConnected;
       _sseHasConnected = true;
       setConnectionStatus(true);
       if (document.getElementById("container-table")) {
-        var updatingBadges = document.querySelectorAll(".badge-updating");
-        for (var i = 0; i < updatingBadges.length; i++) {
-          var row = updatingBadges[i].closest("tr.container-row");
-          if (row) {
-            var n = row.getAttribute("data-name");
-            var h = row.getAttribute("data-host") || "";
-            if (n) updateContainerRow(n, h);
-          }
+        if (_sseCatchUpTimer) {
+          clearTimeout(_sseCatchUpTimer);
         }
+        _sseCatchUpTimer = setTimeout(function() {
+          _sseCatchUpTimer = null;
+          var rows;
+          if (wasReconnect) {
+            rows = Array.prototype.slice.call(
+              document.querySelectorAll("tr.container-row")
+            );
+          } else {
+            rows = [];
+            var updatingBadges = document.querySelectorAll(".badge-updating");
+            for (var i = 0; i < updatingBadges.length; i++) {
+              var row = updatingBadges[i].closest("tr.container-row");
+              if (row) rows.push(row);
+            }
+          }
+          var MAX_CONCURRENT = 6;
+          var idx = 0;
+          function runNext() {
+            if (idx >= rows.length) return;
+            var row2 = rows[idx++];
+            var n = row2.getAttribute("data-name");
+            var h = row2.getAttribute("data-host") || "";
+            if (!n) {
+              runNext();
+              return;
+            }
+            try {
+              var p = updateContainerRow(n, h);
+              if (p && typeof p.then === "function") {
+                p.then(runNext, runNext);
+              } else {
+                setTimeout(runNext, 25);
+              }
+            } catch (e) {
+              runNext();
+            }
+          }
+          for (var k = 0; k < MAX_CONCURRENT && k < rows.length; k++) {
+            runNext();
+          }
+        }, 500);
       }
     });
     es.addEventListener("container_update", function(e) {

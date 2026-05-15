@@ -218,6 +218,7 @@ function initSSE() {
     // so they can add listeners without opening a duplicate SSE connection.
     window.sseSource = es;
     var _sseHasConnected = false;
+    var _sseCatchUpTimer = null;
 
     es.addEventListener("connected", function () {
         if (localStorage.getItem("sentinel-self-updating")) {
@@ -225,33 +226,80 @@ function initSSE() {
             window.location.reload();
             return;
         }
-        // On reconnect (not first connect), reload the dashboard to avoid stale state.
-        // Skip reload on form pages (settings, connectors, container detail) to
-        // avoid wiping unsaved input fields.
-        if (_sseHasConnected) {
-            var isDashboard = !!document.getElementById("container-table");
-            if (isDashboard) {
-                window.location.reload();
-                return;
-            }
-        }
+        // Previously: reconnect → window.location.reload(). On a flapping
+        // network the dashboard would reload-loop, losing expanded host
+        // groups, scroll position, selection, open modals, and unsaved
+        // filter input. Removed in favour of targeted row refresh — the
+        // catch-up loop below picks up rows whose update finished while
+        // we were disconnected, and per-event handlers (container_update,
+        // container_state, cluster_host) keep everything else in sync.
+        var wasReconnect = _sseHasConnected;
         _sseHasConnected = true;
         setConnectionStatus(true);
 
-        // Catch-up: refresh any rows still showing "Updating" status.
-        // If the update completed between server-side page render and this
-        // SSE connection being established, the container_update event was
-        // lost. Re-fetching the row picks up the current maintenance state.
+        // Catch-up after disconnect or first connect: refresh rows that
+        // are currently mid-update so we don't strand a "Updating" badge
+        // if its terminal SSE event landed while we were offline. On a
+        // pure reconnect, also refresh all visible container rows to
+        // recover from any state divergence (digest changes, policy edits
+        // applied on another tab, etc.) without nuking the page.
+        //
+        // Debounce: a flapping SSE connection can fire `connected` every
+        // few seconds. Without debouncing this would issue N parallel
+        // /api/containers/<name>/row GETs on every flap — for a 60-row
+        // dashboard, 60 simultaneous fetches per flap, sustained. The
+        // 500ms debounce coalesces a flap-storm into one catch-up batch.
+        // The MAX_CONCURRENT cap then serialises that batch so a large
+        // dashboard doesn't overwhelm the browser's connection pool or
+        // the Docker socket on the server side.
         if (document.getElementById("container-table")) {
-            var updatingBadges = document.querySelectorAll(".badge-updating");
-            for (var i = 0; i < updatingBadges.length; i++) {
-                var row = updatingBadges[i].closest("tr.container-row");
-                if (row) {
+            if (_sseCatchUpTimer) {
+                clearTimeout(_sseCatchUpTimer);
+            }
+            _sseCatchUpTimer = setTimeout(function () {
+                _sseCatchUpTimer = null;
+                var rows;
+                if (wasReconnect) {
+                    rows = Array.prototype.slice.call(
+                        document.querySelectorAll("tr.container-row")
+                    );
+                } else {
+                    rows = [];
+                    var updatingBadges = document.querySelectorAll(".badge-updating");
+                    for (var i = 0; i < updatingBadges.length; i++) {
+                        var row = updatingBadges[i].closest("tr.container-row");
+                        if (row) rows.push(row);
+                    }
+                }
+                // Concurrency-capped worker pool.
+                var MAX_CONCURRENT = 6;
+                var idx = 0;
+                function runNext() {
+                    if (idx >= rows.length) return;
+                    var row = rows[idx++];
                     var n = row.getAttribute("data-name");
                     var h = row.getAttribute("data-host") || "";
-                    if (n) updateContainerRow(n, h);
+                    if (!n) {
+                        runNext();
+                        return;
+                    }
+                    try {
+                        var p = updateContainerRow(n, h);
+                        if (p && typeof p.then === "function") {
+                            p.then(runNext, runNext);
+                        } else {
+                            // updateContainerRow not promise-shaped; throttle
+                            // via setTimeout to avoid synchronous burst.
+                            setTimeout(runNext, 25);
+                        }
+                    } catch (e) {
+                        runNext();
+                    }
                 }
-            }
+                for (var k = 0; k < MAX_CONCURRENT && k < rows.length; k++) {
+                    runNext();
+                }
+            }, 500);
         }
     });
 

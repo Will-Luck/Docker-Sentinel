@@ -5,7 +5,7 @@ RUN apk add --no-cache git make
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
-RUN go install github.com/evanw/esbuild/cmd/esbuild@latest
+RUN go install github.com/evanw/esbuild/cmd/esbuild@v0.24.2
 
 COPY . .
 
