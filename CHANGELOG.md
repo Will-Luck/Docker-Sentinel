@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.2] - 2026-05-15
+
+### Fixed
+- `Checker.Check` no longer masks DistributionDigest errors as `IsLocal=true` for registry-prefixed images. Bare names (e.g. `myapp:v1` — no slash, no dot) still fall through silently as before, but images with a registry prefix (`ghcr.io/owner/app`, `library/nginx`, `localhost:5000/repo:v1`) now surface their registry failures via `result.Error` so the scan loop's existing error branch reports them at Warn instead of incrementing `Skipped` silently. Same false-negative class as discussion [#82](https://github.com/Will-Luck/Docker-Sentinel/discussions/82) but on the digest path: PAT rotations, DNS blips, and 5xx storms no longer turn into invisible "no update" reports. Tag-stripping is slash-aware so `host:port/repo:tag` refs are not misclassified as bare names.
+- `finaliseContainer` now nil-checks `inspect.HostConfig` before passing it to `CreateContainer`. Previously a malformed daemon response (container deleted between stop and inspect, or transient daemon glitch) would silently recreate the container with a default host config — losing port bindings, mounts, restart policy, and capabilities. The check returns a clean `finaliseError{stage: "inspect"}` instead.
+- All six `apiUpdate`/`apiUpdateVersion`/`apiSelfUpdate` background goroutines now wrap their bodies in `defer recover()` blocks. Previously a nil-deref in the cluster adapter, Portainer client, or self-updater would take the whole web process down because these goroutines ran detached with `context.Background()` and no recovery. Panics are now logged via `s.deps.Log.Error` and (for `apiSelfUpdate`) an SSE `EventContainerUpdate` is published so the dashboard surfaces the failure instead of hanging on a stale "Updating" badge.
+
+### Changed
+- Dashboard no longer hard-reloads on SSE reconnect. The previous `window.location.reload()` on each `connected` event after a transient network blip was wiping expanded host groups, scroll position, selection, and unsaved input — and on a flapping connection could reload-loop. Replaced with a 500 ms debounced, 6-way concurrency-capped catch-up that re-fetches container rows via `updateContainerRow`. Per-event handlers (`container_update`, `container_state`, `cluster_host`) keep state in sync without nuking the page.
+
+### Build / CI
+- Pinned `golangci-lint` from `@latest` to `v1.64.8` in `.gitea/workflows/ci.yml` to match the GitHub workflow. Removes the "Gitea build fails on Monday after Friday's golangci-lint release" flake.
+- Pinned `esbuild` from `@latest` to `v0.24.2` in the Dockerfile, both CI YAMLs, and the Makefile `$(ESBUILD)` rule. Frontend bundle hashes are now reproducible across rebuilds.
+- `make dev-deploy` SSH key hygiene: the file-scope `DEV_SSH_KEY := $(shell mktemp)` was running at parse time on every Make target (build, test, lint, clean), leaking empty `/tmp/tmp.*` files. The recipe also relied on a separate `@rm -f` step that did not run on failure, leaving 600-perm 1Password-sourced SSH private keys on disk until reboot. Now wrapped in a single recipe shell with `trap 'rm -f "$$TMP_KEY"' EXIT`.
+
 ## [2.13.1] - 2026-05-09
 
 ### Fixed
