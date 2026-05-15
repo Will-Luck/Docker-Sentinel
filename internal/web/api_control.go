@@ -315,6 +315,11 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 
 		s.markRemoteUpdating(hostID, name)
 		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					s.deps.Log.Error("panic in remote update goroutine", "name", name, "host", hostID, "panic", rec)
+				}
+			}()
 			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, ""); err != nil {
 				s.deps.Log.Error("remote update failed", "name", name, "host", hostID, "error", err)
 				s.deps.EventBus.Publish(events.SSEEvent{
@@ -393,6 +398,11 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 
 		s.markRemoteUpdating(hostID, name)
 		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					s.deps.Log.Error("panic in portainer update goroutine", "name", name, "host", hostID, "panic", rec)
+				}
+			}()
 			ctx := context.Background()
 			var updateErr error
 			if pc.StackID != 0 {
@@ -477,6 +487,11 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Trigger update in background — detached context since r.Context() dies with the response.
 	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.deps.Log.Error("panic in local update goroutine", "name", name, "panic", rec)
+			}
+		}()
 		err := s.deps.Updater.UpdateContainer(context.Background(), containerID, name, targetImage)
 		if errors.Is(err, engine.ErrUpdateInProgress) {
 			s.deps.Log.Warn("manual update skipped, already in progress", "name", name)
@@ -860,6 +875,11 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 		queueKey := hostID + "::" + name
 		s.markRemoteUpdating(hostID, name)
 		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					s.deps.Log.Error("panic in remote version-update goroutine", "name", name, "host", hostID, "tag", body.Tag, "panic", rec)
+				}
+			}()
 			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, ""); err != nil {
 				s.deps.Log.Error("remote version update failed", "name", name, "host", hostID, "tag", body.Tag, "error", err)
 				s.deps.EventBus.Publish(events.SSEEvent{
@@ -922,6 +942,11 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 
 		s.markRemoteUpdating(hostID, name)
 		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					s.deps.Log.Error("panic in portainer version-update goroutine", "name", name, "host", hostID, "tag", body.Tag, "panic", rec)
+				}
+			}()
 			ctx := context.Background()
 			var updateErr error
 			if pc.StackID != 0 {

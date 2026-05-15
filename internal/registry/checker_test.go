@@ -179,16 +179,52 @@ func TestCheckPinnedDigest(t *testing.T) {
 func TestCheckDistributionError(t *testing.T) {
 	mock := newMockRegistry()
 	mock.imageDigests["ghcr.io/owner/app:latest"] = "sha256:aaa111"
-	mock.distributionErr["ghcr.io/owner/app:latest"] = errors.New("401 unauthorized")
+	distErr := errors.New("401 unauthorized")
+	mock.distributionErr["ghcr.io/owner/app:latest"] = distErr
 
 	checker := NewChecker(mock, logging.New(false))
 	result := checker.Check(context.Background(), "ghcr.io/owner/app:latest")
 
-	if !result.IsLocal {
-		t.Error("expected IsLocal=true when registry is unreachable")
+	// Registry-prefixed image (ghcr.io/...) — a registry failure is a real
+	// auth/network issue and must surface via result.Error, not be masked
+	// behind IsLocal=true. The scan loop's check.Error branch then reports
+	// it instead of silently incrementing Skipped.
+	if result.IsLocal {
+		t.Error("expected IsLocal=false for registry-prefixed image with registry error")
 	}
 	if result.UpdateAvailable {
 		t.Error("should not show update when registry fails")
+	}
+	if result.Error == nil {
+		t.Fatal("expected result.Error to be set when registry is unreachable, was nil")
+	}
+	if !errors.Is(result.Error, distErr) {
+		t.Errorf("result.Error = %v, want wrapping %v", result.Error, distErr)
+	}
+}
+
+func TestCheckBareNameWithRegistryErrorTreatedAsLocal(t *testing.T) {
+	// Bare-name images ("myapp:v1" — no slash, no dot) are likely locally
+	// built. IsLocalImage explicitly defers their classification to a
+	// "registry check + fail gracefully" pattern. When the registry check
+	// fails for a bare name, IsLocal=true is correct (silent fallback);
+	// Error should NOT be set so the scan-loop classifies it as Skipped
+	// rather than ringing alarm bells on every scan.
+	mock := newMockRegistry()
+	mock.imageDigests["myapp:latest"] = "sha256:local123"
+	mock.distributionErr["myapp:latest"] = errors.New("401 unauthorized")
+
+	checker := NewChecker(mock, logging.New(false))
+	result := checker.Check(context.Background(), "myapp:latest")
+
+	if !result.IsLocal {
+		t.Error("expected IsLocal=true for bare-name image with registry error")
+	}
+	if result.Error != nil {
+		t.Errorf("expected Error=nil for bare-name fallback path, got %v", result.Error)
+	}
+	if result.UpdateAvailable {
+		t.Error("should not show update")
 	}
 }
 
