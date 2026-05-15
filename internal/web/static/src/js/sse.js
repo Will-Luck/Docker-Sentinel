@@ -225,32 +225,39 @@ function initSSE() {
             window.location.reload();
             return;
         }
-        // On reconnect (not first connect), reload the dashboard to avoid stale state.
-        // Skip reload on form pages (settings, connectors, container detail) to
-        // avoid wiping unsaved input fields.
-        if (_sseHasConnected) {
-            var isDashboard = !!document.getElementById("container-table");
-            if (isDashboard) {
-                window.location.reload();
-                return;
-            }
-        }
+        // Previously: reconnect → window.location.reload(). On a flapping
+        // network the dashboard would reload-loop, losing expanded host
+        // groups, scroll position, selection, open modals, and unsaved
+        // filter input. Removed in favour of targeted row refresh — the
+        // catch-up loop below picks up rows whose update finished while
+        // we were disconnected, and per-event handlers (container_update,
+        // container_state, cluster_host) keep everything else in sync.
+        var wasReconnect = _sseHasConnected;
         _sseHasConnected = true;
         setConnectionStatus(true);
 
-        // Catch-up: refresh any rows still showing "Updating" status.
-        // If the update completed between server-side page render and this
-        // SSE connection being established, the container_update event was
-        // lost. Re-fetching the row picks up the current maintenance state.
+        // Catch-up after disconnect or first connect: refresh rows that
+        // are currently mid-update so we don't strand a "Updating" badge
+        // if its terminal SSE event landed while we were offline. On a
+        // pure reconnect, also refresh all visible container rows to
+        // recover from any state divergence (digest changes, policy edits
+        // applied on another tab, etc.) without nuking the page.
         if (document.getElementById("container-table")) {
-            var updatingBadges = document.querySelectorAll(".badge-updating");
-            for (var i = 0; i < updatingBadges.length; i++) {
-                var row = updatingBadges[i].closest("tr.container-row");
-                if (row) {
-                    var n = row.getAttribute("data-name");
-                    var h = row.getAttribute("data-host") || "";
-                    if (n) updateContainerRow(n, h);
+            var rows;
+            if (wasReconnect) {
+                rows = document.querySelectorAll("tr.container-row");
+            } else {
+                rows = [];
+                var updatingBadges = document.querySelectorAll(".badge-updating");
+                for (var i = 0; i < updatingBadges.length; i++) {
+                    var row = updatingBadges[i].closest("tr.container-row");
+                    if (row) rows.push(row);
                 }
+            }
+            for (var j = 0; j < rows.length; j++) {
+                var n = rows[j].getAttribute("data-name");
+                var h = rows[j].getAttribute("data-host") || "";
+                if (n) updateContainerRow(n, h);
             }
         }
     });

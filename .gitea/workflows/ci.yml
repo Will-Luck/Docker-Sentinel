@@ -25,7 +25,7 @@ jobs:
         run: go mod download
 
       - name: Install esbuild
-        run: go install github.com/evanw/esbuild/cmd/esbuild@latest
+        run: go install github.com/evanw/esbuild/cmd/esbuild@v0.24.2
 
       - name: Bundle frontend
         run: |

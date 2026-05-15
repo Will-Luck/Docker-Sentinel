@@ -2522,24 +2522,25 @@
         window.location.reload();
         return;
       }
-      if (_sseHasConnected) {
-        var isDashboard = !!document.getElementById("container-table");
-        if (isDashboard) {
-          window.location.reload();
-          return;
-        }
-      }
+      var wasReconnect = _sseHasConnected;
       _sseHasConnected = true;
       setConnectionStatus(true);
       if (document.getElementById("container-table")) {
-        var updatingBadges = document.querySelectorAll(".badge-updating");
-        for (var i = 0; i < updatingBadges.length; i++) {
-          var row = updatingBadges[i].closest("tr.container-row");
-          if (row) {
-            var n = row.getAttribute("data-name");
-            var h = row.getAttribute("data-host") || "";
-            if (n) updateContainerRow(n, h);
+        var rows;
+        if (wasReconnect) {
+          rows = document.querySelectorAll("tr.container-row");
+        } else {
+          rows = [];
+          var updatingBadges = document.querySelectorAll(".badge-updating");
+          for (var i = 0; i < updatingBadges.length; i++) {
+            var row = updatingBadges[i].closest("tr.container-row");
+            if (row) rows.push(row);
           }
+        }
+        for (var j = 0; j < rows.length; j++) {
+          var n = rows[j].getAttribute("data-name");
+          var h = rows[j].getAttribute("data-host") || "";
+          if (n) updateContainerRow(n, h);
         }
       }
     });
