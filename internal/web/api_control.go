@@ -816,6 +816,16 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.deps.Log.Error("panic in self-update goroutine", "panic", rec)
+				s.deps.EventBus.Publish(events.SSEEvent{
+					Type:      events.EventContainerUpdate,
+					Message:   fmt.Sprintf("self-update crashed: %v", rec),
+					Timestamp: time.Now(),
+				})
+			}
+		}()
 		if err := s.deps.SelfUpdater.Update(context.Background(), targetImage); err != nil {
 			s.deps.Log.Error("self-update failed", "error", err)
 			s.deps.EventBus.Publish(events.SSEEvent{

@@ -106,7 +106,12 @@ func (c *Checker) Check(ctx context.Context, imageRef string) CheckResult {
 		if i := strings.Index(ref, "@"); i >= 0 {
 			ref = ref[:i]
 		}
-		if i := strings.Index(ref, ":"); i >= 0 {
+		// Strip the tag, but only when the colon is in the tag position
+		// (after the last slash). For host:port/repo:tag refs the first
+		// colon belongs to the port and must not be stripped — that's the
+		// bug from the cycle-3 reroll where localhost:5000/repo:v1 was
+		// being misclassified as a bare name.
+		if i := strings.LastIndex(ref, ":"); i >= 0 && i > strings.LastIndex(ref, "/") {
 			ref = ref[:i]
 		}
 		bareName := !strings.Contains(ref, "/") && !strings.Contains(ref, ".")

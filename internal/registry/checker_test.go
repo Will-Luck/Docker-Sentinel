@@ -203,6 +203,31 @@ func TestCheckDistributionError(t *testing.T) {
 	}
 }
 
+func TestCheckPrivateRegistryWithPortSurfacesError(t *testing.T) {
+	// Regression guard for the cycle-3 reroll finding: the first-colon
+	// tag-strip used to classify "localhost:5000/myrepo:v1" as a bare
+	// name (strip at port colon → ref="localhost" → no slash → bare).
+	// That silently swallowed auth/network failures for every private-
+	// registry deployment. The fix uses slash-aware tag stripping.
+	mock := newMockRegistry()
+	mock.imageDigests["localhost:5000/myrepo:v1"] = "sha256:local"
+	distErr := errors.New("500 internal server error")
+	mock.distributionErr["localhost:5000/myrepo:v1"] = distErr
+
+	checker := NewChecker(mock, logging.New(false))
+	result := checker.Check(context.Background(), "localhost:5000/myrepo:v1")
+
+	if result.IsLocal {
+		t.Error("expected IsLocal=false for host:port/repo:tag — port colon must not trigger bare-name fallback")
+	}
+	if result.Error == nil {
+		t.Fatal("expected result.Error to be set for private-registry failure")
+	}
+	if !errors.Is(result.Error, distErr) {
+		t.Errorf("result.Error = %v, want wrapping %v", result.Error, distErr)
+	}
+}
+
 func TestCheckBareNameWithRegistryErrorTreatedAsLocal(t *testing.T) {
 	// Bare-name images ("myapp:v1" — no slash, no dot) are likely locally
 	// built. IsLocalImage explicitly defers their classification to a

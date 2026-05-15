@@ -28,7 +28,7 @@ css: $(ESBUILD)
 frontend: js css
 
 $(ESBUILD):
-	go install github.com/evanw/esbuild/cmd/esbuild@latest
+	go install github.com/evanw/esbuild/cmd/esbuild@v0.24.2
 
 build: frontend
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/sentinel

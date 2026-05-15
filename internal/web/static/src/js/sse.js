@@ -218,6 +218,7 @@ function initSSE() {
     // so they can add listeners without opening a duplicate SSE connection.
     window.sseSource = es;
     var _sseHasConnected = false;
+    var _sseCatchUpTimer = null;
 
     es.addEventListener("connected", function () {
         if (localStorage.getItem("sentinel-self-updating")) {
@@ -242,23 +243,63 @@ function initSSE() {
         // pure reconnect, also refresh all visible container rows to
         // recover from any state divergence (digest changes, policy edits
         // applied on another tab, etc.) without nuking the page.
+        //
+        // Debounce: a flapping SSE connection can fire `connected` every
+        // few seconds. Without debouncing this would issue N parallel
+        // /api/containers/<name>/row GETs on every flap — for a 60-row
+        // dashboard, 60 simultaneous fetches per flap, sustained. The
+        // 500ms debounce coalesces a flap-storm into one catch-up batch.
+        // The MAX_CONCURRENT cap then serialises that batch so a large
+        // dashboard doesn't overwhelm the browser's connection pool or
+        // the Docker socket on the server side.
         if (document.getElementById("container-table")) {
-            var rows;
-            if (wasReconnect) {
-                rows = document.querySelectorAll("tr.container-row");
-            } else {
-                rows = [];
-                var updatingBadges = document.querySelectorAll(".badge-updating");
-                for (var i = 0; i < updatingBadges.length; i++) {
-                    var row = updatingBadges[i].closest("tr.container-row");
-                    if (row) rows.push(row);
+            if (_sseCatchUpTimer) {
+                clearTimeout(_sseCatchUpTimer);
+            }
+            _sseCatchUpTimer = setTimeout(function () {
+                _sseCatchUpTimer = null;
+                var rows;
+                if (wasReconnect) {
+                    rows = Array.prototype.slice.call(
+                        document.querySelectorAll("tr.container-row")
+                    );
+                } else {
+                    rows = [];
+                    var updatingBadges = document.querySelectorAll(".badge-updating");
+                    for (var i = 0; i < updatingBadges.length; i++) {
+                        var row = updatingBadges[i].closest("tr.container-row");
+                        if (row) rows.push(row);
+                    }
                 }
-            }
-            for (var j = 0; j < rows.length; j++) {
-                var n = rows[j].getAttribute("data-name");
-                var h = rows[j].getAttribute("data-host") || "";
-                if (n) updateContainerRow(n, h);
-            }
+                // Concurrency-capped worker pool.
+                var MAX_CONCURRENT = 6;
+                var idx = 0;
+                function runNext() {
+                    if (idx >= rows.length) return;
+                    var row = rows[idx++];
+                    var n = row.getAttribute("data-name");
+                    var h = row.getAttribute("data-host") || "";
+                    if (!n) {
+                        runNext();
+                        return;
+                    }
+                    try {
+                        var p = updateContainerRow(n, h);
+                        if (p && typeof p.then === "function") {
+                            p.then(runNext, runNext);
+                        } else {
+                            // updateContainerRow not promise-shaped; throttle
+                            // via setTimeout to avoid synchronous burst.
+                            setTimeout(runNext, 25);
+                        }
+                    } catch (e) {
+                        runNext();
+                    }
+                }
+                for (var k = 0; k < MAX_CONCURRENT && k < rows.length; k++) {
+                    runNext();
+                }
+            }, 500);
         }
     });
 
