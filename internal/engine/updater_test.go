@@ -314,6 +314,46 @@ func TestFinaliseContainerRemovesMaintenanceLabel(t *testing.T) {
 	}
 }
 
+func TestFinaliseContainerErrorsOnNilHostConfig(t *testing.T) {
+	mock := newMockDocker()
+
+	// Container with the maintenance label set but a nil HostConfig — simulates
+	// a daemon response where the container was deleted between stop and inspect,
+	// or a malformed inspect payload. Without a nil-check, finaliseContainer would
+	// pass nil to CreateContainer and silently recreate without port bindings,
+	// mounts, restart policy, or capabilities.
+	mock.inspectResults["new-abc"] = container.InspectResponse{
+		ID:    "new-abc",
+		Name:  "/myapp",
+		State: &container.State{Running: true},
+		Config: &container.Config{
+			Image: "myapp:latest",
+			Labels: map[string]string{
+				"sentinel.maintenance": "true",
+			},
+		},
+		HostConfig:      nil,
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	u, _ := newTestUpdater(t, mock)
+	_, err := u.finaliseContainer(context.Background(), "new-abc", "myapp")
+	if err == nil {
+		t.Fatalf("expected error for nil HostConfig, got nil")
+	}
+
+	// Must fail at inspect stage before any state mutation.
+	if len(mock.stopCalls) != 0 {
+		t.Errorf("stopCalls = %v, want []", mock.stopCalls)
+	}
+	if len(mock.removeCalls) != 0 {
+		t.Errorf("removeCalls = %v, want []", mock.removeCalls)
+	}
+	if len(mock.createCalls) != 0 {
+		t.Errorf("createCalls = %v, want []", mock.createCalls)
+	}
+}
+
 func TestFinaliseContainerSkipsWhenNoLabel(t *testing.T) {
 	mock := newMockDocker()
 

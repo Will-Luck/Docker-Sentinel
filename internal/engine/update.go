@@ -658,6 +658,10 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 		return id, nil
 	}
 
+	if inspect.HostConfig == nil {
+		return id, &finaliseError{stage: "inspect", err: fmt.Errorf("container HostConfig is nil for %s", name)}
+	}
+
 	cleanConfig := cloneConfig(inspect.Config)
 	delete(cleanConfig.Labels, guardian.MaintenanceLabel)
 

@@ -8,8 +8,6 @@ DEV_IMAGE   := docker-sentinel:$(DEV_TAG)
 DEV_HOST    := user@192.0.2.10
 DEV_PORT    := 62850
 DEV_CONTAINER := sentinel-test
-DEV_SSH_KEY := $(shell mktemp)
-DEV_SSH     := ssh -i $(DEV_SSH_KEY) -o StrictHostKeyChecking=no $(DEV_HOST)
 
 # Frontend bundling (esbuild)
 ESBUILD     := $(shell go env GOPATH)/bin/esbuild
@@ -51,18 +49,22 @@ clean:
 	rm -rf bin/
 
 dev-deploy:
-	docker build --build-arg VERSION=$(DEV_TAG) --build-arg COMMIT=$(COMMIT) -t $(DEV_IMAGE) .
-	op read "op://Server-Keys/ssh-test-server-1/s7ela6vsq6eltvuj7g3orn4jd4" | sed 's/^concealed]=//' > $(DEV_SSH_KEY) && chmod 600 $(DEV_SSH_KEY)
-	docker save $(DEV_IMAGE) | $(DEV_SSH) "docker load"
-	$(DEV_SSH) "docker stop $(DEV_CONTAINER) 2>/dev/null; docker rm $(DEV_CONTAINER) 2>/dev/null; \
+	@set -e; \
+	TMP_KEY=$$(mktemp); \
+	trap 'rm -f "$$TMP_KEY"' EXIT; \
+	chmod 600 "$$TMP_KEY"; \
+	op read "op://Server-Keys/ssh-test-server-1/s7ela6vsq6eltvuj7g3orn4jd4" | sed 's/^concealed]=//' > "$$TMP_KEY"; \
+	DEV_SSH="ssh -i $$TMP_KEY -o StrictHostKeyChecking=no $(DEV_HOST)"; \
+	docker build --build-arg VERSION=$(DEV_TAG) --build-arg COMMIT=$(COMMIT) -t $(DEV_IMAGE) .; \
+	docker save $(DEV_IMAGE) | $$DEV_SSH "docker load"; \
+	$$DEV_SSH "docker stop $(DEV_CONTAINER) 2>/dev/null; docker rm $(DEV_CONTAINER) 2>/dev/null; \
 		docker run -d --name $(DEV_CONTAINER) --network host \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v sentinel-data:/data \
 		-e SENTINEL_WEB_PORT=$(DEV_PORT) \
 		-e SENTINEL_CLUSTER=true \
-		$(DEV_IMAGE)"
-	@rm -f $(DEV_SSH_KEY)
-	@echo "Deployed $(DEV_TAG) to $(DEV_HOST):$(DEV_PORT)"
+		$(DEV_IMAGE)"; \
+	echo "Deployed $(DEV_TAG) to $(DEV_HOST):$(DEV_PORT)"
 
 PROTO_DIR := internal/cluster/proto
 
