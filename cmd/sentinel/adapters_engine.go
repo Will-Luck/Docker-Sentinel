@@ -107,6 +107,52 @@ func (a *registryAdapter) ListVersions(ctx context.Context, imageRef string) ([]
 	return versions, nil
 }
 
+// VersionsWithScopeHint lists the scoped versions (same as ListVersions, but with
+// an explicit scope) and a count of higher registry versions that exist beyond
+// the effective scope, for the #83 detail-page hint. scope and defaultScope are
+// raw label strings, converted to docker.SemverScope here so internal/web stays
+// free of a docker import.
+func (a *registryAdapter) VersionsWithScopeHint(ctx context.Context, imageRef, scope, defaultScope string) ([]string, int, error) {
+	tag := registry.ExtractTag(imageRef)
+	if tag == "" {
+		return nil, 0, nil
+	}
+	repo := registry.RepoPath(imageRef)
+	host := registry.RegistryHost(imageRef)
+
+	token, err := registry.FetchToken(ctx, repo, nil, host)
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetch token: %w", err)
+	}
+	tagsResult, err := registry.ListTags(ctx, imageRef, token, host, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list tags: %w", err)
+	}
+	newer, beyond := registry.NewerVersionsScopedWithBeyond(tag, tagsResult.Tags, parseSemverScope(scope), parseSemverScope(defaultScope))
+	versions := make([]string, len(newer))
+	for i, sv := range newer {
+		versions[i] = sv.Raw
+	}
+	return versions, beyond, nil
+}
+
+// parseSemverScope converts a raw scope string to a docker.SemverScope. Empty and
+// "default" both map to ScopeDefault (relaxed); unrecognised values do too.
+func parseSemverScope(s string) docker.SemverScope {
+	switch s {
+	case string(docker.ScopeStrict):
+		return docker.ScopeStrict
+	case string(docker.ScopePatch):
+		return docker.ScopePatch
+	case string(docker.ScopeMinor):
+		return docker.ScopeMinor
+	case string(docker.ScopeMajor):
+		return docker.ScopeMajor
+	default:
+		return docker.ScopeDefault
+	}
+}
+
 // tagListerAdapter bridges registry.ListTags to web.RegistryTagLister.
 type tagListerAdapter struct {
 	log *logging.Logger

@@ -200,6 +200,29 @@ func NewerVersions(current string, tags []string) []SemVer {
 	return NewerVersionsScoped(current, tags, docker.ScopeDefault, docker.ScopeDefault)
 }
 
+// NewerVersionsScopedWithBeyond returns the scoped newer-versions list (identical
+// to NewerVersionsScoped) plus a count of higher registry versions that exist
+// beyond the effective scope. Used by the UI (#83) to hint that the Version Scope
+// is hiding higher releases instead of silently rendering nothing.
+//
+// beyondScope is computed as len(ScopeMajor result) - len(scoped result), clamped
+// to >= 0. This is correct ONLY by cancellation: the floating-tag same-subtree
+// skip, the version-scheme-mismatch guard, and the semantic dedup all run
+// identically in both the ScopeMajor pass and the scoped pass, so they cancel and
+// the difference isolates exactly the scope-switch effect. ScopeMajor does NOT mean
+// "every newer tag" — do not refactor this into a raw tag count or the cancellation
+// (and thus correctness) breaks. Non-semver / calver-exempt / already-newest cases
+// all yield beyondScope == 0 because both passes return the same set.
+func NewerVersionsScopedWithBeyond(current string, tags []string, scope, defaultScope docker.SemverScope) (newer []SemVer, beyondScope int) {
+	newer = NewerVersionsScoped(current, tags, scope, defaultScope)
+	major := NewerVersionsScoped(current, tags, docker.ScopeMajor, defaultScope)
+	beyondScope = len(major) - len(newer)
+	if beyondScope < 0 {
+		beyondScope = 0
+	}
+	return newer, beyondScope
+}
+
 // NewerVersionsScoped is like NewerVersions but accepts an explicit per-container
 // scope and a global defaultScope. When scope is ScopeDefault (no per-container
 // override), defaultScope controls the precision-based filtering logic:

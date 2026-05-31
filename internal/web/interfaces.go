@@ -30,6 +30,13 @@ type ContainerRollback interface {
 // RegistryVersionChecker lists available image versions from a registry.
 type RegistryVersionChecker interface {
 	ListVersions(ctx context.Context, imageRef string) ([]string, error)
+	// VersionsWithScopeHint returns the scoped versions plus a count of higher
+	// registry versions that exist beyond the effective Version Scope (#83).
+	// scope is the per-container scope, defaultScope the global default; both are
+	// the raw label strings ("", "strict", "patch", "minor", "major") and are
+	// converted to docker.SemverScope inside the implementation to keep this
+	// interface free of a docker import.
+	VersionsWithScopeHint(ctx context.Context, imageRef, scope, defaultScope string) (versions []string, beyondScope int, err error)
 }
 
 // RegistryTagLister lists all tags for an image from a registry.

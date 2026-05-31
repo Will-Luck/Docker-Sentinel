@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
@@ -479,13 +480,15 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 
 // containerDetailData holds all data for the per-container detail page.
 type containerDetailData struct {
-	Container     containerView
-	History       []UpdateRecord
-	Snapshots     []SnapshotEntry
-	Versions      []string
-	HasSnapshot   bool
-	ChangelogURL  string
-	PortOverrides map[string]PortOverride // per-port custom URL/path overrides, keyed by port string
+	Container      containerView
+	History        []UpdateRecord
+	Snapshots      []SnapshotEntry
+	Versions       []string
+	ScopeHintCount int    // #83: count of higher registry versions hidden by the effective Version Scope
+	CurrentScope   string // #83: effective Version Scope for display ("relaxed", "strict", ...)
+	HasSnapshot    bool
+	ChangelogURL   string
+	PortOverrides  map[string]PortOverride // per-port custom URL/path overrides, keyed by port string
 
 	PortainerEnabled bool
 	ClusterEnabled   bool
@@ -549,6 +552,45 @@ func (s *Server) withAuth(r *http.Request, data *pageData) {
 		(data.CurrentUser != nil && data.CurrentUser.RoleID == "admin")
 }
 
+// globalVersionScope returns the persisted global version scope string ("default"
+// or "strict"). An unset/unavailable store maps to "default" (relaxed), matching
+// the runtime normalisation in apiSetVersionScope.
+func (s *Server) globalVersionScope() string {
+	if s.deps.SettingsStore == nil {
+		return "default"
+	}
+	v, err := s.deps.SettingsStore.LoadSetting(store.SettingVersionScope)
+	if err != nil || v == "" {
+		return "default"
+	}
+	return v
+}
+
+// effectiveScopeLabel returns the display word for the effective Version Scope of
+// a container: the per-container scope wins; if it is ScopeDefault, the global
+// default applies. ScopeDefault is shown as "relaxed" (#83 hint text).
+func effectiveScopeLabel(containerScope docker.SemverScope, globalScope string) string {
+	scope := containerScope
+	if scope == docker.ScopeDefault {
+		// Global default: stored "strict" -> strict, anything else -> relaxed.
+		if globalScope == string(docker.ScopeStrict) {
+			scope = docker.ScopeStrict
+		}
+	}
+	switch scope {
+	case docker.ScopeStrict:
+		return "strict"
+	case docker.ScopePatch:
+		return "patch"
+	case docker.ScopeMinor:
+		return "minor"
+	case docker.ScopeMajor:
+		return "major"
+	default:
+		return "relaxed"
+	}
+}
+
 // withAuthDetail populates auth context fields on containerDetailData from the request.
 func (s *Server) withAuthDetail(r *http.Request, data *containerDetailData) {
 	rc := auth.GetRequestContext(r.Context())
@@ -571,7 +613,8 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	hostFilter := r.URL.Query().Get("host")
 
 	var view containerView
-	var image string // for changelog/version lookups
+	var image string                   // for changelog/version lookups
+	var detailLabels map[string]string // labels of the resolved container, for #83 scope hint
 
 	if strings.HasPrefix(hostFilter, "portainer:") && s.deps.Portainer != nil {
 		// Portainer container: parse "portainer:instanceID:epID" or legacy "portainer:epID".
@@ -660,6 +703,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			Registry:        registry.RegistryHost(pc.Image),
 		}
 		image = pc.Image
+		detailLabels = pc.Labels
 	} else if hostFilter != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		// Remote container: look up from cluster cache.
 		var rc *RemoteContainer
@@ -739,6 +783,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			Ports:           rc.Ports,
 		}
 		image = rc.Image
+		detailLabels = rc.Labels
 	} else {
 		// Local container: look up from Docker.
 		containers, err := s.deps.Docker.ListAllContainers(r.Context())
@@ -823,6 +868,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			HostAddress:     s.localHostAddr(r),
 		}
 		image = found.Image
+		detailLabels = found.Labels
 	}
 
 	// Use the scoped key for history/snapshot lookups so Portainer and cluster
@@ -854,13 +900,26 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		snapshots = []SnapshotEntry{}
 	}
 
-	// Gather versions (nil-check dependency).
+	// Gather versions plus the #83 scope hint (nil-check dependency).
+	//
+	// The per-container scope comes from the sentinel.semver label; the global
+	// default scope is read from settings. Both are passed as raw strings (the
+	// adapter converts them to docker.SemverScope), mirroring how the checker
+	// scopes versions. When the scoped list is empty but higher registry versions
+	// exist beyond the effective scope, the template renders a hint instead of
+	// nothing.
 	var versions []string
+	var scopeHintCount int
+	containerScope := docker.ContainerSemverScope(detailLabels)
+	globalScope := s.globalVersionScope()
+	currentScope := effectiveScopeLabel(containerScope, globalScope)
 	if s.deps.Registry != nil {
-		versions, err = s.deps.Registry.ListVersions(r.Context(), image)
+		versions, scopeHintCount, err = s.deps.Registry.VersionsWithScopeHint(
+			r.Context(), image, string(containerScope), globalScope)
 		if err != nil {
 			s.deps.Log.Warn("failed to list versions", "name", name, "error", err)
 			versions = nil
+			scopeHintCount = 0
 		}
 	}
 
@@ -878,6 +937,8 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		History:          history,
 		Snapshots:        snapshots,
 		Versions:         versions,
+		ScopeHintCount:   scopeHintCount,
+		CurrentScope:     currentScope,
 		HasSnapshot:      len(snapshots) > 0,
 		ChangelogURL:     ChangelogURL(image),
 		PortOverrides:    portOverrides,

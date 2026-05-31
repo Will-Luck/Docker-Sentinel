@@ -240,7 +240,19 @@
                     </div>
                 </div>
             </details>
-            {{end}}
+            {{else}}{{if gt .ScopeHintCount 0}}
+            <!-- Available Versions hidden by Version Scope (#83) -->
+            <details class="accordion card">
+                <summary class="accordion-header">
+                    <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <h2>Available Versions</h2>
+                    <span class="accordion-preview">{{.ScopeHintCount}} beyond scope</span>
+                </summary>
+                <div class="accordion-body">
+                    <p class="accordion-empty">{{.ScopeHintCount}} higher version(s) exist on the registry beyond your current Version Scope ({{.CurrentScope}}). Set the <code>sentinel.semver=minor</code> label on this container, or move it to a floating tag, to see them.</p>
+                </div>
+            </details>
+            {{end}}{{end}}
 
             <!-- All Tags -->
             <details class="accordion card" id="all-tags-section">

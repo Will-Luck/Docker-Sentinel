@@ -19,6 +19,10 @@ type CheckResult struct {
 	NewerVersions          []string // Newer semver versions available (newest first)
 	ResolvedCurrentVersion string   // Semver tag matching local digest (for latest-tagged images)
 	ResolvedTargetVersion  string   // Semver tag matching remote digest (for latest-tagged images)
+	// HigherVersionsBeyondScope counts registry versions higher than current that
+	// exist beyond the effective Version Scope (i.e. would only appear under a wider
+	// scope). Lets the UI hint that the scope is hiding releases (#83).
+	HigherVersionsBeyondScope int
 }
 
 // DigestEquivalenceChecker can look up cached digest equivalences.
@@ -224,7 +228,8 @@ func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownD
 	}
 
 	filteredTags := FilterTags(tagsResult.Tags, includeRE, excludeRE)
-	newer := NewerVersionsScoped(tag, filteredTags, scope, c.defaultScope)
+	newer, beyond := NewerVersionsScopedWithBeyond(tag, filteredTags, scope, c.defaultScope)
+	result.HigherVersionsBeyondScope = beyond
 	for _, sv := range newer {
 		result.NewerVersions = append(result.NewerVersions, sv.Raw)
 	}
@@ -294,7 +299,8 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string, scope doc
 	}
 
 	filteredTags := FilterTags(tagsResult.Tags, includeRE, excludeRE)
-	newer := NewerVersionsScoped(tag, filteredTags, scope, c.defaultScope)
+	newer, beyond := NewerVersionsScopedWithBeyond(tag, filteredTags, scope, c.defaultScope)
+	result.HigherVersionsBeyondScope = beyond
 	for _, sv := range newer {
 		result.NewerVersions = append(result.NewerVersions, sv.Raw)
 	}

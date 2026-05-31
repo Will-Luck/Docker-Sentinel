@@ -464,3 +464,104 @@ func TestExtractTag(t *testing.T) {
 		})
 	}
 }
+
+// TestNewerVersionsScopedWithBeyond covers the #83 scope-hint helper: it returns
+// the scoped newer-versions list plus a count of higher registry versions that
+// exist beyond the effective scope. The count is the ScopeMajor length minus the
+// scoped length, which isolates exactly the scope-switch effect.
+func TestNewerVersionsScopedWithBeyond(t *testing.T) {
+	tests := []struct {
+		name         string
+		current      string
+		tags         []string
+		scope        docker.SemverScope
+		defaultScope docker.SemverScope
+		wantScoped   []string
+		wantBeyond   int
+	}{
+		{
+			// gallery-server: relaxed 3-part scope keeps only same-minor patches,
+			// of which there are none, but three higher minors exist on the registry.
+			name:         "gallery_server_relaxed_empty_beyond_3",
+			current:      "v4.50.0",
+			tags:         []string{"v4.50.0", "v4.51.0", "v4.52.0", "v4.55.2"},
+			scope:        docker.ScopeDefault,
+			defaultScope: docker.ScopeDefault,
+			wantScoped:   nil,
+			wantBeyond:   3,
+		},
+		{
+			// Normal case: one same-minor patch is in scope, one higher minor is beyond.
+			name:         "normal_relaxed_one_scoped_one_beyond",
+			current:      "1.2.0",
+			tags:         []string{"1.2.0", "1.2.1", "1.3.0"},
+			scope:        docker.ScopeDefault,
+			defaultScope: docker.ScopeDefault,
+			wantScoped:   []string{"1.2.1"},
+			wantBeyond:   1,
+		},
+		{
+			// Non-semver current tag: ParseSemVer fails, both calls empty, no hint.
+			name:         "latest_non_semver_zero",
+			current:      "latest",
+			tags:         []string{"v4.51.0", "v4.55.2"},
+			scope:        docker.ScopeDefault,
+			defaultScope: docker.ScopeDefault,
+			wantScoped:   nil,
+			wantBeyond:   0,
+		},
+		{
+			// Calver current tag is scope-exempt, so widening to ScopeMajor adds
+			// nothing the scoped call did not already include: no spurious hint.
+			name:         "calver_scope_exempt_zero",
+			current:      "2026.4",
+			tags:         []string{"2026.4", "2026.5", "2026.5.1"},
+			scope:        docker.ScopeDefault,
+			defaultScope: docker.ScopeDefault,
+			wantScoped:   []string{"2026.5.1", "2026.5"},
+			wantBeyond:   0,
+		},
+		{
+			// Already newest: nothing higher anywhere, beyond is zero.
+			name:         "already_newest_zero",
+			current:      "v4.55.2",
+			tags:         []string{"v4.50.0", "v4.51.0", "v4.55.2"},
+			scope:        docker.ScopeDefault,
+			defaultScope: docker.ScopeDefault,
+			wantScoped:   nil,
+			wantBeyond:   0,
+		},
+		{
+			// Strict global default: 3-part current allows no updates at all under
+			// the effective (strict) scope, yet higher patch+minor+major exist beyond.
+			name:         "strict_default_3part_empty_beyond",
+			current:      "1.13.3",
+			tags:         []string{"1.13.3", "1.13.4", "1.14.0", "2.0.0"},
+			scope:        docker.ScopeDefault,
+			defaultScope: docker.ScopeStrict,
+			wantScoped:   nil,
+			wantBeyond:   3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotScoped, gotBeyond := NewerVersionsScopedWithBeyond(tt.current, tt.tags, tt.scope, tt.defaultScope)
+			if len(gotScoped) != len(tt.wantScoped) {
+				t.Fatalf("scoped: got %d versions, want %d: %v", len(gotScoped), len(tt.wantScoped), rawVersions(gotScoped))
+			}
+			gotSet := make(map[string]bool, len(gotScoped))
+			for _, sv := range gotScoped {
+				gotSet[sv.Raw] = true
+			}
+			for _, exp := range tt.wantScoped {
+				if !gotSet[exp] {
+					t.Errorf("expected %q in scoped results, got %v", exp, rawVersions(gotScoped))
+				}
+			}
+			if gotBeyond != tt.wantBeyond {
+				t.Errorf("beyondScope = %d, want %d", gotBeyond, tt.wantBeyond)
+			}
+		})
+	}
+}
