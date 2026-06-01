@@ -192,6 +192,24 @@ func noCertConn(t *testing.T, addr string) *grpc.ClientConn {
 	return conn
 }
 
+// waitFor polls cond every 5ms until it returns true or timeout elapses, then
+// fails the test with msg. It replaces fixed time.Sleep() waits before
+// assertions on asynchronous server-side state (stream registration,
+// reconnection, command results): a fixed sleep races the server goroutine and
+// flakes under CI scheduling pressure, whereas polling the real condition
+// returns as soon as it holds and tolerates a slow scheduler.
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
 // ---------------------------------------------------------------------------
 // TestEnrollment verifies the happy-path enrollment flow end-to-end:
 // token generation, CSR signing, cert chain validation, host registration,
@@ -390,8 +408,11 @@ func TestChannel_Heartbeat(t *testing.T) {
 		t.Fatalf("Channel: %v", err)
 	}
 
-	// Allow the server to register the stream.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the server to register the stream (host marked connected).
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && hs.Connected
+	}, "host should be connected after channel open")
 
 	// Record LastSeen before heartbeat.
 	hs, ok := srv.Registry().Get(hostID)
@@ -418,8 +439,11 @@ func TestChannel_Heartbeat(t *testing.T) {
 		t.Fatalf("send heartbeat: %v", err)
 	}
 
-	// Wait for the server to process it.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the server to process the heartbeat and advance LastSeen.
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && hs.Info.LastSeen.After(lastSeenBefore)
+	}, "LastSeen should have been updated after heartbeat")
 
 	// Verify LastSeen was updated.
 	hs, ok = srv.Registry().Get(hostID)
@@ -458,8 +482,11 @@ func TestChannel_ListContainers(t *testing.T) {
 		t.Fatalf("Channel: %v", err)
 	}
 
-	// Wait for the stream to be registered server-side.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the stream to be registered server-side (host connected).
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && hs.Connected
+	}, "host should be connected before sending command")
 
 	// In a goroutine, act as the agent: read from the stream, handle the
 	// ListContainersRequest by sending back a ContainerList response.
@@ -528,7 +555,10 @@ func TestChannel_ListContainers(t *testing.T) {
 	}
 
 	// Wait for the server to process the ContainerList response.
-	time.Sleep(100 * time.Millisecond)
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && len(hs.Containers) == 2
+	}, "expected 2 containers in registry after list response")
 
 	// Verify: registry should now have 2 containers for this host.
 	hs, ok := srv.Registry().Get(hostID)
@@ -574,7 +604,11 @@ func TestChannel_UpdateContainer(t *testing.T) {
 		t.Fatalf("Channel: %v", err)
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	// Wait for the stream to be registered server-side (host connected).
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && hs.Connected
+	}, "host should be connected before sending command")
 
 	// Subscribe to SSE events to verify the update result is published.
 	evtCh, evtCancel := bus.Subscribe()
@@ -638,10 +672,8 @@ func TestChannel_UpdateContainer(t *testing.T) {
 		t.Fatal("timeout waiting for agent update response")
 	}
 
-	// Wait for server to process and publish the SSE event.
-	time.Sleep(100 * time.Millisecond)
-
 	// Verify: an SSE event should have been published for the update.
+	// The select below already waits up to 2s, so no fixed sleep is needed.
 	select {
 	case evt := <-evtCh:
 		if evt.Type != events.EventContainerUpdate {
@@ -679,8 +711,11 @@ func TestChannel_Disconnect(t *testing.T) {
 		t.Fatalf("Channel: %v", err)
 	}
 
-	// Wait for connection to be established.
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the connection to be established.
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && hs.Connected
+	}, "host should be connected before disconnect")
 
 	// Verify connected.
 	hs, ok := srv.Registry().Get(hostID)
@@ -698,7 +733,10 @@ func TestChannel_Disconnect(t *testing.T) {
 	_ = stream.CloseSend()
 
 	// Wait for the server to detect the disconnect and clean up.
-	time.Sleep(300 * time.Millisecond)
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && !hs.Connected
+	}, "host should be marked as disconnected after stream cancel")
 
 	// Verify: host marked as disconnected.
 	hs, ok = srv.Registry().Get(hostID)
@@ -746,7 +784,11 @@ func TestChannel_Reconnect(t *testing.T) {
 		cancel1()
 		t.Fatalf("Channel (first): %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the first connection to register.
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && hs.Connected
+	}, "host should be connected after first channel open")
 
 	// Verify connected.
 	hs, _ := srv.Registry().Get(hostID)
@@ -757,7 +799,12 @@ func TestChannel_Reconnect(t *testing.T) {
 	// Disconnect.
 	cancel1()
 	_ = stream1.CloseSend()
-	time.Sleep(300 * time.Millisecond)
+
+	// Wait for the server to mark the host disconnected.
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && !hs.Connected
+	}, "host should be disconnected after cancel")
 
 	// Verify disconnected.
 	hs, _ = srv.Registry().Get(hostID)
@@ -788,7 +835,11 @@ func TestChannel_Reconnect(t *testing.T) {
 		t.Fatalf("send heartbeat on reconnect: %v", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the reconnection to re-register the host as connected.
+	waitFor(t, 3*time.Second, func() bool {
+		hs, ok := srv.Registry().Get(hostID)
+		return ok && hs.Connected
+	}, "host should be marked as connected after reconnecting")
 
 	// Verify reconnected.
 	hs, ok := srv.Registry().Get(hostID)
