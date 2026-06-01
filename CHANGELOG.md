@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14.1] - 2026-06-01
+
+### Security
+- Bumped `go.opentelemetry.io/otel` (and `otel/metric`, `otel/trace`) to v1.41.0 to clear CVE-2026-29181 / GHSA-mh2q-q3fh-2475 (multi-value baggage header extraction, a DoS amplification). The package is a transitive dependency and the vulnerable path is not reachable in Sentinel (no otel propagator or baggage extraction is wired), so this is a precautionary bump. ([#81](https://github.com/Will-Luck/Docker-Sentinel/pull/81))
+
 ## [2.14.0] - 2026-06-01
 
 ### Added
