@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-06-01
+
 ### Added
 - The container detail page now shows a hint when the Version Scope is hiding higher releases, instead of rendering an empty "Available Versions" section. Under the relaxed default scope a 3-part semver tag only counts higher same-minor patches as updates, so a container whose minor line has no further patches (e.g. `nginx:1.24.0`, or an app pinned to an older minor) would silently show nothing even though newer minors and majors exist upstream. The section now reads "N higher version(s) exist on the registry beyond your current Version Scope" and points to the per-container `sentinel.semver=minor` label (or a floating tag) to surface them. Backed by a new `NewerVersionsScopedWithBeyond` helper and a `CheckResult.HigherVersionsBeyondScope` count. ([#83](https://github.com/Will-Luck/Docker-Sentinel/issues/83))
 
