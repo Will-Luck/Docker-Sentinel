@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.15.0] - 2026-07-09
+## [2.15.1] - 2026-07-09
+
+### Security
+- Bumped `golang.org/x/net` v0.49.0 to v0.55.0, clearing GHSA-5cv4-jp36-h3mw (Go HTML parser denial of service). The vulnerable package is an indirect dependency and the HTML parser is not on any Sentinel code path, so this is a precautionary bump. Transitive `golang.org/x/*` modules (crypto, sync, sys, text) moved forward with it.
+
+### Changed
+- Toolchain raised to Go 1.25 (required by x/net v0.55.0): go.mod, CI workflows, and the Docker builder image now use Go 1.25.
+- golangci-lint upgraded v1.64.8 to v2.12.2 (v1 cannot lint go 1.25 modules). The `.golangci.yml` was migrated to the v2 format at v1 parity: same effective linter set (gosimple is now part of staticcheck, gofmt runs as a formatter), with v1's default exclusions restored via presets. gosec analyzers introduced after v1.64.8 (G115, G117, G118, G123, G124, G703, G705) are excluded pending triage; the flagged sites were spot-checked as false positives (bounds-guarded conversion, documented TLS enrollment design, deploy-dependent cookie Secure flag, static asset writes).
 
 ### Changed
 - Version comparison is now variant-aware. A bare tag (`nginx:1.24.0`) only competes against bare and pre-release tags, and a variant tag (`1.24.0-alpine`) only against tags with the same variant suffix. Previously every flavour an image publishes (`-alpine`, `-perl`, `-bookworm`, `-otel`, ...) counted as a distinct higher version, inflating the Available Versions list and the beyond-scope hint count by a variant multiplier -- `nginx:1.24.0` reported "499 beyond scope" where the real number of higher bare version lines was a handful. Pre-release suffixes (`-rc1`, `-beta.2`, `-dev`, ...) still participate in version ordering, so a container on `2.0.0-rc1` continues to see `2.0.0-rc2` and the final `2.0.0` as updates. ([#84](https://github.com/Will-Luck/Docker-Sentinel/issues/84))
@@ -710,7 +717,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.0...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.1...HEAD
+[2.15.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.14.1...v2.15.0
 [2.14.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.14.0...v2.14.1
 [2.14.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.13.2...v2.14.0

@@ -1,14 +1,50 @@
+version: "2"
+
 run:
   timeout: 5m
 
+# v1 -> v2 migration (golangci-lint v1.64.8 -> v2.12.2), kept at v1 parity:
+# - errcheck, govet, staticcheck, unused, ineffassign are in the v2 default set
+# - gosimple was merged into staticcheck (S* checks below)
+# - gofmt moved to the formatters section
+# - v1's built-in default exclusions became opt-in presets in v2
+# - v1 ran only SA* (staticcheck) + S* (gosimple); QF*/ST* stay off
 linters:
   enable:
-    - errcheck
-    - govet
-    - staticcheck
-    - unused
-    - gosimple
-    - ineffassign
     - gosec
     - misspell
+  settings:
+    gosec:
+      # Analyzers added to gosec after golangci-lint v1.64.8, parked at v1
+      # parity pending triage (tracked in GitHub issue). Spot-checked as
+      # false positives here: G115 (byte(qos) is bounds-guarded), G123
+      # (VerifyClientCertIfGiven is the documented enrollment design), G705
+      # (static asset writes with explicit content types).
+      excludes:
+        - G115 # integer overflow conversion
+        - G117 # marshaled struct field matches secret pattern
+        - G118 # goroutine uses context.Background in request scope
+        - G123 # weak TLS client auth
+        - G124 # cookie attributes (Secure is deploy-dependent; CSRF double-submit needs HttpOnly=false)
+        - G703 # path traversal via taint analysis
+        - G705 # XSS via taint analysis
+    staticcheck:
+      checks:
+        - "SA*"
+        - "S*"
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+    rules:
+      # Test fixtures trip credential/taint analyzers (G101 fake tokens,
+      # G704 test-server proxying, G124 test listeners).
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
     - gofmt

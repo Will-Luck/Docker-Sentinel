@@ -1,6 +1,6 @@
 module github.com/Will-Luck/Docker-Sentinel
 
-go 1.24.13
+go 1.25.0
 
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0
@@ -13,7 +13,7 @@ require (
 	github.com/prometheus/common v0.66.1
 	github.com/robfig/cron/v3 v3.0.1
 	go.etcd.io/bbolt v1.4.3
-	golang.org/x/crypto v0.48.0
+	golang.org/x/crypto v0.51.0
 	golang.org/x/oauth2 v0.35.0
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.11
@@ -55,9 +55,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.41.0 // indirect
 	go.opentelemetry.io/otel/trace v1.41.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/net v0.49.0 // indirect
-	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 )
