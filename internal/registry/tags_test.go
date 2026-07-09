@@ -565,3 +565,155 @@ func TestNewerVersionsScopedWithBeyond(t *testing.T) {
 		})
 	}
 }
+
+func TestSemVerVariant(t *testing.T) {
+	tests := []struct {
+		tag  string
+		want string
+	}{
+		{"1.24.0", ""},
+		{"v2.0.0", ""},
+		// Pre-release suffixes are ordering qualifiers, not variants.
+		{"1.0.0-rc1", ""},
+		{"1.0.0-rc.2", ""},
+		{"1.0.0-beta2", ""},
+		{"1.0.0-alpha", ""},
+		{"1.0.0-dev", ""},
+		{"1.0.0-snapshot", ""},
+		{"1.0.0-preview1", ""},
+		// Build variants partition the tag space.
+		{"1.24.0-alpine", "alpine"},
+		{"1.24.0-alpine3.19", "alpine3.19"},
+		{"1.24.0-perl", "perl"},
+		{"1.24.0-bookworm", "bookworm"},
+		{"1.24.0-otel", "otel"},
+		{"1.24.0-alpine-perl", "alpine-perl"},
+		{"1.24.0-slim", "slim"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			sv, ok := ParseSemVer(tt.tag)
+			if !ok {
+				t.Fatalf("ParseSemVer(%q) returned false, want true", tt.tag)
+			}
+			if got := sv.Variant(); got != tt.want {
+				t.Errorf("Variant() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNewerVersionsScoped_VariantAware covers #84: variant-suffixed tags must
+// not appear as newer versions for a differently-flavoured current tag.
+func TestNewerVersionsScoped_VariantAware(t *testing.T) {
+	// nginx-style tag zoo: each version line published in several flavours.
+	nginxTags := []string{
+		"1.24.0", "1.24.0-alpine", "1.24.0-perl", "1.24.0-bookworm", "1.24.0-otel",
+		"1.25.1", "1.25.1-alpine", "1.25.1-perl", "1.25.1-bookworm", "1.25.1-otel",
+		"1.25.2", "1.25.2-alpine", "1.25.2-perl", "1.25.2-bookworm", "1.25.2-otel",
+	}
+
+	tests := []struct {
+		name     string
+		current  string
+		tags     []string
+		scope    docker.SemverScope
+		expected []string
+	}{
+		{
+			// Bare current: only bare tags count, flavours are invisible.
+			name:     "bare_current_ignores_variants",
+			current:  "1.25.1",
+			tags:     nginxTags,
+			scope:    docker.ScopeDefault,
+			expected: []string{"1.25.2"},
+		},
+		{
+			// Variant current: only the same flavour counts.
+			name:     "alpine_current_sees_only_alpine",
+			current:  "1.25.1-alpine",
+			tags:     nginxTags,
+			scope:    docker.ScopeDefault,
+			expected: []string{"1.25.2-alpine"},
+		},
+		{
+			// Different variant present but no matching newer tag: empty, not
+			// another flavour's release.
+			name:     "perl_current_no_cross_variant_leak",
+			current:  "1.25.2-perl",
+			tags:     nginxTags,
+			scope:    docker.ScopeMajor,
+			expected: nil,
+		},
+		{
+			// Pre-release current still sees its release counterpart and later
+			// pre-releases: rc/beta/alpha are ordering qualifiers, not variants.
+			name:     "prerelease_current_sees_release",
+			current:  "2.0.0-rc1",
+			tags:     []string{"2.0.0-rc1", "2.0.0-rc2", "2.0.0", "2.0.0-alpine"},
+			scope:    docker.ScopePatch,
+			expected: []string{"2.0.0-rc2", "2.0.0"},
+		},
+		{
+			// Bare current sees pre-releases of higher versions but no variants.
+			name:     "bare_current_sees_higher_prerelease",
+			current:  "1.25.2",
+			tags:     []string{"1.25.3-rc1", "1.25.3-alpine", "1.26.0-beta1"},
+			scope:    docker.ScopeMajor,
+			expected: []string{"1.26.0-beta1", "1.25.3-rc1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewerVersionsScoped(tt.current, tt.tags, tt.scope, docker.ScopeDefault)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("got %d versions, want %d: %v", len(got), len(tt.expected), rawVersions(got))
+			}
+			gotSet := make(map[string]bool, len(got))
+			for _, sv := range got {
+				gotSet[sv.Raw] = true
+			}
+			for _, exp := range tt.expected {
+				if !gotSet[exp] {
+					t.Errorf("expected %q in results, got %v", exp, rawVersions(got))
+				}
+			}
+		})
+	}
+}
+
+// TestNewerVersionsScopedWithBeyond_VariantAware covers the #84 headline case:
+// the beyond-scope count must reflect distinct same-variant version lines, not
+// every flavour multiplied out (nginx:1.24.0 previously reported hundreds).
+func TestNewerVersionsScopedWithBeyond_VariantAware(t *testing.T) {
+	variants := []string{"", "-alpine", "-perl", "-bookworm", "-otel", "-alpine-perl", "-alpine-slim", "-otel-alpine"}
+	versions := []string{"1.25.0", "1.25.1", "1.26.0", "1.26.1", "1.27.0"}
+	var tags []string
+	for _, v := range versions {
+		for _, suffix := range variants {
+			tags = append(tags, v+suffix)
+		}
+	}
+
+	// Bare 1.24.0 under relaxed default scope: nothing in scope (no newer
+	// 1.24.x), and beyond-scope counts the 5 bare higher versions only --
+	// not 5 versions x 8 flavours = 40.
+	scoped, beyond := NewerVersionsScopedWithBeyond("1.24.0", tags, docker.ScopeDefault, docker.ScopeDefault)
+	if len(scoped) != 0 {
+		t.Fatalf("scoped: got %d versions, want 0: %v", len(scoped), rawVersions(scoped))
+	}
+	if beyond != len(versions) {
+		t.Errorf("beyondScope = %d, want %d (bare version lines only)", beyond, len(versions))
+	}
+
+	// Same shape for a variant-pinned current: only -alpine lines count.
+	scoped, beyond = NewerVersionsScopedWithBeyond("1.24.0-alpine", tags, docker.ScopeDefault, docker.ScopeDefault)
+	if len(scoped) != 0 {
+		t.Fatalf("alpine scoped: got %d versions, want 0: %v", len(scoped), rawVersions(scoped))
+	}
+	if beyond != len(versions) {
+		t.Errorf("alpine beyondScope = %d, want %d (alpine version lines only)", beyond, len(versions))
+	}
+}

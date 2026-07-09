@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-07-09
+
+### Changed
+- Version comparison is now variant-aware. A bare tag (`nginx:1.24.0`) only competes against bare and pre-release tags, and a variant tag (`1.24.0-alpine`) only against tags with the same variant suffix. Previously every flavour an image publishes (`-alpine`, `-perl`, `-bookworm`, `-otel`, ...) counted as a distinct higher version, inflating the Available Versions list and the beyond-scope hint count by a variant multiplier -- `nginx:1.24.0` reported "499 beyond scope" where the real number of higher bare version lines was a handful. Pre-release suffixes (`-rc1`, `-beta.2`, `-dev`, ...) still participate in version ordering, so a container on `2.0.0-rc1` continues to see `2.0.0-rc2` and the final `2.0.0` as updates. ([#84](https://github.com/Will-Luck/Docker-Sentinel/issues/84))
+
 ## [2.14.1] - 2026-06-01
 
 ### Security
@@ -705,7 +710,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.10.1...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.0...HEAD
+[2.15.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.14.1...v2.15.0
+[2.14.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.14.0...v2.14.1
+[2.14.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.13.2...v2.14.0
 [2.10.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.10.0...v2.10.1
 [2.10.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.9.1...v2.10.0
 [2.9.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.9.0...v2.9.1

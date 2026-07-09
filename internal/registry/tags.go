@@ -207,9 +207,12 @@ func NewerVersions(current string, tags []string) []SemVer {
 //
 // beyondScope is computed as len(ScopeMajor result) - len(scoped result), clamped
 // to >= 0. This is correct ONLY by cancellation: the floating-tag same-subtree
-// skip, the version-scheme-mismatch guard, and the semantic dedup all run
-// identically in both the ScopeMajor pass and the scoped pass, so they cancel and
-// the difference isolates exactly the scope-switch effect. ScopeMajor does NOT mean
+// skip, the version-scheme-mismatch guard, the variant filter (#84), and the
+// semantic dedup all run identically in both the ScopeMajor pass and the scoped
+// pass, so they cancel and the difference isolates exactly the scope-switch
+// effect. Because the variant filter runs in both passes, beyondScope counts
+// only same-variant higher versions (nginx:1.24.0 reports the bare 1.25/1.26/...
+// lines, not every -alpine/-perl/-bookworm flavour of them). ScopeMajor does NOT mean
 // "every newer tag" — do not refactor this into a raw tag count or the cancellation
 // (and thus correctness) breaks. Non-semver / calver-exempt / already-newest cases
 // all yield beyondScope == 0 because both passes return the same set.
@@ -224,8 +227,11 @@ func NewerVersionsScopedWithBeyond(current string, tags []string, scope, default
 }
 
 // NewerVersionsScoped is like NewerVersions but accepts an explicit per-container
-// scope and a global defaultScope. When scope is ScopeDefault (no per-container
-// override), defaultScope controls the precision-based filtering logic:
+// scope and a global defaultScope. Comparison is variant-aware (#84): candidates
+// whose build-variant suffix differs from the current tag's are skipped, so a
+// bare tag only sees bare/pre-release tags and a -alpine tag only sees -alpine
+// tags. When scope is ScopeDefault (no per-container override), defaultScope
+// controls the precision-based filtering logic:
 //   - ScopeDefault (relaxed): 3-part→patch, 2-part→minor+patch, 1-part→all
 //   - ScopeStrict: 3-part→none, 2-part→patch, 1-part→minor+patch
 func NewerVersionsScoped(current string, tags []string, scope, defaultScope docker.SemverScope) []SemVer {
@@ -236,12 +242,22 @@ func NewerVersionsScoped(current string, tags []string, scope, defaultScope dock
 
 	var newer []SemVer
 	curIsCalver := cur.Major >= 1900
+	curVariant := cur.Variant()
 	for _, tag := range tags {
 		sv, ok := ParseSemVer(tag)
 		if !ok {
 			continue
 		}
 		if versionSchemeMismatch(cur, sv) {
+			continue
+		}
+
+		// #84: variant-aware comparison. A bare current tag (nginx:1.24.0) only
+		// competes with bare or pre-release tags; a variant tag (1.24.0-alpine)
+		// only with the same variant. Without this, images that publish many
+		// flavours (-alpine, -perl, -bookworm, -otel, ...) inflate the newer
+		// list and the beyond-scope count by a variant multiplier.
+		if sv.Variant() != curVariant {
 			continue
 		}
 
@@ -370,6 +386,22 @@ func versionSchemeMismatch(a, b SemVer) bool {
 	aCalver := a.Major >= 1900
 	bCalver := b.Major >= 1900
 	return aCalver != bCalver
+}
+
+// preReleaseSuffixRE matches suffixes that denote a pre-release of the same
+// version line (rc1, beta.2, alpha-3, dev, snapshot, ...) rather than a build
+// variant (alpine, perl, bookworm, otel, slim, ...). Pre-releases participate
+// in version ordering (1.2.3-rc1 < 1.2.3); variants partition the tag space.
+var preReleaseSuffixRE = regexp.MustCompile(`(?i)^(alpha|beta|rc|pre|preview|dev|snapshot|nightly|canary|next|ea|milestone|m)([-.]?\d+)?$`)
+
+// Variant returns the build-variant identifier of a tag, or "" for bare tags
+// and pre-release suffixes. "1.24.0" and "2.0.0-rc1" are both variant "";
+// "1.24.0-alpine" is variant "alpine"; "1.24.0-alpine3.19" is "alpine3.19".
+func (v SemVer) Variant() string {
+	if v.Pre == "" || preReleaseSuffixRE.MatchString(v.Pre) {
+		return ""
+	}
+	return v.Pre
 }
 
 // NormaliseRepo converts an image reference to a Docker Hub repository path.
