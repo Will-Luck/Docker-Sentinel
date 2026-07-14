@@ -15,19 +15,19 @@ linters:
     - misspell
   settings:
     gosec:
-      # Analyzers added to gosec after golangci-lint v1.64.8, parked at v1
-      # parity pending triage (tracked in GitHub issue). Spot-checked as
-      # false positives here: G115 (byte(qos) is bounds-guarded), G123
-      # (VerifyClientCertIfGiven is the documented enrollment design), G705
-      # (static asset writes with explicit content types).
+      # Post-v1.64.8 analyzers triaged individually (GitHub issue #85).
+      # Fixed in code: G115 (mqtt qos bounds), G123 (session resumption
+      # disabled so the CRL check runs on every handshake). Annotated with
+      # targeted #nosec at the flagged sites: G117, G703, G705. Only the
+      # two below stay globally excluded:
       excludes:
-        - G115 # integer overflow conversion
-        - G117 # marshaled struct field matches secret pattern
+        # All 23 sites are fire-and-forget jobs (container actions, scans,
+        # registry refreshes) that must outlive the HTTP request by design.
         - G118 # goroutine uses context.Background in request scope
-        - G123 # weak TLS client auth
-        - G124 # cookie attributes (Secure is deploy-dependent; CSRF double-submit needs HttpOnly=false)
-        - G703 # path traversal via taint analysis
-        - G705 # XSS via taint analysis
+        # Secure can't be a literal: plain-HTTP LAN installs are supported,
+        # so it comes from deploy config at every cookie site. The CSRF
+        # double-submit cookie additionally requires HttpOnly=false.
+        - G124 # cookie attributes
     staticcheck:
       checks:
         - "SA*"
@@ -39,11 +39,12 @@ linters:
       - common-false-positives
       - legacy
     rules:
-      # Test fixtures trip credential/taint analyzers (G101 fake tokens,
-      # G704 test-server proxying, G124 test listeners).
+      # Test fixtures only: fake tokens (G101) and test-server proxying
+      # (G704). Everything else in gosec now applies to test files too.
       - path: _test\.go
         linters:
           - gosec
+        text: "G101|G704"
 
 formatters:
   enable:

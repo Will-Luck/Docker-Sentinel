@@ -93,7 +93,7 @@ func (s *Store) GetRegistryCredentials() ([]registry.RegistryCredential, error) 
 
 // SetRegistryCredentials saves registry credentials to the registry_credentials bucket.
 func (s *Store) SetRegistryCredentials(creds []registry.RegistryCredential) error {
-	data, err := json.Marshal(creds)
+	data, err := json.Marshal(creds) // #nosec G117 -- persisting registry credentials locally is this store's purpose
 	if err != nil {
 		return fmt.Errorf("marshal registry credentials: %w", err)
 	}

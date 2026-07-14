@@ -258,6 +258,6 @@ func maskNtfySecrets(settings json.RawMessage) json.RawMessage {
 	if s.Password != "" {
 		s.Password = maskToken(s.Password)
 	}
-	out, _ := json.Marshal(s)
+	out, _ := json.Marshal(s) // #nosec G117 -- secrets are masked above before re-marshaling
 	return out
 }

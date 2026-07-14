@@ -307,7 +307,7 @@ func (as *AgentServer) serveStatic(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
-	_, _ = w.Write(data)
+	_, _ = w.Write(data) // #nosec G705 -- compile-time embedded static asset, Content-Type set explicitly above
 }
 
 func (as *AgentServer) serveFaviconSVG(w http.ResponseWriter, r *http.Request) {

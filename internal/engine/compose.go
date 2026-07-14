@@ -35,12 +35,12 @@ func UpdateComposeTag(composePath, serviceName, newImage string) error {
 	}
 
 	// Write backup.
-	if err := os.WriteFile(composePath+".bak", data, 0600); err != nil {
+	if err := os.WriteFile(composePath+".bak", data, 0600); err != nil { // #nosec G703 -- composePath comes from Docker compose labels on the host, not request input
 		return fmt.Errorf("write compose backup: %w", err)
 	}
 
 	// Write updated file.
-	if err := os.WriteFile(composePath, []byte(updated), 0600); err != nil {
+	if err := os.WriteFile(composePath, []byte(updated), 0600); err != nil { // #nosec G703 -- composePath comes from Docker compose labels on the host, not request input
 		return fmt.Errorf("write compose file: %w", err)
 	}
 

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.15.2] - 2026-07-14
+
+### Security
+
+- The cluster gRPC server now disables TLS session resumption
+  (`SessionTicketsDisabled`). Session resumption skips `VerifyPeerCertificate`,
+  so a revoked agent certificate could have reconnected without hitting the
+  CRL check for the lifetime of a session ticket. Agent connections are
+  long-lived, so the extra handshake cost is negligible. Found while triaging
+  gosec G123; the v2.15.1 spot-check misread this finding as being about the
+  documented `VerifyClientCertIfGiven` enrollment design.
+  ([#85](https://github.com/Will-Luck/Docker-Sentinel/issues/85))
+
+### Fixed
+
+- MQTT notifier QoS bounds check now runs before the int-to-byte conversion.
+  Previously a QoS value above 255 wrapped at the byte boundary (257 became
+  QoS 1) and slipped past the guard; out-of-range values now always fall back
+  to QoS 0. Found while triaging gosec G115.
+  ([#85](https://github.com/Will-Luck/Docker-Sentinel/issues/85))
+
+### Changed
+
+- Completed the gosec analyzer triage deferred at v2.15.1. G115 and G123 are
+  fixed in code (above). G117 (credential persistence and masked-secret
+  marshaling), G703 (compose paths sourced from Docker labels), and G705
+  (embedded static assets) carry targeted `#nosec` annotations at the seven
+  flagged sites. Only G118 (fire-and-forget update goroutines that must
+  outlive the request) and G124 (deploy-dependent cookie `Secure` flag,
+  CSRF double-submit cookie) remain globally excluded, each with a documented
+  rationale in `.golangci.yml`. The blanket gosec exclusion for test files
+  narrowed to G101/G704 (fixture tokens and test-server requests).
+  ([#85](https://github.com/Will-Luck/Docker-Sentinel/issues/85))
+
 ## [2.15.1] - 2026-07-09
 
 ### Security
@@ -717,7 +751,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.1...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.2...HEAD
+[2.15.2]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.1...v2.15.2
 [2.15.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.14.1...v2.15.0
 [2.14.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.14.0...v2.14.1

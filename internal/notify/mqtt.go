@@ -31,10 +31,10 @@ type MQTT struct {
 
 // NewMQTT creates an MQTT notifier.
 func NewMQTT(broker, topic, clientID, username, password string, qos int) *MQTT {
-	q := byte(qos)
-	if q > 2 {
-		q = 0
+	if qos < 0 || qos > 2 {
+		qos = 0
 	}
+	q := byte(qos)
 	if clientID == "" {
 		clientID = "docker-sentinel"
 	}

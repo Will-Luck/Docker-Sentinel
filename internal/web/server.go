@@ -641,7 +641,7 @@ func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	_, _ = w.Write(data)
+	_, _ = w.Write(data) // #nosec G705 -- compile-time embedded static asset, Content-Type set explicitly above
 }
 
 // ---------------------------------------------------------------------------

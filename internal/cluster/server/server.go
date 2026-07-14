@@ -193,20 +193,7 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 		return fmt.Errorf("failed to add CA cert to pool")
 	}
 
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientCAs:    caPool,
-		MinVersion:   tls.VersionTLS13,
-
-		// VerifyClientCertIfGiven allows enrollment without a client cert
-		// while still verifying certs when they are presented. The
-		// AgentService methods enforce cert presence explicitly.
-		ClientAuth: tls.VerifyClientCertIfGiven,
-
-		// Custom verification hook to check the certificate revocation list.
-		// Runs after the standard chain verification succeeds.
-		VerifyPeerCertificate: s.verifyCRL,
-	}
+	tlsCfg := s.buildTLSConfig(serverCert, caPool)
 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -229,6 +216,30 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 	}()
 
 	return nil
+}
+
+// buildTLSConfig assembles the mTLS configuration for the gRPC listener.
+func (s *Server) buildTLSConfig(serverCert tls.Certificate, caPool *x509.CertPool) *tls.Config {
+	return &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientCAs:    caPool,
+		MinVersion:   tls.VersionTLS13,
+
+		// VerifyClientCertIfGiven allows enrollment without a client cert
+		// while still verifying certs when they are presented. The
+		// AgentService methods enforce cert presence explicitly.
+		ClientAuth: tls.VerifyClientCertIfGiven,
+
+		// Custom verification hook to check the certificate revocation list.
+		// Runs after the standard chain verification succeeds.
+		VerifyPeerCertificate: s.verifyCRL,
+
+		// Session resumption skips VerifyPeerCertificate, which would let a
+		// revoked agent cert reconnect for the lifetime of a session ticket.
+		// Resumption buys nothing for long-lived gRPC connections, so turn
+		// it off and force the CRL check on every handshake (gosec G123).
+		SessionTicketsDisabled: true,
+	}
 }
 
 // Stop gracefully stops the gRPC server. Waits for active RPCs to finish.

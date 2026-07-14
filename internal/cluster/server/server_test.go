@@ -1380,3 +1380,18 @@ func TestVerifyCRL_FailsClosed(t *testing.T) {
 		t.Fatal("verifyCRL should return an error when the store fails, but got nil")
 	}
 }
+
+// The CRL hook runs in VerifyPeerCertificate, which TLS session resumption
+// skips. Resumption must stay disabled or a revoked agent cert could
+// reconnect for the lifetime of a session ticket.
+func TestBuildTLSConfig_ResumptionDisabled(t *testing.T) {
+	s := &Server{log: slog.Default()}
+	cfg := s.buildTLSConfig(tls.Certificate{}, x509.NewCertPool())
+
+	if !cfg.SessionTicketsDisabled {
+		t.Error("SessionTicketsDisabled must be true: resumed sessions skip the VerifyPeerCertificate CRL check")
+	}
+	if cfg.VerifyPeerCertificate == nil {
+		t.Error("VerifyPeerCertificate must be set to the CRL check")
+	}
+}
