@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.15.3] - 2026-07-15
+
+### Security
+
+- Bumped `golang.org/x/crypto` v0.51.0 to v0.52.0, clearing the July 2026
+  batch of 13 advisories (CVE-2026-39827 through CVE-2026-46598) in the
+  `x/crypto/ssh` package. Sentinel does not import the SSH package -- only
+  `bcrypt`, `blowfish`, and `ocsp` are compiled into the binary -- so none of
+  the vulnerable code paths are reachable and this is a precautionary bump to
+  clear the module-level alerts.
+
 ## [2.15.2] - 2026-07-14
 
 ### Security
@@ -751,7 +762,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.2...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.3...HEAD
+[2.15.3]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.2...v2.15.3
 [2.15.2]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.1...v2.15.2
 [2.15.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.0...v2.15.1
 [2.15.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.14.1...v2.15.0
