@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the vulnerable code paths are reachable and this is a precautionary bump to
   clear the module-level alerts.
 
+### Fixed
+
+- Fixed a flaky scheduler test (`TestMaybeSelfUpdate_AutoModeWhenIdle`) that
+  raced the self-update goroutine's failure re-queue on slow runners; it now
+  asserts the atomic trigger flag instead of queue length. Test-only change,
+  no runtime behaviour affected.
+
 ## [2.15.2] - 2026-07-14
 
 ### Security

@@ -188,14 +188,17 @@ func TestMaybeSelfUpdate_AutoModeWhenIdle(t *testing.T) {
 	u.selfUpdateQueued.Store(true)
 	u.selfUpdateKey.Store("sentinel")
 
-	// Call maybeSelfUpdate — should remove from queue (auto + idle).
+	// Call maybeSelfUpdate — should trigger (auto + idle).
 	sched.maybeSelfUpdate()
 
-	if q.Len() != 0 {
-		t.Errorf("queue.Len() = %d, want 0 (auto mode + idle should trigger)", q.Len())
+	// Queue length cannot be asserted here: the spawned Update() goroutine
+	// fails against the mock and re-adds the item for retry, racing any
+	// q.Len() check. selfUpdateQueued is stored false in the same
+	// synchronous block that drains the queue and is never touched by the
+	// goroutine, so it deterministically proves the trigger path ran.
+	if u.selfUpdateQueued.Load() {
+		t.Error("selfUpdateQueued still true, want false (auto mode + idle should trigger)")
 	}
-	// The actual Update() goroutine will fail (mock Docker doesn't fully support it),
-	// but we verified the queue was drained which proves the logic triggered.
 }
 
 func TestMatchesFilter(t *testing.T) {
