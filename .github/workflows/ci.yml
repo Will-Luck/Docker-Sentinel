@@ -36,3 +36,8 @@ jobs:
         with:
           version: v2.12.2
           args: ./...
+          # Analysis cache restored across dependency bumps can poison
+          # staticcheck facts (false SA5011s after the x/crypto 0.52.0 bump,
+          # runs 29379331640/attempts 1+2). Cold analysis is deterministic
+          # and costs ~1 min on this repo.
+          skip-cache: true

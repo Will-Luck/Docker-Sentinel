@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raced the self-update goroutine's failure re-queue on slow runners; it now
   asserts the atomic trigger flag instead of queue length. Test-only change,
   no runtime behaviour affected.
+- Disabled the golangci-lint analysis cache in CI (`skip-cache: true`): a
+  cache entry restored across the x/crypto bump poisoned staticcheck's
+  cross-package facts, producing false SA5011 nil-dereference findings in
+  test files guarded by `t.Fatal`.
 
 ## [2.15.2] - 2026-07-14
 
