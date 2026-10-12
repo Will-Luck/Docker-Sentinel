@@ -97,12 +97,13 @@ func labelCommand(argv []string) string {
 
 // shellReserved holds the words a shell treats as syntax rather than as a
 // command name when they are unquoted in command position: the POSIX reserved
-// words, plus function, time and [[ ]] from bash and ksh, where /bin/sh may
-// be one of those.
+// words, plus function, time, select, coproc and [[ ]] from bash and ksh,
+// where /bin/sh may be one of those.
 var shellReserved = map[string]bool{
 	"if": true, "then": true, "else": true, "elif": true, "fi": true,
 	"do": true, "done": true, "case": true, "esac": true, "while": true,
 	"until": true, "for": true, "in": true, "function": true, "time": true,
+	"select": true, "coproc": true,
 	"!": true, "{": true, "}": true, "[[": true, "]]": true,
 }
 

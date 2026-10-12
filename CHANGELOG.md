@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other exit code, an exec error or a timeout stops it before the image
   backup and pull and clears the maintenance flag. An aborted update is
   recorded as failed in the container's update history and sends the
-  `update_failed` notification, like other failed updates. A skip with exit
+  `update_failed` notification, as a failed validation does. A skip with exit
   75 records nothing and sends no failure notification. Previously the failure
   was logged as a warning and the update went ahead. Post-update hook
   failures are still only logged (GitHub #86).

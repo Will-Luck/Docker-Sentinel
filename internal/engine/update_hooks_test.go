@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -209,6 +210,29 @@ func TestUpdateContainer_PreUpdateTimeoutAborts(t *testing.T) {
 	}
 	assertAbortedBeforePull(t, mock, u)
 	assertAbortReported(t, u, rec, "timed out after 1s")
+}
+
+func TestUpdateContainer_PreUpdateCancelledIsNotRecorded(t *testing.T) {
+	mock, u, _ := setupHookUpdate(t, map[string]string{"sentinel.hook.pre-update": "sleep 600"})
+	rec := recordNotifications(u)
+	mock.execBlock["aaa"] = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+	err := u.UpdateContainer(ctx, "aaa", "nginx", "")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	assertAbortedBeforePull(t, mock, u)
+	if history, _ := u.store.ListHistory(10, ""); len(history) != 0 {
+		t.Errorf("history = %+v, want none for a cancelled update", history)
+	}
+	if failed := rec.ofType(notify.EventUpdateFailed); len(failed) != 0 {
+		t.Errorf("update_failed notifications = %d, want none for a cancelled update", len(failed))
+	}
 }
 
 func TestUpdateContainer_PreUpdateExit75Skips(t *testing.T) {

@@ -153,6 +153,8 @@ func TestLabelCommandQuotesCommandWord(t *testing.T) {
 		{"fi", []string{"fi"}, "'fi'"},
 		{"do", []string{"do"}, "'do'"},
 		{"done", []string{"done"}, "'done'"},
+		{"select", []string{"select", "a b"}, "'select' 'a b'"},
+		{"coproc", []string{"coproc", "a b"}, "'coproc' 'a b'"},
 		{"case", []string{"case"}, "'case'"},
 		{"esac", []string{"esac"}, "'esac'"},
 		{"while", []string{"while"}, "'while'"},

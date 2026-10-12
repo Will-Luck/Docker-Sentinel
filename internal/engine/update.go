@@ -92,6 +92,11 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			if mErr := u.store.SetMaintenance(name, false); mErr != nil {
 				u.log.Warn("failed to clear maintenance flag after pre-update hook failure", "name", name, "error", mErr)
 			}
+			// A cancelled update (e.g. shutdown) is not a hook failure: return
+			// without recording or notifying, as the grace-period wait does.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			if recErr := u.store.RecordUpdate(store.UpdateRecord{
 				Timestamp:     u.clock.Now(),
 				ContainerName: name,
