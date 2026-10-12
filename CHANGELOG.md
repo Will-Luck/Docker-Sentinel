@@ -12,9 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A failing pre-update hook now aborts the update, as the Lifecycle Hooks
   wiki page documents. Exit 0 continues, exit 75 skips the update, and any
   other exit code, an exec error or a timeout stops it before the image
-  backup and pull, clears the maintenance flag and reports the update as
-  failed. Previously the failure was logged as a warning and the update went
-  ahead. Post-update hook failures are still only logged (GitHub #86).
+  backup and pull and clears the maintenance flag. An aborted update is
+  recorded as failed in the container's update history and sends the
+  `update_failed` notification, like other failed updates. A skip with exit
+  75 records nothing and sends no failure notification. Previously the failure
+  was logged as a warning and the update went ahead. Post-update hook
+  failures are still only logged (GitHub #86).
 
 ### Fixed
 
