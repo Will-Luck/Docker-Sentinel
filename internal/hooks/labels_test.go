@@ -134,6 +134,82 @@ func TestHookLabelsArgvRoundTripThroughShell(t *testing.T) {
 	}
 }
 
+func TestLabelCommandQuotesCommandWord(t *testing.T) {
+	tests := []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{"plain command", []string{"/usr/bin/curl", "-sf"}, "/usr/bin/curl -sf"},
+		{"assignment-like command", []string{"FOO=bar", "x"}, "'FOO=bar' x"},
+		{"equals in a path", []string{"/opt/a=b/run"}, "'/opt/a=b/run'"},
+		{"equals in a later arg", []string{"/usr/bin/env", "FOO=bar", "run"}, "/usr/bin/env FOO=bar run"},
+		{"reserved word in a later arg", []string{"echo", "if", "then"}, "echo if then"},
+		{"near miss is not reserved", []string{"iff"}, "iff"},
+		{"if", []string{"if", "x"}, "'if' x"},
+		{"then", []string{"then"}, "'then'"},
+		{"else", []string{"else"}, "'else'"},
+		{"elif", []string{"elif"}, "'elif'"},
+		{"fi", []string{"fi"}, "'fi'"},
+		{"do", []string{"do"}, "'do'"},
+		{"done", []string{"done"}, "'done'"},
+		{"case", []string{"case"}, "'case'"},
+		{"esac", []string{"esac"}, "'esac'"},
+		{"while", []string{"while"}, "'while'"},
+		{"until", []string{"until"}, "'until'"},
+		{"for", []string{"for"}, "'for'"},
+		{"in", []string{"in"}, "'in'"},
+		{"function", []string{"function"}, "'function'"},
+		{"time", []string{"time"}, "'time'"},
+		{"bang", []string{"!"}, "'!'"},
+		{"open brace", []string{"{"}, "'{'"},
+		{"close brace", []string{"}"}, "'}'"},
+		{"open test", []string{"[["}, "'[['"},
+		{"close test", []string{"]]"}, "']]'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := labelCommand(tt.argv); got != tt.want {
+				t.Errorf("labelCommand(%q) = %q, want %q", tt.argv, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestHookLabelsCommandWordRoundTripThroughShell puts an executable named
+// after argv[0] on PATH and checks that /bin/sh -c, given the written label,
+// runs it with the same arguments instead of reading an assignment or a
+// reserved word.
+func TestHookLabelsCommandWordRoundTripThroughShell(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("/bin/sh not available")
+	}
+	for _, argv0 := range []string{"FOO=bar", "if"} {
+		t.Run(argv0, func(t *testing.T) {
+			dir := t.TempDir()
+			script := "#!/bin/sh\nprintf '<%s>' \"${0##*/}\" \"$@\"\n"
+			if err := os.WriteFile(dir+"/"+argv0, []byte(script), 0o755); err != nil { //nolint:gosec // test executable
+				t.Fatal(err)
+			}
+
+			labels := HookLabels([]Hook{{Phase: "pre-update", Command: []string{argv0, "a b"}}})
+			hooks := ReadLabels("app", labels)
+			if len(hooks) != 1 {
+				t.Fatalf("expected one hook back, got %+v", hooks)
+			}
+			cmd := exec.Command("/bin/sh", "-c", hooks[0].Command[2]) //nolint:gosec // runs the fixed argv built above
+			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("run %q: %v: %s", hooks[0].Command[2], err, out)
+			}
+			if want := "<" + argv0 + "><a b>"; string(out) != want {
+				t.Errorf("shell ran %q as %q, want %q", hooks[0].Command[2], out, want)
+			}
+		})
+	}
+}
+
 func TestHookLabelsTimeoutUsesLongestHook(t *testing.T) {
 	labels := HookLabels([]Hook{
 		{Phase: "pre-update", Command: []string{"/bin/sh", "-c", "a"}, Timeout: 120},

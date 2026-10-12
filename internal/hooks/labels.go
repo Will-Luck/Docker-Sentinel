@@ -86,9 +86,35 @@ func labelCommand(argv []string) string {
 	}
 	quoted := make([]string, len(argv))
 	for i, arg := range argv {
+		if i == 0 {
+			quoted[i] = quoteCommandWord(arg)
+			continue
+		}
 		quoted[i] = shellQuote(arg)
 	}
 	return strings.Join(quoted, " ")
+}
+
+// shellReserved holds the words a shell treats as syntax rather than as a
+// command name when they are unquoted in command position: the POSIX reserved
+// words, plus function, time and [[ ]] from bash and ksh, where /bin/sh may
+// be one of those.
+var shellReserved = map[string]bool{
+	"if": true, "then": true, "else": true, "elif": true, "fi": true,
+	"do": true, "done": true, "case": true, "esac": true, "while": true,
+	"until": true, "for": true, "in": true, "function": true, "time": true,
+	"!": true, "{": true, "}": true, "[[": true, "]]": true,
+}
+
+// quoteCommandWord quotes argv[0]. On top of what shellQuote quotes, it
+// always quotes a word holding '=' (an unquoted FOO=bar is read as a variable
+// assignment) or a reserved word (an unquoted if starts an if statement), so
+// the shell runs it as the command.
+func quoteCommandWord(s string) string {
+	if strings.ContainsRune(s, '=') || shellReserved[s] {
+		return singleQuote(s)
+	}
+	return shellQuote(s)
 }
 
 // shellQuote quotes s for a POSIX shell. Words made only of safe characters
@@ -97,16 +123,16 @@ func shellQuote(s string) string {
 	if s == "" {
 		return "''"
 	}
-	safe := true
 	for _, r := range s {
 		if !isShellSafe(r) {
-			safe = false
-			break
+			return singleQuote(s)
 		}
 	}
-	if safe {
-		return s
-	}
+	return s
+}
+
+// singleQuote wraps s in single quotes, closing and escaping any it contains.
+func singleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
