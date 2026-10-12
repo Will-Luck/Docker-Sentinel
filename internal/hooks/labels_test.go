@@ -121,10 +121,10 @@ func TestHookLabelsArgvRoundTripThroughShell(t *testing.T) {
 	labels := HookLabels([]Hook{{Phase: "pre-update", Command: argv}})
 
 	hooks := ReadLabels("app", labels)
-	if len(hooks) != 1 {
-		t.Fatalf("expected 1 hook back, got %d", len(hooks))
+	if len(hooks) != 1 || len(hooks[0].Command) != 3 || hooks[0].Command[0] != "/bin/sh" || hooks[0].Command[1] != "-c" {
+		t.Fatalf("expected one /bin/sh -c hook back, got %+v", hooks)
 	}
-	out, err := exec.Command(hooks[0].Command[0], hooks[0].Command[1:]...).Output()
+	out, err := exec.Command("/bin/sh", "-c", hooks[0].Command[2]).Output() //nolint:gosec // runs the fixed argv built above
 	if err != nil {
 		t.Fatalf("run %q: %v", hooks[0].Command, err)
 	}
