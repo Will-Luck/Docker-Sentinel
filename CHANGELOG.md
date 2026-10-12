@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-10-12
+
 ### Changed
 
 - A failing pre-update hook now aborts the update, as the Lifecycle Hooks
@@ -811,7 +813,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.3...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.16.0...HEAD
+[2.16.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.3...v2.16.0
 [2.15.3]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.2...v2.15.3
 [2.15.2]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.1...v2.15.2
 [2.15.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.0...v2.15.1
