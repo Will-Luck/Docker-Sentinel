@@ -72,7 +72,8 @@ type mockDocker struct {
 		exitCode int
 		output   string
 	}
-	execErr map[string]error
+	execErr   map[string]error
+	execBlock map[string]bool // exec waits for its context to end, like a hung command
 
 	// Swarm mock fields
 	swarmManager     bool
@@ -117,6 +118,7 @@ func newMockDocker() *mockDocker {
 			output   string
 		}),
 		execErr:         make(map[string]error),
+		execBlock:       make(map[string]bool),
 		inspectService:  make(map[string]swarm.Service),
 		inspectSvcErr:   make(map[string]error),
 		updateSvcErr:    make(map[string]error),
@@ -278,10 +280,14 @@ func (m *mockDocker) RemoveContainerWithVolumes(_ context.Context, id string) er
 	return nil
 }
 
-func (m *mockDocker) ExecContainer(_ context.Context, id string, cmd []string, _ int) (int, string, error) {
+func (m *mockDocker) ExecContainer(ctx context.Context, id string, cmd []string, _ int) (int, string, error) {
 	m.mu.Lock()
 	m.execCalls = append(m.execCalls, id)
 	m.mu.Unlock()
+	if m.execBlock[id] {
+		<-ctx.Done()
+		return -1, "", ctx.Err()
+	}
 	if err, ok := m.execErr[id]; ok {
 		return -1, "", err
 	}

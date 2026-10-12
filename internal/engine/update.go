@@ -79,6 +79,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	}
 
 	// 2.5. Run pre-update hooks (store entries, else the old container's labels).
+	// Exit 75 skips the update; any other failure aborts it before the pull.
 	if u.hooks != nil && u.cfg.HooksEnabled() {
 		if err := u.hooks.RunPreUpdate(ctx, id, name, inspect.Config.Labels); err != nil {
 			if errors.Is(err, hooks.ErrSkipUpdate) {
@@ -86,7 +87,11 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 				_ = u.store.SetMaintenance(name, false)
 				return nil
 			}
-			u.log.Warn("pre-update hook failed", "name", name, "error", err)
+			u.log.Warn("pre-update hook failed, aborting update", "name", name, "error", err)
+			if mErr := u.store.SetMaintenance(name, false); mErr != nil {
+				u.log.Warn("failed to clear maintenance flag after pre-update hook failure", "name", name, "error", mErr)
+			}
+			return fmt.Errorf("pre-update hook for %s: %w", name, err)
 		}
 	}
 
