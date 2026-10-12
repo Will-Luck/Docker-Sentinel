@@ -78,9 +78,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.log.Warn("failed to set maintenance flag", "name", name, "error", err)
 	}
 
-	// 2.5. Run pre-update hooks.
+	// 2.5. Run pre-update hooks (store entries, else the old container's labels).
 	if u.hooks != nil && u.cfg.HooksEnabled() {
-		if err := u.hooks.RunPreUpdate(ctx, id, name); err != nil {
+		if err := u.hooks.RunPreUpdate(ctx, id, name, inspect.Config.Labels); err != nil {
 			if errors.Is(err, hooks.ErrSkipUpdate) {
 				u.log.Info("pre-update hook requested skip", "name", name)
 				_ = u.store.SetMaintenance(name, false)
@@ -271,9 +271,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		return fmt.Errorf("new container %s failed validation", name)
 	}
 
-	// 6.5. Run post-update hooks.
+	// 6.5. Run post-update hooks (store entries, else the new container's labels).
 	if u.hooks != nil && u.cfg.HooksEnabled() {
-		if err := u.hooks.RunPostUpdate(ctx, newID, name); err != nil {
+		if err := u.hooks.RunPostUpdate(ctx, newID, name, newConfig.Labels); err != nil {
 			u.log.Warn("post-update hook failed", "name", name, "error", err)
 		}
 	}

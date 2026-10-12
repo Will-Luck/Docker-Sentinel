@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -11,30 +12,40 @@ const (
 	labelTimeout    = "sentinel.hook.timeout"
 )
 
-// ReadLabels reads hook config from container labels.
+// phaseLabel returns the label key that holds the command for phase.
+func phaseLabel(phase string) string {
+	if phase == PhasePostUpdate {
+		return labelPostUpdate
+	}
+	return labelPreUpdate
+}
+
+// ReadLabels reads hook config from container labels. Commands run as
+// /bin/sh -c <value>. Empty values are ignored, and a missing or invalid
+// timeout falls back to DefaultTimeout.
 func ReadLabels(name string, labels map[string]string) []Hook {
 	var hooks []Hook
 
-	timeout := 30
+	timeout := DefaultTimeout
 	if v, ok := labels[labelTimeout]; ok {
-		if t := parseTimeout(v); t > 0 {
+		if t, valid := parseTimeout(v); valid {
 			timeout = t
 		}
 	}
 
-	if cmd, ok := labels[labelPreUpdate]; ok && cmd != "" {
+	if cmd, ok := labels[labelPreUpdate]; ok && !isBlank(cmd) {
 		hooks = append(hooks, Hook{
 			ContainerName: name,
-			Phase:         "pre-update",
+			Phase:         PhasePreUpdate,
 			Command:       []string{"/bin/sh", "-c", cmd},
 			Timeout:       timeout,
 		})
 	}
 
-	if cmd, ok := labels[labelPostUpdate]; ok && cmd != "" {
+	if cmd, ok := labels[labelPostUpdate]; ok && !isBlank(cmd) {
 		hooks = append(hooks, Hook{
 			ContainerName: name,
-			Phase:         "post-update",
+			Phase:         PhasePostUpdate,
 			Command:       []string{"/bin/sh", "-c", cmd},
 			Timeout:       timeout,
 		})
@@ -53,22 +64,28 @@ func HookLabels(hooks []Hook) map[string]string {
 			cmd = h.Command[2]
 		}
 		switch h.Phase {
-		case "pre-update":
+		case PhasePreUpdate:
 			labels[labelPreUpdate] = cmd
-		case "post-update":
+		case PhasePostUpdate:
 			labels[labelPostUpdate] = cmd
 		}
-		if h.Timeout > 0 && h.Timeout != 30 {
+		if h.Timeout > 0 && h.Timeout != DefaultTimeout {
 			labels[labelTimeout] = fmt.Sprintf("%d", h.Timeout)
 		}
 	}
 	return labels
 }
 
-func parseTimeout(s string) int {
-	var n int
-	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
-		return 0
+// parseTimeout parses a timeout label value in whole seconds. It reports false
+// for anything that is not a positive integer, such as "2m" or "0".
+func parseTimeout(s string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n <= 0 {
+		return 0, false
 	}
-	return n
+	return n, true
+}
+
+func isBlank(s string) bool {
+	return strings.TrimSpace(s) == ""
 }

@@ -446,7 +446,7 @@ func main() {
 	updater.SetGHCRCache(ghcrCache)
 	updater.SetGHCRSaver(db.SaveGHCRCache)
 
-	// Create hook runner if hooks are enabled.
+	// The hook runner is always attached; cfg.HooksEnabled() gates it on each update.
 	hookRunner := hooks.NewRunner(client, &hookStoreAdapter{db}, log.Logger)
 	updater.SetHookRunner(hookRunner)
 
