@@ -622,12 +622,22 @@ func TestBulkPolicy_RemoteContainersScopedKeys(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type mockConfigReader struct {
-	values        map[string]string
-	defaultPolicy string
+	values           map[string]string
+	defaultPolicy    string
+	latestAutoUpdate bool
+	imageCleanup     bool
+	dependencyAware  bool
+	hooksEnabled     bool
+	hooksWriteLabels bool
 }
 
 func (m *mockConfigReader) Values() map[string]string { return m.values }
 func (m *mockConfigReader) DefaultPolicy() string     { return m.defaultPolicy }
+func (m *mockConfigReader) LatestAutoUpdate() bool    { return m.latestAutoUpdate }
+func (m *mockConfigReader) ImageCleanup() bool        { return m.imageCleanup }
+func (m *mockConfigReader) DependencyAware() bool     { return m.dependencyAware }
+func (m *mockConfigReader) HooksEnabled() bool        { return m.hooksEnabled }
+func (m *mockConfigReader) HooksWriteLabels() bool    { return m.hooksWriteLabels }
 
 // ---------------------------------------------------------------------------
 // containerPolicy tests (unit)

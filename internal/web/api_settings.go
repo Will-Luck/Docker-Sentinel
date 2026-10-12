@@ -36,6 +36,15 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// These toggles are only stored once saved in the UI, so the stored key
+	// alone cannot show an env-var value. Report what the engine uses.
+	cfg := s.deps.Config
+	values["latest_auto_update"] = strconv.FormatBool(cfg.LatestAutoUpdate())
+	values["image_cleanup"] = strconv.FormatBool(cfg.ImageCleanup())
+	values["dependency_aware"] = strconv.FormatBool(cfg.DependencyAware())
+	values["hooks_enabled"] = strconv.FormatBool(cfg.HooksEnabled())
+	values["hooks_write_labels"] = strconv.FormatBool(cfg.HooksWriteLabels())
+
 	writeJSON(w, http.StatusOK, values)
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -971,5 +972,71 @@ func TestApiVerifierSettingsSave_PartialUpdate(t *testing.T) {
 	// Mode should not be touched.
 	if _, exists := ms.data[store.SettingVerifyMode]; exists {
 		t.Error("verify_mode should not be set for partial update without 'mode' field")
+	}
+}
+
+func getSettings(t *testing.T, srv *Server) map[string]string {
+	t.Helper()
+	w := httptest.NewRecorder()
+	srv.apiSettings(w, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
+// A fresh database has no toggle keys, so the page used to show the toggles
+// as Off (or :latest auto-update as On) whatever the environment said.
+func TestApiSettings_ReportsEffectiveTogglesOnFreshDB(t *testing.T) {
+	ss := newMockSettingsStore()
+	ss.data["paused"] = "true"
+	cfg := &mockConfigReader{
+		values: map[string]string{
+			"SENTINEL_HOOKS":              "true",
+			"SENTINEL_HOOKS_WRITE_LABELS": "true",
+		},
+		latestAutoUpdate: false,
+		imageCleanup:     true,
+		dependencyAware:  true,
+		hooksEnabled:     true,
+		hooksWriteLabels: true,
+	}
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: cfg, Log: slog.Default()}}
+
+	got := getSettings(t, srv)
+	want := map[string]string{
+		"latest_auto_update": "false",
+		"image_cleanup":      "true",
+		"dependency_aware":   "true",
+		"hooks_enabled":      "true",
+		"hooks_write_labels": "true",
+		"paused":             "true", // other saved settings still come through
+		"SENTINEL_HOOKS":     "true",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+// The runtime config is what the engine uses, so it wins over a stored key.
+func TestApiSettings_TogglesFollowRuntimeConfig(t *testing.T) {
+	ss := newMockSettingsStore()
+	ss.data["hooks_enabled"] = "true"
+	ss.data["image_cleanup"] = "true"
+	ss.data["latest_auto_update"] = "true"
+	cfg := &mockConfigReader{values: map[string]string{}}
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: cfg, Log: slog.Default()}}
+
+	got := getSettings(t, srv)
+	for _, k := range []string{"hooks_enabled", "image_cleanup", "latest_auto_update", "dependency_aware", "hooks_write_labels"} {
+		if got[k] != "false" {
+			t.Errorf("%s = %q, want \"false\" from the runtime config", k, got[k])
+		}
 	}
 }

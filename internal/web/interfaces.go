@@ -641,6 +641,14 @@ type VersionScopeUpdater interface {
 type ConfigReader interface {
 	Values() map[string]string
 	DefaultPolicy() string
+
+	// Runtime values of the Settings page toggles: the env default, replaced
+	// at startup by a value saved in the UI and kept current by the toggles.
+	LatestAutoUpdate() bool
+	ImageCleanup() bool
+	DependencyAware() bool
+	HooksEnabled() bool
+	HooksWriteLabels() bool
 }
 
 // ConfigWriter updates mutable runtime settings in memory.
