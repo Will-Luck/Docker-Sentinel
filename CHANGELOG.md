@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A failing pre-update hook now aborts the update, as the Lifecycle Hooks
+  wiki page documents. Exit 0 continues, exit 75 skips the update, and any
+  other exit code, an exec error or a timeout stops it before the image
+  backup and pull, clears the maintenance flag and reports the update as
+  failed. Previously the failure was logged as a warning and the update went
+  ahead. Post-update hook failures are still only logged (GitHub #86).
+
+### Fixed
+
+- Lifecycle hooks set with the `sentinel.hook.pre-update`,
+  `sentinel.hook.post-update` and `sentinel.hook.timeout` labels now run.
+  Only hooks saved through the REST API were ever read, so label hooks were
+  silently ignored. A hook saved through the API still wins for its phase.
+  Sentinel now logs each hook it runs with its phase and source (label or
+  store), logs at Debug when a container has none, and warns when a hook
+  label has an empty value (the compose list form without `=value`) or the
+  timeout label is not a whole number of seconds (GitHub #86).
+- `SENTINEL_HOOKS_WRITE_LABELS` (Settings > Write hook labels) was saved but
+  never used. It now writes a container's API-saved hooks onto the container
+  Sentinel creates during an update, as `sentinel.hook.*` labels
+  (GitHub #86).
+- A hook that outlives its timeout no longer holds up the update: Sentinel
+  stops waiting when the timeout expires. The command itself is not killed
+  and may keep running inside the container (GitHub #86).
+- `POST /api/hooks/{container}` accepts `command` as a shell string, run with
+  `/bin/sh -c` like a label, as well as an array of arguments. The
+  documented string form returned 400 (GitHub #86).
+- The Settings page shows the value in effect for Lifecycle hooks, Write
+  hook labels, Image cleanup, Dependency-aware updates and Auto-update
+  :latest containers. It showed only a value saved in the UI, so an env var
+  such as `SENTINEL_HOOKS=true` appeared as Off until the toggle was saved
+  (GitHub #86).
+
 ## [2.15.3] - 2026-07-15
 
 ### Security
