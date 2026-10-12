@@ -1,9 +1,12 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/deps"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -43,9 +46,9 @@ func (s *Server) apiSaveHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Phase   string   `json:"phase"`
-		Command []string `json:"command"`
-		Timeout int      `json:"timeout"`
+		Phase   string          `json:"phase"`
+		Command json.RawMessage `json:"command"`
+		Timeout int             `json:"timeout"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -55,8 +58,9 @@ func (s *Server) apiSaveHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "phase must be pre-update or post-update")
 		return
 	}
-	if len(body.Command) == 0 {
-		writeError(w, http.StatusBadRequest, "command is required")
+	command, err := parseHookCommand(body.Command)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if s.deps.HookStore == nil {
@@ -72,7 +76,7 @@ func (s *Server) apiSaveHook(w http.ResponseWriter, r *http.Request) {
 	entry := HookEntry{
 		ContainerName: storeKey,
 		Phase:         body.Phase,
-		Command:       body.Command,
+		Command:       command,
 		Timeout:       body.Timeout,
 	}
 	if err := s.deps.HookStore.SaveHook(entry); err != nil {
@@ -82,6 +86,39 @@ func (s *Server) apiSaveHook(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logEvent(r, "hooks", name, fmt.Sprintf("Saved %s hook", body.Phase))
 	writeJSON(w, http.StatusOK, entry)
+}
+
+// parseHookCommand accepts a hook command as a JSON string, which runs as
+// /bin/sh -c <string> like a sentinel.hook.* label, or as a JSON array of
+// arguments, which runs as given.
+func parseHookCommand(raw json.RawMessage) ([]string, error) {
+	errRequired := errors.New("command is required: a shell command string or a non-empty array of arguments")
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil, errRequired
+	}
+	switch raw[0] {
+	case '"':
+		var cmd string
+		if err := json.Unmarshal(raw, &cmd); err != nil {
+			return nil, errors.New("command must be a string or an array of strings")
+		}
+		if strings.TrimSpace(cmd) == "" {
+			return nil, errRequired
+		}
+		return []string{"/bin/sh", "-c", cmd}, nil
+	case '[':
+		var argv []string
+		if err := json.Unmarshal(raw, &argv); err != nil {
+			return nil, errors.New("command must be a string or an array of strings")
+		}
+		if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+			return nil, errRequired
+		}
+		return argv, nil
+	default:
+		return nil, errors.New("command must be a string or an array of strings")
+	}
 }
 
 // apiDeleteHook removes a hook for a container.
