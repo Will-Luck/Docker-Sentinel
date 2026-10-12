@@ -179,9 +179,18 @@ func (c *Client) ExecContainer(ctx context.Context, id string, cmd []string, tim
 		return -1, "", fmt.Errorf("exec attach: %w", err)
 	}
 	defer attachResp.Close()
+	// The hijacked stream ignores ctx once it is attached, so a command that
+	// never exits would block the read below forever. Closing the stream when
+	// ctx ends makes Sentinel stop waiting; the process in the container is
+	// not killed.
+	stopClose := context.AfterFunc(ctx, attachResp.Close)
+	defer stopClose()
 
 	var stdout, stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, attachResp.Reader); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return -1, stdout.String(), fmt.Errorf("exec stopped waiting: %w", ctxErr)
+		}
 		return -1, "", fmt.Errorf("exec read: %w", err)
 	}
 	if stderr.Len() > 0 {
