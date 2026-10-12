@@ -1,7 +1,6 @@
 package hooks
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -54,26 +53,76 @@ func ReadLabels(name string, labels map[string]string) []Hook {
 	return hooks
 }
 
-// HookLabels converts hooks to container labels for portability.
+// HookLabels converts hooks to container labels that ReadLabels reads back as
+// the same commands. A ["/bin/sh", "-c", X] command becomes the label X; any
+// other argv becomes a POSIX shell-quoted join, which /bin/sh -c runs as the
+// same argv. The single timeout label takes the longest hook timeout, so no
+// hook is cut short, and is omitted when that is the default.
 func HookLabels(hooks []Hook) map[string]string {
 	labels := make(map[string]string)
+	timeout := 0
 	for _, h := range hooks {
-		cmd := strings.Join(h.Command, " ")
-		// If command is ["/bin/sh", "-c", "actual command"], extract the actual command.
-		if len(h.Command) == 3 && h.Command[0] == "/bin/sh" && h.Command[1] == "-c" {
-			cmd = h.Command[2]
+		if len(h.Command) == 0 {
+			continue
 		}
 		switch h.Phase {
-		case PhasePreUpdate:
-			labels[labelPreUpdate] = cmd
-		case PhasePostUpdate:
-			labels[labelPostUpdate] = cmd
+		case PhasePreUpdate, PhasePostUpdate:
+			labels[phaseLabel(h.Phase)] = labelCommand(h.Command)
+		default:
+			continue
 		}
-		if h.Timeout > 0 && h.Timeout != DefaultTimeout {
-			labels[labelTimeout] = fmt.Sprintf("%d", h.Timeout)
-		}
+		timeout = max(timeout, effectiveTimeout(h.Timeout))
+	}
+	if timeout > 0 && timeout != DefaultTimeout {
+		labels[labelTimeout] = strconv.Itoa(timeout)
 	}
 	return labels
+}
+
+// labelCommand returns the label value for a stored hook command.
+func labelCommand(argv []string) string {
+	if len(argv) == 3 && argv[0] == "/bin/sh" && argv[1] == "-c" {
+		return argv[2]
+	}
+	quoted := make([]string, len(argv))
+	for i, arg := range argv {
+		quoted[i] = shellQuote(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+// shellQuote quotes s for a POSIX shell. Words made only of safe characters
+// are left as they are; anything else is single-quoted.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, r := range s {
+		if !isShellSafe(r) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func isShellSafe(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	}
+	return strings.ContainsRune("@%+=:,./-_", r)
+}
+
+func effectiveTimeout(t int) int {
+	if t <= 0 {
+		return DefaultTimeout
+	}
+	return t
 }
 
 // parseTimeout parses a timeout label value in whole seconds. It reports false

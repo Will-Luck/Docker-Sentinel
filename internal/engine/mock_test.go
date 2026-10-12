@@ -34,6 +34,10 @@ type mockDocker struct {
 	createErr     map[string]error
 	createCalls   []string
 	createConfigs map[string]*container.Config
+	createHistory []*container.Config // every config passed to CreateContainer, in order
+	// mirrorCreate makes InspectContainer on a created ID return a running
+	// container with the config it was created with.
+	mirrorCreate bool
 
 	startCalls []string
 	startErr   map[string]error
@@ -168,15 +172,29 @@ func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *contai
 	m.createCalls = append(m.createCalls, name)
 	if cfg != nil {
 		m.createConfigs[name] = cfg
+		m.createHistory = append(m.createHistory, cloneConfig(cfg))
 	}
 	m.mu.Unlock()
 	if err, ok := m.createErr[name]; ok {
 		return "", err
 	}
-	if id, ok := m.createResult[name]; ok {
-		return id, nil
+	id := "new-" + name
+	if r, ok := m.createResult[name]; ok {
+		id = r
 	}
-	return "new-" + name, nil
+	if m.mirrorCreate {
+		m.mu.Lock()
+		m.inspectResults[id] = container.InspectResponse{
+			ID:              id,
+			Name:            "/" + name,
+			State:           &container.State{Running: true},
+			Config:          cloneConfig(cfg),
+			HostConfig:      &container.HostConfig{},
+			NetworkSettings: &container.NetworkSettings{},
+		}
+		m.mu.Unlock()
+	}
+	return id, nil
 }
 
 func (m *mockDocker) StartContainer(_ context.Context, id string) error {

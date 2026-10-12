@@ -1,6 +1,11 @@
 package hooks
 
 import (
+	"bytes"
+	"log/slog"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +89,164 @@ func TestDefaultTimeout(t *testing.T) {
 	}
 	if hooks[0].Timeout != 30 {
 		t.Errorf("expected default timeout 30, got %d", hooks[0].Timeout)
+	}
+}
+
+func TestHookLabelsShellCommandIsUnwrapped(t *testing.T) {
+	labels := HookLabels([]Hook{
+		{Phase: "pre-update", Command: []string{"/bin/sh", "-c", "pg_dump -U postgres app > /b.sql"}},
+	})
+	if got := labels["sentinel.hook.pre-update"]; got != "pg_dump -U postgres app > /b.sql" {
+		t.Errorf("label = %q, want the raw shell command", got)
+	}
+}
+
+func TestHookLabelsQuotesOtherArgv(t *testing.T) {
+	labels := HookLabels([]Hook{
+		{Phase: "post-update", Command: []string{"/usr/bin/curl", "-sf", "http://localhost/health?a=1&b=2"}},
+	})
+	want := "/usr/bin/curl -sf 'http://localhost/health?a=1&b=2'"
+	if got := labels["sentinel.hook.post-update"]; got != want {
+		t.Errorf("label = %q, want %q", got, want)
+	}
+}
+
+// TestHookLabelsArgvRoundTripThroughShell runs the written label through
+// /bin/sh -c, as ReadLabels would, and checks the shell sees the same argv.
+func TestHookLabelsArgvRoundTripThroughShell(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("/bin/sh not available")
+	}
+	argv := []string{"printf", "<%s>", "a b", "it's", "$HOME", "", "semi;colon", `back\slash`, "new\nline", "*", "~"}
+	labels := HookLabels([]Hook{{Phase: "pre-update", Command: argv}})
+
+	hooks := ReadLabels("app", labels)
+	if len(hooks) != 1 {
+		t.Fatalf("expected 1 hook back, got %d", len(hooks))
+	}
+	out, err := exec.Command(hooks[0].Command[0], hooks[0].Command[1:]...).Output()
+	if err != nil {
+		t.Fatalf("run %q: %v", hooks[0].Command, err)
+	}
+	want := "<a b><it's><$HOME><><semi;colon><back\\slash><new\nline><*><~>"
+	if string(out) != want {
+		t.Errorf("shell saw %q, want %q", out, want)
+	}
+}
+
+func TestHookLabelsTimeoutUsesLongestHook(t *testing.T) {
+	labels := HookLabels([]Hook{
+		{Phase: "pre-update", Command: []string{"/bin/sh", "-c", "a"}, Timeout: 120},
+		{Phase: "post-update", Command: []string{"/bin/sh", "-c", "b"}, Timeout: 60},
+	})
+	if got := labels["sentinel.hook.timeout"]; got != "120" {
+		t.Errorf("timeout label = %q, want 120 so neither hook is cut short", got)
+	}
+}
+
+func TestHookLabelsDefaultTimeoutOmitted(t *testing.T) {
+	labels := HookLabels([]Hook{{Phase: "pre-update", Command: []string{"/bin/sh", "-c", "a"}, Timeout: 30}})
+	if _, ok := labels["sentinel.hook.timeout"]; ok {
+		t.Errorf("default timeout should not be written, got %v", labels)
+	}
+}
+
+func TestWriteBackLabelsStoreWins(t *testing.T) {
+	store := newMockStore()
+	store.hooks["app"] = []Hook{
+		{ContainerName: "app", Phase: "pre-update", Command: []string{"/bin/sh", "-c", "new backup"}, Timeout: 90},
+	}
+	labels := map[string]string{
+		"sentinel.hook.pre-update": "old backup",
+		"sentinel.hook.timeout":    "10",
+		"com.example.other":        "kept",
+	}
+
+	var buf bytes.Buffer
+	runner := NewRunner(newMockExec(), store, captureLog(&buf))
+	got, err := runner.WriteBackLabels("app", labels)
+	if err != nil {
+		t.Fatalf("WriteBackLabels: %v", err)
+	}
+	if got["sentinel.hook.pre-update"] != "new backup" {
+		t.Errorf("pre-update label = %q, want the stored command", got["sentinel.hook.pre-update"])
+	}
+	if got["sentinel.hook.timeout"] != "90" {
+		t.Errorf("timeout label = %q, want 90", got["sentinel.hook.timeout"])
+	}
+	if got["com.example.other"] != "kept" {
+		t.Error("unrelated labels must be kept")
+	}
+	if !strings.Contains(buf.String(), "level=DEBUG") || !strings.Contains(buf.String(), "sentinel.hook.pre-update") {
+		t.Errorf("expected a debug line about the replaced label, got:\n%s", buf.String())
+	}
+}
+
+func TestWriteBackLabelsResetsTimeoutToStoreDefault(t *testing.T) {
+	store := newMockStore()
+	store.hooks["app"] = []Hook{
+		{ContainerName: "app", Phase: "pre-update", Command: []string{"/bin/sh", "-c", "a"}, Timeout: 30},
+	}
+	labels := map[string]string{"sentinel.hook.timeout": "300"}
+
+	runner := NewRunner(newMockExec(), store, slog.Default())
+	got, err := runner.WriteBackLabels("app", labels)
+	if err != nil {
+		t.Fatalf("WriteBackLabels: %v", err)
+	}
+	back := ReadLabels("app", got)
+	if len(back) != 1 || back[0].Timeout != 30 {
+		t.Errorf("labels %v read back as %+v, want the stored 30s timeout", got, back)
+	}
+}
+
+func TestWriteBackLabelsKeepsTimeoutOfLabelOnlyPhase(t *testing.T) {
+	store := newMockStore()
+	store.hooks["app"] = []Hook{
+		{ContainerName: "app", Phase: "pre-update", Command: []string{"/bin/sh", "-c", "a"}, Timeout: 30},
+	}
+	// The post-update hook still comes from labels and relies on this timeout.
+	labels := map[string]string{
+		"sentinel.hook.post-update": "warm cache",
+		"sentinel.hook.timeout":     "300",
+	}
+
+	runner := NewRunner(newMockExec(), store, slog.Default())
+	got, err := runner.WriteBackLabels("app", labels)
+	if err != nil {
+		t.Fatalf("WriteBackLabels: %v", err)
+	}
+	if got["sentinel.hook.timeout"] != "300" {
+		t.Errorf("timeout label = %q, want 300 left alone for the label-only post-update hook", got["sentinel.hook.timeout"])
+	}
+	if got["sentinel.hook.pre-update"] != "a" || got["sentinel.hook.post-update"] != "warm cache" {
+		t.Errorf("unexpected labels %v", got)
+	}
+}
+
+func TestWriteBackLabelsNoStoredHooks(t *testing.T) {
+	labels := map[string]string{"sentinel.hook.pre-update": "from compose"}
+	runner := NewRunner(newMockExec(), newMockStore(), slog.Default())
+	got, err := runner.WriteBackLabels("app", labels)
+	if err != nil {
+		t.Fatalf("WriteBackLabels: %v", err)
+	}
+	if len(got) != 1 || got["sentinel.hook.pre-update"] != "from compose" {
+		t.Errorf("labels changed without stored hooks: %v", got)
+	}
+}
+
+func TestWriteBackLabelsNilMap(t *testing.T) {
+	store := newMockStore()
+	store.hooks["app"] = []Hook{
+		{ContainerName: "app", Phase: "post-update", Command: []string{"/bin/sh", "-c", "b"}},
+	}
+	runner := NewRunner(newMockExec(), store, slog.Default())
+	got, err := runner.WriteBackLabels("app", nil)
+	if err != nil {
+		t.Fatalf("WriteBackLabels: %v", err)
+	}
+	if got["sentinel.hook.post-update"] != "b" {
+		t.Errorf("labels = %v, want the stored post-update hook", got)
 	}
 }

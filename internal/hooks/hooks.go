@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 )
 
@@ -83,10 +84,7 @@ func (r *Runner) run(ctx context.Context, phase, containerID, containerName stri
 	}
 
 	for _, h := range hooks {
-		timeout := h.Timeout
-		if timeout <= 0 {
-			timeout = DefaultTimeout
-		}
+		timeout := effectiveTimeout(h.Timeout)
 		r.log.Info("running lifecycle hook", "container", containerName, "phase", phase, "source", source, "timeout", timeout)
 
 		execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
@@ -161,4 +159,64 @@ func (r *Runner) warnLabelProblems(phase, containerName string, labels map[strin
 				"container", containerName, "label", labelTimeout, "value", v, "default", DefaultTimeout)
 		}
 	}
+}
+
+// WriteBackLabels merges the hooks stored for containerName into labels, so a
+// container recreated by Sentinel carries them as sentinel.hook.* labels. A
+// stored hook wins over a differing label. The timeout label is left alone
+// while a phase without a stored hook still runs from a label, because that
+// hook depends on it. labels is returned unchanged when nothing is stored; a
+// nil map is allocated only when something is written.
+func (r *Runner) WriteBackLabels(containerName string, labels map[string]string) (map[string]string, error) {
+	stored, err := r.store.ListHooks(containerName)
+	if err != nil {
+		return labels, fmt.Errorf("list hooks: %w", err)
+	}
+	want := HookLabels(stored)
+	if len(want) == 0 {
+		return labels, nil
+	}
+
+	storedPhase := make(map[string]bool)
+	for _, h := range stored {
+		if len(h.Command) > 0 {
+			storedPhase[h.Phase] = true
+		}
+	}
+	labelOnlyPhase := false
+	for _, phase := range []string{PhasePreUpdate, PhasePostUpdate} {
+		if !storedPhase[phase] && !isBlank(labels[phaseLabel(phase)]) {
+			labelOnlyPhase = true
+		}
+	}
+
+	// One timeout label serves both phases. While a label-defined hook still
+	// uses it, leave it alone. Otherwise the stored timeout wins, written out
+	// even when it is the default if it replaces an existing label.
+	storedTimeout, ok := want[labelTimeout]
+	if !ok {
+		storedTimeout = strconv.Itoa(DefaultTimeout)
+	}
+	existingTimeout, hasTimeout := labels[labelTimeout]
+	switch {
+	case labelOnlyPhase:
+		delete(want, labelTimeout)
+		if hasTimeout && existingTimeout != storedTimeout {
+			r.log.Debug("keeping hook timeout label, a label-defined hook still uses it",
+				"container", containerName, "label", labelTimeout, "value", existingTimeout)
+		}
+	case hasTimeout:
+		want[labelTimeout] = storedTimeout
+	}
+
+	if labels == nil {
+		labels = make(map[string]string, len(want))
+	}
+	for k, v := range want {
+		if old, ok := labels[k]; ok && old != v {
+			r.log.Debug("stored hook replaces differing label", "container", containerName, "label", k)
+		}
+		labels[k] = v
+	}
+	return labels, nil
 }

@@ -160,3 +160,62 @@ func TestUpdateContainer_PostUpdateFailureOnlyWarns(t *testing.T) {
 		t.Errorf("execCalls = %v, want one post-update exec on new-nginx", mock.execCalls)
 	}
 }
+
+func TestUpdateContainer_WriteBackLabelsSurviveFinalise(t *testing.T) {
+	mock, u, stub := setupHookUpdate(t, map[string]string{
+		"sentinel.hook.pre-update": "old backup from compose",
+		"com.example.keep":         "yes",
+	})
+	mock.mirrorCreate = true
+	stub.hooks["nginx"] = []hooks.Hook{
+		{ContainerName: "nginx", Phase: "pre-update", Command: []string{"/bin/sh", "-c", "pg_dump -f /b.sql"}, Timeout: 120},
+		{ContainerName: "nginx", Phase: "post-update", Command: []string{"/usr/bin/curl", "-sf", "http://localhost/health?a=1&b=2"}},
+	}
+	u.cfg.SetHooksWriteLabels(true)
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v", err)
+	}
+
+	if len(mock.createHistory) != 2 {
+		t.Fatalf("creates = %d, want 2 (update, then finalise)", len(mock.createHistory))
+	}
+	want := map[string]string{
+		"sentinel.hook.pre-update":  "pg_dump -f /b.sql",
+		"sentinel.hook.post-update": "/usr/bin/curl -sf 'http://localhost/health?a=1&b=2'",
+		"sentinel.hook.timeout":     "120",
+		"com.example.keep":          "yes",
+	}
+	for i, stage := range []string{"update create", "finalise create"} {
+		got := mock.createHistory[i].Labels
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("%s: label %s = %q, want %q", stage, k, got[k], v)
+			}
+		}
+	}
+	if _, ok := mock.createHistory[1].Labels["sentinel.maintenance"]; ok {
+		t.Error("finalise create still carries the maintenance label")
+	}
+	// The snapshot of the old container must not be touched.
+	if got := mock.inspectResults["aaa"].Config.Labels["sentinel.hook.pre-update"]; got != "old backup from compose" {
+		t.Errorf("old container labels changed: pre-update = %q", got)
+	}
+}
+
+func TestUpdateContainer_NoWriteBackWhenDisabled(t *testing.T) {
+	mock, u, stub := setupHookUpdate(t, map[string]string{})
+	stub.hooks["nginx"] = []hooks.Hook{
+		{ContainerName: "nginx", Phase: "pre-update", Command: []string{"/bin/sh", "-c", "pg_dump"}},
+	}
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v", err)
+	}
+	if len(mock.createHistory) == 0 {
+		t.Fatal("no container was created")
+	}
+	if _, ok := mock.createHistory[0].Labels["sentinel.hook.pre-update"]; ok {
+		t.Error("hook label written while SENTINEL_HOOKS_WRITE_LABELS is off")
+	}
+}

@@ -225,6 +225,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	if targetImage != "" {
 		newConfig.Image = targetImage
 	}
+	u.writeBackHookLabels(name, newConfig)
 	addMaintenanceLabel(newConfig)
 
 	hostConfig := inspect.HostConfig
@@ -632,6 +633,21 @@ func cloneConfig(cfg *container.Config) *container.Config {
 	clone := *cfg
 	clone.Labels = maps.Clone(cfg.Labels)
 	return &clone
+}
+
+// writeBackHookLabels copies the container's stored hooks onto the new
+// config as sentinel.hook.* labels when SENTINEL_HOOKS_WRITE_LABELS is on.
+// finaliseContainer clones this config, so the labels survive it.
+func (u *Updater) writeBackHookLabels(name string, cfg *container.Config) {
+	if u.hooks == nil || !u.cfg.HooksWriteLabels() {
+		return
+	}
+	labels, err := u.hooks.WriteBackLabels(name, cfg.Labels)
+	if err != nil {
+		u.log.Warn("failed to write hook labels", "name", name, "error", err)
+		return
+	}
+	cfg.Labels = labels
 }
 
 // addMaintenanceLabel sets sentinel.maintenance=true on the config.
