@@ -5,10 +5,47 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 )
+
+// eventRecorder is a notify.Notifier that keeps every event it is sent.
+type eventRecorder struct {
+	mu     sync.Mutex
+	events []notify.Event
+}
+
+func (r *eventRecorder) Send(_ context.Context, e notify.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+	return nil
+}
+
+func (r *eventRecorder) Name() string { return "recorder" }
+
+func (r *eventRecorder) ofType(t notify.EventType) []notify.Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []notify.Event
+	for _, e := range r.events {
+		if e.Type == t {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// recordNotifications routes the updater's notifications to a recorder.
+func recordNotifications(u *Updater) *eventRecorder {
+	rec := &eventRecorder{}
+	u.notifier.Reconfigure(rec)
+	return rec
+}
 
 // hookStoreStub implements hooks.Store in memory.
 type hookStoreStub struct {
@@ -92,8 +129,44 @@ func assertAbortedBeforePull(t *testing.T, mock *mockDocker, u *Updater) {
 	}
 }
 
+// assertAbortReported checks that an aborted pre-update left one failed
+// history record and sent exactly one update-failed notification, both
+// carrying wantErr.
+func assertAbortReported(t *testing.T, u *Updater, rec *eventRecorder, wantErr string) {
+	t.Helper()
+	history, err := u.store.ListHistory(10, "")
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history = %+v, want one record", history)
+	}
+	h := history[0]
+	if h.ContainerName != "nginx" || h.Outcome != "failed" {
+		t.Errorf("history record = %s/%s, want nginx/failed", h.ContainerName, h.Outcome)
+	}
+	if h.OldImage != "docker.io/library/nginx:latest" {
+		t.Errorf("history old image = %q, want the running image", h.OldImage)
+	}
+	if !strings.Contains(h.Error, wantErr) {
+		t.Errorf("history error = %q, want it to contain %q", h.Error, wantErr)
+	}
+
+	failed := rec.ofType(notify.EventUpdateFailed)
+	if len(failed) != 1 {
+		t.Fatalf("update_failed notifications = %d, want exactly 1", len(failed))
+	}
+	if failed[0].ContainerName != "nginx" || failed[0].OldImage != "docker.io/library/nginx:latest" {
+		t.Errorf("update_failed event = %s/%s, want nginx and the running image", failed[0].ContainerName, failed[0].OldImage)
+	}
+	if !strings.Contains(failed[0].Error, wantErr) {
+		t.Errorf("update_failed error = %q, want it to contain %q", failed[0].Error, wantErr)
+	}
+}
+
 func TestUpdateContainer_PreUpdateNonZeroExitAborts(t *testing.T) {
 	mock, u, _ := setupHookUpdate(t, map[string]string{"sentinel.hook.pre-update": "pg_dump"})
+	rec := recordNotifications(u)
 	u.cfg.SetImageBackup(true)
 	mock.execResults["aaa"] = struct {
 		exitCode int
@@ -105,10 +178,12 @@ func TestUpdateContainer_PreUpdateNonZeroExitAborts(t *testing.T) {
 		t.Fatal("expected an error when the pre-update hook exits 1")
 	}
 	assertAbortedBeforePull(t, mock, u)
+	assertAbortReported(t, u, rec, "pre-update hook exited with code 1")
 }
 
 func TestUpdateContainer_PreUpdateExecErrorAborts(t *testing.T) {
 	mock, u, stub := setupHookUpdate(t, nil)
+	rec := recordNotifications(u)
 	stub.hooks["nginx"] = []hooks.Hook{
 		{ContainerName: "nginx", Phase: "pre-update", Command: []string{"/backup.sh"}, Timeout: 10},
 	}
@@ -118,6 +193,7 @@ func TestUpdateContainer_PreUpdateExecErrorAborts(t *testing.T) {
 		t.Fatal("expected an error when the pre-update hook cannot be executed")
 	}
 	assertAbortedBeforePull(t, mock, u)
+	assertAbortReported(t, u, rec, "exec create: no such file")
 }
 
 func TestUpdateContainer_PreUpdateTimeoutAborts(t *testing.T) {
@@ -125,16 +201,19 @@ func TestUpdateContainer_PreUpdateTimeoutAborts(t *testing.T) {
 		"sentinel.hook.pre-update": "sleep 600",
 		"sentinel.hook.timeout":    "1",
 	})
+	rec := recordNotifications(u)
 	mock.execBlock["aaa"] = true
 
 	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err == nil {
 		t.Fatal("expected an error when the pre-update hook times out")
 	}
 	assertAbortedBeforePull(t, mock, u)
+	assertAbortReported(t, u, rec, "timed out after 1s")
 }
 
 func TestUpdateContainer_PreUpdateExit75Skips(t *testing.T) {
 	mock, u, _ := setupHookUpdate(t, map[string]string{"sentinel.hook.pre-update": "exit 75"})
+	rec := recordNotifications(u)
 	mock.execResults["aaa"] = struct {
 		exitCode int
 		output   string
@@ -144,6 +223,17 @@ func TestUpdateContainer_PreUpdateExit75Skips(t *testing.T) {
 		t.Fatalf("exit 75 should skip without an error, got %v", err)
 	}
 	assertAbortedBeforePull(t, mock, u)
+
+	history, err := u.store.ListHistory(10, "")
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("history = %+v, want none for a requested skip", history)
+	}
+	if failed := rec.ofType(notify.EventUpdateFailed); len(failed) != 0 {
+		t.Errorf("update_failed notifications = %d, want none for a requested skip", len(failed))
+	}
 }
 
 func TestUpdateContainer_PostUpdateFailureOnlyWarns(t *testing.T) {

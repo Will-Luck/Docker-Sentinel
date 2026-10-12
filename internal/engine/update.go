@@ -79,7 +79,8 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	}
 
 	// 2.5. Run pre-update hooks (store entries, else the old container's labels).
-	// Exit 75 skips the update; any other failure aborts it before the pull.
+	// Exit 75 skips the update quietly; any other failure aborts it before the
+	// pull and is recorded and notified as a failed update.
 	if u.hooks != nil && u.cfg.HooksEnabled() {
 		if err := u.hooks.RunPreUpdate(ctx, id, name, inspect.Config.Labels); err != nil {
 			if errors.Is(err, hooks.ErrSkipUpdate) {
@@ -91,6 +92,27 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			if mErr := u.store.SetMaintenance(name, false); mErr != nil {
 				u.log.Warn("failed to clear maintenance flag after pre-update hook failure", "name", name, "error", mErr)
 			}
+			if recErr := u.store.RecordUpdate(store.UpdateRecord{
+				Timestamp:     u.clock.Now(),
+				ContainerName: name,
+				OldImage:      oldImage,
+				OldDigest:     extractDigestForRecord(inspect),
+				NewImage:      pullImage,
+				Outcome:       "failed",
+				Duration:      u.clock.Since(start),
+				Error:         err.Error(),
+			}); recErr != nil {
+				u.log.Warn("failed to persist pre-update hook failure record", "name", name, "error", recErr)
+			}
+			metrics.UpdatesTotal.WithLabelValues("failed").Inc()
+			u.publishEvent(events.EventContainerUpdate, name, "update failed")
+			u.notifier.Notify(ctx, notify.Event{
+				Type:          notify.EventUpdateFailed,
+				ContainerName: name,
+				OldImage:      oldImage,
+				Error:         err.Error(),
+				Timestamp:     u.clock.Now(),
+			})
 			return fmt.Errorf("pre-update hook for %s: %w", name, err)
 		}
 	}
