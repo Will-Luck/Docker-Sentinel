@@ -260,7 +260,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 		u.log.Error("replacement failed, restoring the old container", "name", name, "error", err)
 		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, err)
-		return fmt.Errorf("replace %s: %w", name, err)
+		return fmt.Errorf("%w: replace %s: %w", ErrRolledBack, name, err)
 	}
 	newID := sw.newID
 
@@ -298,7 +298,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			cause = fmt.Errorf("validation failed: %w", err)
 		}
 		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, cause)
-		return fmt.Errorf("new container %s failed validation", name)
+		return fmt.Errorf("%w: new container %s failed validation", ErrRolledBack, name)
 	}
 
 	// The new container is good: keep the old one's snapshot for a later
@@ -367,7 +367,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 				Error:         finaliseErr.Error(),
 				Timestamp:     u.clock.Now(),
 			})
-			return finaliseErr
+			return fmt.Errorf("%w: %w", ErrRolledBack, finaliseErr)
 		}
 
 		// The validated container is still in place, running the new image
@@ -481,9 +481,13 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 	}
 
-	// Clear ignored versions — container moved past them.
+	// Clear ignored versions and any failed-update marker: the container
+	// moved past them.
 	if err := u.store.ClearIgnoredVersions(name); err != nil {
 		u.log.Warn("failed to clear ignored versions after update", "name", name, "error", err)
+	}
+	if err := u.store.ClearFailedUpdate(name); err != nil {
+		u.log.Warn("failed to clear the failed-update marker", "name", name, "error", err)
 	}
 
 	// 9. Clean old snapshots, keeping only the most recent one. If this

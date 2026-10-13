@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,12 @@ import (
 // ErrUpdateInProgress is returned when an update is attempted on a container
 // that already has an update in progress.
 var ErrUpdateInProgress = fmt.Errorf("update already in progress")
+
+// ErrRolledBack is wrapped by the error UpdateContainer returns when the
+// update changed the container and was rolled back (the new container
+// failed to start or to validate). Scan then leaves that exact update alone
+// until a new version or digest appears.
+var ErrRolledBack = errors.New("update rolled back")
 
 // ImageScanner scans a container image for vulnerabilities.
 type ImageScanner interface {

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -302,6 +303,16 @@ func ignoreKey(check registry.CheckResult) string {
 		return check.ResolvedTargetVersion
 	}
 	return check.RemoteDigest
+}
+
+// failedUpdateKey identifies the update a check offers, as recorded when it
+// is rolled back: the target version for a version bump, otherwise the
+// ignoreKey of a mutable tag (resolved version or remote digest).
+func failedUpdateKey(check registry.CheckResult) string {
+	if len(check.NewerVersions) > 0 {
+		return check.NewerVersions[0]
+	}
+	return ignoreKey(check)
 }
 
 // filterIgnored drops ignored versions from check.NewerVersions and reports
@@ -616,6 +627,13 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			continue
 		}
 
+		// An update that was tried and rolled back is not tried (or
+		// announced) again until a new version or digest appears.
+		if failed, _ := u.store.FailedUpdate(name); failed != "" && failed == failedUpdateKey(check) {
+			u.log.Debug("update was rolled back before, waiting for a newer one", "name", name, "update", failed)
+			continue
+		}
+
 		u.log.Info("update available", "name", name, "image", imageRef,
 			"local_digest", check.LocalDigest, "remote_digest", check.RemoteDigest)
 		u.publishEvent(events.EventContainerUpdate, name, "update available")
@@ -786,6 +804,13 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				u.log.Error("auto-update failed", "name", name, "error", err)
 				result.Failed++
 				result.Errors = append(result.Errors, err)
+				if errors.Is(err, ErrRolledBack) {
+					if key := failedUpdateKey(check); key != "" {
+						if err := u.store.SetFailedUpdate(name, key); err != nil {
+							u.log.Warn("failed to record the rolled-back update", "name", name, "error", err)
+						}
+					}
+				}
 			} else {
 				result.Updated++
 			}
