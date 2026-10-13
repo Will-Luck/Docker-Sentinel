@@ -48,6 +48,23 @@ const FeatureCertRenewal = "cert-renewal"
 // minutes.
 const FeatureKeepalive = "keepalive"
 
+// FeatureDiscardSwap is the agent feature (in its heartbeat and state
+// report) that says it can discard a swap record on the hub's request
+// (agents since v3.0.0).
+const FeatureDiscardSwap = "discard-swap"
+
+// Errors of a remote swap record discard.
+var (
+	// ErrAgentTooOld: the agent cannot do what was asked (it is older than
+	// the feature).
+	ErrAgentTooOld = errors.New("the agent on this host is older than v3.0.0 and cannot discard swap records; update it, " +
+		"or fix the containers on the host and restart the agent")
+	// ErrNoSwapRecord: the agent has no swap record for the container.
+	ErrNoSwapRecord = errors.New("no unfinished swap is recorded for this container on the agent")
+	// ErrSwapBusy: an update or recovery of the container is running.
+	ErrSwapBusy = errors.New("an update or recovery of this container is running on the agent")
+)
+
 // MaxMessageSize is the largest gRPC message the cluster server and agents
 // exchange. A host with many containers and large labels sends a container
 // list well over gRPC's 4 MB default.

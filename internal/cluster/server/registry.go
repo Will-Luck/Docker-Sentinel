@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -253,10 +254,11 @@ func (r *Registry) UpdateEngineID(hostID, engineID string) error {
 	return nil
 }
 
-// UpdateAgentInfo stores the version an agent reports and, when name is
-// not empty, the host name it now runs with (SENTINEL_HOST_NAME, which
-// may have changed since it enrolled). Persisted only when they change.
-func (r *Registry) UpdateAgentInfo(hostID, version, name string) error {
+// UpdateAgentInfo stores the version and features an agent reports and,
+// when name is not empty, the host name it now runs with
+// (SENTINEL_HOST_NAME, which may have changed since it enrolled). Persisted
+// only when they change; nil features leave the stored ones.
+func (r *Registry) UpdateAgentInfo(hostID, version, name string, features []string) error {
 	r.mu.Lock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
@@ -266,6 +268,10 @@ func (r *Registry) UpdateAgentInfo(hostID, version, name string) error {
 	changed := false
 	if version != "" && hs.Info.AgentVersion != version {
 		hs.Info.AgentVersion = version
+		changed = true
+	}
+	if features != nil && !slices.Equal(hs.Info.Features, features) {
+		hs.Info.Features = slices.Clone(features)
 		changed = true
 	}
 	oldName := hs.Info.Name

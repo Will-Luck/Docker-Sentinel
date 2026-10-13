@@ -385,7 +385,7 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 
 	containers := protoToContainers(report.Containers)
 	s.registry.UpdateContainers(hostID, containers)
-	if err := s.registry.UpdateAgentInfo(hostID, report.AgentVersion, report.HostName); err != nil {
+	if err := s.registry.UpdateAgentInfo(hostID, report.AgentVersion, report.HostName, report.SupportedFeatures); err != nil {
 		s.log.Warn("failed to store the agent's version", "hostID", hostID, "error", err)
 	}
 	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
@@ -465,7 +465,7 @@ func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heart
 	as.version = hb.AgentVersion
 	as.features = hb.SupportedFeatures
 	as.mu.Unlock()
-	if err := s.registry.UpdateAgentInfo(hostID, hb.AgentVersion, ""); err != nil {
+	if err := s.registry.UpdateAgentInfo(hostID, hb.AgentVersion, "", hb.SupportedFeatures); err != nil {
 		s.log.Warn("failed to store the agent's version", "hostID", hostID, "error", err)
 	}
 

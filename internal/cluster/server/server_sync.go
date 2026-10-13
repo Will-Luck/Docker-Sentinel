@@ -9,6 +9,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -299,6 +301,60 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 	}
 
 	return ur.UpdateResult, nil
+}
+
+// DiscardSwapSync asks the agent on hostID to discard its record of a swap
+// of name that it cannot finish, once the user has fixed the containers on
+// the host. An agent before v3.0.0 cannot: ErrAgentTooOld, and nothing is
+// sent. ErrNoSwapRecord when it has no record, ErrSwapBusy while an update
+// or recovery holds the container.
+func (s *Server) DiscardSwapSync(ctx context.Context, hostID, name string) error {
+	if !s.hostHas(hostID, cluster.FeatureDiscardSwap) {
+		return cluster.ErrAgentTooOld
+	}
+	resp, err := s.request(ctx, hostID, "container action result", "", actionTimeout, &proto.ServerMessage{
+		Payload: &proto.ServerMessage_ContainerAction{
+			ContainerAction: &proto.ContainerActionRequest{ContainerName: name, Action: cluster.FeatureDiscardSwap},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	ar, ok := resp.Payload.(*proto.AgentMessage_ContainerActionResult)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T (wanted ContainerActionResult)", resp.Payload)
+	}
+	switch r := ar.ContainerActionResult; r.GetOutcome() {
+	case "success":
+		return nil
+	case "not_found":
+		return cluster.ErrNoSwapRecord
+	case "busy":
+		return cluster.ErrSwapBusy
+	default:
+		if strings.Contains(r.GetError(), "unknown action") {
+			return cluster.ErrAgentTooOld
+		}
+		return fmt.Errorf("discard the swap record of %s: %s", name, r.GetError())
+	}
+}
+
+// hostHas reports whether the agent on hostID advertises feature: in its
+// heartbeats on the current stream, else in its last state report.
+func (s *Server) hostHas(hostID, feature string) bool {
+	s.mu.RLock()
+	as, ok := s.streams[hostID]
+	s.mu.RUnlock()
+	if ok {
+		as.mu.RLock()
+		has := slices.Contains(as.features, feature)
+		as.mu.RUnlock()
+		if has {
+			return true
+		}
+	}
+	hs, ok := s.registry.Get(hostID)
+	return ok && slices.Contains(hs.Info.Features, feature)
 }
 
 // PullImage asks the agent on hostID to pull ref (a pull-only update). The

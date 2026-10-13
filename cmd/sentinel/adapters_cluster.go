@@ -141,6 +141,10 @@ func (a *clusterAdapter) ResumeHost(id string) error {
 	return a.srv.ResumeHost(id)
 }
 
+func (a *clusterAdapter) DiscardRemoteSwap(ctx context.Context, hostID, name string) error {
+	return a.srv.DiscardSwapSync(ctx, hostID, name)
+}
+
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
 	hostName, oldImage := hostID, ""
 	if hs, ok := a.srv.GetHost(hostID); ok {

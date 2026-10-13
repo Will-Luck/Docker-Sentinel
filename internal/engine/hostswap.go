@@ -63,8 +63,9 @@ func (h *HostSwaps) SetAside(name string) bool { return h.u.setAside(name) }
 
 // Pending returns an error saying that an earlier swap of name did not
 // finish, or nil. Nothing may change name until that swap is resolved: its
-// journal record is the only way back to the old container.
-func (h *HostSwaps) Pending(name string) error {
+// journal record is the only way back to the old container. discard says
+// how to discard the record once the containers are right.
+func (h *HostSwaps) Pending(name, discard string) error {
 	rec, found, _ := h.u.store.GetSwap(name)
 	if !found {
 		return nil
@@ -73,9 +74,15 @@ func (h *HostSwaps) Pending(name string) error {
 		return fmt.Errorf("%w: its old container was put back, and Sentinel watches it until %s in case Docker stops it; try again after that",
 			ErrSwapPending, rec.WatchUntil.Format(time.TimeOnly))
 	}
-	return fmt.Errorf("%w: the agent retries it every minute; if it cannot, check %s and %s%s on this host",
-		ErrSwapPending, name, name, replacedSuffix)
+	return fmt.Errorf("%w: the agent retries it every minute; if it cannot, keep one working copy named %s on this host "+
+		"(check %s and %s%s), then discard the record with %s",
+		ErrSwapPending, name, name, name, replacedSuffix, discard)
 }
+
+// Discard removes the journal record of a swap that cannot be resolved, once
+// the user has fixed the containers by hand (Updater.DiscardSwap): ErrNoSwap
+// when there is none, ErrUpdateInProgress while the container is held.
+func (h *HostSwaps) Discard(name string) error { return h.u.DiscardSwap(name) }
 
 // BackupImage tags image as a backup before it is replaced, when image
 // backup is on, as the hub does before an update.

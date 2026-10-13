@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 )
 
@@ -201,5 +202,58 @@ func TestUpdateContainerSync_RefusedForAPausedHost(t *testing.T) {
 	}
 	if _, err := srv.UpdateContainerSync(ctx, hostID, "web", "nginx:2", ""); err != nil {
 		t.Errorf("update after resuming: %v", err)
+	}
+}
+
+// The hub forwards the discard of a swap record to the agent, and refuses
+// it with a clear error for an agent too old to do it (it does not
+// advertise the feature), without sending anything.
+func TestDiscardSwapSync(t *testing.T) {
+	srv, hostID, stream := connectAgent(t)
+	got := make(chan *proto.ContainerActionRequest, 2)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if a := msg.GetContainerAction(); a != nil {
+				got <- a
+				outcome := "success"
+				if a.GetContainerName() == "missing" {
+					outcome = "not_found"
+				}
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_ContainerActionResult{
+					ContainerActionResult: &proto.ContainerActionResult{RequestId: msg.GetRequestId(), ContainerName: a.GetContainerName(), Action: a.GetAction(), Outcome: outcome},
+				}})
+			}
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.DiscardSwapSync(ctx, hostID, "web"); !errors.Is(err, cluster.ErrAgentTooOld) {
+		t.Fatalf("discard on an agent without the feature: %v, want ErrAgentTooOld", err)
+	}
+	select {
+	case a := <-got:
+		t.Fatalf("an old agent was sent %v", a)
+	default:
+	}
+
+	if err := stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_Heartbeat{Heartbeat: &proto.Heartbeat{
+		SupportedFeatures: []string{cluster.FeatureDiscardSwap},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return srv.hostHas(hostID, cluster.FeatureDiscardSwap) }, "the hub should see the feature")
+	if err := srv.DiscardSwapSync(ctx, hostID, "web"); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if a := <-got; a.GetAction() != "discard-swap" || a.GetContainerName() != "web" {
+		t.Errorf("agent got %v, want a discard-swap of web", a)
+	}
+	if err := srv.DiscardSwapSync(ctx, hostID, "missing"); !errors.Is(err, cluster.ErrNoSwapRecord) {
+		t.Errorf("discard with no record: %v, want ErrNoSwapRecord", err)
 	}
 }

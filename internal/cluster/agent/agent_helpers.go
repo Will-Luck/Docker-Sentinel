@@ -179,7 +179,7 @@ func (a *Agent) recreate(ctx context.Context, name, targetImage string, opts upd
 	}
 	// An earlier update that did not finish holds the only way back to its
 	// old container: change nothing until its recovery has resolved it.
-	if err := a.swaps.Pending(name); err != nil {
+	if err := a.swaps.Pending(name, fmt.Sprintf("DELETE /api/swaps/%s?host=%s on the server", name, a.hostID)); err != nil {
 		return r, err
 	}
 

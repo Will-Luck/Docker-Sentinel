@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -111,6 +112,22 @@ func (c *ClusterController) PauseHost(id string) error {
 	}
 	return c.provider.PauseHost(id)
 }
+
+// DiscardRemoteSwap asks the agent on hostID to discard its record of an
+// unfinished swap of name. Returns an error when clustering is disabled or
+// the provider cannot.
+func (c *ClusterController) DiscardRemoteSwap(ctx context.Context, hostID, name string) error {
+	d, ok := c.current().(interface {
+		DiscardRemoteSwap(ctx context.Context, hostID, name string) error
+	})
+	if !ok {
+		return errClusterOff
+	}
+	return d.DiscardRemoteSwap(ctx, hostID, name)
+}
+
+// errClusterOff is returned for a remote request while clustering is off.
+var errClusterOff = errors.New("cluster not enabled")
 
 // ResumeHost ends the pause of a host: it gets updates again. Returns an
 // error when clustering is disabled or the provider cannot resume.

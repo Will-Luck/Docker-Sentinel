@@ -11,6 +11,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -351,6 +352,10 @@ func (a *Agent) handleContainerAction(ctx context.Context, stream proto.AgentSer
 	action := req.GetAction()
 	a.log.Info("container action", "name", name, "action", action, "request_id", requestID)
 
+	if action == actionDiscardSwap {
+		return a.handleDiscardSwap(stream, name, requestID)
+	}
+
 	cID, err := a.findContainerID(ctx, name)
 	if err == nil {
 		switch action {
@@ -388,6 +393,41 @@ func (a *Agent) handleContainerAction(ctx context.Context, stream proto.AgentSer
 	// Push a fresh container list so the server cache and UI reflect the
 	// new state immediately (e.g. a stopped container stays visible).
 	return a.handleListContainers(ctx, stream, "")
+}
+
+// actionDiscardSwap is the container action that discards the agent's
+// record of a swap it cannot finish (DELETE /api/swaps/{name}?host= on the
+// hub). Its outcomes besides success and failed are discardNotFound (no
+// record) and discardBusy (an update or recovery holds the container).
+const (
+	actionDiscardSwap = "discard-swap"
+	discardNotFound   = "not_found"
+	discardBusy       = "busy"
+)
+
+// handleDiscardSwap discards the swap record of name, as the hub asked,
+// once the user has fixed the containers on this host.
+func (a *Agent) handleDiscardSwap(stream proto.AgentService_ChannelClient, name, requestID string) error {
+	result := &proto.ContainerActionResult{RequestId: requestID, ContainerName: name, Action: actionDiscardSwap, Outcome: "success"}
+	var err error
+	if a.swaps == nil {
+		err = errors.New("this agent keeps no swap journal")
+	} else {
+		err = a.swaps.Discard(name)
+	}
+	switch {
+	case errors.Is(err, engine.ErrNoSwap):
+		result.Outcome = discardNotFound
+	case errors.Is(err, engine.ErrUpdateInProgress):
+		result.Outcome = discardBusy
+	case err != nil:
+		result.Outcome, result.Error = "failed", err.Error()
+	default:
+		a.log.Warn("discarded a swap record on the server's request", "name", name)
+	}
+	return a.sendMsg(stream, &proto.AgentMessage{
+		Payload: &proto.AgentMessage_ContainerActionResult{ContainerActionResult: result},
+	})
 }
 
 // handleFetchLogs fetches the last N lines of a container's logs and sends

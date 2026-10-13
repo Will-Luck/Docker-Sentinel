@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 )
 
 // discardingUpdater is a ContainerUpdater that also discards swap records.
@@ -71,5 +73,53 @@ func TestAPIDiscardSwapRejectsBadName(t *testing.T) {
 
 	if w := discardSwap(srv, "../etc"); w.Code != http.StatusBadRequest || len(up.discarded) != 0 {
 		t.Errorf("status = %d discarded = %v, want 400 and nothing discarded", w.Code, up.discarded)
+	}
+}
+
+// discardingCluster is a cluster provider that discards remote swap
+// records.
+type discardingCluster struct {
+	mockClusterProviderWithContainers
+	err       error
+	discarded []string
+}
+
+func (d *discardingCluster) DiscardRemoteSwap(_ context.Context, hostID, name string) error {
+	d.discarded = append(d.discarded, hostID+"/"+name)
+	return d.err
+}
+
+// DELETE /api/swaps/{name}?host=<hostID> discards the swap record on that
+// agent, and says plainly when the agent is too old to.
+func TestAPIDiscardSwap_RemoteHost(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		code int
+	}{
+		{"discarded", nil, http.StatusOK},
+		{"none", cluster.ErrNoSwapRecord, http.StatusNotFound},
+		{"busy", cluster.ErrSwapBusy, http.StatusConflict},
+		{"old agent", cluster.ErrAgentTooOld, http.StatusNotImplemented},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dc := &discardingCluster{mockClusterProviderWithContainers: mockClusterProviderWithContainers{
+				hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"},
+			}, err: tc.err}
+			cc := NewClusterController()
+			cc.SetProvider(dc)
+			up := &discardingUpdater{}
+			srv := &Server{deps: Dependencies{Updater: up, Cluster: cc, Log: slog.Default(), EventBus: events.New()}}
+			req := httptest.NewRequest(http.MethodDelete, "/api/swaps/web?host=h1", nil)
+			req.SetPathValue("name", "web")
+			w := httptest.NewRecorder()
+			srv.apiDiscardSwap(w, req)
+			if w.Code != tc.code {
+				t.Errorf("status = %d (%s), want %d", w.Code, w.Body.String(), tc.code)
+			}
+			if len(dc.discarded) != 1 || dc.discarded[0] != "h1/web" || len(up.discarded) != 0 {
+				t.Errorf("remote discards %v, local %v; want only h1/web on the agent", dc.discarded, up.discarded)
+			}
+		})
 	}
 }
