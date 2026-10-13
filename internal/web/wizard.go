@@ -34,6 +34,8 @@ type WizardServer struct {
 	setupDeadline time.Time
 	done          chan struct{}
 	closeOnce     sync.Once
+	tlsCert       string
+	tlsKey        string
 }
 
 // NewWizardServer creates a WizardServer ready to serve.
@@ -294,7 +296,15 @@ func (ws *WizardServer) serveFaviconSVG(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write(data)
 }
 
-// ListenAndServe starts the wizard HTTP server on addr.
+// SetTLS makes the wizard serve HTTPS with the given certificate and key.
+// Without it the wizard serves plain HTTP.
+func (ws *WizardServer) SetTLS(cert, key string) {
+	ws.tlsCert = cert
+	ws.tlsKey = key
+}
+
+// ListenAndServe starts the wizard HTTP server on addr, over HTTPS when TLS
+// has been set.
 func (ws *WizardServer) ListenAndServe(addr string) error {
 	ws.server = &http.Server{
 		Addr:         addr,
@@ -303,7 +313,10 @@ func (ws *WizardServer) ListenAndServe(addr string) error {
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
-	ws.deps.Log.Info("wizard server listening", "addr", addr)
+	ws.deps.Log.Info("wizard server listening", "addr", addr, "tls", ws.tlsCert != "")
+	if ws.tlsCert != "" && ws.tlsKey != "" {
+		return ws.server.ListenAndServeTLS(ws.tlsCert, ws.tlsKey)
+	}
 	return ws.server.ListenAndServe()
 }
 

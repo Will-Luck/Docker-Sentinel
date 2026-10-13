@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -124,10 +125,28 @@ func generateRandomPassword() string {
 // runWizard starts the setup wizard server and blocks until setup completes
 // or ctx is cancelled.
 func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc *auth.Service, log *logging.Logger) {
+	// Serve the setup page over TLS when TLS is configured, as the main
+	// server does, so the admin password is not sent in the clear.
+	scheme := "http"
+	var tlsCert, tlsKey string
+	if cfg.TLSCert != "" && cfg.TLSKey != "" {
+		tlsCert, tlsKey = cfg.TLSCert, cfg.TLSKey
+	} else if cfg.TLSAuto {
+		var tlsErr error
+		tlsCert, tlsKey, tlsErr = web.EnsureSelfSignedCert(filepath.Dir(cfg.DBPath))
+		if tlsErr != nil {
+			log.Error("failed to generate self-signed certificate for the setup page", "error", tlsErr)
+			os.Exit(1)
+		}
+	}
+	if tlsCert != "" {
+		scheme = "https"
+	}
+
 	fmt.Println("=============================================")
 	fmt.Println("First-run setup required!")
 	fmt.Println("")
-	fmt.Printf("  Open http://<your-host>:%s/setup\n", cfg.WebPort)
+	fmt.Printf("  Open %s://<your-host>:%s/setup\n", scheme, cfg.WebPort)
 	fmt.Println("  to configure this instance.")
 	fmt.Println("")
 	fmt.Println("  This page will be available for 5 minutes.")
@@ -141,6 +160,10 @@ func runWizard(ctx context.Context, cfg *config.Config, db *store.Store, authSvc
 		Version:       versionString(),
 		ClusterPort:   cfg.ClusterPort,
 	})
+
+	if tlsCert != "" {
+		ws.SetTLS(tlsCert, tlsKey)
+	}
 
 	addr := net.JoinHostPort("", cfg.WebPort)
 	go func() {
