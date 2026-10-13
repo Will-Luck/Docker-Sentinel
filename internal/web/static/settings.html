@@ -672,7 +672,7 @@
                                     <div class="setting-info">
                                         <div class="setting-label">Webhook Secret</div>
                                         <div class="setting-desc">
-                                            Append <code>?secret=YOUR_SECRET</code> to the URL, or send it in the <code>X-Webhook-Secret</code> header
+                                            Send the secret in the <code>X-Webhook-Secret</code> header; the URL query is not accepted. Docker Hub and GitHub cannot add a custom header, so call this URL through a relay that does
                                         </div>
                                     </div>
                                     <div class="setting-control-stack">

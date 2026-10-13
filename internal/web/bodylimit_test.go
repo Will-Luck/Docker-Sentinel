@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,5 +38,14 @@ func TestLimitBodyMiddlewareCapsEveryRoute(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(make([]byte, maxRequestBody+1))))
 	if readErr == nil {
 		t.Error("a body over the global cap was read in full")
+	}
+}
+
+// The inbound webhook only accepts the secret in a header, so the Settings
+// page must not tell people to put it in the URL.
+func TestSettingsPage_WebhookHelpMatchesTheHandler(t *testing.T) {
+	b, _ := staticFS.ReadFile("static/settings.html")
+	if strings.Contains(string(b), "?secret=") {
+		t.Error("settings.html still tells people to use ?secret=, which the handler rejects")
 	}
 }
