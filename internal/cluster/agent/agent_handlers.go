@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
@@ -266,7 +267,40 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 			UpdateResult: result,
 		},
 	}
-	return a.sendMsg(stream, msg)
+	if err := a.sendMsg(stream, msg); err != nil {
+		// The connection dropped while the update ran: keep the result
+		// for the hub, which gets it when the agent reconnects.
+		a.journalResult(result, start)
+		return err
+	}
+	return nil
+}
+
+// journalResult keeps an update result the hub could not be sent in the
+// offline journal, which the agent sends it on reconnecting (syncJournal).
+func (a *Agent) journalResult(r *proto.UpdateResult, start time.Time) {
+	if a.journal == nil {
+		return
+	}
+	err := a.journal.Add(cluster.JournalEntry{
+		ID:        r.GetRequestId(),
+		Timestamp: start.UTC(),
+		Action:    "update",
+		Container: r.GetContainerName(),
+		OldImage:  r.GetOldImage(),
+		NewImage:  r.GetNewImage(),
+		OldDigest: r.GetOldDigest(),
+		NewDigest: r.GetNewDigest(),
+		Outcome:   r.GetOutcome(),
+		Error:     r.GetError(),
+		Duration:  r.GetDuration().AsDuration(),
+	})
+	if err != nil {
+		a.log.Error("could not keep an unsent update result in the offline journal", "container", r.GetContainerName(), "error", err)
+		return
+	}
+	a.log.Warn("could not send an update result; it is kept for the hub until the agent reconnects",
+		"container", r.GetContainerName(), "outcome", r.GetOutcome())
 }
 
 // beginUpdate claims name for an update, reporting false if another update

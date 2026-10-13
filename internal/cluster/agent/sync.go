@@ -1,10 +1,11 @@
 // Package agent — sync.go handles the offline action journal and reconnection
-// sync. When the agent operates autonomously, all observed state changes are
-// recorded in a file-backed journal. On reconnection, the journal is sent to
-// the server for processing and then cleared.
+// sync. Update results the agent could not send (the connection dropped
+// while the update ran) are recorded in a file-backed journal. On
+// reconnection, the journal is sent to the server for processing and then
+// cleared.
 //
-// The journal is a simple JSON file (not BoltDB) since the agent doesn't run
-// its own BoltDB instance — it's designed to be lightweight and self-contained.
+// The journal is a JSON file in the data directory, apart from the agent's
+// database, which holds the journal of container swaps in progress.
 package agent
 
 import (

@@ -654,6 +654,9 @@ func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 	}
 
 	for _, e := range oj.Entries {
+		if e.Outcome == "skipped" {
+			continue // nothing changed; no history row, as locally
+		}
 		ts := time.Now()
 		if e.GetTimestamp() != nil {
 			ts = e.GetTimestamp().AsTime()
