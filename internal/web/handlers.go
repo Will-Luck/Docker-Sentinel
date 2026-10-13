@@ -434,6 +434,7 @@ type containerDetailData struct {
 	PortOverrides  map[string]PortOverride // per-port custom URL/path overrides, keyed by port string
 
 	ClusterEnabled bool
+	QueueCount     int
 
 	// Auth context.
 	CurrentUser *auth.User
@@ -775,6 +776,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		ChangelogURL:   ChangelogURL(image),
 		PortOverrides:  portOverrides,
 		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
+		QueueCount:     len(s.deps.Queue.List()),
 	}
 	s.withAuthDetail(r, &data)
 
@@ -789,6 +791,7 @@ type serviceDetailData struct {
 	ChangelogURL string
 
 	ClusterEnabled bool
+	QueueCount     int
 
 	// Auth context.
 	CurrentUser *auth.User
@@ -871,6 +874,7 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 		Versions:       versions,
 		ChangelogURL:   ChangelogURL(found.Image),
 		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
+		QueueCount:     len(s.deps.Queue.List()),
 	}
 	s.withAuthServiceDetail(r, &data)
 

@@ -177,3 +177,18 @@ func TestServicePage_UsesTheContainerPageOptionStyles(t *testing.T) {
 		t.Error("service.html should use the styled notify-option markup")
 	}
 }
+
+// The container and service pages show the pending-updates count in the nav,
+// like the other pages.
+func TestDetailPages_ShowTheQueueBadge(t *testing.T) {
+	c := renderAny(t, "container.html", containerDetailData{Container: containerView{Name: "web"}, QueueCount: 7})
+	s := renderAny(t, "service.html", serviceDetailData{Service: serviceView{Name: "svc"}, QueueCount: 7})
+	for name, out := range map[string]string{"container": c, "service": s} {
+		if !strings.Contains(out, `<span class="nav-badge">7</span>`) {
+			t.Errorf("%s page has no queue badge", name)
+		}
+	}
+	if out := renderAny(t, "container.html", containerDetailData{Container: containerView{Name: "web"}}); strings.Contains(out, "nav-badge") {
+		t.Errorf("an empty queue should show no badge")
+	}
+}
