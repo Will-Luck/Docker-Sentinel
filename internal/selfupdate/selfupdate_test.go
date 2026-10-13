@@ -117,7 +117,7 @@ func (f *fake) RenameContainer(_ context.Context, id, name string) error {
 
 func hubInspect() container.InspectResponse {
 	return container.InspectResponse{
-		ID: "old1",
+		ID: "old1", Image: "sha256:running-image-id",
 		Config: &container.Config{
 			Image: "ghcr.io/example/sentinel:2.0.0", Env: []string{"SENTINEL_WEB_PORT=8080"},
 			Labels: map[string]string{"sentinel.self": "true"},
@@ -168,11 +168,13 @@ func TestBeginSetsUpReplacementAndHelper(t *testing.T) {
 	}
 
 	// The helper runs the new image's helper subcommand with the socket and data mounted.
+	// The helper runs the image already running here, never the target: a
+	// target older than v3 has no helper subcommand.
 	hc, hh := f.created["id-sentinel-self-update-helper"], f.hosts["id-sentinel-self-update-helper"]
 	if hc == nil {
 		t.Fatal("no helper created")
 	}
-	if hc.Image != "ghcr.io/example/sentinel:3.0.0" || !slices.Equal(hc.Cmd, []string{"self-update-helper"}) {
+	if hc.Image != "sha256:running-image-id" || !slices.Equal(hc.Cmd, []string{"self-update-helper"}) {
 		t.Errorf("helper image/cmd = %q %v", hc.Image, hc.Cmd)
 	}
 	if hc.Labels["sentinel.self"] != "false" || hc.Labels[HelperLabel] != "true" {

@@ -3,8 +3,9 @@
 //
 // A container cannot free its own published ports, or its database lock,
 // before the new one starts. So the running instance sets everything up, then
-// hands the swap to a short-lived helper container: it is created from the new
-// image, mounts the Docker socket and runs the hidden "self-update-helper"
+// hands the swap to a short-lived helper container: it is created from the
+// image the running instance uses (so it works whatever the target image is,
+// including an older one), mounts the Docker socket and runs the hidden "self-update-helper"
 // subcommand, which stops the old container, starts the new one, waits for it
 // to settle and puts the old one back if it does not. The helper records the
 // outcome in the data directory and the new instance reports it on startup.
@@ -271,8 +272,15 @@ func Begin(ctx context.Context, p Params) (*Handover, error) {
 	if old, err := findByName(ctx, p.Docker, helperName); err == nil && old != "" {
 		_ = p.Docker.RemoveContainer(ctx, old)
 	}
+	// The helper runs the image this instance runs (by its ID), not the target:
+	// the target may be older than the helper subcommand (a rollback to v2.x)
+	// and would start a full Sentinel instead.
+	helperImage := p.Inspect.Image
+	if helperImage == "" {
+		helperImage = p.Inspect.Config.Image
+	}
 	helperCfg := &container.Config{
-		Image: p.Image,
+		Image: helperImage,
 		Cmd:   []string{HelperSubcommand},
 		Env:   []string{SpecEnv + "=" + string(specJSON)},
 		// The image carries sentinel.self=true; the helper is not Sentinel.

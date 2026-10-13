@@ -224,7 +224,7 @@ func TestSelfUpdateUsesHelperWhenSocketIsMounted(t *testing.T) {
 		t.Fatal("Update returned nil; with a helper it only returns when the helper did not replace us")
 	}
 	cfg := ev.createConfigs["sentinel-self-update-helper"]
-	if cfg == nil || cfg.Image != "img:2.0" || !slices.Equal(cfg.Cmd, []string{"self-update-helper"}) {
+	if cfg == nil || cfg.Image != "img:1.0" || !slices.Equal(cfg.Cmd, []string{"self-update-helper"}) {
 		t.Fatalf("helper config = %+v", cfg)
 	}
 	if slices.Contains(ev.events, "start:new-sentinel") || slices.Contains(ev.events, "stop:abc123") {

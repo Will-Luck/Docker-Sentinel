@@ -44,7 +44,7 @@ func TestSelfUpdateContainerHandsOverToHelperWhenSocketIsMounted(t *testing.T) {
 		t.Fatalf("replacement config = %+v", repl)
 	}
 	helper := mock.createConfigs["sentinel-agent-self-update-helper"]
-	if helper == nil || helper.Image != "sentinel:v2" || !slices.Equal(helper.Cmd, []string{"self-update-helper"}) {
+	if helper == nil || helper.Image != "sentinel:v1" || !slices.Equal(helper.Cmd, []string{"self-update-helper"}) {
 		t.Fatalf("helper config = %+v", helper)
 	}
 	// Only the helper was started; it starts the replacement.
