@@ -63,25 +63,8 @@ func (s *Server) resolvedPolicy(labels map[string]string, name string) string {
 // getContainerLabels fetches labels for a named container, checking local
 // Docker, Swarm services, and remote cluster containers in order.
 func (s *Server) getContainerLabels(ctx context.Context, name string) map[string]string {
-	// Local containers.
-	containers, err := s.deps.Docker.ListAllContainers(ctx)
-	if err == nil {
-		for _, c := range containers {
-			if containerName(c) == name {
-				return c.Labels
-			}
-		}
-	}
-
-	// Swarm services.
-	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
-		if services, svcErr := s.deps.Swarm.ListServiceDetail(ctx); svcErr == nil {
-			for _, svc := range services {
-				if svc.Name == name {
-					return svc.Labels
-				}
-			}
-		}
+	if labels := s.getLocalContainerLabels(ctx, name); labels != nil {
+		return labels
 	}
 
 	// Remote cluster containers.
@@ -275,4 +258,41 @@ func hasMaskedValue(settings json.RawMessage) bool {
 		return false
 	}
 	return walk(fields)
+}
+
+// getLocalContainerLabels fetches labels for a named local container or
+// Swarm service, or nil.
+func (s *Server) getLocalContainerLabels(ctx context.Context, name string) map[string]string {
+	// Local containers.
+	containers, err := s.deps.Docker.ListAllContainers(ctx)
+	if err == nil {
+		for _, c := range containers {
+			if containerName(c) == name {
+				return c.Labels
+			}
+		}
+	}
+
+	// Swarm services.
+	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
+		if services, svcErr := s.deps.Swarm.ListServiceDetail(ctx); svcErr == nil {
+			for _, svc := range services {
+				if svc.Name == name {
+					return svc.Labels
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// isQueueItemSelf reports whether a queued update is for this Sentinel
+// itself, which updates through the self-update path. Only a local item
+// can be: a queued update for a Sentinel agent on another host goes to
+// that agent like any other remote update.
+func (s *Server) isQueueItemSelf(ctx context.Context, item PendingUpdate) bool {
+	if item.HostID != "" {
+		return false
+	}
+	return s.getLocalContainerLabels(ctx, item.ContainerName)["sentinel.self"] == "true"
 }

@@ -33,8 +33,9 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 				releaseNotes[item.Key()] = releaseNote{URL: info.URL, Body: info.Body}
 			}
 		}
-		// Check if this queue item is the Sentinel container itself.
-		if s.isProtectedContainer(r.Context(), item.ContainerName) {
+		// Check if this queue item is this Sentinel itself (a remote agent
+		// row is not: its update goes to that agent).
+		if s.isQueueItemSelf(r.Context(), item) {
 			selfKeys[item.Key()] = true
 		}
 	}

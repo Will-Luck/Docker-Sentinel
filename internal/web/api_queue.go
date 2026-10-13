@@ -133,7 +133,13 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isProtectedContainer(r.Context(), name) {
+	// Only the hub's own container is protected; an update for a Sentinel
+	// agent on another host goes to that agent.
+	var keyHost string
+	if key != name {
+		keyHost = strings.TrimSuffix(key, "::"+name)
+	}
+	if s.isQueueItemSelf(r.Context(), PendingUpdate{HostID: keyHost, ContainerName: name}) {
 		writeError(w, http.StatusForbidden, "cannot approve updates for sentinel itself")
 		return
 	}
