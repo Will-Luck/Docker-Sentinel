@@ -118,8 +118,12 @@ func (c *Checker) Check(ctx context.Context, imageRef string) CheckResult {
 		if i := strings.LastIndex(ref, ":"); i >= 0 && i > strings.LastIndex(ref, "/") {
 			ref = ref[:i]
 		}
+		// A bare name is a local image only if it was not pulled from a
+		// registry: a pulled image (an official Docker Hub image such as
+		// nginx) has a repo digest, a locally built one only an image ID.
 		bareName := !strings.Contains(ref, "/") && !strings.Contains(ref, ".")
-		if bareName {
+		pulled := strings.Contains(localDigest, "@")
+		if bareName && !pulled {
 			c.log.Debug("registry check failed for bare-name image, treating as local", "image", imageRef, "error", err)
 			result.IsLocal = true
 		} else {
@@ -172,8 +176,10 @@ func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownD
 
 	remoteDigest, err := c.docker.DistributionDigest(ctx, imageRef)
 	if err != nil {
-		c.log.Debug("failed to get remote digest, treating as local", "image", imageRef, "error", err)
-		result.IsLocal = true
+		// A Swarm service's image comes from a registry, so this is a failed
+		// check to report, not a local image to skip.
+		c.log.Warn("registry check failed", "image", imageRef, "error", err)
+		result.Error = err
 		return result
 	}
 	result.RemoteDigest = remoteDigest

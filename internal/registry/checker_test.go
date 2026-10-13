@@ -338,3 +338,35 @@ func TestCheckWithoutEquivalenceCache(t *testing.T) {
 		t.Error("expected UpdateAvailable=true when no equivalence cache")
 	}
 }
+
+// A Docker Hub official image (nginx:latest) reduces to a bare name, but it was
+// pulled from a registry: its local digest is a repo digest. A registry failure
+// (429, outage) is then an error to report, not a local image to skip.
+func TestCheckBareNamePulledFromRegistryReportsTheFailure(t *testing.T) {
+	mock := newMockRegistry()
+	mock.imageDigests["nginx:latest"] = "docker.io/library/nginx@sha256:aaa111"
+	mock.distributionErr["nginx:latest"] = errors.New("toomanyrequests: rate limit")
+
+	checker := NewChecker(mock, logging.New(false))
+	result := checker.Check(context.Background(), "nginx:latest")
+
+	if result.IsLocal {
+		t.Error("a pulled official image was classified as local")
+	}
+	if result.Error == nil {
+		t.Error("expected the registry failure to be reported as an error")
+	}
+}
+
+// Swarm services are always registry images: a failed lookup is an error.
+func TestCheckVersionedWithDigestReportsRegistryFailure(t *testing.T) {
+	mock := newMockRegistry()
+	mock.distributionErr["nginx:1.25"] = errors.New("503 service unavailable")
+
+	checker := NewChecker(mock, logging.New(false))
+	result := checker.CheckVersionedWithDigest(context.Background(), "nginx:1.25", "sha256:abc", docker.ScopeDefault, "", "")
+
+	if result.IsLocal || result.Error == nil {
+		t.Errorf("IsLocal=%v Error=%v, want the failure reported", result.IsLocal, result.Error)
+	}
+}
