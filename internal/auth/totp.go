@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
@@ -29,6 +30,26 @@ func GenerateTOTPSecret(username string) (*otp.Key, error) {
 // ValidateTOTPCode checks a 6-digit TOTP code against a secret.
 func ValidateTOTPCode(secret, code string) bool {
 	return totp.Validate(code, secret)
+}
+
+// maxTOTPAttempts is how many wrong codes a pending 2FA login token takes
+// before it is thrown away and the password must be entered again.
+const maxTOTPAttempts = 5
+
+// totpStepSeconds is the length of a TOTP time step.
+const totpStepSeconds = 30
+
+// ValidateTOTPStep checks a code against a secret around now (one step either
+// side, as ValidateTOTPCode does) and returns the time step it matched.
+func ValidateTOTPStep(secret, code string, now time.Time) (int64, bool) {
+	for _, d := range []int64{0, -1, 1} {
+		step := now.Unix()/totpStepSeconds + d
+		want, err := totp.GenerateCode(secret, time.Unix(step*totpStepSeconds, 0))
+		if err == nil && subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 {
+			return step, true
+		}
+	}
+	return 0, false
 }
 
 // hashRecoveryCode returns the hex-encoded SHA-256 hash of a recovery code.

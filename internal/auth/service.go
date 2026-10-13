@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/pquerna/otp"
@@ -81,6 +82,9 @@ type Service struct {
 	AuthEnabledEnv *bool // nil = use DB setting; non-nil = override
 
 	rateLimiter *RateLimiter
+
+	totpMu       sync.Mutex
+	totpAttempts map[string]int // wrong codes per pending 2FA token
 }
 
 // NewService creates a new auth service.
@@ -209,7 +213,11 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	user.LockedUntil = time.Time{}
 	user.LocalPassword = true
 	_ = s.Users.UpdateUser(*user)
-	s.rateLimiter.Reset(ip)
+	// With 2FA on, the password alone does not clear the IP's throttle: that
+	// would give a password holder a fresh set of code guesses each time.
+	if !(user.TOTPEnabled && s.PendingTOTP != nil) {
+		s.rateLimiter.Reset(ip)
+	}
 
 	// If TOTP is enabled, don't create a session yet — return a pending token.
 	if user.TOTPEnabled && s.PendingTOTP != nil {
@@ -412,8 +420,14 @@ func (s *Service) VerifyTOTP(ctx context.Context, pendingToken, code, ip, userAg
 		return nil, ErrTOTPNotEnabled
 	}
 
-	// Try TOTP code first.
-	valid := ValidateTOTPCode(user.TOTPSecret, code)
+	// Try TOTP code first. A step that was already accepted is a replay.
+	valid := false
+	if step, ok := ValidateTOTPStep(user.TOTPSecret, code, time.Now()); ok && step > user.TOTPLastStep {
+		valid = true
+		user.TOTPLastStep = step
+		user.UpdatedAt = time.Now().UTC()
+		_ = s.Users.UpdateUser(*user)
+	}
 
 	// If TOTP didn't match, try recovery codes.
 	if !valid {
@@ -429,6 +443,9 @@ func (s *Service) VerifyTOTP(ctx context.Context, pendingToken, code, ip, userAg
 
 	if !valid {
 		s.rateLimiter.RecordFailure(ip)
+		if s.noteTOTPFailure(pendingToken) {
+			_ = s.PendingTOTP.DeletePendingTOTP(pendingToken)
+		}
 		return nil, ErrTOTPInvalidCode
 	}
 
@@ -510,9 +527,11 @@ func (s *Service) ConfirmTOTP(ctx context.Context, userID, code string) ([]strin
 	}
 
 	// Validate the code against the secret.
-	if !ValidateTOTPCode(user.TOTPSecret, code) {
+	step, ok := ValidateTOTPStep(user.TOTPSecret, code, time.Now())
+	if !ok {
 		return nil, ErrTOTPInvalidCode
 	}
+	user.TOTPLastStep = step // the code that proved setup cannot also log in
 
 	// Only hashes are stored, so the plain codes from EnableTOTP are gone.
 	// Generate the set the user will actually be shown, and store its hashes.
@@ -578,3 +597,19 @@ var (
 	ErrTOTPInvalidCode    = fmt.Errorf("invalid TOTP code")
 	ErrTOTPInvalidToken   = fmt.Errorf("invalid or expired TOTP pending token")
 )
+
+// noteTOTPFailure counts a wrong code against a pending token and reports
+// whether the token is now used up.
+func (s *Service) noteTOTPFailure(token string) bool {
+	s.totpMu.Lock()
+	defer s.totpMu.Unlock()
+	if s.totpAttempts == nil {
+		s.totpAttempts = map[string]int{}
+	}
+	s.totpAttempts[token]++
+	if s.totpAttempts[token] >= maxTOTPAttempts {
+		delete(s.totpAttempts, token)
+		return true
+	}
+	return false
+}

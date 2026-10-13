@@ -54,6 +54,9 @@ type User struct {
 	// (set by an admin, at setup, on a password change, or proven by a
 	// password login). Such an account is never linked to SSO by username.
 	LocalPassword bool `json:"local_password,omitempty"`
+	// TOTPLastStep is the newest 30-second step of a TOTP code that was
+	// accepted. A code for that step or an earlier one is not accepted again.
+	TOTPLastStep int64 `json:"totp_last_step,omitempty"`
 }
 
 // EnsureWebAuthnUserID generates a random WebAuthn user ID if one isn't set.
