@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The Portainer connector. Sentinel no longer scans or updates containers
+  through the Portainer API, and the Portainer pages, settings and
+  `/api/portainer/*` endpoints are gone. To keep monitoring those hosts, run
+  a Sentinel agent on each one (see Cluster Mode). Saved Portainer settings
+  stay in the database untouched, so downgrading restores them; queued
+  Portainer updates are dropped at startup, and `SENTINEL_PORTAINER_URL` /
+  `SENTINEL_PORTAINER_TOKEN` are ignored with a warning.
+
 ## [2.16.1] - 2026-10-13
 
 ### Security
