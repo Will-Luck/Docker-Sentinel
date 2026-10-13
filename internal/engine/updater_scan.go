@@ -362,6 +362,34 @@ func (u *Updater) pruneFailedUpdates(ctx context.Context) {
 	}
 }
 
+// pruneNotifyStates forgets the "update available" state of local
+// containers and services that no longer exist, so they leave the digest.
+// Remote containers ("host::name") are left to the cluster. Nothing is
+// pruned when the containers, or the services of a Swarm manager, could
+// not be listed.
+func (u *Updater) pruneNotifyStates(ctx context.Context, isSwarm bool, services []swarm.Service, servicesListed bool) {
+	states, err := u.store.AllNotifyStates()
+	if err != nil || len(states) == 0 || (isSwarm && !servicesListed) {
+		return
+	}
+	all, err := u.docker.ListAllContainers(ctx)
+	if err != nil {
+		return
+	}
+	present := make(map[string]bool, len(all)+len(services))
+	for _, c := range all {
+		present[containerName(c)] = true
+	}
+	for _, svc := range services {
+		present[svc.Spec.Name] = true
+	}
+	for name := range states {
+		if !present[name] && !strings.Contains(name, "::") {
+			_ = u.store.ClearNotifyState(name)
+		}
+	}
+}
+
 // filterIgnored drops ignored versions from check.NewerVersions and reports
 // whether nothing is left to act on. Updates without a version list are
 // checked against ignoreKey instead.
@@ -469,10 +497,12 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	isSwarm := u.docker.IsSwarmManager(ctx)
 	u.log.Debug("swarm check", "isSwarm", isSwarm)
 	var swarmServices []swarm.Service
+	svcListed := true
 	if isSwarm {
 		var svcErr error
 		swarmServices, svcErr = u.docker.ListServices(ctx)
 		if svcErr != nil {
+			svcListed = false
 			u.log.Error("failed to list services", "error", svcErr)
 			result.Errors = append(result.Errors, svcErr)
 		}
@@ -663,6 +693,10 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			if _, queued := u.queue.Get(name); queued {
 				u.queue.Remove(name)
 				u.log.Info("removed stale queue entry (now up to date)", "name", name)
+			}
+			// Updated outside Sentinel: it no longer belongs in the digest.
+			if st, _ := u.store.GetNotifyState(name); st != nil {
+				_ = u.store.ClearNotifyState(name)
 			}
 			u.log.Debug("up to date", "name", name, "image", imageRef)
 			result.UpToDate++
@@ -894,6 +928,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 
 	// Scan Swarm services using the pre-fetched list.
+	u.pruneNotifyStates(ctx, isSwarm, swarmServices, svcListed)
+
 	if isSwarm && len(swarmServices) > 0 {
 		u.scanServices(ctx, swarmServices, mode, &result, filters, reserve)
 	}

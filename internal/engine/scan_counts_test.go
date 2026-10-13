@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -82,5 +84,35 @@ func TestScanSummaryPrintsSkippedAndRateLimited(t *testing.T) {
 	}
 	if !strings.Contains(summary, "1 skipped") || !strings.Contains(summary, "0 rate limited") {
 		t.Errorf("summary = %q, want 1 skipped and 0 rate limited", summary)
+	}
+}
+
+// A container found up to date (updated outside Sentinel) leaves the
+// digest: its stale "update available" state is cleared.
+func TestScanClearsNotifyStateWhenUpToDate(t *testing.T) {
+	mock, u := setupScanOne(t, map[string]string{})
+	mock.distDigests["localhost:1/nginx:latest"] = "sha256:old"
+	if err := u.store.SetNotifyState("nginx", &store.NotifyState{LastDigest: "sha256:new", LastNotified: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	u.Scan(context.Background(), ScanScheduled)
+
+	if st, _ := u.store.GetNotifyState("nginx"); st != nil {
+		t.Errorf("notify state = %+v, want it cleared for an up-to-date container", st)
+	}
+}
+
+// A container that is gone leaves the digest too.
+func TestScanPrunesNotifyStateOfRemovedContainers(t *testing.T) {
+	_, u := setupScanOne(t, map[string]string{})
+	if err := u.store.SetNotifyState("gone", &store.NotifyState{LastDigest: "sha256:x", LastNotified: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	u.Scan(context.Background(), ScanScheduled)
+
+	if st, _ := u.store.GetNotifyState("gone"); st != nil {
+		t.Errorf("notify state = %+v, want it pruned for a removed container", st)
 	}
 }

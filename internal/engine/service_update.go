@@ -126,6 +126,9 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				if _, queued := u.queue.Get(name); queued {
 					u.queue.Remove(name)
 				}
+				if st, _ := u.store.GetNotifyState(name); st != nil {
+					_ = u.store.ClearNotifyState(name)
+				}
 			}
 			continue
 		}
