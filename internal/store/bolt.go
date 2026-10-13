@@ -261,6 +261,17 @@ func (s *Store) RecordUpdate(rec UpdateRecord) error {
 	})
 }
 
+// normaliseHistoryCursor rewrites a cursor timestamp in UTC, the form history
+// keys are stored in. A cursor copied from a record's JSON carries the local
+// offset the record was written with and would otherwise sort wrongly.
+func normaliseHistoryCursor(before string) string {
+	t, err := time.Parse(time.RFC3339Nano, before)
+	if err != nil {
+		return before
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
 // ListHistory returns the most recent update records, up to limit.
 // If before is non-empty it is treated as a cursor (RFC3339Nano key) and only
 // records older than that key are returned.
@@ -276,7 +287,7 @@ func (s *Store) ListHistory(limit int, before string) ([]UpdateRecord, error) {
 
 		var k, v []byte
 		if before != "" {
-			c.Seek([]byte(before))
+			c.Seek([]byte(normaliseHistoryCursor(before)))
 			k, v = c.Prev()
 		} else {
 			k, v = c.Last()
