@@ -2,15 +2,26 @@ package deps
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 )
 
 // ContainerInfo holds the minimal info needed to build the dependency graph.
 type ContainerInfo struct {
+	// ID is the container ID. The daemon stores network_mode container:<name>
+	// as container:<ID>, so it is needed to resolve network dependencies.
+	ID          string
 	Name        string
 	Labels      map[string]string
 	NetworkMode string // from HostConfig.NetworkMode
 }
+
+// Compose labels used to resolve compose depends_on entries, which name
+// services of the same project rather than containers.
+const (
+	composeProjectLabel = "com.docker.compose.project"
+	composeServiceLabel = "com.docker.compose.service"
+)
 
 // Graph represents a directed acyclic graph of container dependencies.
 type Graph struct {
@@ -25,23 +36,47 @@ func Build(containers []ContainerInfo) *Graph {
 		all: make(map[string]bool),
 	}
 
+	byID := make(map[string]string)
+	type service struct{ project, name string }
+	byService := make(map[service][]string)
 	for _, c := range containers {
 		g.all[c.Name] = true
+		if c.ID != "" {
+			byID[c.ID] = c.Name
+		}
+		if p, s := c.Labels[composeProjectLabel], c.Labels[composeServiceLabel]; p != "" && s != "" {
+			k := service{p, s}
+			byService[k] = append(byService[k], c.Name)
+		}
 	}
 
 	for _, c := range containers {
 		var deps []string
 
-		// Label-based dependencies
+		// Label-based dependencies. A name that is not a container is looked
+		// up as a compose service of the same project (compose names its
+		// containers <project>-<service>-1), when exactly one container runs it.
 		for _, dep := range ParseDependsOn(c.Labels) {
-			if g.all[dep] {
+			if !g.all[dep] {
+				if p := c.Labels[composeProjectLabel]; p != "" {
+					if names := byService[service{p, dep}]; len(names) == 1 {
+						dep = names[0]
+					}
+				}
+			}
+			if g.all[dep] && !slices.Contains(deps, dep) {
 				deps = append(deps, dep)
 			}
 		}
 
-		// Network namespace dependency
-		if netDep := ParseNetworkDependency(c.NetworkMode); netDep != "" && g.all[netDep] {
-			deps = append(deps, netDep)
+		// Network namespace dependency, by name or by container ID.
+		if netDep := ParseNetworkDependency(c.NetworkMode); netDep != "" {
+			if name, ok := byID[netDep]; ok {
+				netDep = name
+			}
+			if g.all[netDep] && !slices.Contains(deps, netDep) {
+				deps = append(deps, netDep)
+			}
 		}
 
 		if len(deps) > 0 {

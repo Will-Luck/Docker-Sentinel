@@ -8,7 +8,6 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
-	"github.com/Will-Luck/Docker-Sentinel/internal/deps"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
@@ -66,7 +65,6 @@ type Updater struct {
 	updating         sync.Map                   // map[string]*sync.Mutex: per-container update locks
 	activeUpdates    atomic.Int32               // tracks number of in-progress updates for IsIdle()
 	hooks            *hooks.Runner              // optional: lifecycle hook runner
-	deps             *deps.Graph                // optional: dependency graph (rebuilt each scan)
 	cluster          ClusterScanner             // optional: nil = single-host mode
 	haDiscovery      *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
 	imgScanner       ImageScanner               // optional: trivy vulnerability scanner

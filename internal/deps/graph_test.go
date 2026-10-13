@@ -117,6 +117,47 @@ func TestNetworkDependency(t *testing.T) {
 	}
 }
 
+// The daemon stores network_mode container:<name> as container:<ID>.
+func TestNetworkDependencyByContainerID(t *testing.T) {
+	containers := []ContainerInfo{
+		{ID: "0123456789abcdef", Name: "vpn"},
+		{ID: "fedcba9876543210", Name: "torrent", NetworkMode: "container:0123456789abcdef"},
+	}
+
+	g := Build(containers)
+
+	if got := g.Dependents("vpn"); len(got) != 1 || got[0] != "torrent" {
+		t.Errorf("Dependents(vpn) = %v, want [torrent]", got)
+	}
+}
+
+// compose depends_on names services of the same project, while compose
+// names the containers <project>-<service>-1.
+func TestComposeDependsOnResolvesServiceNames(t *testing.T) {
+	containers := []ContainerInfo{
+		{Name: "shop-db-1", Labels: map[string]string{
+			"com.docker.compose.project": "shop", "com.docker.compose.service": "db",
+		}},
+		{Name: "shop-app-1", Labels: map[string]string{
+			"com.docker.compose.project":    "shop",
+			"com.docker.compose.service":    "app",
+			"com.docker.compose.depends_on": "db:service_healthy:false",
+		}},
+		{Name: "blog-db-1", Labels: map[string]string{
+			"com.docker.compose.project": "blog", "com.docker.compose.service": "db",
+		}},
+	}
+
+	g := Build(containers)
+
+	if got := g.Dependencies("shop-app-1"); len(got) != 1 || got[0] != "shop-db-1" {
+		t.Errorf("Dependencies(shop-app-1) = %v, want [shop-db-1] (same project only)", got)
+	}
+	if got := g.Dependents("blog-db-1"); len(got) != 0 {
+		t.Errorf("Dependents(blog-db-1) = %v, want none", got)
+	}
+}
+
 func TestDependents(t *testing.T) {
 	containers := []ContainerInfo{
 		{Name: "db", Labels: map[string]string{}},

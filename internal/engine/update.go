@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/deps"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/guardian"
@@ -464,29 +465,14 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	// 10. Handle shared network namespaces. Consumers reference the provider
 	// by the ID it had before the update (the original or the step-5 one).
-	u.repairNetworkNamespace(ctx, finaliseNewID, name, id, newID)
+	repaired := u.repairNetworkNamespace(ctx, finaliseNewID, name, id, newID)
 
 	// 11. Clean up old image if enabled.
 	u.cleanupOldImage(ctx, oldImageID, name)
 
 	// 12. Restart dependents (dependency-aware).
-	if u.deps != nil && u.cfg.DependencyAware() {
-		for _, dep := range u.deps.Dependents(name) {
-			depContainers, err := u.docker.ListContainers(ctx)
-			if err != nil {
-				u.log.Warn("deps: failed to list containers", "error", err)
-				break
-			}
-			for _, dc := range depContainers {
-				if containerName(dc) == dep {
-					u.log.Info("restarting dependent container", "dependent", dep, "provider", name)
-					if err := u.docker.RestartContainer(ctx, dc.ID); err != nil {
-						u.log.Warn("failed to restart dependent", "dependent", dep, "error", err)
-					}
-					break
-				}
-			}
-		}
+	if u.cfg.DependencyAware() {
+		u.restartDependents(ctx, name, repaired)
 	}
 
 	u.log.Info("update complete", "name", name, "duration", duration)
@@ -865,6 +851,40 @@ func (u *Updater) repairNetworkNamespace(ctx context.Context, id, name string, o
 		}
 	}
 	return repaired
+}
+
+// restartDependents restarts the running containers that depend on name
+// (sentinel.depends-on or compose depends_on labels, or its network
+// namespace), so they reconnect to the updated container. skip holds the
+// namespace consumers repairNetworkNamespace already handled. The graph is
+// built from the containers running now, so it is never stale.
+func (u *Updater) restartDependents(ctx context.Context, name string, skip map[string]bool) {
+	running, err := u.docker.ListContainers(ctx)
+	if err != nil {
+		u.log.Warn("deps: failed to list containers", "error", err)
+		return
+	}
+	ids := make(map[string]string, len(running))
+	infos := make([]deps.ContainerInfo, 0, len(running))
+	for _, c := range running {
+		n := containerName(c)
+		ids[n] = c.ID
+		infos = append(infos, deps.ContainerInfo{
+			ID:          c.ID,
+			Name:        n,
+			Labels:      c.Labels,
+			NetworkMode: c.HostConfig.NetworkMode,
+		})
+	}
+	for _, dep := range deps.Build(infos).Dependents(name) {
+		if skip[dep] || strings.HasSuffix(dep, replacedSuffix) {
+			continue
+		}
+		u.log.Info("restarting dependent container", "dependent", dep, "provider", name)
+		if err := u.docker.RestartContainer(ctx, ids[dep]); err != nil {
+			u.log.Warn("failed to restart dependent", "dependent", dep, "error", err)
+		}
+	}
 }
 
 // recreateNamespaceConsumer recreates a container that shared the network
