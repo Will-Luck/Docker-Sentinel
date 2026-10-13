@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strconv"
+	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -115,6 +116,10 @@ func (s *Server) apiVerifierSettings(w http.ResponseWriter, _ *http.Request) {
 			"cosign_path": store.SettingCosignPath,
 			"keyless":     store.SettingCosignKeyless,
 			"key_path":    store.SettingCosignKeyPath,
+			// Who must have signed an image in keyless mode.
+			"identity":        "cosign_identity",
+			"oidc_issuer":     "cosign_oidc_issuer",
+			"identity_regexp": "cosign_identity_regexp",
 		}
 		for field, dbKey := range keys {
 			if v, err := s.deps.SettingsStore.LoadSetting(dbKey); err == nil && v != "" {
@@ -123,6 +128,10 @@ func (s *Server) apiVerifierSettings(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	result["identity_source"] = "not set"
+	if result["identity"] != "" {
+		result["identity_source"] = "saved"
+	}
 	result["cosign_available"] = strconv.FormatBool(cosignOnPath(result["cosign_path"]))
 
 	writeJSON(w, http.StatusOK, result)
@@ -135,6 +144,11 @@ func (s *Server) apiVerifierSettingsSave(w http.ResponseWriter, r *http.Request)
 		CosignPath string `json:"cosign_path"`
 		Keyless    *bool  `json:"keyless"`
 		KeyPath    string `json:"key_path"`
+		// Keyless mode checks who signed the image. A field left out of the
+		// request is kept; an empty one clears it.
+		Identity       *string `json:"identity"`
+		OIDCIssuer     *string `json:"oidc_issuer"`
+		IdentityRegexp *bool   `json:"identity_regexp"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -174,6 +188,31 @@ func (s *Server) apiVerifierSettingsSave(w http.ResponseWriter, r *http.Request)
 			val = "true"
 		}
 		if err := s.deps.SettingsStore.SaveSetting(store.SettingCosignKeyless, val); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+
+	for _, f := range []struct {
+		v    *string
+		key  string
+		name string
+	}{{req.Identity, "cosign_identity", "identity"}, {req.OIDCIssuer, "cosign_oidc_issuer", "oidc_issuer"}} {
+		if f.v == nil {
+			continue
+		}
+		val := strings.TrimSpace(*f.v)
+		if len(val) > 1024 {
+			writeError(w, http.StatusBadRequest, f.name+" is too long")
+			return
+		}
+		if err := s.deps.SettingsStore.SaveSetting(f.key, val); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+	if req.IdentityRegexp != nil {
+		if err := s.deps.SettingsStore.SaveSetting("cosign_identity_regexp", strconv.FormatBool(*req.IdentityRegexp)); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save setting")
 			return
 		}

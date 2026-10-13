@@ -496,6 +496,31 @@
                                 </div>
                                 <input type="text" id="cosign-key-path" class="setting-input" placeholder="/path/to/cosign.pub" style="width:250px">
                             </div>
+                            <div class="setting-row" data-keyless-only>
+                                <div class="setting-info">
+                                    <div class="setting-label">Signer identity</div>
+                                    <div class="setting-desc">Who must have signed the image: the signer's certificate identity, for example the GitHub Actions workflow URL. Keyless verification is refused without it.</div>
+                                    <div class="setting-desc" id="cosign-identity-source"></div>
+                                </div>
+                                <input type="text" id="cosign-identity" class="setting-input" placeholder="https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1" style="width:320px">
+                            </div>
+                            <div class="setting-row" data-keyless-only>
+                                <div class="setting-info">
+                                    <div class="setting-label">Identity is a pattern</div>
+                                    <div class="setting-desc">Treat the identity as a regular expression, to accept several workflows or tags.</div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="cosign-identity-regexp" class="channel-toggle">
+                                    <span id="cosign-identity-regexp-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row" data-keyless-only>
+                                <div class="setting-info">
+                                    <div class="setting-label">OIDC issuer</div>
+                                    <div class="setting-desc">The identity provider that vouches for the signer, for example https://token.actions.githubusercontent.com</div>
+                                </div>
+                                <input type="text" id="cosign-oidc-issuer" class="setting-input" placeholder="https://token.actions.githubusercontent.com" style="width:320px">
+                            </div>
                             <div class="setting-row">
                                 <div class="setting-info"></div>
                                 <button class="btn btn-primary" onclick="saveVerifierSettings()">Save</button>

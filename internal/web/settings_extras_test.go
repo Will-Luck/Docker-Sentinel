@@ -134,3 +134,54 @@ func (m *memCreds) GetRegistryCredentials() ([]RegistryCredential, error) { retu
 func (m *memCreds) SetRegistryCredentials(c []RegistryCredential) error   { m.creds = c; return nil }
 
 func nopLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestApiVerifierSettings_KeylessSignerFields(t *testing.T) {
+	ss := newMockSettingsStore()
+	srv := newTestServer(ss)
+
+	save := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		srv.apiVerifierSettingsSave(w, httptest.NewRequest(http.MethodPost, "/api/settings/verifier", strings.NewReader(body)))
+		return w
+	}
+	w := save(`{"mode":"enforce","keyless":true,"identity":"https://github.com/acme/app/.github/workflows/release.yml@refs/tags/v1","oidc_issuer":"https://token.actions.githubusercontent.com","identity_regexp":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	if ss.data["cosign_identity"] == "" || ss.data["cosign_oidc_issuer"] != "https://token.actions.githubusercontent.com" || ss.data["cosign_identity_regexp"] != "true" {
+		t.Errorf("signer settings not saved: %v", ss.data)
+	}
+
+	r := httptest.NewRecorder()
+	srv.apiVerifierSettings(r, httptest.NewRequest(http.MethodGet, "/api/settings/verifier", nil))
+	var got map[string]string
+	_ = json.Unmarshal(r.Body.Bytes(), &got)
+	if got["identity"] == "" || got["oidc_issuer"] == "" || got["identity_regexp"] != "true" || got["identity_source"] != "saved" {
+		t.Errorf("read = %v", got)
+	}
+
+	// An omitted field is left alone; an empty one clears it.
+	save(`{"mode":"enforce"}`)
+	if ss.data["cosign_identity"] == "" {
+		t.Errorf("an omitted identity was cleared")
+	}
+	save(`{"identity":""}`)
+	if ss.data["cosign_identity"] != "" {
+		t.Errorf("an empty identity was not cleared")
+	}
+	if w := save(`{"identity":"` + strings.Repeat("a", 2000) + `"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("oversized identity: status %d, want 400", w.Code)
+	}
+}
+
+func TestSettingsPage_HasKeylessSignerFields(t *testing.T) {
+	b, _ := staticFS.ReadFile("static/settings.html")
+	for _, id := range []string{`id="cosign-identity"`, `id="cosign-identity-regexp"`, `id="cosign-oidc-issuer"`, `id="cosign-identity-source"`} {
+		if !strings.Contains(string(b), id) {
+			t.Errorf("settings.html lacks %s", id)
+		}
+	}
+	if strings.Count(string(b), "data-keyless-only") != 3 {
+		t.Errorf("the three signer rows should be shown only in keyless mode")
+	}
+}

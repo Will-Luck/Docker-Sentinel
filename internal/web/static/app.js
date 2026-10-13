@@ -4124,8 +4124,29 @@
         keylessEl.checked = data.keyless === "true";
         var text = document.getElementById("cosign-keyless-text");
         if (text) text.textContent = data.keyless === "true" ? "On" : "Off";
+        keylessEl.onchange = function() {
+          updateToggleText("cosign-keyless-text", this.checked);
+          showKeylessFields(this.checked);
+        };
       }
       if (keyPathEl) keyPathEl.value = data.key_path || "";
+      var idEl = document.getElementById("cosign-identity");
+      var issuerEl = document.getElementById("cosign-oidc-issuer");
+      var reEl = document.getElementById("cosign-identity-regexp");
+      if (idEl) idEl.value = data.identity || "";
+      if (issuerEl) issuerEl.value = data.oidc_issuer || "";
+      if (reEl) {
+        reEl.checked = data.identity_regexp === "true";
+        updateToggleText("cosign-identity-regexp-text", reEl.checked);
+        reEl.onchange = function() {
+          updateToggleText("cosign-identity-regexp-text", this.checked);
+        };
+      }
+      var idSource = document.getElementById("cosign-identity-source");
+      if (idSource) {
+        idSource.textContent = data.identity_source === "saved" ? "In effect: the signer saved here." : data.keyless === "true" ? "No signer saved: keyless verification is refused until one is set." : "";
+      }
+      showKeylessFields(data.keyless === "true");
       var warn = document.getElementById("cosign-warning");
       if (warn) {
         var missing = data.mode && data.mode !== "disabled" && data.cosign_available === "false";
@@ -4143,6 +4164,12 @@
     }).catch(function() {
     });
   }
+  function showKeylessFields(on) {
+    var rows = document.querySelectorAll("[data-keyless-only]");
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].style.display = on ? "" : "none";
+    }
+  }
   function saveVerifierSettings() {
     var mode = document.getElementById("verify-mode");
     var cosignPath = document.getElementById("cosign-path");
@@ -4153,6 +4180,12 @@
     if (cosignPath && cosignPath.value) body.cosign_path = cosignPath.value;
     if (keyless) body.keyless = keyless.checked;
     if (keyPath) body.key_path = keyPath.value;
+    var idEl = document.getElementById("cosign-identity");
+    var issuerEl = document.getElementById("cosign-oidc-issuer");
+    var reEl = document.getElementById("cosign-identity-regexp");
+    if (idEl) body.identity = idEl.value;
+    if (issuerEl) body.oidc_issuer = issuerEl.value;
+    if (reEl) body.identity_regexp = reEl.checked;
     fetch("/api/settings/verifier", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
