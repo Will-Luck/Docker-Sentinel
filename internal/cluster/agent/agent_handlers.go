@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -94,6 +93,8 @@ func (a *Agent) receiveLoop(ctx context.Context, stream proto.AgentService_Chann
 // but never crash the agent. This is critical — one bad command must not
 // take down the entire agent process.
 func (a *Agent) safeHandle(op, reqID string, fn func() error) {
+	a.inflight.Add(1)
+	defer a.inflight.Add(-1)
 	defer func() {
 		if r := recover(); r != nil {
 			a.log.Error("handler panic", "op", op, "request_id", reqID, "panic", r)
@@ -364,22 +365,6 @@ func (a *Agent) handleRunHook(ctx context.Context, stream proto.AgentService_Cha
 	code := clampInt32(exitCode)
 
 	return a.sendHookResult(stream, requestID, name, phase, code, output, errStr)
-}
-
-// handleCertRenewal saves a newly signed certificate received from the
-// server during cert rotation.
-func (a *Agent) handleCertRenewal(resp *proto.CertRenewalResponse) error {
-	certPEM := resp.GetAgentCert()
-	if len(certPEM) == 0 {
-		return fmt.Errorf("empty cert in renewal response")
-	}
-
-	a.log.Info("saving renewed certificate")
-	if err := os.WriteFile(a.certPath, certPEM, 0600); err != nil {
-		return fmt.Errorf("write renewed cert: %w", err)
-	}
-
-	return nil
 }
 
 // sendHookResult sends a HookResult message back to the server.

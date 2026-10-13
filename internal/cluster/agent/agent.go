@@ -15,12 +15,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
@@ -108,6 +110,18 @@ type Agent struct {
 
 	certErrLogged bool // suppress repeated CA mismatch guidance
 
+	// Certificate renewal (renewal.go). credMu serialises reads and writes
+	// of the credential files; renewMu guards renewal.
+	now         func() time.Time // clock for renewal decisions; time.Now when nil
+	credMu      sync.Mutex
+	renewMu     sync.Mutex
+	renewal     *pendingRenewal
+	certRenewed chan struct{} // signalled once a renewed pair is on disk
+
+	// inflight counts running command handlers, so a reconnect for a
+	// renewed certificate can wait for them.
+	inflight atomic.Int64
+
 	dedup    *dedup
 	policies *policyCache
 	journal  *journal
@@ -124,6 +138,9 @@ func New(cfg Config, docker DockerAPI, log *slog.Logger) *Agent {
 		caPath:   filepath.Join(cfg.DataDir, "ca.pem"),
 		dedup:    newDedup(1000),
 		policies: newPolicyCache(),
+
+		now:         time.Now,
+		certRenewed: make(chan struct{}, 1),
 	}
 }
 
@@ -207,6 +224,14 @@ func (a *Agent) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 
+		// A planned reconnect to start using a renewed certificate: no
+		// backoff, and the agent was never really offline.
+		if errors.Is(err, errCertRenewed) {
+			a.log.Info("reconnecting with the renewed certificate")
+			bo.reset()
+			continue
+		}
+
 		// If the session lasted more than a minute, the connection was
 		// healthy — reset backoff so the next reconnect starts fast.
 		if time.Since(sessionStart) > time.Minute {
@@ -232,16 +257,14 @@ func (a *Agent) Run(ctx context.Context) error {
 		wait := bo.next()
 		a.log.Warn("session ended, reconnecting", "error", err, "backoff", wait)
 
-		// Detect TLS certificate errors and log actionable guidance once.
-		// This typically happens when the server's CA was regenerated
-		// (volume deleted, host migration) while the agent still has
-		// the old CA certificate cached locally.
+		// Detect TLS certificate errors and log actionable guidance once:
+		// an expired certificate on either side, or a server CA that was
+		// regenerated (volume deleted, host migration) while the agent
+		// still has the old CA certificate cached locally.
 		if err != nil && !a.certErrLogged && isCertError(err) {
 			a.certErrLogged = true
-			a.log.Error("server CA mismatch -- the server's TLS certificate has changed since this agent enrolled",
-				"fix", "re-enroll this agent: stop it, delete the cluster data directory, and restart with a fresh SENTINEL_ENROLL_TOKEN",
-				"data_dir", a.cfg.DataDir,
-			)
+			msg, fix := certErrorGuidance(err)
+			a.log.Error(msg, "fix", fix, "data_dir", a.cfg.DataDir)
 		}
 
 		select {
@@ -302,11 +325,21 @@ func (a *Agent) runSession(ctx context.Context) error {
 		// retried on the next reconnection.
 	}
 
-	// Run heartbeat and receive loops concurrently. When either exits,
-	// the session is over.
-	errCh := make(chan error, 2)
-	go func() { errCh <- a.heartbeatLoop(ctx, stream) }()
+	// A renewal signal left over from the last session is stale: this
+	// session already connected with the files on disk.
+	select {
+	case <-a.certRenewed:
+	default:
+	}
+
+	// Run heartbeat, receive and certificate renewal loops concurrently.
+	// When any exits, the session is over.
+	sessCtx, endSession := context.WithCancel(ctx)
+	defer endSession()
+	errCh := make(chan error, 3)
+	go func() { errCh <- a.heartbeatLoop(sessCtx, stream) }()
 	go func() { errCh <- a.receiveLoop(ctx, stream) }()
+	go func() { errCh <- a.renewalLoop(sessCtx, stream) }()
 
 	// First error tears down the session.
 	return <-errCh
@@ -402,7 +435,11 @@ func (a *Agent) enroll(ctx context.Context) error {
 // connect establishes a gRPC connection with mTLS using the agent's
 // enrolled certificate and the server CA.
 func (a *Agent) connect(ctx context.Context) error {
+	a.recoverStagedRenewal()
+
+	a.credMu.Lock()
 	cert, err := tls.LoadX509KeyPair(a.certPath, a.keyPath)
+	a.credMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("load agent cert/key: %w", err)
 	}
@@ -446,14 +483,36 @@ func (a *Agent) closeConn() {
 }
 
 // isCertError returns true if the error indicates a TLS certificate
-// mismatch, typically caused by the server regenerating its CA after
-// a volume deletion or host migration.
+// problem: an expired certificate on either side, or a mismatch, typically
+// caused by the server regenerating its CA after a volume deletion or host
+// migration.
 func isCertError(err error) bool {
 	s := err.Error()
 	return strings.Contains(s, "certificate signed by unknown authority") ||
 		strings.Contains(s, "certificate is not trusted") ||
 		strings.Contains(s, "x509:") ||
-		strings.Contains(s, "tls: failed to verify certificate")
+		strings.Contains(s, "tls: failed to verify certificate") ||
+		strings.Contains(s, "tls: expired certificate")
+}
+
+// certErrorGuidance describes a certificate error from isCertError and
+// what to do about it.
+func certErrorGuidance(err error) (msg, fix string) {
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "tls: expired certificate"):
+		// The hub rejected this agent's certificate as expired.
+		return "this agent's certificate has expired, so the server refuses it",
+			"re-enrol this agent: stop it, delete the cluster data directory, and restart with a fresh SENTINEL_ENROLL_TOKEN. " +
+				"Agents renew their certificate automatically while it is still valid, so this means the agent could not reach the server for too long"
+	case strings.Contains(s, "certificate has expired or is not yet valid"):
+		// This agent rejected the hub's certificate on its dates.
+		return "the server's TLS certificate has expired or is not yet valid, or the clocks on the two hosts disagree",
+			"check the clock on both hosts; restarting the server gives it a fresh certificate"
+	default:
+		return "server CA mismatch -- the server's TLS certificate has changed since this agent enrolled",
+			"re-enroll this agent: stop it, delete the cluster data directory, and restart with a fresh SENTINEL_ENROLL_TOKEN"
+	}
 }
 
 // setConnected marks the agent as connected and clears the offline timer.
