@@ -57,7 +57,7 @@ func NewQueue(s *store.Store, bus *events.Bus, log *slog.Logger) *Queue {
 		if json.Unmarshal(data, &items) == nil {
 			dropped := 0
 			for _, item := range items {
-				if strings.HasPrefix(item.HostID, removedHostPrefix) || strings.HasPrefix(item.Key(), removedHostPrefix) {
+				if strings.HasPrefix(item.HostID, removedHostPrefix) {
 					dropped++
 					continue
 				}
