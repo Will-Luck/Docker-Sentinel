@@ -256,15 +256,6 @@ func helperGone(f *fake) {
 	f.mu.Unlock()
 }
 
-func hasRemoval(f *fake) bool {
-	for _, e := range f.events {
-		if strings.HasPrefix(e, "remove:") {
-			return true
-		}
-	}
-	return false
-}
-
 // If the helper never began the swap (no outcome marker), the old instance was
 // never touched: Wait undoes the set-up, removing only what is unused.
 func TestWaitUndoesTheSetUpWhenTheHelperNeverBeganTheSwap(t *testing.T) {
