@@ -85,11 +85,19 @@ func TestRecoveryStartsAgainAContainerTheDaemonStoppedLate(t *testing.T) {
 	}
 }
 
+// assertOneRestartRow checks the history: the row recovery wrote for the
+// interrupted update, and one saying the container was started again.
 func assertOneRestartRow(t *testing.T, s *store.Store) {
 	t.Helper()
 	history, err := s.ListHistoryByContainer("app", 10)
-	if err != nil || len(history) != 1 || history[0].Outcome != "rollback" || history[0].OldImage != "app:latest" {
-		t.Errorf("history = %+v (err %v), want one rollback row saying it was started again", history, err)
+	restarts := 0
+	for _, h := range history {
+		if strings.Contains(h.Error, "started it again") && h.Outcome == "rollback" && h.OldImage == "app:latest" {
+			restarts++
+		}
+	}
+	if err != nil || len(history) != 2 || restarts != 1 {
+		t.Errorf("history = %+v (err %v), want the recovery row and one saying it was started again", history, err)
 	}
 }
 
@@ -181,5 +189,46 @@ func TestWatchEndsOnShutdown(t *testing.T) {
 
 	if len(journal(t, u)) != 1 {
 		t.Errorf("journal = %+v, want the watched record kept for the next start", journal(t, u))
+	}
+}
+
+// Recovery records each interrupted swap it resolves in the history, with
+// what it did, whether or not the daemon later stops the container.
+func TestRecoveryRecordsTheInterruptedUpdate(t *testing.T) {
+	f, s := slowStopUpdate(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clk := newStepClock(true)
+	u := newFakeUpdaterWith(t, f, s, clk)
+
+	u.RecoverInterruptedUpdates(ctx)
+	clk.Advance(time.Minute)
+	u.resolvePendingSwaps(ctx) // the watch ends; the container never stopped
+
+	history, err := s.ListHistoryByContainer("app", 10)
+	if err != nil || len(history) != 1 {
+		t.Fatalf("history = %+v (err %v), want one row for the interrupted update", history, err)
+	}
+	if h := history[0]; h.Outcome != "rollback" || !strings.Contains(h.Error, "interrupted") || h.OldImage != "app:latest" {
+		t.Errorf("row = %+v, want a rollback row saying the update was interrupted", h)
+	}
+}
+
+// A swap that had been committed is finished by recovery and recorded as a
+// success.
+func TestRecoveryRecordsAFinishedSwap(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, true, nil)
+	f.add("new", "app-new", "app:latest", true, nil, nil)
+	f.containers["old"].name = "app" + replacedSuffix
+	f.containers["new"].name = "app"
+	if err := u.store.SaveSwap(store.SwapRecord{Name: "app", Kind: swapUpdate, OldID: "old", NewID: "new", OldRunning: true, Committed: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	u.RecoverInterruptedUpdates(context.Background())
+
+	history, _ := u.store.ListHistoryByContainer("app", 10)
+	if len(history) != 1 || history[0].Outcome != "success" || !strings.Contains(history[0].Error, "interrupted") {
+		t.Errorf("history = %+v, want one success row noting the interruption", history)
 	}
 }

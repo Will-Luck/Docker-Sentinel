@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -532,7 +533,7 @@ func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord, 
 	if !watching {
 		u.log.Warn("resolving an interrupted container swap", "name", rec.Name, "kind", rec.Kind, "attempt", rec.Attempts+1)
 	}
-	changed, oldKept, err := u.recoverSwap(ctx, rec)
+	changed, oldKept, action, err := u.recoverSwap(ctx, rec)
 	if err != nil {
 		// A failed resolution leaves the watch: the scans retry it.
 		rec.WatchUntil = time.Time{}
@@ -554,8 +555,12 @@ func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord, 
 		}
 		return false
 	}
-	if changed && watching {
-		u.startedAgain(ctx, rec, now)
+	if watching {
+		if changed {
+			u.startedAgain(ctx, rec, now)
+		}
+	} else {
+		u.recordRecovery(rec, action, now)
 	}
 	if oldKept && rec.Stopping {
 		if !watching {
@@ -610,6 +615,55 @@ func (u *Updater) finishRecovered(ctx context.Context, rec store.SwapRecord, cha
 		return
 	}
 	u.afterProviderChange(ctx, rec.Name, newID, current.ID)
+}
+
+// What recovery did with an interrupted swap (recordRecovery).
+const (
+	actionFinished = "finished" // committed: the replaced container was removed
+	actionRestored = "restored" // the old container was put back
+	actionRebuilt  = "rebuilt"  // the old container was rebuilt from its snapshot
+	actionKept     = "kept"     // the old container was gone: its replacement was kept
+	actionDropped  = "dropped"  // both were gone and another container took the name
+)
+
+// recordRecovery writes the history row of an interrupted swap that
+// recovery resolved, saying what it did.
+func (u *Updater) recordRecovery(rec store.SwapRecord, action string, now time.Time) {
+	what := map[string]string{
+		swapUpdate:   "an update",
+		swapFinalise: "the last step of an update",
+		swapRollback: "a rollback",
+		swapConsumer: "the recreate of a network dependent",
+	}[rec.Kind]
+	if what == "" {
+		what = "a container swap"
+	}
+	outcome, done := "rollback", ""
+	switch action {
+	case actionFinished:
+		outcome, done = "success", "it had finished, so recovery removed the replaced container"
+	case actionKept:
+		outcome, done = "success", "the old container was gone, so recovery kept its replacement"
+	case actionRestored:
+		done = "recovery put the old container back"
+	case actionRebuilt:
+		done = "recovery rebuilt the old container from its snapshot"
+	case actionDropped:
+		outcome, done = "failed", "both containers were gone and another container now has the name"
+	}
+	entry := store.UpdateRecord{
+		Timestamp:     now,
+		ContainerName: rec.Name,
+		Outcome:       outcome,
+		Error:         "Sentinel was interrupted during " + what + "; " + done,
+	}
+	var old container.InspectResponse
+	if rec.Snapshot != nil && json.Unmarshal(rec.Snapshot, &old) == nil && old.Config != nil {
+		entry.OldImage, entry.OldDigest = old.Config.Image, old.Image
+	}
+	if err := u.store.RecordUpdate(entry); err != nil {
+		u.log.Warn("could not record the recovered swap in the history", "name", rec.Name, "error", err)
+	}
 }
 
 // stopWatchMargin is added to a stop timeout for the daemon to kill the
@@ -775,15 +829,15 @@ func (u *Updater) DiscardSwap(name string) error {
 //     snapshot) the replacement is kept and started.
 //   - Both are gone: the old container is rebuilt from its snapshot, unless
 //     some other container has taken the name meanwhile.
-func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (changed, oldKept bool, err error) {
+func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (changed, oldKept bool, action string, err error) {
 	old, err := u.docker.InspectContainer(ctx, rec.OldID)
 	oldGone := docker.IsNotFound(err)
 	if err != nil && !oldGone {
-		return false, false, fmt.Errorf("inspect the old container: %w", err)
+		return false, false, "", fmt.Errorf("inspect the old container: %w", err)
 	}
 	replacement, newFound, err := u.findReplacement(ctx, rec)
 	if err != nil {
-		return false, false, err
+		return false, false, "", err
 	}
 
 	switch {
@@ -795,9 +849,9 @@ func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (change
 			err = u.docker.RemoveContainer(ctx, rec.OldID)
 		}
 		if err != nil && !docker.IsNotFound(err) {
-			return false, false, fmt.Errorf("remove the replaced container: %w", err)
+			return false, false, "", fmt.Errorf("remove the replaced container: %w", err)
 		}
-		return true, false, nil
+		return true, false, actionFinished, nil
 
 	case !oldGone:
 		if rec.WatchUntil.IsZero() {
@@ -805,37 +859,40 @@ func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (change
 		}
 		if newFound {
 			if err := u.removeReplacement(ctx, replacement); err != nil {
-				return false, true, err
+				return false, true, "", err
 			}
 		}
 		changed, err = u.restoreOldContainer(ctx, rec, old)
-		return changed, true, err
+		return changed, true, actionRestored, err
 
 	case newFound && rec.Kind == swapUpdate && !rec.Committed && rec.Snapshot != nil:
 		// The update was never validated, and its old container (a --rm
 		// one) is gone: put the old version back from its snapshot.
 		u.log.Warn("the old container is gone and the update was not validated, rebuilding it", "name", rec.Name)
 		changed, err = u.replaceWithRebuild(ctx, rec, replacement)
-		return changed, false, err
+		return changed, false, actionRebuilt, err
 
 	case newFound:
 		u.log.Warn("the old container is gone, keeping its replacement", "name", rec.Name)
 		if rec.OldRunning && (replacement.State == nil || !replacement.State.Running) {
 			if err := u.docker.StartContainer(ctx, replacement.ID); err != nil {
 				if rec.Snapshot == nil {
-					return false, false, fmt.Errorf("start the replacement: %w", err)
+					return false, false, "", fmt.Errorf("start the replacement: %w", err)
 				}
 				// It will not start: put the old container back instead.
 				u.log.Warn("the replacement does not start, rebuilding the old container", "name", rec.Name, "error", err)
 				changed, err = u.replaceWithRebuild(ctx, rec, replacement)
-				return changed, false, err
+				return changed, false, actionRebuilt, err
 			}
 		}
-		return true, false, nil
+		return true, false, actionKept, nil
 
 	default:
 		changed, err = u.rebuildFromJournal(ctx, rec)
-		return changed, false, err
+		if err == nil && !changed {
+			return false, false, actionDropped, nil
+		}
+		return changed, false, actionRebuilt, err
 	}
 }
 
