@@ -12,6 +12,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/moby/moby/api/types/container"
 )
 
 // eventRecorder is a notify.Notifier that keeps every event it is sent.
@@ -272,6 +273,28 @@ func TestUpdateContainer_PostUpdateFailureOnlyWarns(t *testing.T) {
 	}
 	if len(mock.execCalls) != 1 || mock.execCalls[0] != "new-nginx" {
 		t.Errorf("execCalls = %v, want one post-update exec on new-nginx", mock.execCalls)
+	}
+}
+
+// A post-update hook declared as a label in the image is dropped from the
+// create config (it equals the old image's default) and filled back in by
+// the daemon. The hook must be read from the new container itself.
+func TestUpdateContainer_PostUpdateHookFromImageLabel(t *testing.T) {
+	hook := map[string]string{"sentinel.hook.post-update": "curl -sf http://localhost/health"}
+	mock, u, _ := setupHookUpdate(t, hook)
+	mock.imageConfigs["sha256:old111"] = &container.Config{Labels: hook}
+	replacement := mock.inspectResults["new-nginx"]
+	replacement.Config.Labels = map[string]string{
+		"sentinel.maintenance":      "true",
+		"sentinel.hook.post-update": "curl -sf http://localhost/health",
+	}
+	mock.inspectResults["new-nginx"] = replacement
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v", err)
+	}
+	if len(mock.execCalls) != 1 || mock.execCalls[0] != "new-nginx" {
+		t.Errorf("execCalls = %v, want the post-update hook run on new-nginx", mock.execCalls)
 	}
 }
 

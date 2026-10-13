@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -310,9 +311,18 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	}
 	sw.commit(ctx)
 
-	// 6.5. Run post-update hooks (store entries, else the new container's labels).
+	// 6.5. Run post-update hooks (store entries, else the new container's
+	// labels, read from the container: the create config left out the
+	// labels the daemon fills in from the new image).
 	if u.hooks != nil && u.cfg.HooksEnabled() {
-		if err := u.hooks.RunPostUpdate(ctx, newID, name, newConfig.Labels); err != nil {
+		labels := maps.Clone(newConfig.Labels)
+		if created, err := u.docker.InspectContainer(ctx, newID); err == nil && created.Config != nil {
+			if labels == nil {
+				labels = make(map[string]string, len(created.Config.Labels))
+			}
+			maps.Copy(labels, created.Config.Labels)
+		}
+		if err := u.hooks.RunPostUpdate(ctx, newID, name, labels); err != nil {
 			u.log.Warn("post-update hook failed", "name", name, "error", err)
 		}
 	}
