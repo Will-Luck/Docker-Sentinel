@@ -13,7 +13,14 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/versions"
 )
+
+// minAPIVersion is the oldest Docker Engine API Sentinel supports (Docker
+// 25.0). Older daemons reject creating a container on several networks at
+// once, which the update and rollback paths do after removing the old
+// container.
+const minAPIVersion = "1.44"
 
 // Client wraps the Docker API client.
 type Client struct {
@@ -104,9 +111,13 @@ func NewClient(dockerSock string, tlsCfg *TLSConfig) (*Client, error) {
 	// instead of confusing failures later during container operations.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := c.Ping(ctx); err != nil {
+	if _, err := api.Ping(ctx, client.PingOptions{NegotiateAPIVersion: true}); err != nil {
 		api.Close()
 		return nil, fmt.Errorf("docker daemon unreachable at %s: %w", dockerSock, err)
+	}
+	if v := api.ClientVersion(); versions.LessThan(v, minAPIVersion) {
+		api.Close()
+		return nil, fmt.Errorf("docker daemon at %s speaks API %s; Sentinel needs %s or later (Docker Engine 25.0+)", dockerSock, v, minAPIVersion)
 	}
 
 	return c, nil

@@ -38,6 +38,8 @@ A container update orchestrator with a web dashboard, written in Go. Replaces Wa
 
 ## Quick Start
 
+Requires Docker Engine 25.0 or later (API 1.44).
+
 ```bash
 docker run -d \
   --name docker-sentinel \
