@@ -184,6 +184,11 @@ function reapplyBadgeSpinners() {
     }
 }
 
+// isActionFailure reports whether a container_state message says an action failed.
+function isActionFailure(message) {
+    return typeof message === "string" && /\bfailed\b/.test(message);
+}
+
 function clearPendingBadge(name, hostId) {
     var key = (hostId || "") + "::" + name;
     delete pendingBadgeActions[key];
@@ -325,6 +330,12 @@ function initSSE() {
     es.addEventListener("container_state", function (e) {
         try {
             var data = JSON.parse(e.data);
+            // A stop, start or restart is answered "initiated" before it runs;
+            // a failure only arrives here, so show it.
+            if (isActionFailure(data.message)) {
+                showToast(data.message, "error");
+                clearPendingBadge(data.container_name, data.host_id);
+            }
             if (data.container_name) {
                 updateContainerRow(data.container_name, data.host_id);
                 return;

@@ -2540,6 +2540,9 @@
       if (wrap) wrap.setAttribute("data-pending", "");
     }
   }
+  function isActionFailure(message) {
+    return typeof message === "string" && /\bfailed\b/.test(message);
+  }
   function clearPendingBadge(name, hostId) {
     var key = (hostId || "") + "::" + name;
     delete pendingBadgeActions[key];
@@ -2646,6 +2649,10 @@
     es.addEventListener("container_state", function(e) {
       try {
         var data = JSON.parse(e.data);
+        if (isActionFailure(data.message)) {
+          showToast(data.message, "error");
+          clearPendingBadge(data.container_name, data.host_id);
+        }
         if (data.container_name) {
           updateContainerRow(data.container_name, data.host_id);
           return;
