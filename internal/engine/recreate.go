@@ -41,8 +41,17 @@ var ErrNoSwap = errors.New("no unfinished swap is recorded for this container")
 // renamed out of the way (<name>-sentinel-old). Such a container is never
 // scanned or updated itself; a container that merely has such a name is.
 func (u *Updater) setAside(name string) bool {
-	base, ok := strings.CutSuffix(name, replacedSuffix)
-	return ok && base != "" && u.store.HasSwap(base)
+	if base, ok := strings.CutSuffix(name, replacedSuffix); ok && base != "" && u.store.HasSwap(base) {
+		return true
+	}
+	// A failed replacement set aside by an undo (<name>-sentinel-failed,
+	// perhaps with a timestamp), while its journal record is kept.
+	if i := strings.LastIndex(name, failedSuffix); i > 0 {
+		if rec, found, err := u.store.GetSwap(name[:i]); found && err == nil && rec.FailedName == name {
+			return true
+		}
+	}
+	return false
 }
 
 // swapTimeout bounds each group of Docker calls in a swap. The calls run
@@ -336,7 +345,11 @@ func (s *swap) undo(ctx context.Context) error {
 			}
 		}
 		if err := s.d.RemoveContainer(ctx, s.newID); err != nil && !docker.IsNotFound(err) {
-			return fmt.Errorf("remove the replacement: %w", err)
+			// It holds the name the old container needs: set it aside, so
+			// the service runs again now, and leave its removal to recovery.
+			if aside := s.setFailedAside(ctx, err); aside != nil {
+				return aside
+			}
 		}
 		s.newID = ""
 		s.newStarted = false
@@ -373,8 +386,57 @@ func (s *swap) undo(ctx context.Context) error {
 	if policyErr != nil {
 		return fmt.Errorf("restore the old container's restart policy: %w", policyErr)
 	}
+	if s.rec.FailedName != "" {
+		// The old container is back; the record stays so recovery removes
+		// the set-aside replacement.
+		s.log.Warn("the failed replacement could not be removed; it is set aside and removed by the next recovery",
+			"name", s.name, "set_aside_as", s.rec.FailedName)
+		return nil
+	}
 	s.forget()
 	return nil
+}
+
+// leftoverName names the container a swap record leaves besides the one
+// under its name: the set-aside failed replacement, or the old container.
+func leftoverName(rec store.SwapRecord) string {
+	if rec.FailedName != "" {
+		return rec.FailedName
+	}
+	return rec.Name + replacedSuffix
+}
+
+// failedSuffix is added to a failed replacement's name when it cannot be
+// removed and is set aside.
+const failedSuffix = "-sentinel-failed"
+
+// setFailedAside renames the replacement, which could not be removed
+// (removeErr), out of the way to <name>-sentinel-failed (with a timestamp
+// when that is taken) and turns its restart policy off, so the old
+// container can have its name back. The name is journalled first, so the
+// scans leave it alone and recovery removes it. It returns an error when
+// the replacement could not be renamed either.
+func (s *swap) setFailedAside(ctx context.Context, removeErr error) error {
+	s.log.Warn("could not remove the failed replacement, setting it aside", "name", s.name, "error", removeErr)
+	if updater, ok := s.d.(docker.RestartPolicyUpdater); ok {
+		if err := updater.UpdateRestartPolicy(ctx, s.newID, container.RestartPolicy{Name: container.RestartPolicyDisabled}); err != nil {
+			s.log.Warn("could not turn off the failed replacement's restart policy", "name", s.name, "error", err)
+		}
+	}
+	names := []string{s.name + failedSuffix, s.name + failedSuffix + "-" + time.Now().UTC().Format("20060102-150405")}
+	var err error
+	for _, target := range names {
+		s.rec.FailedName = target
+		if saveErr := s.save(); saveErr != nil {
+			s.log.Warn("could not journal the set-aside name", "name", s.name, "error", saveErr)
+		}
+		if err = s.d.RenameContainer(ctx, s.newID, target); err == nil {
+			return nil
+		}
+	}
+	s.rec.FailedName = ""
+	_ = s.save()
+	return fmt.Errorf("remove the replacement: %w; setting it aside failed too: %v", removeErr, err)
 }
 
 // undoOrRetry undoes the swap and, if that fails while the old container
@@ -439,12 +501,20 @@ func (s *swap) commit(ctx context.Context) {
 // pendingSwapError explains, for users, a container whose earlier swap did
 // not finish.
 func (u *Updater) pendingSwapError(name string) error {
-	if rec, _, _ := u.store.GetSwap(name); !rec.WatchUntil.IsZero() {
+	rec, _, _ := u.store.GetSwap(name)
+	switch {
+	case !rec.WatchUntil.IsZero():
 		return fmt.Errorf("%w: its old container was put back, and Sentinel watches it until %s in case Docker stops it; try again after that",
 			ErrSwapPending, rec.WatchUntil.Format(time.TimeOnly))
+	case rec.FailedName != "":
+		return fmt.Errorf("%w: the failed replacement set aside as %s is still to be removed; Sentinel retries at every scan, or remove it by hand and discard the record with DELETE /api/swaps/%s",
+			ErrSwapPending, rec.FailedName, name)
 	}
-	return fmt.Errorf("%w: Sentinel retries it at every scan; if it cannot, check %s and %s%s by hand and then discard the record with DELETE /api/swaps/%s",
-		ErrSwapPending, name, name, replacedSuffix, name)
+	if rec.Name == "" {
+		rec.Name = name
+	}
+	return fmt.Errorf("%w: Sentinel retries it at every scan; if it cannot, check %s and %s by hand and then discard the record with DELETE /api/swaps/%s",
+		ErrSwapPending, name, leftoverName(rec), name)
 }
 
 // RecoverInterruptedUpdates finishes or undoes the container swaps that an
@@ -545,8 +615,8 @@ func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord, 
 				Type:          notify.EventRollbackFailed,
 				ContainerName: rec.Name,
 				Error: fmt.Sprintf("Sentinel could not finish an interrupted update of %s after %d attempts (%v). "+
-					"Check %s and %s%s by hand, keep one working copy named %s, then discard the record with DELETE /api/swaps/%s.",
-					rec.Name, rec.Attempts, err, rec.Name, rec.Name, replacedSuffix, rec.Name, rec.Name),
+					"Check %s and %s by hand, keep one working copy named %s, then discard the record with DELETE /api/swaps/%s.",
+					rec.Name, rec.Attempts, err, rec.Name, leftoverName(rec), rec.Name, rec.Name),
 				Timestamp: u.clock.Now(),
 			})
 		}
@@ -555,11 +625,15 @@ func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord, 
 		}
 		return false
 	}
-	if watching {
+	switch {
+	case watching:
 		if changed {
 			u.startedAgain(ctx, rec, now)
 		}
-	} else {
+	case rec.FailedName != "":
+		// The update recorded its own outcome; only the leftover is gone.
+		u.log.Info("removed the failed replacement an undo had set aside", "name", rec.Name, "set_aside_as", rec.FailedName)
+	default:
 		u.recordRecovery(rec, action, now)
 	}
 	if oldKept && rec.Stopping {

@@ -57,6 +57,7 @@ type fakeDocker struct {
 	failRename        map[string]error // by target name
 	failRenameOnce    map[string]error // by target name, only the first time
 	failRemoveOnce    map[string]error // by container ID, only the first time
+	failRemove        map[string]error // by container ID, every time
 	restartUpdateErr  error
 	failPolicyTo      map[container.RestartPolicyMode]error // by the policy set
 	removeVolumeCalls []string
@@ -425,6 +426,9 @@ func (f *fakeDocker) remove(id string, withVolumes bool) error {
 		f.removeVolumeCalls = append(f.removeVolumeCalls, id)
 	}
 	f.record(op + id)
+	if err, ok := f.failRemove[id]; ok {
+		return err
+	}
 	if err, ok := f.failRemoveOnce[id]; ok {
 		delete(f.failRemoveOnce, id)
 		return err

@@ -45,6 +45,10 @@ type SwapRecord struct {
 	StopTimeout int       `json:"stop_timeout,omitempty"`
 	Stopping    bool      `json:"stopping,omitempty"`
 	WatchUntil  time.Time `json:"watch_until,omitzero"`
+	// FailedName is the name a failed replacement that could not be removed
+	// was renamed to, so the old container could have its name back; the
+	// record stays until recovery removes it.
+	FailedName string `json:"failed_name,omitempty"`
 	// Committed is set once the replacement is accepted; only the removal
 	// of the old container is then left to do.
 	Committed     bool `json:"committed,omitempty"`

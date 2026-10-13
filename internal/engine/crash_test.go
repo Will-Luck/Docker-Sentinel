@@ -60,6 +60,19 @@ func crashScenarios() []crashScenario {
 				rollbackSetup(&container.HostConfig{RestartPolicy: unlessStopped})(f, u)
 				f.slowStop["old"] = true
 			}, run: rollback},
+		// The new container fails and the daemon will not remove it at
+		// first: the undo sets it aside and recovery removes it later.
+		{name: "update-start-fails-remove-fails", running: true, host: &container.HostConfig{RestartPolicy: always},
+			setup: func(f *fakeDocker, _ *Updater) {
+				f.failStart["app-1"] = errors.New("OCI error")
+				f.failRemoveOnce["app-1"] = errors.New("device or resource busy")
+			}, run: update},
+		{name: "rollback-start-fails-remove-fails", running: true, host: &container.HostConfig{RestartPolicy: always},
+			setup: func(f *fakeDocker, u *Updater) {
+				rollbackSetup(&container.HostConfig{RestartPolicy: always})(f, u)
+				f.failStart["app-1"] = errors.New("OCI error")
+				f.failRemoveOnce["app-1"] = errors.New("device or resource busy")
+			}, run: rollback},
 	}
 }
 
