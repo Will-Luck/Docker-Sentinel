@@ -12,6 +12,8 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
@@ -343,5 +345,34 @@ func TestRun_WaitsForRunningCommands(t *testing.T) {
 	case <-done:
 	default:
 		t.Errorf("Run returned after %v with a command still running", time.Since(start))
+	}
+}
+
+// review (minor): the startup recovery ran before the settings cached from
+// the hub were loaded, so it followed the defaults: with dependency
+// awareness off on the hub, a recovered container's dependents were
+// restarted all the same. The cached settings load first.
+func TestRun_RecoveryFollowsTheCachedHubSettings(t *testing.T) {
+	h := newFakeHost()
+	h.addImage("db:1", "sha256:db-1", &container.Config{})
+	old := h.addFromImage(t, "db-sentinel-old", "db:1", nil, nil, nil, false) // set aside and stopped
+	repl := h.addFromImage(t, "db", "db:1", &container.Config{Labels: map[string]string{"sentinel.swap": "tok"}}, nil, nil, false)
+	web := h.addFromImage(t, "web", "db:1", &container.Config{Labels: map[string]string{"sentinel.depends-on": "db"}}, nil, nil, true)
+	s := openTestStore(t)
+	if err := s.SaveSwap(store.SwapRecord{Name: "db", Kind: "update", OldID: old.id, NewID: repl.id, Token: "tok", OldRunning: true}); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	cached := newTestAgent(dir, h)
+	cached.handleSettingsSync(&proto.SettingsSync{DependencyAware: false, ImageCleanup: true})
+
+	a := New(Config{DataDir: dir, Store: s, Settings: config.NewTestConfig()}, h, noopLogger())
+	_ = a.Run(context.Background()) // not enrolled: it stops after the recovery
+
+	if c := h.byName("db"); c == nil || c.id != old.id || !c.running {
+		t.Fatalf("db = %+v, want the old container back and running", c)
+	}
+	if slices.Contains(h.restartCalls, web.id) {
+		t.Error("web was restarted although the hub has dependency awareness off")
 	}
 }

@@ -257,6 +257,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	selfOutcome := selfupdate.ReportOutcome(a.cfg.DataDir, a.log)
 	selfupdate.CleanupLeftovers(ctx, a.docker, a.cfg.DataDir, a.log)
 
+	// Restore cached policies and the hub's last settings first: autonomous
+	// mode needs them, and the recovery below follows the settings.
+	if err := a.loadPolicyCache(); err != nil {
+		a.log.Warn("failed to load policy cache, using defaults", "error", err)
+	}
+
 	// Finish or undo any update an earlier run was killed in the middle
 	// of, before anything else can touch a container, then keep retrying
 	// one whose recovery fails.
@@ -279,11 +285,6 @@ func (a *Agent) Run(ctx context.Context) error {
 	// The hub was told the self-update succeeded when the helper started;
 	// if it was rolled back or failed, tell it now.
 	a.reportSelfUpdateOutcome(selfOutcome)
-
-	// Restore cached policies so autonomous mode has them immediately.
-	if err := a.loadPolicyCache(); err != nil {
-		a.log.Warn("failed to load policy cache, using defaults", "error", err)
-	}
 
 	// Collect Engine ID for source deduplication. Non-fatal if it fails —
 	// the hub will just skip overlap detection for this agent.
