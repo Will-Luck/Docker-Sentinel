@@ -37,3 +37,21 @@ func TestHistoryPage_RemoteRowShowsPlainNameAndHostLink(t *testing.T) {
 		t.Errorf("local row must still render with a plain link")
 	}
 }
+
+func TestLoginPage_ErrorElementHasAnID(t *testing.T) {
+	srv := &Server{}
+	srv.parseTemplates()
+	render := func(errText string) string {
+		var buf bytes.Buffer
+		if err := srv.tmpl.ExecuteTemplate(&buf, "login.html", map[string]any{"Error": errText}); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+	if out := render("Invalid username or password"); !strings.Contains(out, `id="login-error" class="login-error">Invalid username or password<`) {
+		t.Errorf("server-rendered error should sit in #login-error and be visible")
+	}
+	if out := render(""); !strings.Contains(out, `id="login-error" class="login-error" style="display: none;"`) {
+		t.Errorf("without an error, #login-error should exist and be hidden")
+	}
+}

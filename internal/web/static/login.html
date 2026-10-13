@@ -22,9 +22,7 @@
                 </svg>
             </div>
 
-            {{if .Error}}
-            <div class="login-error">{{.Error}}</div>
-            {{end}}
+            <div id="login-error" class="login-error"{{if not .Error}} style="display: none;"{{end}}>{{.Error}}</div>
 
             <form class="login-form" method="POST" action="/login" id="login-form">
                 <div class="form-group">
@@ -82,8 +80,8 @@
     <script>
         // Focus management: if there is an error, focus the username field.
         (function() {
-            var err = document.querySelector('.login-error');
-            if (err) {
+            var err = document.getElementById('login-error');
+            if (err && err.textContent.trim()) {
                 var input = document.getElementById('username');
                 if (input) input.focus();
             }

@@ -456,12 +456,21 @@ function closeUserDropdown() {
    7. TOTP Two-Factor Authentication
    ------------------------------------------------------------ */
 
+// showLoginError shows a message in the password step's error element. The
+// TOTP step has its own element (#totp-error), which stays hidden here.
+function showLoginError(message) {
+    var errDiv = document.getElementById("login-error");
+    if (!errDiv) return;
+    errDiv.textContent = message;
+    errDiv.style.display = "";
+}
+
 // showTOTPStep hides the login form and shows the TOTP input.
 function showTOTPStep() {
     var loginForm = document.getElementById("login-form");
     var passkeySection = document.getElementById("passkey-login-section");
     var totpStep = document.getElementById("totp-step");
-    var loginError = document.querySelector(".login-error");
+    var loginError = document.getElementById("login-error");
 
     if (loginForm) loginForm.style.display = "none";
     if (passkeySection) passkeySection.style.display = "none";
@@ -840,24 +849,12 @@ document.addEventListener("DOMContentLoaded", function() {
                     }
                     window.location.href = result.data.redirect || "/";
                 } else {
-                    var errDiv = document.querySelector(".login-error");
-                    if (!errDiv) {
-                        errDiv = document.createElement("div");
-                        errDiv.className = "login-error";
-                        loginForm.parentNode.insertBefore(errDiv, loginForm);
-                    }
-                    errDiv.textContent = result.data.error || "Invalid username or password";
+                    showLoginError(result.data.error || "Invalid username or password");
                     if (btn) { btn.disabled = false; btn.textContent = "Sign In"; }
                 }
             })
             .catch(function() {
-                var errDiv = document.querySelector(".login-error");
-                if (!errDiv) {
-                    errDiv = document.createElement("div");
-                    errDiv.className = "login-error";
-                    loginForm.parentNode.insertBefore(errDiv, loginForm);
-                }
-                errDiv.textContent = "Network error";
+                showLoginError("Network error");
                 if (btn) { btn.disabled = false; btn.textContent = "Sign In"; }
             });
         });
