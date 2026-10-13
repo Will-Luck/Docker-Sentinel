@@ -107,6 +107,10 @@ message ContainerInfo {
 message ContainerList {
   string request_id = 1;  // echoes the server's request_id
   repeated ContainerInfo containers = 2;
+  // Set when the agent could not list its containers. containers is then
+  // empty and does not describe the host. Hubs older than v2.17.0 ignore
+  // this field.
+  string error = 3;
 }
 
 // --- Container operations ---

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
@@ -19,6 +20,18 @@ import (
 // ---------------------------------------------------------------------------
 // Synchronous request/response helpers
 // ---------------------------------------------------------------------------
+
+// Upper bounds on how long the hub waits for an agent's reply. A connected
+// agent that never answers (its Docker daemon is wedged, a handler hung)
+// must not hold up the caller for ever: the scheduled scan waits on these
+// calls one host at a time. The update bound allows for a large image pull.
+// Variables so tests can shorten them.
+var (
+	listTimeout   = time.Minute
+	updateTimeout = 15 * time.Minute
+	actionTimeout = 2 * time.Minute
+	logsTimeout   = time.Minute
+)
 
 // deliverPending sends an agent response to a waiting synchronous caller.
 // Non-blocking: if nobody is waiting (or the channel is already full), the
@@ -131,8 +144,11 @@ func (s *Server) awaitPending(ctx context.Context, hostID, requestID string, ch 
 }
 
 // request sends msg to the agent under a fresh request ID and waits for the
-// agent's reply. what names the request in errors.
-func (s *Server) request(ctx context.Context, hostID, what string, msg *proto.ServerMessage) (*proto.AgentMessage, error) {
+// agent's reply, for at most timeout. what names the request in errors.
+func (s *Server) request(ctx context.Context, hostID, what string, timeout time.Duration, msg *proto.ServerMessage) (*proto.AgentMessage, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	reqID := generateRequestID()
 	msg.RequestId = reqID
 
@@ -159,7 +175,7 @@ func (s *Server) request(ctx context.Context, hostID, what string, msg *proto.Se
 // until the agent responds with a ContainerList or the context is cancelled.
 // The request_id on the ServerMessage is used for correlation.
 func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]cluster.ContainerInfo, error) {
-	resp, err := s.request(ctx, hostID, "container list", &proto.ServerMessage{
+	resp, err := s.request(ctx, hostID, "container list", listTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_ListContainers{
 			ListContainers: &proto.ListContainersRequest{},
 		},
@@ -172,6 +188,9 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 	if !ok {
 		return nil, fmt.Errorf("unexpected response type %T (wanted ContainerList)", resp.Payload)
 	}
+	if msg := cl.ContainerList.GetError(); msg != "" {
+		return nil, fmt.Errorf("agent %s could not list its containers: %s", hostID, msg)
+	}
 
 	return protoToContainers(cl.ContainerList.Containers), nil
 }
@@ -179,7 +198,7 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 // UpdateContainerSync sends an UpdateContainerRequest to the agent and blocks
 // until the agent responds with an UpdateResult or the context is cancelled.
 func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (*proto.UpdateResult, error) {
-	resp, err := s.request(ctx, hostID, "update result", &proto.ServerMessage{
+	resp, err := s.request(ctx, hostID, "update result", updateTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_UpdateContainer{
 			UpdateContainer: &proto.UpdateContainerRequest{
 				ContainerName: containerName,
@@ -203,7 +222,7 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 // ContainerActionSync sends a ContainerActionRequest to the agent and blocks
 // until the agent responds with a ContainerActionResult or the context is cancelled.
 func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName, action string) error {
-	resp, err := s.request(ctx, hostID, "container action result", &proto.ServerMessage{
+	resp, err := s.request(ctx, hostID, "container action result", actionTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_ContainerAction{
 			ContainerAction: &proto.ContainerActionRequest{
 				ContainerName: containerName,
@@ -235,7 +254,7 @@ func (s *Server) FetchLogsSync(ctx context.Context, hostID, containerName string
 		lines = 500
 	}
 
-	resp, err := s.request(ctx, hostID, "fetch logs", &proto.ServerMessage{
+	resp, err := s.request(ctx, hostID, "fetch logs", logsTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_FetchLogs{
 			FetchLogs: &proto.FetchLogsRequest{
 				ContainerName: containerName,

@@ -810,9 +810,13 @@ func (x *ContainerInfo) GetPorts() []*PortMapping {
 }
 
 type ContainerList struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // echoes the server's request_id
-	Containers    []*ContainerInfo       `protobuf:"bytes,2,rep,name=containers,proto3" json:"containers,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	RequestId  string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // echoes the server's request_id
+	Containers []*ContainerInfo       `protobuf:"bytes,2,rep,name=containers,proto3" json:"containers,omitempty"`
+	// Set when the agent could not list its containers. containers is then
+	// empty and does not describe the host. Hubs older than v2.17.0 ignore
+	// this field.
+	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -859,6 +863,13 @@ func (x *ContainerList) GetContainers() []*ContainerInfo {
 		return x.Containers
 	}
 	return nil
+}
+
+func (x *ContainerList) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
 }
 
 type ListContainersRequest struct {
@@ -2240,13 +2251,14 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"\x05ports\x18\b \x03(\v2\x1d.sentinel.cluster.PortMappingR\x05ports\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"o\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x85\x01\n" +
 	"\rContainerList\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12?\n" +
 	"\n" +
 	"containers\x18\x02 \x03(\v2\x1f.sentinel.cluster.ContainerInfoR\n" +
-	"containers\"\x17\n" +
+	"containers\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\x17\n" +
 	"\x15ListContainersRequest\"\xa6\x01\n" +
 	"\x16UpdateContainerRequest\x12%\n" +
 	"\x0econtainer_name\x18\x01 \x01(\tR\rcontainerName\x12!\n" +

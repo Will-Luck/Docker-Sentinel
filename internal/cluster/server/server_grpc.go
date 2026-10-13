@@ -411,6 +411,16 @@ func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heart
 }
 
 func (s *Server) handleContainerList(hostID string, msg *proto.AgentMessage, cl *proto.ContainerList) {
+	if cl.GetError() != "" {
+		// The agent could not list its containers. Keep the last known
+		// list; the waiting caller gets the error.
+		s.log.Warn("agent could not list its containers", "hostID", hostID, "error", cl.GetError(), "requestID", cl.RequestId)
+		if cl.RequestId != "" {
+			s.deliverPending(hostID, cl.RequestId, msg)
+		}
+		return
+	}
+
 	containers := protoToContainers(cl.Containers)
 	s.registry.UpdateContainers(hostID, containers)
 

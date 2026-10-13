@@ -108,12 +108,24 @@ func (a *Agent) safeHandle(op, reqID string, fn func() error) {
 // --- Command Handlers ---
 
 // handleListContainers lists local containers and sends the result back
-// to the server.
+// to the server. An empty requestID marks an unsolicited refresh.
 func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentService_ChannelClient, requestID string) error {
 	a.log.Info("listing containers", "request_id", requestID)
 
 	containers, err := a.listLocalContainers(ctx)
 	if err != nil {
+		if requestID != "" {
+			// The hub is waiting on this request ID: answer with the
+			// error. Hubs before v2.17.0 ignore the error field and see
+			// an empty list, which still releases the waiting scan.
+			if sendErr := a.sendMsg(stream, &proto.AgentMessage{
+				Payload: &proto.AgentMessage_ContainerList{
+					ContainerList: &proto.ContainerList{RequestId: requestID, Error: err.Error()},
+				},
+			}); sendErr != nil {
+				a.log.Warn("failed to send container list error", "request_id", requestID, "error", sendErr)
+			}
+		}
 		return fmt.Errorf("list containers: %w", err)
 	}
 
