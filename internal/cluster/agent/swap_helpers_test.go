@@ -96,3 +96,13 @@ func (c *stepClock) Advance(d time.Duration) {
 	}
 	c.timers = kept
 }
+
+// instantClock is a real clock whose waits end at once, so an update's
+// grace period passes without delay (but still runs its code path).
+type instantClock struct{ clock.Real }
+
+func (instantClock) After(time.Duration) <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	ch <- time.Now()
+	return ch
+}

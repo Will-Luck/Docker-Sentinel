@@ -65,3 +65,21 @@ func TestLoadPolicyCache_AppliesTheHubsSettings(t *testing.T) {
 		t.Error("a cache with no settings from the hub turned settings off")
 	}
 }
+
+// The grace period an agent update waits before it validates the new
+// container is the hub's, unless SENTINEL_GRACE_PERIOD is set on the agent.
+func TestHandleSettingsSync_GracePeriod(t *testing.T) {
+	a := newTestAgent(t.TempDir(), newMockDocker())
+	a.handleSettingsSync(&proto.SettingsSync{GracePeriod: durationpb.New(45 * time.Second)})
+	if got := a.settings.GracePeriod(); got != 45*time.Second {
+		t.Errorf("grace period = %v, want the hub's 45s", got)
+	}
+
+	pinned := newTestAgent(t.TempDir(), newMockDocker())
+	pinned.settings.SetGracePeriod(10 * time.Second)
+	pinned.cfg.EnvSettings = map[string]bool{"grace_period": true}
+	pinned.handleSettingsSync(&proto.SettingsSync{GracePeriod: durationpb.New(45 * time.Second)})
+	if got := pinned.settings.GracePeriod(); got != 10*time.Second {
+		t.Errorf("grace period = %v, want the agent's own 10s", got)
+	}
+}

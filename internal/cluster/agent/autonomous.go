@@ -290,12 +290,14 @@ const (
 	settingImageBackup     = "image_backup"
 	settingHooksEnabled    = "hooks_enabled"
 	settingDependencyAware = "dependency_aware"
+	settingGracePeriod     = "grace_period"
 )
 
 // applyServerSettings makes the agent's updates follow the settings the
 // server sent, except those the agent's own environment sets: on its host,
 // SENTINEL_REMOVE_VOLUMES, SENTINEL_IMAGE_CLEANUP, SENTINEL_IMAGE_BACKUP,
-// SENTINEL_HOOKS and SENTINEL_DEPS win over the server.
+// SENTINEL_HOOKS, SENTINEL_DEPS and SENTINEL_GRACE_PERIOD win over the
+// server.
 func (a *Agent) applyServerSettings() {
 	pc := a.policies
 	pc.mu.RLock()
@@ -309,6 +311,7 @@ func (a *Agent) applyServerSettings() {
 		settingImageBackup:     func() { a.settings.SetImageBackup(pc.imageBackup) },
 		settingHooksEnabled:    func() { a.settings.SetHooksEnabled(pc.hooksEnabled) },
 		settingDependencyAware: func() { a.settings.SetDependencyAware(pc.dependencyAware) },
+		settingGracePeriod:     func() { a.settings.SetGracePeriod(pc.gracePeriod) },
 	} {
 		if !a.cfg.EnvSettings[key] {
 			apply()

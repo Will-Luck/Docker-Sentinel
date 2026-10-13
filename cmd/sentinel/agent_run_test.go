@@ -48,3 +48,11 @@ func TestAgentExitErr(t *testing.T) {
 		t.Error("a real failure was swallowed")
 	}
 }
+
+// SENTINEL_GRACE_PERIOD on an agent pins its grace period.
+func TestAgentEnvSettings_GracePeriod(t *testing.T) {
+	got := agentEnvSettings(func(k string) (string, bool) { return "1m", k == "SENTINEL_GRACE_PERIOD" })
+	if !got["grace_period"] {
+		t.Errorf("env settings = %v, want grace_period", got)
+	}
+}

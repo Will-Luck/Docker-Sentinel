@@ -1117,8 +1117,16 @@ func newTestAgent(dataDir string, docker DockerAPI) *Agent {
 		log:      noopLogger(),
 		dedup:    newDedup(100),
 		policies: newPolicyCache(),
-		settings: config.NewTestConfig(),
+		settings: testSettings(),
 	}
+}
+
+// testSettings are an agent's settings in tests: the defaults with no grace
+// period, so an update validates its new container at once.
+func testSettings() *config.Config {
+	cfg := config.NewTestConfig()
+	cfg.SetGracePeriod(0)
+	return cfg
 }
 
 func noopLogger() *slog.Logger {

@@ -316,6 +316,9 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				}
 			} else {
 				result.Failed++
+				if ur.Outcome == "rollback" {
+					u.applyRollbackPolicy(scopedName)
+				}
 			}
 
 		case docker.PolicyManual:
@@ -441,11 +444,31 @@ func (u *Updater) notifyRemoteResult(ctx context.Context, label string, ur Remot
 	case "success":
 		ev.Type = notify.EventUpdateSucceeded
 	case "rollback":
-		ev.Type, ev.Error = notify.EventRollbackOK, ur.Error
+		// The update failed and the agent put the old container back, as a
+		// local update that fails validation: both are told.
+		failed := ev
+		failed.Type, failed.Error = notify.EventUpdateFailed, ur.Error
+		u.notifier.Notify(ctx, failed)
+		ev.Type = notify.EventRollbackOK
 	default:
 		ev.Type, ev.Error = notify.EventUpdateFailed, ur.Error
 	}
 	u.notifier.Notify(ctx, ev)
+}
+
+// applyRollbackPolicy sets the rollback policy (manual or pinned) on a
+// container whose update was rolled back, so the next scan does not try
+// the same update again, as a local rollback does.
+func (u *Updater) applyRollbackPolicy(key string) {
+	rp := u.rollbackPolicy()
+	if rp != "manual" && rp != "pinned" {
+		return
+	}
+	if err := u.store.SetPolicyOverride(key, rp); err != nil {
+		u.log.Warn("failed to set rollback policy override", "name", key, "policy", rp, "error", err)
+		return
+	}
+	u.log.Info("policy changed after rollback", "name", key, "policy", rp)
 }
 
 // remotePullOnly asks the agent to pull target for a pull-only container,

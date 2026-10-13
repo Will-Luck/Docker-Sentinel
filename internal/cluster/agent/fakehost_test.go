@@ -50,9 +50,12 @@ type fakeHost struct {
 	// startErrID fails the start of a container on the image with this ID,
 	// whatever reference it was created from.
 	startErrID map[string]error
-	stopErr    map[string]error // by container ID
-	renameErr  map[string]error // by requested new name
-	removeErr  map[string]error // by container ID
+	// exitsOnStart makes a container on the image with this ID start (the
+	// call succeeds) and exit at once, as a crashing image does.
+	exitsOnStart map[string]bool
+	stopErr      map[string]error // by container ID
+	renameErr    map[string]error // by requested new name
+	removeErr    map[string]error // by container ID
 
 	// lazyAutoRemove makes a stopped --rm container linger (as the daemon
 	// can take a moment to delete it): it is gone by the next start.
@@ -218,16 +221,17 @@ func fakeID(n int) string {
 
 func newFakeHost() *fakeHost {
 	return &fakeHost{
-		containers: map[string]*fakeContainer{},
-		images:     map[string]string{},
-		imageIDs:   map[string]bool{},
-		registry:   map[string]string{},
-		createErr:  map[string]error{},
-		startErr:   map[string]error{},
-		startErrID: map[string]error{},
-		stopErr:    map[string]error{},
-		renameErr:  map[string]error{},
-		removeErr:  map[string]error{},
+		containers:   map[string]*fakeContainer{},
+		images:       map[string]string{},
+		imageIDs:     map[string]bool{},
+		registry:     map[string]string{},
+		createErr:    map[string]error{},
+		startErr:     map[string]error{},
+		startErrID:   map[string]error{},
+		exitsOnStart: map[string]bool{},
+		stopErr:      map[string]error{},
+		renameErr:    map[string]error{},
+		removeErr:    map[string]error{},
 
 		imageConfigs: map[string]*container.Config{},
 		slowStop:     map[string]bool{},
@@ -742,6 +746,9 @@ func (h *fakeHost) start(id string) error {
 	}
 	c.running = true
 	c.started = true
+	if h.exitsOnStart[c.imageID] {
+		c.running = false
+	}
 	return nil
 }
 

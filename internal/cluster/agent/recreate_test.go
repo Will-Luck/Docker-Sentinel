@@ -375,6 +375,8 @@ func TestRecreateContainer_KeepsEveryNetworksSettings(t *testing.T) {
 			},
 		}},
 	}
+	// The replacement is up when the agent validates it.
+	mock.inspectResults["new-web"] = container.InspectResponse{ID: "new-web", State: &container.State{Running: true}}
 	a := newSwapAgent(t, mock)
 
 	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err != nil {
@@ -553,4 +555,38 @@ func TestRecreateContainer_LeftoverKeptWhenRealContainerNeverRan(t *testing.T) {
 	if h.byName("web-sentinel-old") == nil {
 		t.Error("the parked original was removed although web has never run")
 	}
+}
+
+// smoke F6: an agent update reported success as soon as the new container
+// started, and removed the old one, so an image that exits right after
+// start left the service down ("Restarting"). As on the hub, the agent
+// waits the grace period, checks the new container is still up (and
+// healthy), and otherwise puts the old one back and reports a rollback.
+func TestRecreateContainer_RollsBackANewContainerThatDoesNotStayUp(t *testing.T) {
+	h, old, a := recreateFixture(t)
+	h.exitsOnStart["sha256:nginx-2"] = true
+	a.settings.SetGracePeriod(10 * time.Millisecond)
+
+	ur := updateResult(t, a, "web", "nginx:2")
+	if ur.GetOutcome() != "rollback" {
+		t.Errorf("outcome %q (%s), want rollback", ur.GetOutcome(), ur.GetError())
+	}
+	h.requireOnly(t, "web", "nginx:1", true)
+	if c := h.byName("web"); c.id != old.id {
+		t.Errorf("web is %s, want the original %s back", c.id, old.id)
+	}
+}
+
+// A new container that stays up passes, after the grace period.
+func TestRecreateContainer_ValidatesAfterTheGracePeriod(t *testing.T) {
+	h, _, a := recreateFixture(t)
+	a.settings.SetGracePeriod(50 * time.Millisecond)
+	start := time.Now()
+	if ur := updateResult(t, a, "web", "nginx:2"); ur.GetOutcome() != "success" {
+		t.Fatalf("outcome %q (%s), want success", ur.GetOutcome(), ur.GetError())
+	}
+	if time.Since(start) < 50*time.Millisecond {
+		t.Error("the update did not wait the grace period")
+	}
+	h.requireOnly(t, "web", "nginx:2", true)
 }

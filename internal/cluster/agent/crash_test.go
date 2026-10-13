@@ -49,6 +49,12 @@ func agentCrashScenarios() []agentCrashScenario {
 		{name: "update-rm-start-fails", running: true, host: container.HostConfig{AutoRemove: true}, setup: startFails},
 		{name: "update-slow-stop", running: true, host: container.HostConfig{RestartPolicy: crashUnlessStopped}, setup: slowStop},
 		{name: "update-rm-slow-stop", running: true, host: container.HostConfig{AutoRemove: true}, setup: slowStop},
+		// The new container exits right after it starts: the validation
+		// after the grace period rolls the update back.
+		{name: "update-exits-on-start", running: true, host: container.HostConfig{RestartPolicy: crashAlways},
+			setup: func(h *fakeHost, _ *fakeContainer) { h.exitsOnStart["sha256:app-2"] = true }},
+		{name: "update-rm-exits-on-start", running: true, host: container.HostConfig{AutoRemove: true},
+			setup: func(h *fakeHost, _ *fakeContainer) { h.exitsOnStart["sha256:app-2"] = true }},
 	}
 }
 
@@ -67,7 +73,12 @@ func newAgentCrashFixture(t *testing.T, sc agentCrashScenario) (*fakeHost, *Agen
 	}
 	h.setCrash(0, false, false)
 	s := openTestStore(t)
-	return h, newSwapAgentOn(t, h, s, newStepClock(true)), s
+	// The update waits a grace period before it validates the new
+	// container; the clock lets it pass at once, so a crash point falls
+	// just after the wait, before the validation.
+	a := newSwapAgentOn(t, h, s, instantClock{})
+	a.settings.SetGracePeriod(30 * time.Second)
+	return h, a, s
 }
 
 // runAgentUpdate runs the update of app to app:2 until it ends or the agent
@@ -247,6 +258,7 @@ func cloneAgentCrashState(t *testing.T, h *fakeHost, s *store.Store) agentCrashS
 	maps.Copy(c.stopErr, h.stopErr)
 	maps.Copy(c.renameErr, h.renameErr)
 	maps.Copy(c.removeErr, h.removeErr)
+	maps.Copy(c.exitsOnStart, h.exitsOnStart)
 	c.nextID, c.volumeSeq = h.nextID, h.volumeSeq
 	c.pendingStops = slices.Clone(h.pendingStops)
 	for id, fc := range h.containers {

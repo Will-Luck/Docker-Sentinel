@@ -338,3 +338,29 @@ func TestScanRemoteUnansweredFailureNeverOverwritesTheResult(t *testing.T) {
 		t.Errorf("history = %+v, want the late success kept", recs)
 	}
 }
+
+// smoke F6: a remote update the agent rolled back (the new container did
+// not stay up) is told like a local one: failed, then rolled back, and the
+// rollback policy then applies to the remote container.
+func TestScanRemoteRollbackNotifiesAndAppliesTheRollbackPolicy(t *testing.T) {
+	u, pc, _ := remotePolicyFixture(t, nil)
+	pc.fakeCluster.outcome = "rollback"
+	if err := u.store.SaveSetting("rollback_policy", "pinned"); err != nil {
+		t.Fatal(err)
+	}
+	cn := &capturingNotifier{}
+	u.notifier = notify.NewMulti(u.log, cn)
+	res := u.Scan(context.Background(), ScanScheduled)
+
+	got := cn.types()
+	want := []notify.EventType{notify.EventUpdateAvailable, notify.EventUpdateStarted, notify.EventUpdateFailed, notify.EventRollbackOK}
+	if len(got) != len(want) || got[2] != want[2] || got[3] != want[3] {
+		t.Errorf("notifications = %v, want %v", got, want)
+	}
+	if res.Failed != 1 {
+		t.Errorf("failed = %d, want the rolled-back update counted as failed", res.Failed)
+	}
+	if p, ok := u.store.GetPolicyOverride(store.ScopedKey("h1", "web")); !ok || p != "pinned" {
+		t.Errorf("policy override = %q (%v), want pinned after the rollback", p, ok)
+	}
+}

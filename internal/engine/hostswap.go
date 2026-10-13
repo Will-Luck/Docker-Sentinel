@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -116,9 +117,13 @@ type HostUpdate struct {
 // Update replaces a container with the one described by up.Recreate, through
 // the journalled swap: the old container is renamed aside, the replacement
 // created, the old one stopped and the replacement started (only if the old
-// one was running), then the old one removed. On failure the old container
+// one was running). A started replacement is then validated as a local
+// update's is: after the grace period (the settings', or the container's
+// sentinel.grace-period label) it must be running and, with a healthcheck,
+// healthy. Only then is the old one removed. On failure the old container
 // is put back, or rebuilt from its inspect if the daemon deleted it, and the
-// containers depending on it are repaired; the swap's error is returned.
+// containers depending on it are repaired; the error wraps ErrRolledBack
+// when the replacement started (or tried to) and the old container is back.
 // On success the containers sharing its network namespace and (with
 // dependency awareness on) its dependents follow it to the replacement. It
 // returns the replacement's ID, and a warning when the update worked but
@@ -130,7 +135,7 @@ func (h *HostSwaps) Update(ctx context.Context, up HostUpdate) (newID, warning s
 		return "", "", fmt.Errorf("snapshot %s: %w", up.Name, err)
 	}
 	sw := newSwap(u.docker, u.log, u.store, swapSpec{
-		kind: swapUpdate, name: up.Name, oldID: up.OldID, old: up.Old, stopTimeout: 30,
+		kind: swapUpdate, name: up.Name, oldID: up.OldID, old: up.Old, stopTimeout: stopTimeout(up.Old.Config, 30),
 		snapshot: snapshot, removeVolumes: up.RemoveVolumes,
 	})
 	if err := sw.replace(ctx, up.Recreate, sw.oldRunning, nil); err != nil {
@@ -141,7 +146,18 @@ func (h *HostSwaps) Update(ctx context.Context, up HostUpdate) (newID, warning s
 		if restoreErr := u.restoreOld(ctx, sw, snapshot); restoreErr != nil {
 			return "", "", fmt.Errorf("%w; restoring the old container failed too: %v", err, restoreErr)
 		}
+		// Only a new container that would not start says something about
+		// the image; a failed create, stop or journal write does not.
+		var se *swapError
+		if errors.As(err, &se) && se.stage == "start" {
+			return "", "", fmt.Errorf("%w: %w", ErrRolledBack, err)
+		}
 		return "", "", err
+	}
+	if sw.newStarted {
+		if err := h.validate(ctx, sw, up, snapshot); err != nil {
+			return "", "", err
+		}
 	}
 	sw.commit(ctx)
 	if u.store.HasSwap(up.Name) {
@@ -151,6 +167,50 @@ func (h *HostSwaps) Update(ctx context.Context, up HostUpdate) (newID, warning s
 	}
 	u.afterProviderChange(ctx, up.Name, sw.newID, up.OldID)
 	return sw.newID, warning, nil
+}
+
+// validate waits the grace period and checks the started replacement, as a
+// local update does. A replacement that is not running (or not healthy) is
+// rolled back: the old container comes back and the error wraps
+// ErrRolledBack. An update cancelled meanwhile (the agent is stopping) puts
+// the old container back too, and returns the cancellation.
+func (h *HostSwaps) validate(ctx context.Context, sw *swap, up HostUpdate, snapshot []byte) error {
+	u := h.u
+	grace := u.cfg.GracePeriod()
+	if up.Old.Config != nil {
+		if override := docker.ContainerGracePeriod(up.Old.Config.Labels); override > 0 {
+			grace = override
+		}
+	}
+	u.log.Info("waiting grace period", "name", up.Name, "duration", grace)
+	abandon := func() error {
+		u.log.Warn("update interrupted, restoring the old container", "name", up.Name)
+		if err := u.restoreOld(ctx, sw, snapshot); err != nil {
+			u.log.Error("could not restore the old container after an interrupted update", "name", up.Name, "error", err)
+		}
+		return ctx.Err()
+	}
+	select {
+	case <-u.clock.After(grace):
+	case <-ctx.Done():
+		return abandon()
+	}
+	healthy, err := u.validateContainer(ctx, sw.newID)
+	if ctx.Err() != nil {
+		return abandon()
+	}
+	if err == nil && healthy {
+		return nil
+	}
+	cause := errors.New("the new container did not stay up (not running, restarting or unhealthy)")
+	if err != nil {
+		cause = fmt.Errorf("validation failed: %w", err)
+	}
+	u.log.Error("validation failed, rolling back", "name", up.Name, "error", cause)
+	if restoreErr := u.restoreOld(ctx, sw, snapshot); restoreErr != nil {
+		return fmt.Errorf("new container %s failed validation (%v), and restoring the old container failed: %w", up.Name, cause, restoreErr)
+	}
+	return fmt.Errorf("%w: new container %s failed validation: %v", ErrRolledBack, up.Name, cause)
 }
 
 // CleanupOldImage removes the image an updated container ran before, when

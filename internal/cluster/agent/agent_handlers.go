@@ -253,6 +253,12 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 			result.Error = "skipped: " + err.Error()
 		}
 		a.log.Info("update skipped", "name", name, "reason", err)
+	case errors.Is(err, engine.ErrRolledBack):
+		// The new container failed (it would not start or stay up) and
+		// the old one is back.
+		result.Outcome = "rollback"
+		result.Error = err.Error()
+		a.log.Error("update rolled back", "name", name, "error", err, "duration", dur)
 	case err != nil:
 		result.Outcome = "failed"
 		result.Error = err.Error()

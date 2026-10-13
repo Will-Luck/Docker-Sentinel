@@ -151,6 +151,7 @@ func agentEnvSettings(lookup func(string) (string, bool)) map[string]bool {
 		"SENTINEL_IMAGE_BACKUP":   "image_backup",
 		"SENTINEL_HOOKS":          "hooks_enabled",
 		"SENTINEL_DEPS":           "dependency_aware",
+		"SENTINEL_GRACE_PERIOD":   "grace_period",
 	} {
 		if _, ok := lookup(env); ok {
 			out[key] = true
