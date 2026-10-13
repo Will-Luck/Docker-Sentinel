@@ -401,7 +401,9 @@ func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
 		{"oidc_group_mappings", groupMappingsJSON},
 	}
 
-	if req.LinkExisting != nil {
+	// Store the toggle only when it differs from what is in effect, so a save
+	// of other OIDC settings does not pin it over SENTINEL_OIDC_LINK_EXISTING.
+	if req.LinkExisting != nil && *req.LinkExisting != s.effectiveLinkExisting() {
 		pairs = append(pairs, struct{ key, val string }{"oidc_link_existing", strconv.FormatBool(*req.LinkExisting)})
 	}
 
@@ -475,4 +477,15 @@ func (s *Server) apiSetDashboardColumns(w http.ResponseWriter, r *http.Request) 
 
 	s.logEvent(r, "settings-change", "", "Dashboard columns updated")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// effectiveLinkExisting is whether linking existing accounts by username is
+// on: a saved value wins over SENTINEL_OIDC_LINK_EXISTING.
+func (s *Server) effectiveLinkExisting() bool {
+	if s.deps.SettingsStore != nil {
+		if v, _ := s.deps.SettingsStore.LoadSetting("oidc_link_existing"); v != "" {
+			return v == "true"
+		}
+	}
+	return s.deps.Config != nil && s.deps.Config.Values()["SENTINEL_OIDC_LINK_EXISTING"] == "true"
 }

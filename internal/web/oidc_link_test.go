@@ -166,3 +166,29 @@ func TestOIDCSettings_LinkExistingSavedWinsOverEnv(t *testing.T) {
 		t.Errorf("save: status %d, stored %q", w.Code, ss.data["oidc_link_existing"])
 	}
 }
+
+// Saving the OIDC settings must not pin oidc_link_existing to the value the
+// toggle showed, or it would beat SENTINEL_OIDC_LINK_EXISTING for good.
+func TestOIDCSettings_SaveDoesNotPinLinkExistingToTheEnvValue(t *testing.T) {
+	ss := newMockSettingsStore()
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: &mockConfigReader{values: map[string]string{"SENTINEL_OIDC_LINK_EXISTING": "true"}}, Log: nopLogger()}}
+	save := func(body string) {
+		w := httptest.NewRecorder()
+		srv.apiSaveOIDCSettings(w, httptest.NewRequest(http.MethodPost, "/api/settings/oidc", strings.NewReader(body)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("save: %d %s", w.Code, w.Body.String())
+		}
+	}
+	save(`{"enabled":false,"client_secret":"new","link_existing":true}`) // unchanged from the env value
+	if _, ok := ss.data["oidc_link_existing"]; ok {
+		t.Errorf("an unchanged toggle was stored: %q", ss.data["oidc_link_existing"])
+	}
+	save(`{"enabled":false,"link_existing":false}`) // the user turned it off
+	if ss.data["oidc_link_existing"] != "false" {
+		t.Errorf("a changed toggle was not stored: %q", ss.data["oidc_link_existing"])
+	}
+	save(`{"enabled":false,"link_existing":false}`) // still the saved value
+	if ss.data["oidc_link_existing"] != "false" {
+		t.Errorf("the saved value was lost: %q", ss.data["oidc_link_existing"])
+	}
+}
