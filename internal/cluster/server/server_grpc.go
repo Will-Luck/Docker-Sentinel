@@ -221,9 +221,10 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		s.log.Warn("replaced stale stream", "hostID", hostID)
 	}
 	s.streams[hostID] = as
-	s.mu.Unlock()
-
+	// Under s.mu, like the disconnect in the cleanup below, so the two
+	// cannot be applied out of order for one host.
 	s.registry.SetConnected(hostID, true)
+	s.mu.Unlock()
 
 	s.log.Info("agent connected", "hostID", hostID)
 	s.bus.Publish(events.SSEEvent{
@@ -241,6 +242,11 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		if ok && cur == as {
 			delete(s.streams, hostID)
 		}
+		// Mark the host disconnected while still holding s.mu, so a new
+		// stream for it cannot register between the check and the update.
+		if !replaced {
+			s.registry.SetDisconnected(hostID, streamErr)
+		}
 		s.mu.Unlock()
 
 		// Requests that went out on this stream can never be answered.
@@ -253,7 +259,6 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 			return
 		}
 
-		s.registry.SetDisconnected(hostID, streamErr)
 		// Force-persist LastSeen on disconnect so it survives server restart.
 		if err := s.registry.PersistLastSeen(hostID); err != nil {
 			s.log.Warn("failed to persist last seen on disconnect", "hostID", hostID, "error", err)
