@@ -22,3 +22,20 @@ func TestHeadlessFirstRunSkipsWizardAndOpensScanGate(t *testing.T) {
 		t.Error("configured install must scan at once")
 	}
 }
+
+func TestHeadlessRoleChoice(t *testing.T) {
+	cases := []struct {
+		name, mode, token, addr, want string
+	}{
+		{"nothing set", "", "", "", "server"},
+		{"explicit agent mode", "agent", "", "", "agent"},
+		{"enrol token and server address", "", "tok", "hub:9443", "agent"},
+		{"token without address", "", "tok", "", "server"},
+		{"explicit server beats enrol vars", "server", "tok", "hub:9443", "server"},
+	}
+	for _, c := range cases {
+		if got := headlessRole(c.mode, c.token, c.addr); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}

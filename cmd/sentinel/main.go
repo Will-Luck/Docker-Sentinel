@@ -197,9 +197,12 @@ func main() {
 	if instanceRole == "" && !cfg.WebEnabled {
 		// Headless first run: there is no UI to run the wizard in, so
 		// default the role (server unless SENTINEL_MODE says otherwise).
-		instanceRole = cfg.Mode
-		if instanceRole == "" {
-			instanceRole = "server"
+		instanceRole = headlessRole(cfg.Mode, cfg.EnrollToken, cfg.ServerAddr)
+		if instanceRole == "agent" && cfg.ServerAddr != "" {
+			_ = db.SaveSetting("server_addr", cfg.ServerAddr)
+			if cfg.HostName != "" {
+				_ = db.SaveSetting("host_name", cfg.HostName)
+			}
 		}
 		_ = db.SaveSetting("instance_role", instanceRole)
 		log.Info("web UI disabled: skipping the setup wizard", "role", instanceRole)

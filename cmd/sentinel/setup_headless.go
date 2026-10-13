@@ -12,3 +12,16 @@ func wizardRequired(instanceRole string, webEnabled bool) bool {
 func scanGateOpensAtStart(freshSetup, webEnabled bool) bool {
 	return !freshSetup || !webEnabled
 }
+
+// headlessRole picks the instance role for a first run with the web UI
+// disabled. An explicit SENTINEL_MODE wins; otherwise the enrolment variables
+// from the Cluster page snippet make it an agent, and anything else a server.
+func headlessRole(mode, enrollToken, serverAddr string) string {
+	switch {
+	case mode != "":
+		return mode
+	case enrollToken != "" && serverAddr != "":
+		return "agent"
+	}
+	return "server"
+}
