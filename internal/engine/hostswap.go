@@ -202,11 +202,10 @@ func (h *HostSwaps) validate(ctx context.Context, sw *swap, up HostUpdate, snaps
 	if err == nil && healthy {
 		return nil
 	}
-	cause := errors.New("the new container did not stay up (not running, restarting or unhealthy)")
-	if err != nil {
-		cause = fmt.Errorf("validation failed: %w", err)
-	}
-	u.log.Error("validation failed, rolling back", "name", up.Name, "error", cause)
+	// Why, as a local update says it: the exit code, the restart count or
+	// the healthcheck's output.
+	cause := u.validationFailure(ctx, sw.newID, err)
+	u.log.Error("validation failed, rolling back", "name", up.Name, "reason", cause)
 	if restoreErr := u.restoreOld(ctx, sw, snapshot); restoreErr != nil {
 		return fmt.Errorf("new container %s failed validation (%v), and restoring the old container failed: %w", up.Name, cause, restoreErr)
 	}

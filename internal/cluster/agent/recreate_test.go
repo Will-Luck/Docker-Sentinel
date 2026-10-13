@@ -577,6 +577,20 @@ func TestRecreateContainer_RollsBackANewContainerThatDoesNotStayUp(t *testing.T)
 	}
 }
 
+// The rollback says why the new container failed, as a local one does
+// (its exit code, restart count or health output), not only that it did
+// not stay up.
+func TestRecreateContainer_RollbackSaysWhyTheNewContainerFailed(t *testing.T) {
+	h, _, a := recreateFixture(t)
+	h.exitsOnStart["sha256:nginx-2"] = true
+	a.settings.SetGracePeriod(10 * time.Millisecond)
+
+	ur := updateResult(t, a, "web", "nginx:2")
+	if ur.GetOutcome() != "rollback" || !strings.Contains(ur.GetError(), "it exited (exit code 0)") {
+		t.Errorf("outcome %q, error %q, want a rollback saying it exited and with which code", ur.GetOutcome(), ur.GetError())
+	}
+}
+
 // A new container that stays up passes, after the grace period.
 func TestRecreateContainer_ValidatesAfterTheGracePeriod(t *testing.T) {
 	h, _, a := recreateFixture(t)
