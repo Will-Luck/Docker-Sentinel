@@ -518,3 +518,23 @@ func TestRecreateContainer_UnremovableReplacementMovedAside(t *testing.T) {
 		t.Errorf("replacement not moved aside; containers = %v", h.names())
 	}
 }
+
+// If the container under the real name has never run (a replacement that
+// was created but not started before the agent stopped), the stopped
+// parked copy may be the working original. It is not removed.
+func TestRecreateContainer_LeftoverKeptWhenRealContainerNeverRan(t *testing.T) {
+	h := newFakeHost()
+	h.addContainer("web", "nginx:2", false) // created, never started
+	leftover := h.addContainer("web-sentinel-old", "nginx:1", false)
+	leftover.started = true // the original, which ran until it was parked
+	h.registry["nginx:3"] = "sha256:nginx-3"
+	a := newTestAgent(t.TempDir(), h)
+
+	_, err := a.recreateContainer(context.Background(), "web", "nginx:3")
+	if err == nil || !strings.Contains(err.Error(), "web-sentinel-old") {
+		t.Fatalf("recreateContainer error = %v, want one naming web-sentinel-old", err)
+	}
+	if h.byName("web-sentinel-old") == nil {
+		t.Error("the parked original was removed although web has never run")
+	}
+}

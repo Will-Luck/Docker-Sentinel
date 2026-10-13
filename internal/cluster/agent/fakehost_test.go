@@ -58,6 +58,7 @@ type fakeContainer struct {
 	env        []string
 	labels     map[string]string
 	removing   bool // stopped --rm container the daemon is deleting
+	started    bool // has been started at some point
 }
 
 func newFakeHost() *fakeHost {
@@ -89,6 +90,7 @@ func (h *fakeHost) addContainer(name, image string, running bool) *fakeContainer
 		image:   image,
 		imageID: h.images[image],
 		running: running,
+		started: running,
 		env:     []string{"APP_MODE=prod"},
 	}
 	h.containers[c.id] = c
@@ -173,7 +175,7 @@ func (h *fakeHost) InspectContainer(_ context.Context, id string) (container.Ins
 		ID:         c.id,
 		Name:       "/" + c.name,
 		Image:      c.imageID,
-		State:      &container.State{Running: c.running},
+		State:      &container.State{Running: c.running, StartedAt: startedAt(c.started)},
 		Config:     &container.Config{Image: c.image, Env: append([]string(nil), c.env...)},
 		HostConfig: &container.HostConfig{AutoRemove: c.autoRemove},
 	}, nil
@@ -267,7 +269,17 @@ func (h *fakeHost) StartContainer(_ context.Context, id string) error {
 		return err
 	}
 	c.running = true
+	c.started = true
 	return nil
+}
+
+// startedAt is the inspect StartedAt of a container that has (or has not)
+// been started.
+func startedAt(started bool) string {
+	if started {
+		return "2026-10-01T12:00:00Z"
+	}
+	return "0001-01-01T00:00:00Z"
 }
 
 func (h *fakeHost) RestartContainer(ctx context.Context, id string) error {

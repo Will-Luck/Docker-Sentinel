@@ -132,7 +132,7 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 
 	parked := parkedName(name)
 	if id, err := a.findContainerID(ctx, parked); err == nil {
-		if err := a.clearLeftover(ctx, name, parked, id); err != nil {
+		if err := a.clearLeftover(ctx, name, parked, id, &inspect); err != nil {
 			return r, err
 		}
 	}
@@ -186,13 +186,14 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 }
 
 // clearLeftover deals with a container already under the parked name when
-// an update of name starts. A stopped one is the old copy from an update
-// that was interrupted after the replacement was made (name exists, so it
-// is not the only copy): it is removed. A running one is left alone and
-// the update refused.
-func (a *Agent) clearLeftover(ctx context.Context, name, parked, id string) error {
+// an update of name starts. It is removed only when it is stopped and the
+// container under the real name (current) is running or has run: then the
+// leftover is the old copy from an update interrupted after its
+// replacement took over. Otherwise the leftover may be the working
+// original, so it is left alone and the update refused.
+func (a *Agent) clearLeftover(ctx context.Context, name, parked, id string, current *container.InspectResponse) error {
 	inspect, err := a.docker.InspectContainer(ctx, id)
-	if err == nil && !isRunning(&inspect) {
+	if err == nil && !isRunning(&inspect) && (isRunning(current) || hasRun(current)) {
 		if err := a.docker.RemoveContainer(ctx, id); err == nil {
 			a.log.Info("removed a stopped container left by an interrupted update", "container", name, "leftover", parked, "id", truncateID(id))
 			return nil
@@ -237,6 +238,15 @@ type parkedContainer struct {
 
 func isRunning(inspect *container.InspectResponse) bool {
 	return inspect.State != nil && inspect.State.Running
+}
+
+// hasRun reports whether the container has been started at some point.
+func hasRun(inspect *container.InspectResponse) bool {
+	if inspect.State == nil || inspect.State.StartedAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt)
+	return err == nil && !t.IsZero()
 }
 
 func autoRemoves(inspect *container.InspectResponse) bool {
