@@ -28,6 +28,11 @@ func (s *Store) ListHooks(containerName string) ([]HookEntry, error) {
 		}
 		c := b.Cursor()
 		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			// A remote container's hooks are keyed "hostID::name::phase",
+			// which the prefix of a container named hostID also matches.
+			if bytes.Contains(k[len(prefix):], []byte("::")) {
+				continue
+			}
 			var entry HookEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
 				continue

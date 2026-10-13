@@ -14,6 +14,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
+	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 )
 
@@ -105,11 +106,45 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 type updateOptions struct {
 	// previous are the images the container ran before its current one.
 	previous []*proto.PreviousImage
+	// hooks are the hooks the hub stores for the container; skipHooks
+	// runs none.
+	hooks     []*proto.HookSpec
+	skipHooks bool
 }
 
 // updateOptionsFrom reads the options of an update request.
 func updateOptionsFrom(req *proto.UpdateContainerRequest) updateOptions {
-	return updateOptions{previous: req.GetPreviousImages()}
+	return updateOptions{previous: req.GetPreviousImages(), hooks: req.GetHooks(), skipHooks: req.GetSkipHooks()}
+}
+
+// errSkippedByHook ends an update a pre-update hook asked to skip (exit
+// 75): nothing was changed.
+var errSkippedByHook = errors.New("a pre-update hook asked to skip the update (exit 75)")
+
+// hookRunner returns the runner of the lifecycle hooks of one update, or
+// nil when none run (hooks are off, or the hub asked to skip them). The
+// hooks the hub sent win over the container's sentinel.hook.* labels,
+// phase by phase, as the hub's stored hooks do on the hub.
+func (a *Agent) hookRunner(name string, opts updateOptions) *hooks.Runner {
+	if opts.skipHooks || !a.settings.HooksEnabled() {
+		return nil
+	}
+	sent := make(sentHooks, 0, len(opts.hooks))
+	for _, h := range opts.hooks {
+		sent = append(sent, hooks.Hook{ContainerName: name, Phase: h.GetPhase(), Command: h.GetCommand(), Timeout: int(h.GetTimeoutSeconds())})
+	}
+	return hooks.NewRunner(a.docker, sent, a.log)
+}
+
+// sentHooks is the hook store of one update: the hooks the hub sent.
+type sentHooks []hooks.Hook
+
+func (s sentHooks) ListHooks(string) ([]hooks.Hook, error) { return s, nil }
+func (sentHooks) SaveHook(hooks.Hook) error {
+	return errors.New("the hooks the hub sent are read-only")
+}
+func (sentHooks) DeleteHook(string, string) error {
+	return errors.New("the hooks the hub sent are read-only")
 }
 
 // recreate is recreateContainer with the options the hub sent.
@@ -141,6 +176,19 @@ func (a *Agent) recreate(ctx context.Context, name, targetImage string, opts upd
 
 	// Get current image digest for the audit trail.
 	r.oldDigest, _ = a.docker.ImageDigest(ctx, r.oldImage)
+
+	// Pre-update hooks run in the old container before anything changes:
+	// exit 75 skips the update, any other failure aborts it.
+	runner := a.hookRunner(name, opts)
+	if runner != nil {
+		if err := runner.RunPreUpdate(ctx, cID, name, inspect.Config.Labels); err != nil {
+			if errors.Is(err, hooks.ErrSkipUpdate) {
+				a.log.Info("pre-update hook requested skip", "name", name)
+				return r, errSkippedByHook
+			}
+			return r, fmt.Errorf("pre-update hook for %s: %w", name, err)
+		}
+	}
 
 	a.swaps.BackupImage(ctx, name, r.oldImage)
 
@@ -179,15 +227,40 @@ func (a *Agent) recreate(ctx context.Context, name, targetImage string, opts upd
 		InheritedImages:       a.previousImageConfigs(ctx, name, opts.previous),
 		FreshAnonymousVolumes: removeVolumes,
 	})
-	_, warning, err := a.swaps.Update(ctx, engine.HostUpdate{
+	newID, warning, err := a.swaps.Update(ctx, engine.HostUpdate{
 		Name: name, OldID: cID, Old: inspect, Recreate: rc, RemoveVolumes: removeVolumes,
 	})
 	r.warning = warning
 	if err != nil {
 		return r, err
 	}
+
+	// Post-update hooks run in the new container, with its own labels; a
+	// failure is reported but undoes nothing.
+	if runner != nil {
+		var labels map[string]string
+		if created, err := a.docker.InspectContainer(ctx, newID); err == nil && created.Config != nil {
+			labels = created.Config.Labels
+		}
+		if err := runner.RunPostUpdate(ctx, newID, name, labels); err != nil {
+			a.log.Warn("post-update hook failed", "name", name, "error", err)
+			r.warning = joinWarnings(r.warning, fmt.Sprintf("post-update hook: %v", err))
+		}
+	}
+
 	a.swaps.CleanupOldImage(ctx, inspect.Image, name)
 	return r, nil
+}
+
+// joinWarnings joins two warnings, either of which may be empty.
+func joinWarnings(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return a + "; " + b
 }
 
 // clearLeftover deals with a container already under the set-aside name,

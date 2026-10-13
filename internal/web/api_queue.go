@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
@@ -189,6 +190,11 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, engine.ErrUpdateInProgress) {
 			s.deps.Queue.Add(update)
 			s.deps.Log.Warn("update busy, re-enqueued", "name", name)
+			return
+		}
+		if errors.Is(err, cluster.ErrUpdateSkipped) {
+			// Nothing changed; like a local skip, no history row.
+			s.deps.Log.Info("remote update skipped by a pre-update hook", "name", name, "host", update.HostID)
 			return
 		}
 		if err != nil {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -136,13 +137,23 @@ func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, cont
 	if err != nil {
 		return err
 	}
-	if ur.Outcome != "success" {
-		if ur.Error != "" {
-			return fmt.Errorf("%s", ur.Error)
-		}
-		return fmt.Errorf("update failed")
+	return remoteResultErr(ur, "update")
+}
+
+// remoteResultErr turns an agent's answer to an update or rollback (what)
+// into the caller's error: nil for success, cluster.ErrUpdateSkipped when
+// a pre-update hook asked to skip, else the agent's error.
+func remoteResultErr(ur *proto.UpdateResult, what string) error {
+	switch ur.Outcome {
+	case "success":
+		return nil
+	case "skipped":
+		return fmt.Errorf("%w (exit 75)", cluster.ErrUpdateSkipped)
 	}
-	return nil
+	if ur.Error != "" {
+		return errors.New(ur.Error)
+	}
+	return fmt.Errorf("%s failed", what)
 }
 
 func (a *clusterAdapter) RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error {
@@ -168,13 +179,7 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 	if err != nil {
 		return err
 	}
-	if ur.Outcome != "success" {
-		if ur.Error != "" {
-			return fmt.Errorf("%s", ur.Error)
-		}
-		return fmt.Errorf("rollback failed")
-	}
-	return nil
+	return remoteResultErr(ur, "rollback")
 }
 
 // lastRemoteOldImage returns the old image of the most recent successful
@@ -220,7 +225,28 @@ func (p *remoteUpdatePrep) prepare(ctx context.Context, hostID string, req *prot
 		}
 	}
 	req.PreviousImages = previousImages(p.db, hostID, name, c.ImageDigest)
+	if rollback {
+		// A rollback runs no hooks, as locally.
+		req.SkipHooks = true
+		return nil
+	}
+	req.Hooks = storedHooks(p.db, hostID, name)
 	return nil
+}
+
+// storedHooks returns the lifecycle hooks the hub stores for a remote
+// container (under its host-scoped key), for the agent to run around the
+// update. They win over the container's labels there, as here.
+func storedHooks(db *store.Store, hostID, name string) []*proto.HookSpec {
+	entries, err := db.ListHooks(store.ScopedKey(hostID, name))
+	if err != nil {
+		return nil
+	}
+	out := make([]*proto.HookSpec, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, &proto.HookSpec{Phase: e.Phase, Command: e.Command, TimeoutSeconds: int32(min(max(e.Timeout, 0), 1<<20))}) //nolint:gosec // clamped
+	}
+	return out
 }
 
 // maxPreviousImages bounds the images sent with an update.

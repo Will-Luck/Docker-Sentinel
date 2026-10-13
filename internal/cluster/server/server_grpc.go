@@ -489,7 +489,8 @@ func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *
 	// Route to a pending synchronous caller if one is waiting. If the
 	// caller has given up (it timed out and recorded a failure), this is
 	// still what the agent did: keep it in the history.
-	if ur.RequestId != "" && !s.deliverPending(hostID, ur.RequestId, msg) {
+	// A skipped update changed nothing and leaves no history, as locally.
+	if ur.RequestId != "" && !s.deliverPending(hostID, ur.RequestId, msg) && ur.Outcome != "skipped" {
 		s.recordLateUpdate(hostID, ur)
 	}
 }

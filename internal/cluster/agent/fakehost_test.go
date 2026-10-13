@@ -78,6 +78,11 @@ type fakeHost struct {
 	// imageConfigs holds each image's defaults, by image ID.
 	imageConfigs map[string]*container.Config
 	volumeSeq    int
+	// execs lists each command run in a container, as
+	// "name@image: argv"; execExit gives the exit code of a command, by
+	// its argv joined with spaces.
+	execs    []string
+	execExit map[string]int
 	// createHook, if set, runs once a create has taken effect.
 	createHook func()
 	// tags lists each TagImage call as "source target".
@@ -223,6 +228,7 @@ func newFakeHost() *fakeHost {
 
 		imageConfigs: map[string]*container.Config{},
 		slowStop:     map[string]bool{},
+		execExit:     map[string]int{},
 	}
 }
 
@@ -915,8 +921,22 @@ func (h *fakeHost) ImageDigest(_ context.Context, ref string) (string, error) {
 	return "", fmt.Errorf("No such image: %s", ref)
 }
 
-func (h *fakeHost) ExecContainer(context.Context, string, []string, int) (int, string, error) {
-	return 0, "", nil
+// ExecContainer records the command run in the container (by name, as
+// "name: argv") and exits with execExit for that command, else 0.
+func (h *fakeHost) ExecContainer(_ context.Context, id string, cmd []string, _ int) (int, string, error) {
+	if err := h.tick(); err != nil {
+		return 0, "", err
+	}
+	defer h.late()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c, ok := h.containers[id]
+	if !ok {
+		return 0, "", notFound(id)
+	}
+	line := strings.Join(cmd, " ")
+	h.execs = append(h.execs, c.name+"@"+c.image+": "+line)
+	return h.execExit[line], "", nil
 }
 
 func (h *fakeHost) ContainerLogs(context.Context, string, int) (string, error) { return "", nil }

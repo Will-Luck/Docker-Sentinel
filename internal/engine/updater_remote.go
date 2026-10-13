@@ -205,6 +205,12 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				result.Failed++
 				continue
 			}
+			if ur.Outcome == "skipped" {
+				// A pre-update hook asked to skip it: nothing changed.
+				u.log.Info("remote update skipped by a pre-update hook", "host", host.HostName, "name", c.Name)
+				result.Skipped++
+				continue
+			}
 
 			// Record update in host-scoped history.
 			if err := u.store.RecordUpdate(store.UpdateRecord{

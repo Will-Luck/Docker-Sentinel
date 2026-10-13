@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -342,7 +343,9 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, "")
 			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, targetImage, err)
-			if err != nil {
+			if errors.Is(err, cluster.ErrUpdateSkipped) {
+				s.deps.Log.Info("remote update skipped by a pre-update hook", "name", name, "host", hostID)
+			} else if err != nil {
 				s.deps.Log.Error("remote update failed", "name", name, "host", hostID, "error", err)
 				s.deps.EventBus.Publish(events.SSEEvent{
 					Type:          events.EventContainerUpdate,
@@ -917,7 +920,8 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 // recordRemoteUpdate writes the history row for an "Update now" on a remote
 // container, under the scoped key every remote history row uses.
 func (s *Server) recordRemoteUpdate(start time.Time, hostID, hostName, name, oldImage, newImage string, updateErr error) {
-	if s.deps.Store == nil {
+	// A skipped update changed nothing and leaves no row, as locally.
+	if s.deps.Store == nil || errors.Is(updateErr, cluster.ErrUpdateSkipped) {
 		return
 	}
 	rec := UpdateRecord{

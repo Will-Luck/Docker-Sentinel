@@ -1,6 +1,14 @@
 package cluster
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrUpdateSkipped is returned for a remote update that a pre-update hook
+// asked to skip (exit 75): nothing was changed. Like a local skip, it is
+// neither a success nor a failure.
+var ErrUpdateSkipped = errors.New("a pre-update hook asked to skip the update")
 
 // FeatureCertRenewal is the server feature (StateAck.server_features) that
 // says the server renews agent certificates safely: it keeps the old one

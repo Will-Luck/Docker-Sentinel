@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -215,11 +216,16 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		Duration:      durationpb.New(dur),
 	}
 
-	if err != nil {
+	switch {
+	case errors.Is(err, errSkippedByHook):
+		result.Outcome = "skipped"
+		result.Error = err.Error()
+		a.log.Info("update skipped", "name", name, "reason", err)
+	case err != nil:
 		result.Outcome = "failed"
 		result.Error = err.Error()
 		a.log.Error("update failed", "name", name, "error", err, "duration", dur)
-	} else {
+	default:
 		result.Outcome = "success"
 		result.Error = warning
 		a.log.Info("update succeeded", "name", name, "old_image", oldImage, "new_digest", newDigest, "duration", dur)

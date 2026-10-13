@@ -133,3 +133,58 @@ func TestRemoteUpdatePrep_SendsPreviousImages(t *testing.T) {
 		t.Errorf("previous images = %q, want %q", got, want)
 	}
 }
+
+// The hooks the hub stores for a remote container (its host-scoped key)
+// go to the agent with the update; a rollback runs none, as locally.
+func TestRemoteUpdatePrep_SendsTheStoredHooks(t *testing.T) {
+	p, _ := newTestPrep(t, nil)
+	for _, h := range []store.HookEntry{
+		{ContainerName: store.ScopedKey("h1", "web"), Phase: "pre-update", Command: []string{"/bin/sh", "-c", "pg_dump"}, Timeout: 60},
+		{ContainerName: store.ScopedKey("h1", "web"), Phase: "post-update", Command: []string{"notify"}, Timeout: 30},
+		{ContainerName: "web", Phase: "pre-update", Command: []string{"local-only"}},
+		{ContainerName: store.ScopedKey("h2", "web"), Phase: "pre-update", Command: []string{"other-host"}},
+	} {
+		if err := p.db.SaveHook(h); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	req := &proto.UpdateContainerRequest{ContainerName: "web", TargetImage: "nginx:2"}
+	if err := p.prepare(context.Background(), "h1", req, false); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, h := range req.GetHooks() {
+		got = append(got, fmt.Sprintf("%s %v %d", h.GetPhase(), h.GetCommand(), h.GetTimeoutSeconds()))
+	}
+	want := []string{"post-update [notify] 30", "pre-update [/bin/sh -c pg_dump] 60"}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("hooks sent = %q, want %q", got, want)
+	}
+
+	rb := &proto.UpdateContainerRequest{ContainerName: "web", TargetImage: "nginx:1"}
+	if err := p.prepare(context.Background(), "h1", rb, true); err != nil {
+		t.Fatal(err)
+	}
+	if !rb.GetSkipHooks() || len(rb.GetHooks()) != 0 {
+		t.Errorf("rollback request: skip_hooks %v, hooks %v; want hooks skipped", rb.GetSkipHooks(), rb.GetHooks())
+	}
+}
+
+// An agent's answer becomes the caller's error: none for success, a
+// recognisable one when a pre-update hook asked to skip.
+func TestRemoteResultErr(t *testing.T) {
+	if err := remoteResultErr(&proto.UpdateResult{Outcome: "success", Error: "a warning"}, "update"); err != nil {
+		t.Errorf("success: %v", err)
+	}
+	if err := remoteResultErr(&proto.UpdateResult{Outcome: "skipped", Error: "a pre-update hook asked to skip the update (exit 75)"}, "update"); !errors.Is(err, cluster.ErrUpdateSkipped) {
+		t.Errorf("skipped: %v, want ErrUpdateSkipped", err)
+	}
+	if err := remoteResultErr(&proto.UpdateResult{Outcome: "failed", Error: "pull failed"}, "update"); err == nil || err.Error() != "pull failed" {
+		t.Errorf("failed: %v, want the agent's error", err)
+	}
+	if err := remoteResultErr(&proto.UpdateResult{Outcome: "failed"}, "rollback"); err == nil || err.Error() != "rollback failed" {
+		t.Errorf("failed without detail: %v", err)
+	}
+}

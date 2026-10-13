@@ -19,6 +19,7 @@ type fakeCluster struct {
 	lists     map[string][]RemoteContainer
 	listErr   map[string]error
 	updates   []string // "hostID/name -> target"
+	outcome   string   // the agents' answer to an update; "success" when empty
 }
 
 // tickingClock moves on a millisecond every time it is read.
@@ -57,7 +58,11 @@ func (f *fakeCluster) UpdateContainer(_ context.Context, hostID, name, target, _
 	f.mu.Lock()
 	f.updates = append(f.updates, hostID+"/"+name+" -> "+target)
 	f.mu.Unlock()
-	return RemoteUpdateResult{ContainerName: name, NewImage: target, Outcome: "success"}, nil
+	outcome := f.outcome
+	if outcome == "" {
+		outcome = "success"
+	}
+	return RemoteUpdateResult{ContainerName: name, NewImage: target, Outcome: outcome}, nil
 }
 
 func queuedKeys(u *Updater) map[string]bool {
@@ -182,5 +187,32 @@ func TestScanPrunesRemoteQueueWhenClusterIsOff(t *testing.T) {
 
 	if queuedKeys(u)["h1::web"] {
 		t.Error("remote queued update kept with cluster mode off")
+	}
+}
+
+// A remote update a pre-update hook skipped (exit 75) changed nothing: the
+// scan counts it as skipped, not as an update or a failure, and writes no
+// history row, as for a local container.
+func TestScanRemoteHookSkipIsCountedAsSkipped(t *testing.T) {
+	mock := newMockDocker()
+	mock.distDigests["nginx:latest"] = "sha256:new"
+	u, _ := newTestUpdater(t, mock)
+	u.clock = &tickingClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	u.cfg.SetDefaultPolicy("auto")
+	u.SetClusterScanner(&fakeCluster{
+		connected: []string{"h1"},
+		lists: map[string][]RemoteContainer{"h1": {
+			{Name: "web", Image: "nginx:latest", ImageDigest: "sha256:old", State: "running"},
+		}},
+		outcome: "skipped",
+	})
+
+	res := u.Scan(context.Background(), ScanScheduled)
+
+	if res.Updated != 0 || res.Failed != 0 || res.Skipped != 1 {
+		t.Errorf("updated %d, failed %d, skipped %d; want the skip counted as skipped", res.Updated, res.Failed, res.Skipped)
+	}
+	if recs, _ := u.store.ListHistoryByContainer(store.ScopedKey("h1", "web"), 10); len(recs) != 0 {
+		t.Errorf("history = %+v, want no row for a skipped update", recs)
 	}
 }
