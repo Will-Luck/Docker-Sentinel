@@ -294,8 +294,38 @@ func (s *Store) DeleteUser(id string) error {
 			}
 		}
 
-		return nil
+		return deleteWebAuthnForUser(tx, id, user.WebAuthnUserID)
 	})
+}
+
+// deleteWebAuthnForUser removes a user's passkey credentials, their user
+// index entries and the discoverable-login handle index.
+func deleteWebAuthnForUser(tx *bolt.Tx, userID string, handle []byte) error {
+	wb := tx.Bucket(bucketWebAuthnCreds)
+	if wb == nil {
+		return nil
+	}
+	prefix := webauthnUserIndexPrefix(userID)
+	var keys [][]byte
+	c := wb.Cursor()
+	for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+		keys = append(keys, append([]byte(nil), k...))
+	}
+	for _, k := range keys {
+		credKey := append([]byte(nil), k[len(prefix):]...)
+		if err := wb.Delete(credKey); err != nil {
+			return err
+		}
+		if err := wb.Delete(k); err != nil {
+			return err
+		}
+	}
+	if len(handle) > 0 {
+		if err := wb.Delete(webauthnHandleIndexKey(handle)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ListUsers returns all users (excluding index keys).

@@ -237,6 +237,14 @@ func (s *Store) SetNotificationChannels(channels []notify.Channel) error {
 	})
 }
 
+// Channels migrated from the legacy config get fixed IDs so every read
+// returns the same ones; a random ID per read meant the UI could not match a
+// channel to its stored secrets when saving.
+const (
+	legacyGotifyChannelID  = "legacy-gotify"
+	legacyWebhookChannelID = "legacy-webhook"
+)
+
 // migrateFromLegacy converts old NotificationConfig JSON into Channel entries.
 func migrateFromLegacy(data []byte) []notify.Channel {
 	var legacy NotificationConfig
@@ -252,7 +260,7 @@ func migrateFromLegacy(data []byte) []notify.Channel {
 			Token: legacy.GotifyToken,
 		})
 		channels = append(channels, notify.Channel{
-			ID:       notify.GenerateID(),
+			ID:       legacyGotifyChannelID,
 			Type:     notify.ProviderGotify,
 			Name:     "Gotify",
 			Enabled:  true,
@@ -266,7 +274,7 @@ func migrateFromLegacy(data []byte) []notify.Channel {
 			Headers: legacy.WebhookHeaders,
 		})
 		channels = append(channels, notify.Channel{
-			ID:       notify.GenerateID(),
+			ID:       legacyWebhookChannelID,
 			Type:     notify.ProviderWebhook,
 			Name:     "Webhook",
 			Enabled:  true,
