@@ -1238,6 +1238,15 @@ function loadScannerSettings() {
             if (modeEl) modeEl.value = data.mode || "disabled";
             if (threshEl) threshEl.value = data.threshold || "HIGH";
             if (pathEl) pathEl.value = data.trivy_path || "trivy";
+            var tw = document.getElementById("trivy-warning");
+            if (tw) {
+                var missing = data.mode && data.mode !== "disabled" && data.scanner_available === "false";
+                tw.style.display = missing ? "" : "none";
+                tw.textContent = missing
+                    ? "Trivy was not found at this path inside the container, so images are not scanned. " +
+                      (data.mode === "pre-update" ? "Updates go ahead without the pre-update check." : "Post-update scans do not run.")
+                    : "";
+            }
             if (preview) {
                 if (data.mode === "disabled" || !data.mode) {
                     preview.textContent = "Disabled";

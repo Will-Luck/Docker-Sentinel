@@ -87,6 +87,10 @@ func TestSecretSettingKeysCoverStoredKeys(t *testing.T) {
 				t.Errorf("settings key %q looks like a credential but is not on the secret list", k)
 			}
 		}
+		// The cloud registry settings hold JSON with keys and client secrets.
+		if strings.HasPrefix(k, "cloud_auth_") && !isSensitiveSetting(k) {
+			t.Errorf("settings key %q holds cloud registry credentials but is not on the secret list", k)
+		}
 	}
 }
 

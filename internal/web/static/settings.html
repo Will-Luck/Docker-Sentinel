@@ -416,7 +416,8 @@
                             <div class="setting-row">
                                 <div class="setting-info">
                                     <div class="setting-label">Trivy path</div>
-                                    <div class="setting-desc">Path to the Trivy binary on the host</div>
+                                    <div class="setting-desc">Path to the Trivy binary inside the Sentinel container. Trivy is not part of the Sentinel image: mount a binary into the container or build an image that includes it.</div>
+                                    <div class="setting-desc" id="trivy-warning" style="display:none;color:var(--warning, #b45309)" role="alert"></div>
                                 </div>
                                 <input type="text" id="trivy-path" class="setting-input" placeholder="trivy" style="width:200px">
                             </div>
@@ -1020,6 +1021,37 @@
                         <p class="setting-desc" style="margin-bottom:var(--sp-4)">Auto-discovered from your container images. Add credentials for higher rate limits.</p>
                         <div id="registry-status-table"></div>
                         <div id="registry-warnings" style="margin-top:var(--sp-3)"></div>
+                    </div>
+                </details>
+                <details class="accordion card" id="cloud-auth-card">
+                    <summary class="accordion-header">
+                        <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        <h2>Cloud Registry Logins</h2>
+                        <span class="accordion-preview">AWS ECR, Azure ACR, Google Artifact Registry</span>
+                    </summary>
+                    <div class="accordion-body">
+                        <p class="setting-desc" style="margin-bottom:var(--sp-4)">Sentinel logs in to these registries with short-lived tokens. Secrets are never shown again; leave a secret blank to keep the saved one. Changes apply after Sentinel restarts.</p>
+                        <div class="settings-rows">
+                            <h3 class="setting-label">AWS ECR</h3>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Region</div></div><input type="text" id="cloud-ecr-region" class="setting-input" placeholder="eu-west-2" style="width:220px"></div>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Access key</div></div><input type="text" id="cloud-ecr-access_key" class="setting-input" autocomplete="off" style="width:220px"></div>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Secret key</div><div class="setting-desc" id="cloud-ecr-secret_key-hint"></div></div><input type="password" id="cloud-ecr-secret_key" class="setting-input" autocomplete="new-password" style="width:220px"></div>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Account ID</div><div class="setting-desc">Optional. Limits the login to one account's registry.</div></div><input type="text" id="cloud-ecr-account_id" class="setting-input" style="width:220px"></div>
+                            <div class="setting-row"><div class="setting-info"></div><button class="btn btn-sm btn-secondary" onclick="clearCloudAuth('ecr')">Remove</button></div>
+
+                            <h3 class="setting-label">Azure ACR</h3>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Tenant ID</div></div><input type="text" id="cloud-acr-tenant_id" class="setting-input" style="width:220px"></div>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Client ID</div></div><input type="text" id="cloud-acr-client_id" class="setting-input" style="width:220px"></div>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Client secret</div><div class="setting-desc" id="cloud-acr-client_secret-hint"></div></div><input type="password" id="cloud-acr-client_secret" class="setting-input" autocomplete="new-password" style="width:220px"></div>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Login server</div><div class="setting-desc">For example myregistry.azurecr.io</div></div><input type="text" id="cloud-acr-login_server" class="setting-input" style="width:220px"></div>
+                            <div class="setting-row"><div class="setting-info"></div><button class="btn btn-sm btn-secondary" onclick="clearCloudAuth('acr')">Remove</button></div>
+
+                            <h3 class="setting-label">Google Artifact Registry / GCR</h3>
+                            <div class="setting-row"><div class="setting-info"><div class="setting-label">Service account key (JSON)</div><div class="setting-desc" id="cloud-gcr-service_account_json-hint"></div></div><textarea id="cloud-gcr-service_account_json" class="setting-input" rows="4" autocomplete="off" style="width:320px"></textarea></div>
+                            <div class="setting-row"><div class="setting-info"></div><button class="btn btn-sm btn-secondary" onclick="clearCloudAuth('gcr')">Remove</button></div>
+
+                            <div class="setting-row"><div class="setting-info"></div><button class="btn btn-success" onclick="saveCloudAuth()">Save</button></div>
+                        </div>
                     </div>
                 </details>
                 <details class="accordion card">

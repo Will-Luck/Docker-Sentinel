@@ -9,6 +9,7 @@ var registryData = {};
 var registryCredentials = [];
 
 function loadRegistries() {
+    loadCloudAuth();
     fetch("/api/settings/registries")
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -62,6 +63,7 @@ function renderRegistryStatus() {
 
     var tbody = document.createElement("tbody");
     var warnings = [];
+    var rejected = [];
     registries.sort();
 
     registries.forEach(function(reg) {
@@ -129,7 +131,12 @@ function renderRegistryStatus() {
 
         var tdAuth = document.createElement("td");
         var authBadge = document.createElement("span");
-        if (cred) {
+        if (info.credential_rejected_at) {
+            authBadge.className = "badge badge-error";
+            authBadge.textContent = "Rejected";
+            authBadge.title = "The registry refused the stored login on " + new Date(info.credential_rejected_at).toLocaleString();
+            rejected.push(reg);
+        } else if (cred) {
             authBadge.className = "badge badge-success";
             authBadge.textContent = "\u2713 Yes";
         } else {
@@ -152,6 +159,12 @@ function renderRegistryStatus() {
 
     if (warningsEl) {
         warningsEl.textContent = "";
+        rejected.forEach(function(reg) {
+            var alertDiv = document.createElement("div");
+            alertDiv.className = "alert alert-error";
+            alertDiv.textContent = "\u26a0 " + reg + ": the registry rejected the stored login, so Sentinel is using anonymous access. Update the credential under Manage Credentials.";
+            warningsEl.appendChild(alertDiv);
+        });
         warnings.forEach(function(reg) {
             var alertDiv = document.createElement("div");
             alertDiv.className = "alert alert-warning";
@@ -159,6 +172,70 @@ function renderRegistryStatus() {
             warningsEl.appendChild(alertDiv);
         });
     }
+}
+
+var CLOUD_FIELDS = {
+    ecr: { plain: ["region", "access_key", "account_id"], secret: ["secret_key"] },
+    acr: { plain: ["tenant_id", "client_id", "login_server"], secret: ["client_secret"] },
+    gcr: { plain: [], secret: ["service_account_json"] }
+};
+
+function loadCloudAuth() {
+    fetch("/api/settings/cloud-auth")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            Object.keys(CLOUD_FIELDS).forEach(function(p) {
+                var cfg = data[p] || {};
+                CLOUD_FIELDS[p].plain.forEach(function(f) {
+                    var el = document.getElementById("cloud-" + p + "-" + f);
+                    if (el) el.value = cfg[f] || "";
+                });
+                CLOUD_FIELDS[p].secret.forEach(function(f) {
+                    var hint = document.getElementById("cloud-" + p + "-" + f + "-hint");
+                    if (hint) hint.textContent = cfg[f + "_set"] ? "A value is saved. Leave blank to keep it." : "";
+                });
+            });
+        })
+        .catch(function() {});
+}
+
+function saveCloudAuth() {
+    var body = {};
+    Object.keys(CLOUD_FIELDS).forEach(function(p) {
+        var entry = {};
+        var any = false;
+        CLOUD_FIELDS[p].plain.concat(CLOUD_FIELDS[p].secret).forEach(function(f) {
+            var el = document.getElementById("cloud-" + p + "-" + f);
+            entry[f] = el ? el.value : "";
+            if (entry[f] !== "") any = true;
+        });
+        var hint = CLOUD_FIELDS[p].secret.map(function(f) {
+            var h = document.getElementById("cloud-" + p + "-" + f + "-hint");
+            return h && h.textContent !== "";
+        }).some(Boolean);
+        if (any || hint) body[p] = entry;
+    });
+    fetch("/api/settings/cloud-auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+        .then(function(result) {
+            if (!result.ok) { showToast(result.data.error || "Failed to save", "error"); return; }
+            showToast(result.data.message || "Saved", "success");
+            loadCloudAuth();
+        })
+        .catch(function() { showToast("Network error -- could not save", "error"); });
+}
+
+function clearCloudAuth(provider) {
+    var body = {};
+    body[provider] = null;
+    fetch("/api/settings/cloud-auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+        .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+        .then(function(result) {
+            if (!result.ok) { showToast(result.data.error || "Failed to remove", "error"); return; }
+            showToast("Removed. Restart Sentinel to apply the change.", "success");
+            loadCloudAuth();
+        })
+        .catch(function() { showToast("Network error -- could not remove", "error"); });
 }
 
 function renderRegistryCredentials() {
@@ -412,6 +489,9 @@ if (document.getElementById("rate-limit-status")) {
 
 export {
     loadRegistries,
+    loadCloudAuth,
+    saveCloudAuth,
+    clearCloudAuth,
     addRegistryCredential,
     saveRegistryCredentials,
     updateRateLimitStatus

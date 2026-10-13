@@ -17,6 +17,9 @@ func (s *Server) apiGetRegistryCredentials(w http.ResponseWriter, r *http.Reques
 	type registryInfo struct {
 		Credential *RegistryCredential `json:"credential,omitempty"`
 		RateLimit  *RateLimitStatus    `json:"rate_limit,omitempty"`
+		// CredentialRejectedAt is when the registry last refused the stored
+		// credential, so Settings can say it needs updating.
+		CredentialRejectedAt *time.Time `json:"credential_rejected_at,omitempty"`
 	}
 
 	result := make(map[string]*registryInfo)
@@ -52,6 +55,16 @@ func (s *Server) apiGetRegistryCredentials(w http.ResponseWriter, r *http.Reques
 			stCopy := RateLimitStatus(st)
 			info.RateLimit = &stCopy
 		}
+	}
+
+	for host, at := range rejectedCredentials() {
+		info, ok := result[host]
+		if !ok {
+			info = &registryInfo{}
+			result[host] = info
+		}
+		at := at
+		info.CredentialRejectedAt = &at
 	}
 
 	writeJSON(w, http.StatusOK, result)

@@ -412,6 +412,8 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/settings/notifications", perm(auth.PermSettingsView, s.apiGetNotifications))
 	s.mux.Handle("GET /api/settings/notifications/event-types", perm(auth.PermSettingsView, s.apiNotificationEventTypes))
 	s.mux.Handle("GET /api/settings/notifications/templates", perm(auth.PermSettingsView, s.apiGetNotifyTemplates))
+	s.mux.Handle("GET /api/settings/cloud-auth", perm(auth.PermSettingsView, s.apiGetCloudAuth))
+	s.mux.Handle("POST /api/settings/cloud-auth", perm(auth.PermSettingsModify, s.apiSaveCloudAuth))
 	s.mux.Handle("GET /api/settings/registries", perm(auth.PermSettingsView, s.apiGetRegistryCredentials))
 	s.mux.Handle("GET /api/release-sources", perm(auth.PermSettingsView, s.apiGetReleaseSources))
 	s.mux.Handle("GET /api/ratelimits", perm(auth.PermContainersView, s.apiGetRateLimits))

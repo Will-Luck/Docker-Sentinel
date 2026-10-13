@@ -182,6 +182,9 @@ import {
 
 import {
     loadRegistries,
+    loadCloudAuth,
+    saveCloudAuth,
+    clearCloudAuth,
     addRegistryCredential,
     saveRegistryCredentials,
     updateRateLimitStatus
@@ -378,6 +381,8 @@ window.previewNotifyTemplate = previewNotifyTemplate;
 window.addRegistryCredential = addRegistryCredential;
 window.saveRegistryCredentials = saveRegistryCredentials;
 window.loadRegistries = loadRegistries;
+window.saveCloudAuth = saveCloudAuth;
+window.clearCloudAuth = clearCloudAuth;
 
 // About
 window.addReleaseSource = addReleaseSource;

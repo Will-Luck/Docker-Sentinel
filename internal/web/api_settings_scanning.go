@@ -32,6 +32,12 @@ func (s *Server) apiScannerSettings(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	// Say whether the scanner can run, so the page can warn when scanning is
+	// chosen but Trivy is missing. Only an updater that can tell reports it.
+	if u, ok := s.deps.Updater.(interface{ ScannerAvailable() bool }); ok {
+		result["scanner_available"] = strconv.FormatBool(u.ScannerAvailable())
+	}
+
 	writeJSON(w, http.StatusOK, result)
 }
 

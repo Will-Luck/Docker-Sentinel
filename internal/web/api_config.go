@@ -45,6 +45,9 @@ var sensitiveKeys = map[string]bool{
 	"oidc_client_secret":    true,
 	"npm_password":          true,
 	"enroll_token":          true,
+	"cloud_auth_ecr":        true, // JSON with an access and secret key
+	"cloud_auth_acr":        true, // JSON with a client secret
+	"cloud_auth_gcr":        true, // JSON with a service account key
 }
 
 // validSettingKeys is an allowlist of all setting keys that may be stored.
@@ -121,6 +124,11 @@ var validSettingKeys = map[string]bool{
 	"oidc_redirect_url":  true,
 	"oidc_auto_create":   true,
 	"oidc_default_role":  true,
+
+	// Cloud registry logins.
+	"cloud_auth_ecr": true,
+	"cloud_auth_acr": true,
+	"cloud_auth_gcr": true,
 
 	// Agent/server.
 	"server_addr":  true,
