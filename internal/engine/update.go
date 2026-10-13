@@ -372,23 +372,13 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 					"name", name, "stage", fErr.stage, "error", fErr.err)
 				rbErr = errors.New("the updated container could not be put back under its name")
 			}
-			u.reportRollback(ctx, name, rbErr, start, finaliseErr)
-
-			// Record as failed — never as success.
-			duration := u.clock.Since(start)
-			if recErr := u.store.RecordUpdate(store.UpdateRecord{
-				Timestamp:     u.clock.Now(),
-				ContainerName: name,
-				OldImage:      oldImage,
-				OldDigest:     extractDigestForRecord(inspect),
-				NewImage:      pullImage,
-				NewDigest:     newDigest,
-				Outcome:       "failed",
-				Duration:      duration,
-				Error:         finaliseErr.Error(),
-			}); recErr != nil {
-				u.log.Warn("failed to persist finalise failure record", "name", name, "error", recErr)
-			}
+			// One history row: rolled back, or failed when that failed too.
+			u.reportRollback(ctx, name, rbErr, start, finaliseErr, store.UpdateRecord{
+				OldImage:  oldImage,
+				OldDigest: extractDigestForRecord(inspect),
+				NewImage:  pullImage,
+				NewDigest: newDigest,
+			})
 
 			u.publishEvent(events.EventContainerUpdate, name, "finalise failed, rollback attempted")
 			u.notifier.Notify(ctx, notify.Event{
@@ -674,7 +664,7 @@ func (u *Updater) waitForHealthy(ctx context.Context, id string, wait time.Durat
 // It returns the restore's own error.
 func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapshotData []byte, start time.Time, cause error) error {
 	err := u.restoreOld(ctx, sw, snapshotData)
-	u.reportRollback(ctx, sw.name, err, start, cause)
+	u.reportRollback(ctx, sw.name, err, start, cause, store.UpdateRecord{})
 	return err
 }
 
@@ -768,8 +758,9 @@ func (u *Updater) reportFailedUpdate(ctx context.Context, name, oldImage, newIma
 }
 
 // reportRollback records and notifies the result of rolling a failed update
-// back. rbErr is the rollback's own error; cause is why the update failed.
-func (u *Updater) reportRollback(ctx context.Context, name string, rbErr error, start time.Time, cause error) {
+// back. rbErr is the rollback's own error; cause is why the update failed;
+// record gives the images for the history row.
+func (u *Updater) reportRollback(ctx context.Context, name string, rbErr error, start time.Time, cause error, record store.UpdateRecord) {
 	// Report even when the update was cancelled by a shutdown.
 	ctx = context.WithoutCancel(ctx)
 	reason := "update failed"
@@ -808,10 +799,19 @@ func (u *Updater) reportRollback(ctx context.Context, name string, rbErr error, 
 		u.log.Warn("failed to clear maintenance flag after rollback", "name", name, "error", err)
 	}
 
+	// A rollback that failed leaves the update failed, not rolled back.
+	outcome := "rollback"
+	if rbErr != nil {
+		outcome = "failed"
+	}
 	if err := u.store.RecordUpdate(store.UpdateRecord{
 		Timestamp:     u.clock.Now(),
 		ContainerName: name,
-		Outcome:       "rollback",
+		OldImage:      record.OldImage,
+		OldDigest:     record.OldDigest,
+		NewImage:      record.NewImage,
+		NewDigest:     record.NewDigest,
+		Outcome:       outcome,
 		Duration:      u.clock.Since(start),
 		Error:         reason,
 	}); err != nil {

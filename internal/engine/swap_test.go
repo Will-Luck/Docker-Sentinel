@@ -151,8 +151,8 @@ func TestUpdateContainerDoesNotRebuildWhileOldContainerExists(t *testing.T) {
 		t.Errorf("restore attempts = %d, want 2 (one retry): ops=%v", renames, mock.ops)
 	}
 	history, _ := u.store.ListHistory(10, "")
-	if len(history) == 0 || history[0].Outcome != "rollback" || !strings.Contains(history[0].Error, "rollback failed") {
-		t.Errorf("history = %+v, want a rollback record saying the rollback failed", history)
+	if len(history) == 0 || history[0].Outcome != "failed" || !strings.Contains(history[0].Error, "rollback failed") {
+		t.Errorf("history = %+v, want a failed record saying the rollback failed", history)
 	}
 }
 

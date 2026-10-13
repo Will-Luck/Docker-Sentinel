@@ -45,8 +45,8 @@ func TestUpdateContainerRestoreFailureIsReportedNotRebuilt(t *testing.T) {
 		t.Errorf("old container gone: %v", f.names())
 	}
 	history, _ := u.store.ListHistory(10, "")
-	if len(history) == 0 || history[0].Outcome != "rollback" || !strings.Contains(history[0].Error, "rollback failed") {
-		t.Errorf("history = %+v, want a rollback record saying the rollback failed", history)
+	if len(history) == 0 || history[0].Outcome != "failed" || !strings.Contains(history[0].Error, "rollback failed") {
+		t.Errorf("history = %+v, want a failed record saying the rollback failed", history)
 	}
 }
 

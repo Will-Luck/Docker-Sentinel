@@ -2,8 +2,10 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -86,5 +88,20 @@ func TestPostUpdateHooksRunInTheFinalContainer(t *testing.T) {
 	final := f.byName("app")
 	if final == nil || len(f.execCalls) != 1 || f.execCalls[0] != final.id {
 		t.Errorf("hook ran in %v, want only the final container %v (%v)", f.execCalls, final, f.names())
+	}
+}
+
+// A rollback that itself failed is recorded as failed, not as a rollback.
+func TestFailedRollbackIsRecordedAsFailed(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, true, nil)
+	f.failStart["app-1"] = errors.New("OCI error")
+	f.failStart["old"] = errors.New("port is already allocated")
+
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err == nil {
+		t.Fatal("expected the update to fail")
+	}
+	history, _ := u.store.ListHistoryByContainer("app", 10)
+	if len(history) != 1 || history[0].Outcome != "failed" || !strings.Contains(history[0].Error, "rollback failed") {
+		t.Errorf("history = %+v, want one failed row saying the rollback failed", history)
 	}
 }
