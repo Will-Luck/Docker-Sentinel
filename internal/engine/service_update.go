@@ -181,10 +181,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		if existing != nil && existing.FirstSeen.After(time.Time{}) {
 			firstSeen = existing.FirstSeen
 		}
-		lastNotified := time.Time{}
-		if existing != nil {
-			lastNotified = existing.LastNotified
-		}
+		lastNotified := carriedLastNotified(existing, check.RemoteDigest)
 		if notifyOK {
 			lastNotified = now
 		}

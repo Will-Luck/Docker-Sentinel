@@ -765,10 +765,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		if existing != nil && existing.FirstSeen.After(time.Time{}) {
 			firstSeen = existing.FirstSeen
 		}
-		lastNotified := time.Time{}
-		if existing != nil {
-			lastNotified = existing.LastNotified
-		}
+		lastNotified := carriedLastNotified(existing, check.RemoteDigest)
 		if notifyOK {
 			lastNotified = now
 		}
@@ -1055,4 +1052,14 @@ func (u *Updater) orderByDependencies(containers []container.Summary) []containe
 		ordered = append(ordered, byName[name])
 	}
 	return ordered
+}
+
+// carriedLastNotified returns the previous notification time only when it was
+// for the same digest. A new digest whose delivery failed starts unnotified,
+// so the next scan tries again instead of treating it as announced.
+func carriedLastNotified(existing *store.NotifyState, digest string) time.Time {
+	if existing != nil && existing.LastDigest == digest {
+		return existing.LastNotified
+	}
+	return time.Time{}
 }

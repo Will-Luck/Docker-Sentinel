@@ -45,3 +45,21 @@ func TestEveryScanContainersAreNotInTheDigest(t *testing.T) {
 		t.Error("default and digest_only containers belong in the digest")
 	}
 }
+
+// Notified about digest A, then the tag moves to B while every channel is
+// down: B must be retried on the next scan, not treated as already notified.
+func TestFailedDeliveryOfNewDigestIsRetried(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	existing := &store.NotifyState{LastDigest: "A", LastNotified: now.Add(-24 * time.Hour)}
+
+	// The scan that sees B and fails to deliver.
+	saved := &store.NotifyState{LastDigest: "B", LastNotified: carriedLastNotified(existing, "B")}
+	if !shouldNotifyUpdate("default", saved, "B", now) {
+		t.Fatal("B was not retried: the old notification time suppressed it")
+	}
+
+	// The same digest keeps its record so it is not announced twice.
+	if got := carriedLastNotified(existing, "A"); !got.Equal(existing.LastNotified) {
+		t.Errorf("same digest lost its LastNotified: %v", got)
+	}
+}

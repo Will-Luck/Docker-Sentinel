@@ -386,7 +386,7 @@ func (u *Updater) announceRemoteUpdate(ctx context.Context, key, label string, c
 		if !existing.FirstSeen.IsZero() {
 			state.FirstSeen = existing.FirstSeen
 		}
-		state.LastNotified = existing.LastNotified
+		state.LastNotified = carriedLastNotified(existing, check.RemoteDigest)
 		state.SnoozedUntil = existing.SnoozedUntil
 	}
 	if notifyOK {
