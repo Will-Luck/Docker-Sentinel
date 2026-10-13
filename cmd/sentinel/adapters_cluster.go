@@ -147,20 +147,25 @@ func (a *clusterAdapter) DiscardRemoteSwap(ctx context.Context, hostID, name str
 
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
 	hostName, oldImage := hostID, ""
+	var labels map[string]string
 	if hs, ok := a.srv.GetHost(hostID); ok {
 		hostName = hs.Info.Name
 		for _, c := range hs.Containers {
 			if c.Name == containerName {
-				oldImage = c.Image
+				oldImage, labels = c.Image, c.Labels
 			}
 		}
 	}
-	if a.updater != nil {
+	// An update whose image cannot be verified at all is refused before
+	// anything is sent, and, as a local one, without notifications (the
+	// dispatch below returns the refusal).
+	announce := a.updater != nil && !engine.IsUnverifiable(a.updater.RemoteRefusal(labels))
+	if announce {
 		a.updater.NotifyRemote(ctx, hostName, containerName, oldImage, nil)
 	}
 	// The dashboard and the API record the history row themselves.
 	ur, err := a.srv.UpdateContainerSync(clusterserver.WithCallerRecords(ctx), hostID, containerName, targetImage, targetDigest)
-	if a.updater != nil {
+	if announce {
 		res := engine.RemoteUpdateResult{Outcome: "failed", NewImage: targetImage}
 		if err != nil {
 			res.Error = err.Error()

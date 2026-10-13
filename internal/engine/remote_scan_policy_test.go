@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 )
 
 func (c *tickingClock) Advance(d time.Duration) {
@@ -365,5 +367,48 @@ func TestScanRemoteRollbackNotifiesAndAppliesTheRollbackPolicy(t *testing.T) {
 	}
 	if p, ok := u.store.GetPolicyOverride(store.ScopedKey("h1", "web")); !ok || p != "pinned" {
 		t.Errorf("policy override = %q (%v), want pinned after the rollback", p, ok)
+	}
+}
+
+// smoke F12: when the signature gate refused a remote update (enforce, and
+// cosign not available), the hub sent "update started" and "update failed"
+// for that container on its own. A refused remote update now joins the one
+// notification a scan sends for all the updates it refused, with a failed
+// history row, as a local one does.
+func TestScanRemoteUnverifiableRefusalJoinsTheCombinedNotification(t *testing.T) {
+	u, pc, _ := remotePolicyFixture(t, nil)
+	// Enforce, saved in the dashboard; no verifier: cosign is not available.
+	if err := u.store.SaveSetting(store.SettingVerifyMode, string(verify.ModeEnforce)); err != nil {
+		t.Fatal(err)
+	}
+	cn := &capturingNotifier{}
+	u.notifier = notify.NewMulti(u.log, cn)
+
+	res := u.Scan(context.Background(), ScanScheduled)
+
+	if len(pc.updates) != 0 {
+		t.Errorf("updates sent = %q, want none", pc.updates)
+	}
+	cn.mu.Lock()
+	var refused []notify.Event
+	for _, e := range cn.events {
+		switch e.Type {
+		case notify.EventUpdateStarted:
+			t.Errorf("an update_started notification was sent for a refused update: %+v", e)
+		case notify.EventUpdateFailed:
+			refused = append(refused, e)
+		}
+	}
+	cn.mu.Unlock()
+	if len(refused) != 1 || len(refused[0].ContainerNames) != 1 || refused[0].ContainerNames[0] != "web on name-h1" ||
+		!strings.Contains(refused[0].Error, "1 update(s) were refused") {
+		t.Errorf("failure notifications = %+v, want one combined one naming web on name-h1", refused)
+	}
+	recs, _ := u.store.ListHistoryByContainer(store.ScopedKey("h1", "web"), 5)
+	if len(recs) != 1 || recs[0].Outcome != "failed" || recs[0].HostID != "h1" || !strings.Contains(recs[0].Error, "cosign") {
+		t.Errorf("history = %+v, want one failed row for h1 giving the reason", recs)
+	}
+	if res.Failed != 1 {
+		t.Errorf("failed = %d, want 1", res.Failed)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -258,6 +259,16 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 					result.Skipped++
 					continue
 				}
+			}
+
+			// An image that cannot be verified at all (enforce mode with no
+			// cosign, or keyless with no identity) is refused here, before
+			// anything is sent: a failed row, and one notification per scan
+			// for every refused update (notifyUnverifiable), as locally.
+			if reason := u.unverifiable(u.verifyModeFor(c.Labels)); reason != nil {
+				result.Errors = append(result.Errors, u.refuseRemoteUnverifiable(hostID, host, c, scanTarget, label, reason))
+				result.Failed++
+				continue
 			}
 
 			// Dispatch update to the remote agent.
@@ -530,6 +541,42 @@ func (u *Updater) dropQueued(key, why string) {
 	u.publishEvent(events.EventQueueChange, key, "removed: "+why)
 }
 
+// RemoteRefusal returns why the signature gate refuses any update of a
+// remote container with labels before a check is even tried (enforce mode
+// with no cosign, or keyless with no identity), or nil.
+func (u *Updater) RemoteRefusal(labels map[string]string) error {
+	return u.unverifiable(u.verifyModeFor(labels))
+}
+
+// IsUnverifiable reports whether err is such a refusal.
+func IsUnverifiable(err error) bool {
+	return errors.Is(err, ErrVerifierUnavailable) || errors.Is(err, ErrKeylessIdentityMissing)
+}
+
+// refuseRemoteUnverifiable records the update of a remote container that
+// the signature gate refused for reason (see unverifiable), and returns the
+// error that names it, under label, in the scan's combined notification.
+func (u *Updater) refuseRemoteUnverifiable(hostID string, host HostContext, c RemoteContainer, target, label string, reason error) error {
+	key := store.ScopedKey(hostID, c.Name)
+	u.log.Warn("refusing the remote update: the image signature cannot be checked", "host", host.HostName, "name", c.Name, "image", target, "reason", reason)
+	if err := u.store.RecordUpdate(store.UpdateRecord{
+		Timestamp:     u.clock.Now(),
+		ContainerName: key,
+		OldImage:      c.Image,
+		OldDigest:     c.ImageDigest,
+		NewImage:      target,
+		Outcome:       "failed",
+		Error:         reason.Error(),
+		HostID:        hostID,
+		HostName:      host.HostName,
+	}); err != nil {
+		u.log.Warn("failed to persist the refused update", "name", key, "error", err)
+	}
+	metrics.UpdatesTotal.WithLabelValues("failed").Inc()
+	u.publishEvent(events.EventContainerUpdate, key, "update failed: "+reason.Error())
+	return &unverifiableError{name: label, reason: reason}
+}
+
 // VerifyRemoteImage applies the signature gate of a local update (the
 // container's sentinel.verify label, else the global mode) to image, which
 // an agent is about to update the remote container name to. The hub checks
@@ -538,15 +585,14 @@ func (u *Updater) dropQueued(key, why string) {
 // enforce, or the mode is enforce and cosign is not available.
 func (u *Updater) VerifyRemoteImage(ctx context.Context, name string, labels map[string]string, image string) error {
 	mode := u.verifyModeFor(labels)
+	if reason := u.unverifiable(mode); reason != nil {
+		u.log.Warn("refusing the remote update: the image signature cannot be checked", "name", name, "image", image, "reason", reason)
+		return &unverifiableError{name: name, reason: reason}
+	}
 	switch {
 	case mode == verify.ModeDisabled:
 		return nil
 	case u.imgVerifier == nil:
-		if mode == verify.ModeEnforce {
-			u.log.Warn("signature verification is set to enforce but cosign is not available, refusing the remote update",
-				"name", name, "image", image)
-			return fmt.Errorf("update %s: %w", name, ErrVerifierUnavailable)
-		}
 		u.log.Warn("signature verification is set to warn but cosign is not available, updating without a signature check",
 			"name", name, "image", image)
 		return nil

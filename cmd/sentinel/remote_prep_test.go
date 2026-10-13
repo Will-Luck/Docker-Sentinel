@@ -210,3 +210,17 @@ func TestAgentEnvSettings(t *testing.T) {
 		t.Errorf("env settings = %v, want image_cleanup and hooks_enabled only", got)
 	}
 }
+
+// A remote update refused by the signature gate before anything is tried
+// (enforce, no cosign) sends no started or failed notification from the
+// dashboard path, as a local one sends none.
+func TestRemoteRefusal(t *testing.T) {
+	_, u := newTestPrep(t, nil)
+	if engine.IsUnverifiable(u.RemoteRefusal(nil)) {
+		t.Error("refused with verification off")
+	}
+	u.SetVerifyMode(verify.ModeEnforce)
+	if !engine.IsUnverifiable(u.RemoteRefusal(nil)) {
+		t.Error("not refused under enforce without cosign")
+	}
+}
