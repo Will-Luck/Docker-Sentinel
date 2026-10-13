@@ -43,9 +43,10 @@ type mockDocker struct {
 	removeCalls []string
 	removeErr   map[string]error
 
-	createResult  map[string]string // name -> id
-	createErr     map[string]error
-	createConfigs map[string]*container.Config
+	createResult     map[string]string // name -> id
+	createErr        map[string]error
+	createConfigs    map[string]*container.Config
+	createNetConfigs map[string]*network.NetworkingConfig
 
 	startCalls []string
 	startErr   map[string]error
@@ -84,6 +85,7 @@ func newMockDocker() *mockDocker {
 		createResult:      make(map[string]string),
 		createErr:         make(map[string]error),
 		createConfigs:     make(map[string]*container.Config),
+		createNetConfigs:  make(map[string]*network.NetworkingConfig),
 		startErr:          make(map[string]error),
 		restartErr:        make(map[string]error),
 		renameErr:         make(map[string]error),
@@ -139,12 +141,13 @@ func (m *mockDocker) RemoveContainer(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
+func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *container.Config, _ *container.HostConfig, netCfg *network.NetworkingConfig) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if cfg != nil {
 		m.createConfigs[name] = cfg
 	}
+	m.createNetConfigs[name] = netCfg
 	if err, ok := m.createErr[name]; ok {
 		return "", err
 	}
@@ -855,88 +858,68 @@ func TestConfigFromInspect(t *testing.T) {
 	}
 }
 
-func TestBuildNetworkPlanSingleNetwork(t *testing.T) {
-	ns := &container.NetworkSettings{
-		Networks: map[string]*network.EndpointSettings{
-			"app_net": {NetworkID: "net-1", Aliases: []string{"app"}},
-		},
-	}
-
-	plan := buildNetworkPlan(ns)
-	if plan.primary == nil {
-		t.Fatal("expected non-nil primary")
-	}
-	if len(plan.primary.EndpointsConfig) != 1 {
-		t.Errorf("expected 1 primary endpoint, got %d", len(plan.primary.EndpointsConfig))
-	}
-	if len(plan.extras) != 0 {
-		t.Errorf("expected 0 extras, got %d", len(plan.extras))
+func inspectOn(mode string, nets map[string]*network.EndpointSettings) *container.InspectResponse {
+	return &container.InspectResponse{
+		ID:              "0123456789abcdef",
+		HostConfig:      &container.HostConfig{NetworkMode: container.NetworkMode(mode)},
+		NetworkSettings: &container.NetworkSettings{Networks: nets},
 	}
 }
 
-func TestBuildNetworkPlanMultiNetwork(t *testing.T) {
-	ns := &container.NetworkSettings{
-		Networks: map[string]*network.EndpointSettings{
-			"app_net":     {NetworkID: "net-1"},
-			"monitor_net": {NetworkID: "net-2"},
-		},
+func TestRecreateEndpointsEveryNetwork(t *testing.T) {
+	cfg := recreateEndpoints(inspectOn("app_net", map[string]*network.EndpointSettings{
+		"app_net":     {NetworkID: "net-1", Aliases: []string{"app"}},
+		"monitor_net": {NetworkID: "net-2"},
+	}))
+	if cfg == nil || len(cfg.EndpointsConfig) != 2 {
+		t.Fatalf("endpoints = %+v, want both networks", cfg)
 	}
-
-	plan := buildNetworkPlan(ns)
-	if plan.primary == nil {
-		t.Fatal("expected non-nil primary")
-	}
-	if len(plan.primary.EndpointsConfig) != 1 {
-		t.Errorf("expected exactly 1 primary endpoint, got %d", len(plan.primary.EndpointsConfig))
-	}
-	if len(plan.extras) != 1 {
-		t.Errorf("expected 1 extra network, got %d", len(plan.extras))
+	if got := cfg.EndpointsConfig["app_net"].Aliases; len(got) != 1 || got[0] != "app" {
+		t.Errorf("app_net aliases = %v, want [app]", got)
 	}
 }
 
-func TestBuildNetworkPlanSkipsBridge(t *testing.T) {
-	ns := &container.NetworkSettings{
-		Networks: map[string]*network.EndpointSettings{
-			"bridge":  {NetworkID: "net-0"},
-			"app_net": {NetworkID: "net-1"},
-		},
+func TestRecreateEndpointsSkipsDefaultBridge(t *testing.T) {
+	cfg := recreateEndpoints(inspectOn("bridge", map[string]*network.EndpointSettings{
+		"bridge":  {NetworkID: "net-0"},
+		"app_net": {NetworkID: "net-1"},
+	}))
+	if _, ok := cfg.EndpointsConfig["bridge"]; ok {
+		t.Error("default bridge given an endpoint although it is the network mode")
 	}
-
-	plan := buildNetworkPlan(ns)
-	if plan.primary == nil {
-		t.Fatal("expected non-nil primary")
-	}
-	if _, ok := plan.primary.EndpointsConfig["bridge"]; ok {
-		t.Error("bridge should not be in primary")
-	}
-	if _, ok := plan.primary.EndpointsConfig["app_net"]; !ok {
-		t.Error("app_net should be the primary")
-	}
-	if len(plan.extras) != 0 {
-		t.Errorf("expected 0 extras (bridge skipped), got %d", len(plan.extras))
+	if _, ok := cfg.EndpointsConfig["app_net"]; !ok {
+		t.Error("app_net missing")
 	}
 }
 
-func TestBuildNetworkPlanNilSettings(t *testing.T) {
-	plan := buildNetworkPlan(nil)
-	if plan.primary != nil {
-		t.Errorf("expected nil primary for nil settings, got %v", plan.primary)
+// A container whose primary network is a user network but that was also
+// attached to the default bridge keeps the bridge, without aliases (the
+// default bridge refuses them).
+func TestRecreateEndpointsKeepsBridgeWhenNotTheMode(t *testing.T) {
+	cfg := recreateEndpoints(inspectOn("app_net", map[string]*network.EndpointSettings{
+		"bridge":  {NetworkID: "net-0", Aliases: []string{"x"}},
+		"app_net": {NetworkID: "net-1"},
+	}))
+	br, ok := cfg.EndpointsConfig["bridge"]
+	if !ok {
+		t.Fatal("default bridge dropped")
 	}
-	if len(plan.extras) != 0 {
-		t.Errorf("expected 0 extras, got %d", len(plan.extras))
+	if len(br.Aliases) != 0 {
+		t.Errorf("bridge aliases = %v, want none", br.Aliases)
 	}
 }
 
-func TestBuildNetworkPlanBridgeOnly(t *testing.T) {
-	ns := &container.NetworkSettings{
-		Networks: map[string]*network.EndpointSettings{
-			"bridge": {},
-		},
+func TestRecreateEndpointsNone(t *testing.T) {
+	if cfg := recreateEndpoints(&container.InspectResponse{}); cfg != nil {
+		t.Errorf("no network settings: got %+v, want nil", cfg)
 	}
-
-	plan := buildNetworkPlan(ns)
-	if plan.primary != nil {
-		t.Errorf("expected nil primary when only bridge, got %v", plan.primary)
+	if cfg := recreateEndpoints(inspectOn("bridge", map[string]*network.EndpointSettings{"bridge": {}})); cfg != nil {
+		t.Errorf("bridge only: got %+v, want nil", cfg)
+	}
+	for _, mode := range []string{"host", "none", "container:abc"} {
+		if cfg := recreateEndpoints(inspectOn(mode, map[string]*network.EndpointSettings{mode: {}})); cfg != nil {
+			t.Errorf("network mode %s: got %+v, want nil", mode, cfg)
+		}
 	}
 }
 
@@ -1093,6 +1076,7 @@ func TestSelfUpdateMultiNetwork(t *testing.T) {
 	mock := newMockDocker()
 	mock.containers = []container.Summary{sentinelSummary("s-1", "sentinel-agent", "sentinel:v1")}
 	inspect := sentinelInspect("sentinel:v1")
+	inspect.HostConfig.NetworkMode = "app_net" // a host-network container has no other networks
 	inspect.NetworkSettings = &container.NetworkSettings{
 		Networks: map[string]*network.EndpointSettings{
 			"app_net":     {},
@@ -1107,9 +1091,12 @@ func TestSelfUpdateMultiNetwork(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// One network in create's NetworkingConfig, one via NetworkConnect.
-	if len(mock.networkConnectCalls) != 1 {
-		t.Fatalf("expected 1 NetworkConnect call for second network, got %d", len(mock.networkConnectCalls))
+	// Both networks are given at create; none is attached afterwards.
+	if len(mock.networkConnectCalls) != 0 {
+		t.Errorf("expected no NetworkConnect calls, got %v", mock.networkConnectCalls)
+	}
+	if cfg := mock.createNetConfigs["sentinel-agent"]; cfg == nil || len(cfg.EndpointsConfig) != 2 {
+		t.Errorf("replacement created with networks %+v, want both", cfg)
 	}
 }
 

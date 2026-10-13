@@ -180,7 +180,7 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 }
 
 // recreateSpec is everything needed to create a container like an existing
-// one: the config to create it with and the networks to attach.
+// one: its config and its networks.
 //
 // buildRecreateSpec is the one place the agent turns an inspected container
 // into create parameters. The local engine's config helpers (sanitising for
@@ -189,28 +189,18 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 type recreateSpec struct {
 	cfg     *container.Config
 	hostCfg *container.HostConfig
-	nets    networkPlan
+	netCfg  *network.NetworkingConfig
 }
 
 func buildRecreateSpec(inspect *container.InspectResponse, image string) recreateSpec {
 	cfg, hostCfg := configFromInspect(inspect, image)
-	return recreateSpec{cfg: cfg, hostCfg: hostCfg, nets: buildNetworkPlan(inspect.NetworkSettings)}
+	return recreateSpec{cfg: cfg, hostCfg: hostCfg, netCfg: recreateEndpoints(inspect)}
 }
 
-// createFromSpec creates a container named name from spec and connects its
-// extra networks. A failed network connect is logged, not fatal: the
-// container can run without its secondary networks.
+// createFromSpec creates a container named name from spec, attached to all
+// of its networks.
 func (a *Agent) createFromSpec(ctx context.Context, name string, spec recreateSpec) (string, error) {
-	id, err := a.docker.CreateContainer(ctx, name, spec.cfg, spec.hostCfg, spec.nets.primary)
-	if err != nil {
-		return "", err
-	}
-	for _, netName := range spec.nets.extras {
-		if err := a.docker.NetworkConnect(ctx, netName, id); err != nil {
-			a.log.Error("extra network connect failed", "container", name, "network", netName, "error", err)
-		}
-	}
-	return id, nil
+	return a.docker.CreateContainer(ctx, name, spec.cfg, spec.hostCfg, spec.netCfg)
 }
 
 // parkedContainer is an old container moved aside during a recreate.
@@ -285,58 +275,67 @@ func (a *Agent) recreateRemoved(ctx context.Context, old parkedContainer) {
 	}
 }
 
-// networkPlan separates a container's networks into a primary (for
-// CreateContainer) and extras (for subsequent NetworkConnect calls).
-// Docker API 1.44+ rejects creation with multiple endpoints, so only
-// one can go in the NetworkingConfig. Bridge is skipped entirely as
-// Docker attaches it automatically. Only user-specified fields (IPAM,
-// aliases, driver opts) are copied; runtime fields (Gateway, IPAddress)
-// would conflict on the new container.
-type networkPlan struct {
-	primary *network.NetworkingConfig
-	extras  []string // network names to connect after create
-}
-
-func buildNetworkPlan(ns *container.NetworkSettings) networkPlan {
-	var plan networkPlan
-	if ns == nil {
-		return plan
+// recreateEndpoints gives every network a container is on, with the
+// endpoint settings the user chose (static IP, aliases, MAC address, driver
+// options, links), so the recreated container rejoins each network the
+// same way. Sentinel needs Docker API 1.44 or later, which takes several
+// endpoints at create; attaching networks afterwards would drop their
+// settings. The container's primary network stays HostConfig.NetworkMode.
+// Runtime fields (Gateway, IPAddress, DNSNames) are left out, and so is the
+// alias Docker gives a container from its own short ID, which would point
+// at the old container's ID. The default bridge needs no endpoint when it
+// is the network mode, and a container that shares another network stack
+// (host, none, container:X) has none.
+func recreateEndpoints(inspect *container.InspectResponse) *network.NetworkingConfig {
+	ns := inspect.NetworkSettings
+	if ns == nil || len(ns.Networks) == 0 {
+		return nil
 	}
+	var mode string
+	if inspect.HostConfig != nil {
+		mode = string(inspect.HostConfig.NetworkMode)
+	}
+	if mode == "host" || mode == "none" || strings.HasPrefix(mode, "container:") {
+		return nil
+	}
+	defaultBridge := mode == "" || mode == "default" || mode == "bridge"
+	oldShortID := truncateID(inspect.ID)
 
-	var primaryName string
-	for netName := range ns.Networks {
-		if netName == "bridge" {
+	eps := make(map[string]*network.EndpointSettings, len(ns.Networks))
+	for netName, ep := range ns.Networks {
+		if netName == "bridge" && defaultBridge {
 			continue
 		}
-		if primaryName == "" {
-			primaryName = netName
-		} else {
-			plan.extras = append(plan.extras, netName)
+		if ep == nil {
+			ep = &network.EndpointSettings{}
 		}
-	}
-
-	if primaryName != "" {
-		ep := ns.Networks[primaryName]
-		plan.primary = &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				primaryName: {
-					IPAMConfig: ep.IPAMConfig,
-					Aliases:    ep.Aliases,
-					DriverOpts: ep.DriverOpts,
-					NetworkID:  ep.NetworkID,
-					MacAddress: ep.MacAddress,
-				},
-			},
+		settings := &network.EndpointSettings{
+			IPAMConfig: ep.IPAMConfig,
+			Links:      ep.Links,
+			DriverOpts: ep.DriverOpts,
+			NetworkID:  ep.NetworkID,
+			MacAddress: ep.MacAddress,
 		}
+		// The default bridge takes no aliases.
+		if netName != "bridge" {
+			for _, alias := range ep.Aliases {
+				if alias != oldShortID {
+					settings.Aliases = append(settings.Aliases, alias)
+				}
+			}
+		}
+		eps[netName] = settings
 	}
-
-	return plan
+	if len(eps) == 0 {
+		return nil
+	}
+	return &network.NetworkingConfig{EndpointsConfig: eps}
 }
 
 // configFromInspect extracts container creation parameters from an
 // InspectResponse, replacing the image with targetImage. This preserves
 // env vars, volumes, ports, and all other configuration from the original
-// container. Network config is handled separately via buildNetworkPlan.
+// container. Network config is handled separately by recreateEndpoints.
 func configFromInspect(inspect *container.InspectResponse, targetImage string) (*container.Config, *container.HostConfig) {
 	cfgCopy := *inspect.Config
 	cfgCopy.Image = targetImage
@@ -349,12 +348,12 @@ func configFromInspect(inspect *container.InspectResponse, targetImage string) (
 //  1. Inspect to capture full config
 //  2. Pull the new image
 //  3. Rename self out of the way (container keeps running)
-//  4. Create new container with original name + new image
-//  5. Connect extra networks beyond the primary
-//  6. Start the new container
-//  7. Old agent exits naturally (the new container takes over)
+//  4. Create new container with original name + new image, on all of the
+//     old container's networks
+//  5. Start the new container
+//  6. Old agent exits naturally (the new container takes over)
 //
-// On failure at step 4 or 6, the old container is renamed back.
+// On failure at step 4 or 5, the old container is renamed back.
 // selfUpdateResult extends the standard update return values with the old
 // container ID, so the caller can stop/remove it after reporting success.
 type selfUpdateResult struct {
@@ -399,8 +398,7 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 		return r, fmt.Errorf("rename self: %w", err)
 	}
 
-	// Create new container with the original name, then connect extra
-	// networks beyond the primary.
+	// Create new container with the original name.
 	a.log.Info("self-update: creating replacement", "name", name, "image", targetImage)
 	newID, err := a.createFromSpec(ctx, name, buildRecreateSpec(&inspect, targetImage))
 	if err != nil {

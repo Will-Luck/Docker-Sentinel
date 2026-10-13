@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 )
@@ -340,4 +342,66 @@ func TestHandleUpdateContainer_SecondUpdateOfSameContainerFailsFast(t *testing.T
 		t.Fatalf("first update: %q (%s)", r.ur.GetOutcome(), r.ur.GetError())
 	}
 	h.requireOnly(t, "web", "nginx:2", true)
+}
+
+// --- Networks ---
+
+// A container on several networks must keep, on every one of them, the
+// static IP, aliases and MAC address the user gave it. Docker adds the
+// container's own short ID as an alias; that must not follow it.
+func TestRecreateContainer_KeepsEveryNetworksSettings(t *testing.T) {
+	const oldID = "0123456789abcdef0123456789abcdef"
+	mock := newMockDocker()
+	mock.containers = []container.Summary{{ID: oldID, Names: []string{"/web"}, Image: "nginx:1", State: container.StateRunning}}
+	mock.inspectResults[oldID] = container.InspectResponse{
+		ID:         oldID,
+		State:      &container.State{Running: true},
+		Config:     &container.Config{Image: "nginx:1"},
+		HostConfig: &container.HostConfig{NetworkMode: "app_net"},
+		NetworkSettings: &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+			"app_net": {
+				IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: netip.MustParseAddr("10.10.0.5")},
+				Aliases:    []string{"web", "0123456789ab"},
+				NetworkID:  "net-app",
+			},
+			"monitor_net": {
+				IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: netip.MustParseAddr("10.20.0.5")},
+				Aliases:    []string{"web-metrics", "0123456789ab"},
+				NetworkID:  "net-mon",
+			},
+		}},
+	}
+	a := newTestAgent(t.TempDir(), mock)
+
+	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err != nil {
+		t.Fatalf("recreateContainer: %v", err)
+	}
+
+	if len(mock.networkConnectCalls) != 0 {
+		t.Errorf("networks attached after create (settings dropped): %v", mock.networkConnectCalls)
+	}
+	netCfg := mock.createNetConfigs["web"]
+	if netCfg == nil {
+		t.Fatal("replacement created with no network settings")
+	}
+	want := map[string]struct {
+		ip      string
+		aliases []string
+	}{
+		"app_net":     {"10.10.0.5", []string{"web"}},
+		"monitor_net": {"10.20.0.5", []string{"web-metrics"}},
+	}
+	for name, w := range want {
+		ep := netCfg.EndpointsConfig[name]
+		if ep == nil {
+			t.Errorf("network %s missing at create", name)
+			continue
+		}
+		if ep.IPAMConfig == nil || ep.IPAMConfig.IPv4Address.String() != w.ip {
+			t.Errorf("network %s: static IP %+v, want %s", name, ep.IPAMConfig, w.ip)
+		}
+		if fmt.Sprint(ep.Aliases) != fmt.Sprint(w.aliases) {
+			t.Errorf("network %s: aliases %v, want %v", name, ep.Aliases, w.aliases)
+		}
+	}
 }
