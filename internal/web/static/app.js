@@ -2588,7 +2588,7 @@
     }
   }
   function isActionFailure(message) {
-    return typeof message === "string" && /\bfailed\b/.test(message);
+    return typeof message === "string" && /^(stop|start|restart|update|rollback) failed\b/.test(message);
   }
   function clearPendingBadge(name, hostId) {
     var key = (hostId || "") + "::" + name;

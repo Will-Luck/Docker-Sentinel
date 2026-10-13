@@ -187,7 +187,7 @@ function reapplyBadgeSpinners() {
 
 // isActionFailure reports whether a container_state message says an action failed.
 function isActionFailure(message) {
-    return typeof message === "string" && /\bfailed\b/.test(message);
+    return typeof message === "string" && /^(stop|start|restart|update|rollback) failed\b/.test(message);
 }
 
 function clearPendingBadge(name, hostId) {
