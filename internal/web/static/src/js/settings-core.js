@@ -78,10 +78,22 @@ function initSettingsPage() {
     fetch("/api/settings")
         .then(function(r) { return r.json(); })
         .then(function(settings) {
+            // Say, under each setting the environment can set, which one is in effect.
+            [
+                ["poll-interval", "poll_interval", "SENTINEL_POLL_INTERVAL"],
+                ["grace-period", "grace_period", "SENTINEL_GRACE_PERIOD"],
+                ["default-policy", "default_policy", "SENTINEL_DEFAULT_POLICY"],
+                ["cron-schedule", "schedule", "SENTINEL_SCHEDULE"],
+                ["show-stopped-toggle", "show_stopped", "SENTINEL_SHOW_STOPPED"],
+                ["scan-concurrency-input", "scan_concurrency", "SENTINEL_SCAN_CONCURRENCY"],
+                ["maintenance-window", "maintenance_window", "SENTINEL_MAINTENANCE_WINDOW"]
+            ].forEach(function(f) {
+                annotateSource(f[0], settings[f[1] + "_source"], f[2]);
+            });
             // Poll interval.
             var pollSelect = document.getElementById("poll-interval");
             if (pollSelect) {
-                var current = settings["SENTINEL_POLL_INTERVAL"] || settings["poll_interval"] || "6h0m0s";
+                var current = settings["poll_interval"] || settings["SENTINEL_POLL_INTERVAL"] || "6h0m0s";
                 var normalised = normaliseDuration(current);
                 var matched = selectOptionByValue(pollSelect, normalised);
                 if (!matched && normalised !== "") {
@@ -377,10 +389,16 @@ function clearAccordionState() {
    2a. Settings Helpers
    ------------------------------------------------------------ */
 
+// normaliseDuration turns a Go duration ("10m0s", "6h0m0s", "1h30m0s") into
+// the shortest single-unit form the page's options use ("10m", "6h", "90m").
+// It used to strip "0s" and "0m0s" as text, which turned "10m0s" into "1".
 function normaliseDuration(dur) {
-    return dur
-        .replace("0m0s", "").replace("0s", "")
-        .replace(/^0h/, "");
+    var m = String(dur).match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/);
+    if (!m || (!m[1] && !m[2] && !m[3])) return String(dur);
+    var total = Math.round((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0));
+    if (total % 3600 === 0 && total > 0) return (total / 3600) + "h";
+    if (total % 60 === 0 && total > 0) return (total / 60) + "m";
+    return total + "s";
 }
 
 function onCustomUnitChange(prefix) {
@@ -780,6 +798,43 @@ function setPullOnly(enabled) {
 
 function setComposeSync(enabled) {
     postToggle("/api/settings/compose-sync", enabled, "compose-sync-text", "compose-sync-toggle");
+}
+
+// markLoaded remembers what a control showed when the page loaded it, so a
+// save can send only what the user changed.
+function markLoaded(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.dataset.loaded = el.type === "checkbox" ? String(el.checked) : el.value;
+}
+
+// changedValue returns {send: true, value} when the control differs from what
+// was loaded into it (or was never loaded), else {send: false}.
+function changedValue(id) {
+    var el = document.getElementById(id);
+    if (!el) return { send: false };
+    var now = el.type === "checkbox" ? el.checked : el.value;
+    var was = el.dataset ? el.dataset.loaded : undefined;
+    if (was !== undefined && was === String(now)) return { send: false };
+    return { send: true, value: now };
+}
+
+// annotateSource adds a line under a setting's label saying whether the value
+// shown is the one saved on this page or comes from the environment.
+function annotateSource(controlId, source, envName) {
+    var el = document.getElementById(controlId);
+    var info = el ? el.closest(".setting-row") : null;
+    info = info ? info.querySelector(".setting-info") : null;
+    if (!info || !source) return;
+    var note = info.querySelector(".setting-source-note");
+    if (!note) {
+        note = document.createElement("div");
+        note.className = "setting-desc setting-source-note";
+        info.appendChild(note);
+    }
+    note.textContent = source === "saved"
+        ? "In effect: the value saved here (overrides " + envName + ")"
+        : "In effect: " + envName + " or the built-in default. Saving here overrides it.";
 }
 
 // showSettingSource says whether a setting's value comes from a value saved
@@ -1238,6 +1293,7 @@ function loadScannerSettings() {
             if (modeEl) modeEl.value = data.mode || "disabled";
             if (threshEl) threshEl.value = data.threshold || "HIGH";
             if (pathEl) pathEl.value = data.trivy_path || "trivy";
+            ["scanner-mode", "scanner-threshold", "trivy-path"].forEach(markLoaded);
             var tw = document.getElementById("trivy-warning");
             if (tw) {
                 var missing = data.mode && data.mode !== "disabled" && data.scanner_available === "false";
@@ -1263,10 +1319,16 @@ function saveScannerSettings() {
     var threshold = document.getElementById("scanner-threshold");
     var trivyPath = document.getElementById("trivy-path");
 
+    // Send only what was changed: a field left alone keeps its stored value.
     var body = {};
-    if (mode) body.mode = mode.value;
-    if (threshold) body.threshold = threshold.value;
-    if (trivyPath && trivyPath.value) body.trivy_path = trivyPath.value;
+    var c;
+    if (mode && (c = changedValue("scanner-mode")).send) body.mode = c.value;
+    if (threshold && (c = changedValue("scanner-threshold")).send) body.threshold = c.value;
+    if (trivyPath && trivyPath.value && (c = changedValue("trivy-path")).send) body.trivy_path = c.value;
+    if (Object.keys(body).length === 0) {
+        showToast("Nothing changed", "info");
+        return;
+    }
 
     fetch("/api/settings/scanner", {
         method: "POST",
@@ -1323,6 +1385,7 @@ function loadVerifierSettings() {
                     : (data.keyless === "true" ? "No signer saved: keyless verification is refused until one is set." : "");
             }
             showKeylessFields(data.keyless === "true");
+            ["verify-mode", "cosign-path", "cosign-keyless", "cosign-key-path", "cosign-identity", "cosign-oidc-issuer", "cosign-identity-regexp"].forEach(markLoaded);
             var warn = document.getElementById("cosign-warning");
             if (warn) {
                 var missing = data.mode && data.mode !== "disabled" && data.cosign_available === "false";
@@ -1358,17 +1421,20 @@ function saveVerifierSettings() {
     var keyless = document.getElementById("cosign-keyless");
     var keyPath = document.getElementById("cosign-key-path");
 
+    // Send only what was changed: a field left alone keeps its stored value.
     var body = {};
-    if (mode) body.mode = mode.value;
-    if (cosignPath && cosignPath.value) body.cosign_path = cosignPath.value;
-    if (keyless) body.keyless = keyless.checked;
-    if (keyPath) body.key_path = keyPath.value;
-    var idEl = document.getElementById("cosign-identity");
-    var issuerEl = document.getElementById("cosign-oidc-issuer");
-    var reEl = document.getElementById("cosign-identity-regexp");
-    if (idEl) body.identity = idEl.value;
-    if (issuerEl) body.oidc_issuer = issuerEl.value;
-    if (reEl) body.identity_regexp = reEl.checked;
+    var c;
+    if (mode && (c = changedValue("verify-mode")).send) body.mode = c.value;
+    if (cosignPath && cosignPath.value && (c = changedValue("cosign-path")).send) body.cosign_path = c.value;
+    if (keyless && (c = changedValue("cosign-keyless")).send) body.keyless = c.value;
+    if (keyPath && (c = changedValue("cosign-key-path")).send) body.key_path = c.value;
+    if ((c = changedValue("cosign-identity")).send) body.identity = c.value;
+    if ((c = changedValue("cosign-oidc-issuer")).send) body.oidc_issuer = c.value;
+    if ((c = changedValue("cosign-identity-regexp")).send) body.identity_regexp = c.value;
+    if (Object.keys(body).length === 0) {
+        showToast("Nothing changed", "info");
+        return;
+    }
 
     fetch("/api/settings/verifier", {
         method: "POST",
@@ -1396,6 +1462,7 @@ function loadRetrySettings() {
 
             if (countEl) countEl.value = data.count || "0";
             if (backoffEl) backoffEl.value = data.backoff || "2s";
+            ["retry-count", "retry-backoff"].forEach(markLoaded);
             if (preview) {
                 var count = parseInt(data.count || "0", 10);
                 if (count === 0) {
@@ -1412,6 +1479,10 @@ function saveRetrySettings() {
     var count = document.getElementById("retry-count");
     var backoff = document.getElementById("retry-backoff");
 
+    if (!changedValue("retry-count").send && !changedValue("retry-backoff").send) {
+        showToast("Nothing changed", "info");
+        return;
+    }
     var body = {
         count: count ? count.value : "0",
         backoff: backoff ? backoff.value : "2s"

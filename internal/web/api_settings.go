@@ -69,6 +69,31 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 	values["remove_volumes"] = strconv.FormatBool(s.deps.Config.RemoveVolumes())
 	values["rollback_policy"] = s.deps.Config.RollbackPolicy()
 
+	// The rest of the Scanning, Update and Process settings that the
+	// environment can set. A saved value wins; otherwise the page gets the
+	// environment's, so a form never shows blank or default for a value that
+	// is really in effect, and saving it back changes nothing.
+	envBacked := map[string]string{
+		"poll_interval":      "SENTINEL_POLL_INTERVAL",
+		"grace_period":       "SENTINEL_GRACE_PERIOD",
+		"default_policy":     "SENTINEL_DEFAULT_POLICY",
+		"schedule":           "SENTINEL_SCHEDULE",
+		"show_stopped":       "SENTINEL_SHOW_STOPPED",
+		"scan_concurrency":   "SENTINEL_SCAN_CONCURRENCY",
+		"maintenance_window": "SENTINEL_MAINTENANCE_WINDOW",
+	}
+	envValues := s.deps.Config.Values()
+	for key, envKey := range envBacked {
+		source := "env"
+		if v, ok := dbValues[key]; ok && v != "" {
+			values[key] = v
+			source = "saved"
+		} else {
+			values[key] = envValues[envKey]
+		}
+		values[key+"_source"] = source
+	}
+
 	// History retention: a saved value replaces SENTINEL_HISTORY_RETENTION_DAYS.
 	retention, retentionSource := "90", "env"
 	if v := s.deps.Config.Values()["SENTINEL_HISTORY_RETENTION_DAYS"]; v != "" {

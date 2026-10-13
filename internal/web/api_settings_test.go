@@ -1186,3 +1186,35 @@ func TestApiSetHistoryRetention(t *testing.T) {
 		}
 	}
 }
+
+// Settings set only by the environment must reach the page: it shows them as
+// the current values, so nothing is written back unchanged.
+func TestApiSettings_EnvOnlyValuesAreReported(t *testing.T) {
+	ss := newMockSettingsStore()
+	cfg := &mockConfigReader{values: map[string]string{
+		"SENTINEL_POLL_INTERVAL":      "10m0s",
+		"SENTINEL_GRACE_PERIOD":       "30s",
+		"SENTINEL_DEFAULT_POLICY":     "auto",
+		"SENTINEL_SCHEDULE":           "0 3 * * *",
+		"SENTINEL_SHOW_STOPPED":       "true",
+		"SENTINEL_SCAN_CONCURRENCY":   "4",
+		"SENTINEL_MAINTENANCE_WINDOW": "02:00-04:00",
+	}}
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: cfg, Log: slog.Default()}}
+	got := getSettings(t, srv)
+	want := map[string]string{
+		"poll_interval": "10m0s", "grace_period": "30s", "default_policy": "auto", "schedule": "0 3 * * *",
+		"show_stopped": "true", "scan_concurrency": "4", "maintenance_window": "02:00-04:00",
+	}
+	for k, v := range want {
+		if got[k] != v || got[k+"_source"] != "env" {
+			t.Errorf("%s = %q (%s), want %q (env)", k, got[k], got[k+"_source"], v)
+		}
+	}
+	// A saved value wins and says so.
+	ss.data["poll_interval"] = "30m"
+	got = getSettings(t, srv)
+	if got["poll_interval"] != "30m" || got["poll_interval_source"] != "saved" {
+		t.Errorf("saved poll interval = %q (%s)", got["poll_interval"], got["poll_interval_source"])
+	}
+}
