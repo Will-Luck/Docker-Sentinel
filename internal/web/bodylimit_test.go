@@ -49,3 +49,18 @@ func TestSettingsPage_WebhookHelpMatchesTheHandler(t *testing.T) {
 		t.Error("settings.html still tells people to use ?secret=, which the handler rejects")
 	}
 }
+
+// The CSP only allows scripts from this origin, so the 2FA QR code library
+// has to be served by Sentinel.
+func TestAccountPage_QRLibraryIsSelfHosted(t *testing.T) {
+	b, _ := staticFS.ReadFile("static/account.html")
+	if strings.Contains(string(b), "cdn.jsdelivr.net") {
+		t.Error("account.html loads the QR library from a CDN, which the CSP blocks")
+	}
+	srv := &Server{}
+	w := httptest.NewRecorder()
+	srv.serveStaticFile(w, httptest.NewRequest(http.MethodGet, "/static/qrcode.js", nil))
+	if w.Code != http.StatusOK || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/javascript") || w.Body.Len() < 10000 {
+		t.Errorf("/static/qrcode.js: status %d, type %q, %d bytes", w.Code, w.Header().Get("Content-Type"), w.Body.Len())
+	}
+}

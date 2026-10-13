@@ -632,6 +632,8 @@ func (s *Server) serveStaticFile(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/x-icon")
 	case ".map":
 		w.Header().Set("Content-Type", "application/json")
+	case ".js":
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case ".woff2":
 		w.Header().Set("Content-Type", "font/woff2")
 	default:

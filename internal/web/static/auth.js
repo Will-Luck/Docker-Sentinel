@@ -641,14 +641,17 @@ function startTOTPSetup() {
             if (qrContainer) {
                 while (qrContainer.firstChild) qrContainer.removeChild(qrContainer.firstChild);
 
-                if (typeof QRCode !== "undefined") {
-                    new QRCode(qrContainer, {
-                        text: result.data.qr_url,
-                        width: 200,
-                        height: 200,
-                        colorDark: "#000000",
-                        colorLight: "#ffffff"
-                    });
+                if (typeof qrcode !== "undefined") {
+                    var qr = qrcode(0, "M");
+                    qr.addData(result.data.qr_url);
+                    qr.make();
+                    var img = document.createElement("img");
+                    img.src = qr.createDataURL(5);
+                    img.width = 200;
+                    img.height = 200;
+                    img.alt = "QR code for your authenticator app";
+                    img.style.imageRendering = "pixelated";
+                    qrContainer.appendChild(img);
                 } else {
                     var p = document.createElement("p");
                     p.style.cssText = "font-size:0.8rem;color:var(--fg-secondary);word-break:break-all";
