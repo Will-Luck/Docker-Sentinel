@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"slices"
 	"strings"
@@ -123,5 +124,77 @@ func TestAgentFlushesTheJournalToTheOpenSession(t *testing.T) {
 	a.flushJournal()
 	if j.Len() != 1 {
 		t.Errorf("journal entries = %d, want the entry kept for the next session", j.Len())
+	}
+}
+
+func twoSentinelHost(t *testing.T) (*mockDocker, *Agent) {
+	mock := newMockDocker()
+	mock.containers = []container.Summary{
+		sentinelSummary("other99other99", "lh2-hub", "sentinel:v1"),
+		sentinelSummary("bbbbbbbbbbbb2222", "lh-sentinel-agent", "sentinel:v1"),
+	}
+	for _, id := range []string{"other99other99", "bbbbbbbbbbbb2222"} {
+		in := sentinelInspect("sentinel:v1")
+		in.ID = id
+		mock.inspectResults[id] = in
+	}
+	return mock, newTestAgent(t.TempDir(), mock)
+}
+
+func updateResultOf(t *testing.T, a *Agent, name string) *proto.UpdateResult {
+	t.Helper()
+	st := &recStream{}
+	req := &proto.UpdateContainerRequest{ContainerName: name, TargetImage: "sentinel:v2"}
+	if err := a.handleUpdateContainer(context.Background(), st, req, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range st.messages() {
+		if ur := m.GetUpdateResult(); ur != nil {
+			return ur
+		}
+	}
+	t.Fatal("no UpdateResult")
+	return nil
+}
+
+// The hub names the first Sentinel container it saw on the host. When that is
+// another Sentinel, the agent still updates its own container, found by its ID,
+// and leaves the other alone.
+func TestAgentSelfUpdateTargetsItsOwnContainerWhateverNameTheHubSent(t *testing.T) {
+	mock, a := twoSentinelHost(t)
+	a.selfID = func() string { return "bbbbbbbbbbbb" }
+	a.cfg.DockerSock = "tcp://example:2375" // in-process path: observable without a helper
+
+	res := updateResultOf(t, a, "lh2-hub")
+
+	if res.GetOutcome() != "success" {
+		t.Fatalf("result = %+v", res)
+	}
+	for _, r := range mock.renameCalls {
+		if r.id == "other99other99" {
+			t.Errorf("renamed the other Sentinel: %+v", mock.renameCalls)
+		}
+	}
+	if mock.createConfigs["lh-sentinel-agent"] == nil || mock.createConfigs["lh2-hub"] != nil {
+		t.Errorf("replacement created for the wrong container: %v", mock.createConfigs)
+	}
+	for _, id := range mock.removeCalls {
+		if id == "other99other99" {
+			t.Errorf("removed the other Sentinel")
+		}
+	}
+}
+
+func TestAgentSelfUpdateRefusesWhenItCannotTellWhichContainerItIs(t *testing.T) {
+	for _, id := range []string{"", "ffffffffffff"} {
+		mock, a := twoSentinelHost(t)
+		a.selfID = func() string { return id }
+		res := updateResultOf(t, a, "lh2-hub")
+		if res.GetOutcome() != "failed" || !strings.Contains(res.GetError(), "could not determine") {
+			t.Errorf("id %q: result = %+v", id, res)
+		}
+		if len(mock.renameCalls) != 0 || len(mock.createConfigs) != 0 || len(mock.pullCalls) != 0 {
+			t.Errorf("id %q: something changed: renames=%v creates=%v pulls=%v", id, mock.renameCalls, mock.createConfigs, mock.pullCalls)
+		}
 	}
 }

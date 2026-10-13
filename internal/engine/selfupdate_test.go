@@ -12,7 +12,9 @@ import (
 )
 
 func newTestSelfUpdater(mock *mockDocker) *SelfUpdater {
-	return NewSelfUpdater(mock, logging.New(false))
+	su := NewSelfUpdater(mock, logging.New(false))
+	su.selfID = func() string { return "abc123" } // the container the tests run in
+	return su
 }
 
 func sentinelContainer(id, name, image string) container.Summary {
@@ -97,7 +99,7 @@ func TestSelfUpdateNoSentinelContainer(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no sentinel container found")
 	}
-	if !strings.Contains(err.Error(), "could not find sentinel container") {
+	if !strings.Contains(err.Error(), "could not determine which container") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }

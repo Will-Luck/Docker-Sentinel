@@ -67,7 +67,10 @@ func (s *Server) updateAgentContainer(ctx context.Context, hostID, targetTag str
 	containers := make([]cluster.ContainerInfo, len(hs.Containers))
 	copy(containers, hs.Containers)
 
-	// Find the sentinel container (has sentinel.self=true label).
+	// Find a sentinel container (has sentinel.self=true label). With several
+	// Sentinels on the host this may be another one; that is harmless, because
+	// an agent asked to update a Sentinel container updates the container it
+	// runs in, found by its own container ID.
 	var sentinelName, sentinelImage string
 	for _, c := range containers {
 		if c.Labels["sentinel.self"] == "true" {

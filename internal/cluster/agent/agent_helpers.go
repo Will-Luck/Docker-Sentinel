@@ -516,6 +516,25 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 	return r, nil
 }
 
+// ownContainerName returns the name of the container this agent runs in, found
+// by the container ID. It fails, and nothing is guessed, when the ID cannot be
+// determined or is not among this host's containers.
+func (a *Agent) ownContainerName(ctx context.Context) (string, error) {
+	id := selfupdate.SelfID
+	if a.selfID != nil {
+		id = a.selfID
+	}
+	containers, err := a.docker.ListAllContainers(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list containers: %w", err)
+	}
+	self := selfupdate.FindSelf(containers, id())
+	if self == nil || len(self.Names) == 0 {
+		return "", selfupdate.ErrSelfUnknown
+	}
+	return strings.TrimPrefix(self.Names[0], "/"), nil
+}
+
 // isSelfContainer checks if the named container has the sentinel.self=true
 // label, meaning it's this agent's own container.
 func (a *Agent) isSelfContainer(ctx context.Context, name string) bool {

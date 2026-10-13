@@ -110,7 +110,8 @@ type Config struct {
 // Docker host. It is the client-side counterpart to the server's gRPC
 // services (EnrollmentService + AgentService).
 type Agent struct {
-	syncMu   sync.Mutex // serialises journal syncs
+	selfID   func() string // test seam; selfupdate.SelfID when nil
+	syncMu   sync.Mutex    // serialises journal syncs
 	streamMu sync.Mutex
 	stream   proto.AgentService_ChannelClient // the open session, if any
 	cfg      Config
@@ -263,6 +264,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	// and remove what an earlier one left behind.
 	// An agent a host restart left parked as "<name>-old-<ts>" puts itself back.
 	selfID := selfupdate.SelfID()
+	if a.selfID != nil {
+		selfID = a.selfID()
+	}
 	selfOutcome := selfupdate.Recover(ctx, a.docker, selfID, a.cfg.DataDir, a.log)
 	if selfOutcome == nil {
 		selfOutcome = selfupdate.ReportOutcome(a.cfg.DataDir, a.log)

@@ -54,24 +54,24 @@ func (su *SelfUpdater) SetDataDir(dir string) { su.dataDir = dir }
 // the container's current image when empty). On success it does not return:
 // the helper stops this process.
 func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
-	// 1. Find our own container.
+	// 1. Find our own container by its ID. The sentinel.self label is on every
+	// Sentinel, and several can share a host; the first one is not necessarily
+	// this one. If the ID cannot be determined, do nothing rather than guess.
 	containers, err := su.docker.ListContainers(ctx)
 	if err != nil {
 		return fmt.Errorf("list containers: %w", err)
 	}
-
-	var selfID, selfName string
-	for _, c := range containers {
-		if c.Labels["sentinel.self"] == "true" {
-			selfID = c.ID
-			if len(c.Names) > 0 {
-				selfName = strings.TrimPrefix(c.Names[0], "/")
-			}
-			break
-		}
+	id := selfupdate.SelfID
+	if su.selfID != nil {
+		id = su.selfID
 	}
-	if selfID == "" {
-		return fmt.Errorf("could not find sentinel container (no sentinel.self=true label)")
+	self := selfupdate.FindSelf(containers, id())
+	if self == nil {
+		return selfupdate.ErrSelfUnknown
+	}
+	selfID, selfName := self.ID, ""
+	if len(self.Names) > 0 {
+		selfName = strings.TrimPrefix(self.Names[0], "/")
 	}
 
 	// 2. Inspect to capture full config.

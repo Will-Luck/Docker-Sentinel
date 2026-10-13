@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"slices"
 	"strings"
@@ -47,7 +48,9 @@ func newSelfUpdateFixture(image string) (*eventDocker, *SelfUpdater) {
 	mock.containers = []container.Summary{sentinelContainer("abc123", "sentinel", image)}
 	mock.inspectResults["abc123"] = sentinelInspect(image)
 	ev := &eventDocker{mockDocker: mock}
-	return ev, NewSelfUpdater(ev, newTestSelfUpdater(mock).log)
+	su := NewSelfUpdater(ev, newTestSelfUpdater(mock).log)
+	su.selfID = func() string { return "abc123" }
+	return ev, su
 }
 
 // After the replacement has started, the old instance must be stopped: it
@@ -373,4 +376,76 @@ func (g *growingList) ListAllContainers(context.Context) ([]container.Summary, e
 	g.lmu.Lock()
 	defer g.lmu.Unlock()
 	return slices.Clone(g.list), nil
+}
+
+// Two Sentinel containers share a host (a hub and another hub, or a hub and an
+// agent). Self-update changes the one this process runs in and nothing else,
+// whichever comes first in the list.
+func twoSentinels() (*eventDocker, *mockDocker) {
+	mock := newMockDocker()
+	mock.containers = []container.Summary{
+		sentinelContainer("other99", "lh2-hub", "img:1.0"),
+		sentinelContainer("abc123", "lh-sentinel-hub", "img:1.0"),
+	}
+	mock.inspectResults["abc123"] = sentinelInspect("img:1.0")
+	mock.inspectResults["other99"] = sentinelInspect("img:1.0")
+	return &eventDocker{mockDocker: mock}, mock
+}
+
+func TestSelfUpdateInProcessChangesOnlyTheContainerItRunsIn(t *testing.T) {
+	ev, mock := twoSentinels()
+	su := NewSelfUpdater(ev, newTestSelfUpdater(mock).log)
+	su.selfID = func() string { return "abc123" }
+
+	if err := su.Update(context.Background(), "img:2.0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range mock.renameCalls {
+		if r.id == "other99" {
+			t.Errorf("renamed the other Sentinel: %+v", mock.renameCalls)
+		}
+	}
+	if len(mock.createCalls) != 1 || mock.createCalls[0] != "lh-sentinel-hub" {
+		t.Errorf("create calls = %v, want only lh-sentinel-hub", mock.createCalls)
+	}
+	if slices.Contains(ev.events, "stop:other99") || !slices.Contains(ev.events, "stop:abc123") {
+		t.Errorf("events = %v", ev.events)
+	}
+}
+
+func TestSelfUpdateWithHelperChangesOnlyTheContainerItRunsIn(t *testing.T) {
+	ev, mock := twoSentinels()
+	mock.inspectResults["abc123"] = withSocket(sentinelInspect("img:1.0"))
+	su := NewSelfUpdater(ev, newTestSelfUpdater(mock).log)
+	su.selfID = func() string { return "abc123" }
+	su.poll = time.Millisecond
+
+	_ = su.Update(context.Background(), "img:2.0") // returns only because the fake helper never swaps us
+	for _, r := range mock.renameCalls {
+		if r.id == "other99" {
+			t.Errorf("renamed the other Sentinel: %+v", mock.renameCalls)
+		}
+	}
+	if slices.Contains(ev.events, "remove:other99") || slices.Contains(ev.events, "stop:other99") {
+		t.Errorf("touched the other Sentinel: %v", ev.events)
+	}
+	if mock.createConfigs["lh-sentinel-hub"] == nil || mock.createConfigs["lh2-hub"] != nil {
+		t.Errorf("replacement created for the wrong container: %v", mock.createCalls)
+	}
+}
+
+// If this process cannot tell which container it is, it refuses.
+func TestSelfUpdateRefusesWhenItCannotTellWhichContainerItIs(t *testing.T) {
+	for name, id := range map[string]string{"empty": "", "not on this host": "ffffffffffff"} {
+		ev, mock := twoSentinels()
+		su := NewSelfUpdater(ev, newTestSelfUpdater(mock).log)
+		su.selfID = func() string { return id }
+		err := su.Update(context.Background(), "img:2.0")
+		if !errors.Is(err, selfupdate.ErrSelfUnknown) {
+			t.Errorf("%s: err = %v, want ErrSelfUnknown", name, err)
+		}
+		if len(mock.renameCalls) != 0 || len(mock.createCalls) != 0 || len(mock.pullCalls) != 0 {
+			t.Errorf("%s: something changed: renames=%v creates=%v pulls=%v", name, mock.renameCalls, mock.createCalls, mock.pullCalls)
+		}
+	}
 }

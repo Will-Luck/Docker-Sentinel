@@ -190,9 +190,20 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 	// Pulls and digest lookups for this update use the credentials the hub sent.
 	ctx = docker.WithRegistryAuth(ctx, req.GetRegistryAuth())
 
+	// A request naming a Sentinel container is a request to update this agent
+	// itself, which is done on the container this process runs in, found by
+	// its container ID: the name the hub sent (the first sentinel.self
+	// container it saw on the host) may be another Sentinel sharing the host.
 	isSelf := a.isSelfContainer(ctx, name)
+	selfName := name
+	var selfErr error
 	if isSelf {
-		a.log.Info("detected self-container, using rename-before-replace", "name", name)
+		if selfName, selfErr = a.ownContainerName(ctx); selfErr == nil {
+			if selfName != name {
+				a.log.Warn("the update names another Sentinel container; updating this agent's own container instead", "requested", name, "own", selfName)
+			}
+			a.log.Info("detected self-container, using the update helper", "name", selfName)
+		}
 	}
 
 	start := time.Now()
@@ -201,11 +212,15 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 	var handover *selfupdate.Handover
 	var err error
 	if isSelf {
-		sr, selfErr := a.selfUpdateContainer(ctx, name, targetImage)
-		oldImage, oldDigest, newImage, newDigest = sr.oldImage, sr.oldDigest, sr.newImage, sr.newDigest
-		oldContainerID = sr.oldContainerID
-		handover = sr.handover
-		err = selfErr
+		if selfErr != nil {
+			err = selfErr // this agent cannot tell which container it is: nothing is changed
+		} else {
+			sr, updErr := a.selfUpdateContainer(ctx, selfName, targetImage)
+			oldImage, oldDigest, newImage, newDigest = sr.oldImage, sr.oldDigest, sr.newImage, sr.newDigest
+			oldContainerID = sr.oldContainerID
+			handover = sr.handover
+			err = updErr
+		}
 	} else {
 		rr, recreateErr := a.recreate(ctx, name, targetImage, updateOptionsFrom(req))
 		oldImage, oldDigest, newImage, newDigest = rr.oldImage, rr.oldDigest, rr.newImage, rr.newDigest

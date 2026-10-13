@@ -13,6 +13,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
@@ -692,19 +693,23 @@ func (s *Server) apiSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the sentinel container and build target image from queue.
+	// Find this Sentinel's own container (by its container ID, never by the
+	// first sentinel.self label: several Sentinels can share a host) and build
+	// the target image from the queue.
 	var targetImage string
 	containers, err := s.deps.Docker.ListAllContainers(r.Context())
-	if err == nil {
-		for _, c := range containers {
-			name := containerName(c)
-			if c.Labels["sentinel.self"] == "true" {
-				if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
-					targetImage = webReplaceTag(c.Image, pending.NewerVersions[0])
-				}
-				break
-			}
-		}
+	if err != nil {
+		s.deps.Log.Error("self-update: could not list containers", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not list containers")
+		return
+	}
+	self, ok := ownContainer(containers)
+	if !ok {
+		writeError(w, http.StatusConflict, selfupdate.ErrSelfUnknown.Error())
+		return
+	}
+	if pending, ok := s.deps.Queue.Get(containerName(self)); ok && len(pending.NewerVersions) > 0 {
+		targetImage = webReplaceTag(self.Image, pending.NewerVersions[0])
 	}
 
 	msg := "Self-update initiated — Sentinel will restart shortly"
@@ -838,6 +843,13 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 	targetImage := webReplaceTag(imageRef, body.Tag)
 
 	if s.isProtectedTarget(r, name) {
+		// Only this Sentinel's own container can be updated this way. Another
+		// Sentinel on the host (a hub next to an agent) is updated from its own
+		// dashboard; self-updating would change the wrong container.
+		if self, ok := ownContainer(containers); !ok || self.ID != containerID {
+			writeError(w, http.StatusConflict, "that is another Sentinel container; update it from its own dashboard")
+			return
+		}
 		// Sentinel — route through self-updater helper container.
 		if s.deps.SelfUpdater == nil {
 			writeError(w, http.StatusNotImplemented, "self-update not available")
@@ -942,4 +954,22 @@ func (s *Server) recordRemoteFailure(err error, rec UpdateRecord) error {
 		}
 	}
 	return s.deps.Store.RecordUpdate(rec)
+}
+
+// selfContainerID returns this process's own container ID; tests replace it.
+var selfContainerID = selfupdate.SelfID
+
+// ownContainer returns the container this Sentinel is running in, found by its
+// container ID.
+func ownContainer(containers []ContainerSummary) (ContainerSummary, bool) {
+	id := selfContainerID()
+	if id == "" {
+		return ContainerSummary{}, false
+	}
+	for _, c := range containers {
+		if strings.HasPrefix(c.ID, id) {
+			return c, true
+		}
+	}
+	return ContainerSummary{}, false
 }
