@@ -16,9 +16,9 @@ type CheckResult struct {
 	UpdateAvailable        bool
 	IsLocal                bool
 	Error                  error
-	NewerVersions          []string // Newer semver versions available (newest first)
+	NewerVersions          []string // Newer semver versions available (newest first); empty for non-semver tags, which are re-pulled as they are
 	ResolvedCurrentVersion string   // Semver tag matching local digest (for latest-tagged images)
-	ResolvedTargetVersion  string   // Semver tag matching remote digest (for latest-tagged images)
+	ResolvedTargetVersion  string   // Semver tag matching remote digest (display only, never an update target)
 	// HigherVersionsBeyondScope counts registry versions higher than current that
 	// exist beyond the effective Version Scope (i.e. would only appear under a wider
 	// scope). Lets the UI hint that the scope is hiding releases (#83).
@@ -347,13 +347,12 @@ func (c *Checker) resolveLatestVersions(ctx context.Context, imageRef string, re
 	current, target := ResolveVersions(ctx, imageRef, result.LocalDigest, result.RemoteDigest,
 		tagsResult.Tags, token, host, cred, c.tracker)
 
+	// The resolved versions are for display only. NewerVersions stays empty on
+	// purpose: callers turn NewerVersions[0] into the image to recreate the
+	// container with, and a container on a mutable tag (latest, alpine) must be
+	// re-pulled on that same tag, not pinned to the version it currently points at.
 	result.ResolvedCurrentVersion = current
 	result.ResolvedTargetVersion = target
-
-	// Populate NewerVersions with the target so the Ignore button appears.
-	if target != "" {
-		result.NewerVersions = []string{target}
-	}
 }
 
 // ExtractTag returns the tag portion of an image reference, or empty string
