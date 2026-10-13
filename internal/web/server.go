@@ -374,6 +374,8 @@ func (s *Server) registerRoutes() {
 
 	// containers.rollback
 	s.mux.Handle("POST /api/containers/{name}/rollback", perm(auth.PermContainersRollback, s.apiRollback))
+	// Discard the record of an update Sentinel cannot finish (admin only).
+	s.mux.Handle("DELETE /api/swaps/{name}", perm(auth.PermSettingsModify, s.apiDiscardSwap))
 
 	// Swarm service operations share container permission scopes by design —
 	// services are treated as a container-equivalent resource.
