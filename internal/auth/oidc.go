@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -43,6 +44,7 @@ type OIDCProvider struct {
 
 // OIDCUserInfo represents the user info extracted from OIDC claims.
 type OIDCUserInfo struct {
+	Issuer   string // "iss" of the ID token
 	Subject  string
 	Email    string
 	Name     string
@@ -188,6 +190,7 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code, pkceVerifier, expecte
 	}
 
 	return &OIDCUserInfo{
+		Issuer:   idToken.Issuer,
 		Subject:  idToken.Subject,
 		Email:    claims.Email,
 		Name:     claims.Name,
@@ -293,60 +296,77 @@ func PKCEChallengeFromVerifier(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+// ErrOIDCAccountExists is returned when an SSO identity has the same
+// username as an account it is not bound to. It is refused, never merged.
+var ErrOIDCAccountExists = errors.New("an account with this username already exists and is not linked to this single sign-on identity")
+
+// ErrOIDCIdentityTaken is returned when an SSO identity is already bound to
+// another account.
+var ErrOIDCIdentityTaken = errors.New("this single sign-on identity is already linked to another account")
+
+// findByOIDC returns the account bound to (issuer, subject), if any.
+func (s *Service) findByOIDC(issuer, subject string) (*User, error) {
+	users, err := s.Users.ListUsers()
+	if err != nil {
+		return nil, err
+	}
+	for i := range users {
+		if users[i].OIDCIssuer == issuer && users[i].OIDCSubject == subject {
+			u := users[i]
+			return &u, nil
+		}
+	}
+	return nil, nil
+}
+
+// canLinkLegacy reports whether an unbound account may be linked to an SSO
+// identity by username, once. That is only an account an older Sentinel
+// created for SSO: no password a person chose, no 2FA and no passkey.
+func (s *Service) canLinkLegacy(u *User) bool {
+	if u.OIDCSubject != "" || u.LocalPassword || u.TOTPEnabled {
+		return false
+	}
+	return !s.HasPasskeys(u.ID)
+}
+
 // LoginWithOIDC finds or creates a user from OIDC claims and creates a session.
+// Accounts are matched on the identity provider's issuer and subject, never
+// on the username. A username clash with an unbound account is refused, except
+// for the one-off link of an account an earlier version created for SSO.
 // When groupMappings is non-empty, the user's role is resolved from their IdP
-// groups on every login (both new and existing users), keeping Sentinel roles
-// in sync with the identity provider.
+// groups on every login, keeping Sentinel roles in sync with the provider.
 func (s *Service) LoginWithOIDC(ctx context.Context, info *OIDCUserInfo, autoCreate bool, defaultRole string, groupMappings map[string]string, ip, userAgent string) (*Session, error) {
-	// Resolve the target role from groups (falls back to defaultRole).
+	if info.Issuer == "" || info.Subject == "" {
+		return nil, fmt.Errorf("identity provider response has no issuer or subject")
+	}
 	targetRole := ResolveRoleFromGroups(info.Groups, groupMappings, defaultRole)
 
-	// Try to find existing user by username.
-	user, err := s.Users.GetUserByUsername(info.Username)
+	user, err := s.findByOIDC(info.Issuer, info.Subject)
 	if err != nil {
-		// Treat any error as "not found" — the store returns an error when missing.
-		user = nil
+		return nil, fmt.Errorf("look up SSO identity: %w", err)
 	}
 
-	// If not found and auto-create is enabled, create the user.
 	if user == nil {
-		if !autoCreate {
+		existing, _ := s.Users.GetUserByUsername(info.Username)
+		switch {
+		case existing != nil && s.canLinkLegacy(existing):
+			existing.OIDCIssuer = info.Issuer
+			existing.OIDCSubject = info.Subject
+			existing.UpdatedAt = time.Now().UTC()
+			if err := s.Users.UpdateUser(*existing); err != nil {
+				return nil, fmt.Errorf("link SSO identity: %w", err)
+			}
+			user = existing
+		case existing != nil:
+			return nil, ErrOIDCAccountExists
+		case !autoCreate:
 			return nil, fmt.Errorf("user %q not found and auto-create is disabled", info.Username)
-		}
-
-		// Validate the resolved role.
-		switch targetRole {
-		case RoleAdminID, RoleOperatorID, RoleViewerID:
-			// valid
 		default:
-			targetRole = RoleViewerID
-		}
-
-		// Create with a random password (user authenticates via OIDC, not password).
-		randomPass, err := generateRandomPassword()
-		if err != nil {
-			return nil, fmt.Errorf("generate random password: %w", err)
-		}
-		hash, err := HashPassword(randomPass)
-		if err != nil {
-			return nil, fmt.Errorf("hash password: %w", err)
-		}
-
-		userID, err := GenerateUserID()
-		if err != nil {
-			return nil, fmt.Errorf("generate user ID: %w", err)
-		}
-
-		user = &User{
-			ID:           userID,
-			Username:     info.Username,
-			PasswordHash: hash,
-			RoleID:       targetRole,
-			CreatedAt:    time.Now().UTC(),
-			UpdatedAt:    time.Now().UTC(),
-		}
-		if err := s.Users.CreateUser(*user); err != nil {
-			return nil, fmt.Errorf("create OIDC user: %w", err)
+			created, err := s.createOIDCUser(info, targetRole)
+			if err != nil {
+				return nil, err
+			}
+			user = created
 		}
 	} else if len(groupMappings) > 0 && user.RoleID != targetRole {
 		// Existing user with group mappings: sync role from IdP.
@@ -384,4 +404,70 @@ func generateRandomPassword() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// createOIDCUser creates an account bound to the SSO identity, with a random
+// password nobody knows.
+func (s *Service) createOIDCUser(info *OIDCUserInfo, role string) (*User, error) {
+	switch role {
+	case RoleAdminID, RoleOperatorID, RoleViewerID:
+	default:
+		role = RoleViewerID
+	}
+	randomPass, err := generateRandomPassword()
+	if err != nil {
+		return nil, fmt.Errorf("generate random password: %w", err)
+	}
+	hash, err := HashPassword(randomPass)
+	if err != nil {
+		return nil, fmt.Errorf("hash password: %w", err)
+	}
+	userID, err := GenerateUserID()
+	if err != nil {
+		return nil, fmt.Errorf("generate user ID: %w", err)
+	}
+	now := time.Now().UTC()
+	user := User{
+		ID: userID, Username: info.Username, PasswordHash: hash, RoleID: role,
+		CreatedAt: now, UpdatedAt: now,
+		OIDCIssuer: info.Issuer, OIDCSubject: info.Subject,
+	}
+	if err := s.Users.CreateUser(user); err != nil {
+		return nil, fmt.Errorf("create OIDC user: %w", err)
+	}
+	return &user, nil
+}
+
+// LinkOIDC binds an SSO identity to a signed-in user's account.
+func (s *Service) LinkOIDC(userID string, info *OIDCUserInfo) error {
+	if info.Issuer == "" || info.Subject == "" {
+		return fmt.Errorf("identity provider response has no issuer or subject")
+	}
+	if other, err := s.findByOIDC(info.Issuer, info.Subject); err != nil {
+		return err
+	} else if other != nil && other.ID != userID {
+		return ErrOIDCIdentityTaken
+	}
+	user, err := s.Users.GetUser(userID)
+	if err != nil || user == nil {
+		return fmt.Errorf("user not found")
+	}
+	user.OIDCIssuer = info.Issuer
+	user.OIDCSubject = info.Subject
+	user.UpdatedAt = time.Now().UTC()
+	return s.Users.UpdateUser(*user)
+}
+
+// UnlinkOIDC removes an account's SSO binding. The account is then treated as
+// a local one, so it is never linked again by username.
+func (s *Service) UnlinkOIDC(userID string) error {
+	user, err := s.Users.GetUser(userID)
+	if err != nil || user == nil {
+		return fmt.Errorf("user not found")
+	}
+	user.OIDCIssuer = ""
+	user.OIDCSubject = ""
+	user.LocalPassword = true
+	user.UpdatedAt = time.Now().UTC()
+	return s.Users.UpdateUser(*user)
 }

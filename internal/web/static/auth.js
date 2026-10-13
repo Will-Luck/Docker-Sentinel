@@ -318,6 +318,17 @@ function loadUsers() {
                 delBtn.addEventListener("click", function() {
                     deleteUser(this.getAttribute("data-user-id"));
                 });
+                if (u.sso_linked) {
+                    var unlinkBtn = document.createElement("button");
+                    unlinkBtn.className = "btn";
+                    unlinkBtn.style.marginRight = "6px";
+                    unlinkBtn.textContent = "Unlink SSO";
+                    unlinkBtn.setAttribute("data-user-id", u.id);
+                    unlinkBtn.addEventListener("click", function() {
+                        unlinkSSO(this.getAttribute("data-user-id"));
+                    });
+                    tdActions.appendChild(unlinkBtn);
+                }
                 tdActions.appendChild(delBtn);
                 tr.appendChild(tdActions);
 
@@ -325,6 +336,38 @@ function loadUsers() {
             }
         })
         .catch(function() {});
+}
+
+// startSSOLink starts linking the signed-in user's account to their single
+// sign-on identity. The server returns the provider's authorisation URL.
+function startSSOLink() {
+    var btn = document.getElementById("sso-link-btn");
+    if (btn) btn.disabled = true;
+    authFetch("/api/auth/oidc/link", { method: "POST" })
+        .then(function(resp) { return resp.json().then(function(d) { return { ok: resp.ok, data: d }; }); })
+        .then(function(result) {
+            if (!result.ok || !result.data.url) {
+                if (btn) btn.disabled = false;
+                showToast(result.data.error || "Could not start single sign-on", "error");
+                return;
+            }
+            window.location.href = result.data.url;
+        })
+        .catch(function() {
+            if (btn) btn.disabled = false;
+            showToast("Network error", "error");
+        });
+}
+
+function unlinkSSO(userID) {
+    authFetch("/api/auth/users/" + encodeURIComponent(userID) + "/oidc-unlink", { method: "POST" })
+        .then(function(resp) { return resp.json().then(function(d) { return { ok: resp.ok, data: d }; }); })
+        .then(function(result) {
+            if (!result.ok) { showToast(result.data.error || "Could not remove the link", "error"); return; }
+            showToast("Single sign-on link removed", "success");
+            loadUsers();
+        })
+        .catch(function() { showToast("Network error", "error"); });
 }
 
 function createUser() {

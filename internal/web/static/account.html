@@ -88,6 +88,22 @@
             </div>
         </div>
 
+        {{if .SSOAvailable}}
+        <!-- Single sign-on -->
+        <div class="card" style="margin-bottom:var(--sp-4)" id="sso-section">
+            <div class="card-header"><h2>Single sign-on</h2></div>
+            <div class="card-body">
+                {{if .SSOMessage}}<p class="setting-desc" role="status">{{.SSOMessage}}</p>{{end}}
+                {{if .SSOLinked}}
+                <p class="setting-desc">This account is linked to your single sign-on identity. An administrator can remove the link.</p>
+                {{else}}
+                <p class="setting-desc">Link this account to your single sign-on identity, so signing in with it opens this account.</p>
+                <button class="btn btn-success" id="sso-link-btn" onclick="startSSOLink()">Link single sign-on</button>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+
         <!-- Two-Factor Authentication -->
         <div class="card" style="margin-bottom:var(--sp-4)" id="totp-section">
             <div class="card-header"><h2>Two-Factor Authentication</h2></div>

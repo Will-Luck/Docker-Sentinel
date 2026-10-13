@@ -308,6 +308,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/auth/totp/verify", rateLimit(s.authLimiter, s.apiLoginTOTP))
 	s.mux.HandleFunc("GET /api/auth/oidc/login", s.apiOIDCLogin)
 	s.mux.HandleFunc("GET /api/auth/oidc/callback", s.apiOIDCCallback)
+	s.mux.Handle("POST /api/auth/oidc/link", authed(s.apiOIDCLinkStart))
 	s.mux.HandleFunc("GET /api/auth/oidc/available", s.apiOIDCAvailable)
 	s.mux.HandleFunc("GET /healthz", s.apiHealthz)
 	s.mux.HandleFunc("GET /readyz", s.apiReadyz)
@@ -524,6 +525,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/auth/users", perm(auth.PermUsersManage, s.apiListUsers))
 	s.mux.Handle("POST /api/auth/users", perm(auth.PermUsersManage, s.apiCreateUser))
 	s.mux.Handle("DELETE /api/auth/users/{id}", perm(auth.PermUsersManage, s.apiDeleteUser))
+	s.mux.Handle("POST /api/auth/users/{id}/oidc-unlink", perm(auth.PermUsersManage, s.apiOIDCUnlink))
 	s.mux.Handle("POST /api/auth/settings", perm(auth.PermUsersManage, s.apiAuthSettings))
 
 	// Webhook endpoint — uses its own secret-based auth, no session/CSRF required.

@@ -46,6 +46,14 @@ type User struct {
 	TOTPSecret     string    `json:"totp_secret,omitempty"`      // base32-encoded TOTP secret
 	TOTPEnabled    bool      `json:"totp_enabled,omitempty"`     // whether 2FA is active
 	RecoveryCodes  []string  `json:"recovery_codes,omitempty"`   // one-time recovery codes
+	// OIDCIssuer and OIDCSubject bind the account to one identity at the
+	// identity provider. SSO login matches on this pair only.
+	OIDCIssuer  string `json:"oidc_issuer,omitempty"`
+	OIDCSubject string `json:"oidc_subject,omitempty"`
+	// LocalPassword is true once the account has a password a person chose
+	// (set by an admin, at setup, on a password change, or proven by a
+	// password login). Such an account is never linked to SSO by username.
+	LocalPassword bool `json:"local_password,omitempty"`
 }
 
 // EnsureWebAuthnUserID generates a random WebAuthn user ID if one isn't set.

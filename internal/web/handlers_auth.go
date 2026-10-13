@@ -46,7 +46,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.renderTemplate(w, "login.html", map[string]any{
-		"Error":           r.URL.Query().Get("error"),
+		"Error":           loginErrorText(r.URL.Query().Get("error")),
 		"WebAuthnEnabled": s.webauthn != nil,
 		"OIDCEnabled":     s.getOIDCProvider() != nil,
 	})
@@ -195,12 +195,13 @@ func (s *Server) apiSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := auth.User{
-		ID:           userID,
-		Username:     username,
-		PasswordHash: hash,
-		RoleID:       auth.RoleAdminID,
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		ID:            userID,
+		Username:      username,
+		PasswordHash:  hash,
+		LocalPassword: true,
+		RoleID:        auth.RoleAdminID,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 
 	// Atomic: create first user only if none exist.
@@ -295,7 +296,23 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		"CurrentToken":    currentToken,
 		"QueueCount":      len(s.deps.Queue.List()),
 		"ClusterEnabled":  s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
+		"SSOAvailable":    s.getOIDCProvider() != nil,
+		"SSOLinked":       ad.CurrentUser.OIDCSubject != "",
+		"SSOMessage":      accountSSOMessage(r.URL.Query().Get("sso")),
 	})
+}
+
+// accountSSOMessage turns the ?sso= result slug on the Account page into text.
+func accountSSOMessage(slug string) string {
+	switch slug {
+	case "linked":
+		return "Your single sign-on identity is now linked to this account."
+	case "sso_identity_taken":
+		return "That single sign-on identity is already linked to another account."
+	case "sso_link_failed":
+		return "Linking single sign-on failed. Try again."
+	}
+	return ""
 }
 
 // apiChangePassword changes the current user's password.
@@ -332,6 +349,7 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rc.User.PasswordHash = hash
+	rc.User.LocalPassword = true
 	rc.User.UpdatedAt = time.Now().UTC()
 	if err := s.deps.Auth.Users.UpdateUser(*rc.User); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update password")
@@ -398,4 +416,16 @@ func (s *Server) apiAuthSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// loginErrorText turns the error slug in the login URL into the text shown.
+// Other values pass through, as before.
+func loginErrorText(slug string) string {
+	switch slug {
+	case "sso_failed":
+		return "Single sign-on failed. Try again, or sign in with your password."
+	case "sso_account_exists":
+		return "An account with your username already exists here and is not linked to this single sign-on identity. Sign in with your password, then link single sign-on from the Account page."
+	}
+	return slug
 }

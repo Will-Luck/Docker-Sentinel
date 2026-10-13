@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
@@ -191,21 +193,62 @@ func (s *Server) apiOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "OIDC not configured", http.StatusNotFound)
 		return
 	}
+	authURL, err := s.startOIDCFlow(w, provider)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
 
+// apiOIDCLinkStart begins linking the signed-in user's account to their
+// single sign-on identity. It is a POST so the CSRF check applies: a link
+// started from another site would bind the attacker's identity to the victim.
+func (s *Server) apiOIDCLinkStart(w http.ResponseWriter, r *http.Request) {
+	rc := auth.GetRequestContext(r.Context())
+	if rc == nil || rc.User == nil || !rc.AuthEnabled {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	provider := s.getOIDCProvider()
+	if provider == nil {
+		writeError(w, http.StatusNotFound, "single sign-on is not configured")
+		return
+	}
+	authURL, err := s.startOIDCFlow(w, provider)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	setOIDCCookie(w, "oidc_link", rc.User.ID, s.deps.Auth.CookieSecure)
+	writeJSON(w, http.StatusOK, map[string]string{"url": authURL})
+}
+
+// apiOIDCUnlink removes a user's single sign-on binding (admin only).
+func (s *Server) apiOIDCUnlink(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.deps.Auth.UnlinkOIDC(id); err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	s.logEvent(r, "auth", "", "Single sign-on link removed for user "+id)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// startOIDCFlow sets the state, nonce and PKCE cookies and returns the
+// provider's authorisation URL.
+func (s *Server) startOIDCFlow(w http.ResponseWriter, provider *auth.OIDCProvider) (string, error) {
 	state, err := auth.GenerateOIDCState()
 	if err != nil {
-		http.Error(w, "failed to generate state", http.StatusInternalServerError)
-		return
+		return "", fmt.Errorf("failed to generate state")
 	}
 	nonce, err := auth.GenerateOIDCNonce()
 	if err != nil {
-		http.Error(w, "failed to generate nonce", http.StatusInternalServerError)
-		return
+		return "", fmt.Errorf("failed to generate nonce")
 	}
 	pkceVerifier, err := auth.GeneratePKCEVerifier()
 	if err != nil {
-		http.Error(w, "failed to generate PKCE verifier", http.StatusInternalServerError)
-		return
+		return "", fmt.Errorf("failed to generate PKCE verifier")
 	}
 	pkceChallenge := auth.PKCEChallengeFromVerifier(pkceVerifier)
 
@@ -218,7 +261,7 @@ func (s *Server) apiOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	setOIDCCookie(w, "oidc_nonce", nonce, s.deps.Auth.CookieSecure)
 	setOIDCCookie(w, "oidc_pkce", pkceVerifier, s.deps.Auth.CookieSecure)
 
-	http.Redirect(w, r, provider.AuthURL(state, nonce, pkceChallenge), http.StatusFound)
+	return provider.AuthURL(state, nonce, pkceChallenge), nil
 }
 
 // setOIDCCookie writes a short-lived (10 minute) HttpOnly cookie used
@@ -313,6 +356,13 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A link intent: bind this identity to the signed-in user, no new session.
+	if linkCookie, err := r.Cookie("oidc_link"); err == nil && linkCookie.Value != "" {
+		clearOIDCCookie(w, "oidc_link", s.deps.Auth.CookieSecure)
+		s.finishOIDCLink(w, r, linkCookie.Value, userInfo)
+		return
+	}
+
 	// Create or find user and create session.
 	ip := clientIP(r)
 	session, err := s.deps.Auth.LoginWithOIDC(
@@ -325,7 +375,7 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		// Discard err.Error() from the redirect URL (finding J). The detail
 		// is logged server-side; the user sees a generic slug.
 		s.deps.Log.Warn("OIDC login failed", "error", err, "username", userInfo.Username)
-		http.Redirect(w, r, "/login?error=sso_failed", http.StatusSeeOther)
+		http.Redirect(w, r, "/login?error="+oidcLoginErrorSlug(err), http.StatusSeeOther)
 		return
 	}
 
@@ -343,4 +393,34 @@ func (s *Server) apiOIDCAvailable(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{
 		"available": s.getOIDCProvider() != nil,
 	})
+}
+
+// oidcLoginErrorSlug maps a login failure to the slug shown on the login
+// page. An account clash gets its own slug so the user is told what to do.
+func oidcLoginErrorSlug(err error) string {
+	if errors.Is(err, auth.ErrOIDCAccountExists) {
+		return "sso_account_exists"
+	}
+	return "sso_failed"
+}
+
+// finishOIDCLink completes a link started from the Account page. The signed-in
+// session must still belong to the user who started it.
+func (s *Server) finishOIDCLink(w http.ResponseWriter, r *http.Request, startedBy string, info *auth.OIDCUserInfo) {
+	rc := s.deps.Auth.ValidateSession(r.Context(), auth.GetSessionToken(r))
+	if rc == nil || rc.User == nil || rc.User.ID != startedBy {
+		http.Redirect(w, r, "/login?error=sso_failed", http.StatusSeeOther)
+		return
+	}
+	if err := s.deps.Auth.LinkOIDC(rc.User.ID, info); err != nil {
+		s.deps.Log.Warn("OIDC link failed", "error", err, "user", rc.User.Username)
+		slug := "sso_link_failed"
+		if errors.Is(err, auth.ErrOIDCIdentityTaken) {
+			slug = "sso_identity_taken"
+		}
+		http.Redirect(w, r, "/account?sso="+slug, http.StatusSeeOther)
+		return
+	}
+	s.logEvent(r, "auth", "", "User "+rc.User.Username+" linked a single sign-on identity")
+	http.Redirect(w, r, "/account?sso=linked", http.StatusSeeOther)
 }

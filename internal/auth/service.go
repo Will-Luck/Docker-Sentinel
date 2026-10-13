@@ -202,10 +202,12 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 		return nil, nil, ErrInvalidCredentials
 	}
 
-	// Success — clear failure counters.
+	// Success: clear failure counters. A password login proves the account
+	// has a password a person holds, so SSO can no longer link it by username.
 	user.FailedLogins = 0
 	user.Locked = false
 	user.LockedUntil = time.Time{}
+	user.LocalPassword = true
 	_ = s.Users.UpdateUser(*user)
 	s.rateLimiter.Reset(ip)
 
