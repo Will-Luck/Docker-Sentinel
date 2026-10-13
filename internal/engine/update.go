@@ -32,7 +32,7 @@ import (
 // "dxflrs/garage:v2.2.0"). When empty, the current image tag is re-pulled
 // (correct for :latest-style updates where the tag is mutable).
 func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage string) error {
-	if strings.HasSuffix(name, replacedSuffix) {
+	if u.setAside(name) {
 		return fmt.Errorf("%s was set aside while Sentinel replaced it and is not updated itself", name)
 	}
 	if !u.tryLock(name) {

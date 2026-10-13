@@ -490,6 +490,10 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 
 		name := containerName(c)
 		u.publishEvent(events.EventScanProgress, name, fmt.Sprintf("checked=%d total=%d", i+1, len(containers)))
+		if u.setAside(name) {
+			u.log.Debug("skipping a container set aside by a swap in progress", "name", name)
+			continue
+		}
 		labels := c.Labels
 		tag := registry.ExtractTag(c.Image)
 		resolved := ResolvePolicy(u.store, labels, name, tag, u.cfg.DefaultPolicy(), u.cfg.LatestAutoUpdate())

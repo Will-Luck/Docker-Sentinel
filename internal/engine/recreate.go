@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
@@ -15,6 +16,14 @@ import (
 
 // replacedSuffix is added to a container's name while Sentinel replaces it.
 const replacedSuffix = "-sentinel-old"
+
+// setAside reports whether name is a container that a journalled swap has
+// renamed out of the way (<name>-sentinel-old). Such a container is never
+// scanned or updated itself; a container that merely has such a name is.
+func (u *Updater) setAside(name string) bool {
+	base, ok := strings.CutSuffix(name, replacedSuffix)
+	return ok && base != "" && u.store.HasSwap(base)
+}
 
 // swapTimeout bounds each group of Docker calls in a swap. The calls run
 // without the caller's cancellation, so a shutdown cannot stop a swap

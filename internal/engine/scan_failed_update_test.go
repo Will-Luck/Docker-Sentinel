@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -32,6 +33,28 @@ func setupBrokenLatestScan(t *testing.T) (*mockDocker, *Updater) {
 	}
 	u, _ := newTestUpdater(t, mock)
 	return mock, u
+}
+
+// A container set aside by a swap in progress is not checked or updated by
+// a scan; a container that merely has such a name, with no swap recorded,
+// is treated like any other.
+func TestScanSkipsContainerSetAsideBySwap(t *testing.T) {
+	mock, u := setupBrokenLatestScan(t)
+	ref := "docker.io/library/nginx:latest"
+	labels := map[string]string{"sentinel.policy": "auto"}
+	mock.containers = []container.Summary{
+		{ID: "aside", Names: []string{"/web-sentinel-old"}, Image: ref, Labels: labels},
+		{ID: "user", Names: []string{"/docker-sentinel-old"}, Image: ref, Labels: labels},
+	}
+	if err := u.store.SaveSwap(store.SwapRecord{Name: "web", OldID: "aside"}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := u.Scan(context.Background(), ScanScheduled)
+
+	if result.AutoCount != 1 {
+		t.Errorf("AutoCount = %d, want only docker-sentinel-old considered", result.AutoCount)
+	}
 }
 
 // With the default rollback policy a broken :latest digest was pulled,

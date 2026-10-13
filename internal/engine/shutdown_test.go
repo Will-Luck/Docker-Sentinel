@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -109,6 +110,9 @@ func TestUpdateContainerRecreatesNamespaceConsumerOfOldID(t *testing.T) {
 func TestUpdateContainerRefusesSetAsideContainer(t *testing.T) {
 	mock := newMockDocker()
 	u, _ := newTestUpdater(t, mock)
+	if err := u.store.SaveSwap(store.SwapRecord{Name: "app", OldID: "old"}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := u.UpdateContainer(context.Background(), "old", "app-sentinel-old", ""); err == nil {
 		t.Fatal("expected an error for a container set aside by a swap")
