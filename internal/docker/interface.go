@@ -56,6 +56,13 @@ type ImageConfigReader interface {
 	ImageConfig(ctx context.Context, ref string) (*container.Config, error)
 }
 
+// RepoDigestReader returns the repository digests ("repo@sha256:...") of a
+// local image. Client implements it; like ImageConfigReader it is kept out
+// of API.
+type RepoDigestReader interface {
+	ImageRepoDigests(ctx context.Context, ref string) ([]string, error)
+}
+
 // RestartPolicyUpdater changes the restart policy of an existing container.
 // Client implements it; like ImageConfigReader it is kept out of API.
 type RestartPolicyUpdater interface {

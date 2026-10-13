@@ -222,7 +222,11 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 
 	// 3.6 Signature verification gate. The mode was resolved above, where
 	// an enforced check without a verifier was refused.
-	if err := u.checkSignature(ctx, name, pullImage, verifyMode); err != nil {
+	signed := pullImage
+	if verifyMode != verify.ModeDisabled && u.imgVerifier != nil {
+		signed = u.signatureRef(ctx, pullImage)
+	}
+	if err := u.checkSignature(ctx, name, signed, verifyMode); err != nil {
 		_ = u.store.SetMaintenance(name, false)
 		return err
 	}

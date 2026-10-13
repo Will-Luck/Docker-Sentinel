@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -96,6 +97,28 @@ func (u *Updater) checkSignature(ctx context.Context, name, image string, mode v
 		u.log.Warn("signature verification failed, proceeding (warn mode)", "name", name, "image", image, "error", result.Error)
 	}
 	return nil
+}
+
+// signatureRef returns the reference whose signature an update checks: the
+// pulled image's digest in its own repository, which is what the container
+// is created from, so the registry cannot move the tag between the check
+// and the create. When no such digest is known it is image itself.
+func (u *Updater) signatureRef(ctx context.Context, image string) string {
+	r, ok := u.docker.(docker.RepoDigestReader)
+	if !ok {
+		return image
+	}
+	digests, err := r.ImageRepoDigests(ctx, image)
+	if err != nil {
+		return image
+	}
+	repo := repoKey(image)
+	for _, d := range digests {
+		if name, _, ok := strings.Cut(d, "@"); ok && repoKey(name) == repo {
+			return d
+		}
+	}
+	return image
 }
 
 // notifyUnverifiable sends one notification for the updates a scan refused

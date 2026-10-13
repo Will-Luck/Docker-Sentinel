@@ -119,3 +119,33 @@ func TestScanNotifiesOnceForUpdatesRefusedWithoutCosign(t *testing.T) {
 		t.Errorf("failure notifications = %+v, want one naming nginx and redis", failed)
 	}
 }
+
+// repoDigestDocker reports the repository digests of pulled images.
+type repoDigestDocker struct {
+	*mockDocker
+	digests map[string][]string
+}
+
+func (d *repoDigestDocker) ImageRepoDigests(_ context.Context, ref string) ([]string, error) {
+	return d.digests[ref], nil
+}
+
+// The signature is checked on the digest the update pulled (in the image's
+// own repository), not on the tag, which the registry could move between
+// the check and the create.
+func TestVerifyChecksThePulledDigest(t *testing.T) {
+	mock, u := setupUpdateWithScanVerify(t)
+	u.docker = &repoDigestDocker{mockDocker: mock, digests: map[string][]string{
+		"docker.io/library/nginx:latest": {"docker.io/library/other@sha256:aaa", "docker.io/library/nginx@sha256:bbb"},
+	}}
+	mv := &mockImageVerifier{result: &verify.Result{Verified: true}}
+	u.SetVerifier(mv)
+	u.SetVerifyMode(verify.ModeEnforce)
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if len(mv.calls) != 1 || mv.calls[0] != "docker.io/library/nginx@sha256:bbb" {
+		t.Errorf("verified %v, want the pulled digest in nginx's repository", mv.calls)
+	}
+}

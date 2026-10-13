@@ -52,6 +52,15 @@ func (c *Client) PruneImages(ctx context.Context) (ImagePruneResult, error) {
 
 // ImageConfig returns the default container config baked into an image (its
 // ENV, CMD, ENTRYPOINT, LABEL and so on), looked up by ID or reference.
+// ImageRepoDigests returns the repository digests of a local image.
+func (c *Client) ImageRepoDigests(ctx context.Context, ref string) ([]string, error) {
+	resp, err := c.api.ImageInspect(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return resp.RepoDigests, nil
+}
+
 func (c *Client) ImageConfig(ctx context.Context, ref string) (*container.Config, error) {
 	resp, err := c.api.ImageInspect(ctx, ref)
 	if err != nil {
