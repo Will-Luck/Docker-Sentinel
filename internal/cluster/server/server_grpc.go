@@ -201,10 +201,11 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 	defer cancel(nil)
 
 	as := &agentStream{
-		hostID: hostID,
-		send:   make(chan *proto.ServerMessage, sendBufferSize),
-		cancel: cancel,
-		done:   ctx.Done(),
+		hostID:   hostID,
+		send:     make(chan *proto.ServerMessage, sendBufferSize),
+		cancel:   cancel,
+		done:     ctx.Done(),
+		peerCert: peerLeaf(stream.Context()),
 	}
 
 	// Register the stream. If an old stream exists for this host (stale
@@ -672,6 +673,11 @@ var renewalSendTimeout = 10 * time.Second
 // revoked at once, so no untracked certificate stays valid; the agent
 // simply asks again later.
 func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.CertRenewalCSR) {
+	if reason := s.refuseRenewal(hostID, as, csr.Csr); reason != "" {
+		s.log.Warn("cert renewal refused", "hostID", hostID, "reason", reason)
+		return
+	}
+
 	certPEM, serial, err := s.ca.SignCSR(csr.Csr, hostID)
 	if err != nil {
 		s.log.Error("cert renewal failed", "hostID", hostID, "error", err)

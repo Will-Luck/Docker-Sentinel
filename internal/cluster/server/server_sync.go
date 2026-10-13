@@ -332,15 +332,24 @@ func (s *Server) isCertRevoked(ctx context.Context) (bool, error) {
 // peerCertSerial returns the serial (lower-case hex, as stored) of the
 // client certificate the peer presented, if any.
 func peerCertSerial(ctx context.Context) (string, bool) {
+	leaf := peerLeaf(ctx)
+	if leaf == nil {
+		return "", false
+	}
+	return fmt.Sprintf("%x", leaf.SerialNumber), true
+}
+
+// peerLeaf returns the client certificate the peer presented, or nil.
+func peerLeaf(ctx context.Context) *x509.Certificate {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
-		return "", false
+		return nil
 	}
 	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
 	if !ok || len(tlsInfo.State.PeerCertificates) == 0 {
-		return "", false
+		return nil
 	}
-	return fmt.Sprintf("%x", tlsInfo.State.PeerCertificates[0].SerialNumber), true
+	return tlsInfo.State.PeerCertificates[0]
 }
 
 // extractHostID extracts the host ID from the peer's TLS client certificate CN.

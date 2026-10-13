@@ -226,6 +226,9 @@ func (ca *CA) SignCSR(csrDER []byte, hostID string) (certPEM []byte, serial stri
 	if err := csr.CheckSignature(); err != nil {
 		return nil, "", fmt.Errorf("csr signature invalid: %w", err)
 	}
+	if pub, ok := csr.PublicKey.(*ecdsa.PublicKey); !ok || (pub.Curve != elliptic.P256() && pub.Curve != elliptic.P384()) {
+		return nil, "", fmt.Errorf("csr key must be ECDSA P-256 or P-384")
+	}
 
 	ca.mu.Lock()
 	defer ca.mu.Unlock()

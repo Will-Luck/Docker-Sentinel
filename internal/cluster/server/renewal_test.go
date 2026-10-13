@@ -80,6 +80,7 @@ func awaitRenewalResponse(t *testing.T, stream proto.AgentService_ChannelClient)
 // certificate valid until the agent connects with the new one, and only
 // then revoke the old serial.
 func TestCertRenewal_OldCertValidUntilRenewedCertInUse(t *testing.T) {
+	allowRenewalNow(t)
 	srv, addr, st, _ := testServer(t)
 	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
 	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
@@ -182,6 +183,7 @@ func TestCertRenewal_UndeliveredCertIsRevoked(t *testing.T) {
 
 // Revoking a host mid-renewal must revoke both its certificates.
 func TestRevokeHost_RevokesPendingRenewedCert(t *testing.T) {
+	allowRenewalNow(t)
 	srv, addr, st, _ := testServer(t)
 	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
 	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
@@ -243,5 +245,105 @@ func TestServerCert_RenewedBeforeExpiry(t *testing.T) {
 	}
 	if again := presentedServerSerial(t, srv, addr); again != renewed {
 		t.Errorf("server certificate reissued again on the next handshake (%s, %s)", renewed, again)
+	}
+}
+
+// allowRenewalNow lets a test renew a freshly enrolled certificate, which
+// the hub otherwise refuses as not due yet.
+func allowRenewalNow(t *testing.T) {
+	t.Helper()
+	old := renewalAcceptFraction
+	renewalAcceptFraction = 1.01
+	t.Cleanup(func() { renewalAcceptFraction = old })
+}
+
+// sendCSR sends a renewal request on stream and reports whether the hub
+// answered within wait.
+func sendCSR(t *testing.T, stream proto.AgentService_ChannelClient, csrDER []byte, wait time.Duration) bool {
+	t.Helper()
+	if err := stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_CertRenewal{
+		CertRenewal: &proto.CertRenewalCSR{Csr: csrDER},
+	}}); err != nil {
+		t.Fatalf("send CSR: %v", err)
+	}
+	got := make(chan bool, 1)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				got <- false
+				return
+			}
+			if msg.GetCertRenewalResponse() != nil {
+				got <- true
+				return
+			}
+		}
+	}()
+	select {
+	case ok := <-got:
+		return ok
+	case <-time.After(wait):
+		return false
+	}
+}
+
+// The hub signs a renewal only for a certificate that is due for one. A
+// freshly enrolled agent (or a stolen key) cannot mint certificates at will.
+func TestCertRenewal_RefusedWhenNotDue(t *testing.T) {
+	srv, addr, _, _ := testServer(t)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	defer closeConn()
+
+	csrDER, _ := renewalCSR(t, hostID)
+	if sendCSR(t, stream, csrDER, 500*time.Millisecond) {
+		t.Error("hub renewed a certificate that was issued moments ago")
+	}
+	if hs, _ := srv.Registry().Get(hostID); hs.Info.PendingCertSerial != "" {
+		t.Errorf("pending serial %s recorded for a refused renewal", hs.Info.PendingCertSerial)
+	}
+}
+
+// A renewal must come with a new key.
+func TestCertRenewal_RefusedWhenReusingTheCurrentKey(t *testing.T) {
+	allowRenewalNow(t)
+	srv, addr, _, _ := testServer(t)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	defer closeConn()
+
+	block, _ := pem.Decode(keyPEM)
+	key, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: hostID}}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sendCSR(t, stream, csrDER, 500*time.Millisecond) {
+		t.Error("hub renewed a certificate for the key already in use")
+	}
+}
+
+// At most one renewal per host in a short window, however often it asks.
+func TestCertRenewal_AtMostOnePerHostPerInterval(t *testing.T) {
+	allowRenewalNow(t)
+	srv, addr, _, _ := testServer(t)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	defer closeConn()
+
+	first, _ := renewalCSR(t, hostID)
+	if !sendCSR(t, stream, first, 3*time.Second) {
+		t.Fatal("first renewal was not answered")
+	}
+	second, _ := renewalCSR(t, hostID)
+	if sendCSR(t, stream, second, 500*time.Millisecond) {
+		t.Error("hub signed a second renewal for the same host straight away")
 	}
 }

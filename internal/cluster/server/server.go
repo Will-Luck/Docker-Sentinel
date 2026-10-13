@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -90,6 +91,11 @@ type Server struct {
 	// agent's response. Multiple concurrent requests per host are supported.
 	pending map[string]*pendingRequest
 
+	// renewMu guards lastRenewal: when the hub last signed a renewal for
+	// each host.
+	renewMu     sync.Mutex
+	lastRenewal map[string]time.Time
+
 	// certMu guards the fields below: the server's own TLS certificate.
 	certMu      sync.Mutex
 	serverCert  *tls.Certificate
@@ -118,6 +124,8 @@ type agentStream struct {
 	cancel context.CancelCauseFunc
 	// done is closed when the stream ends.
 	done <-chan struct{}
+	// peerCert is the client certificate the agent connected with.
+	peerCert *x509.Certificate
 
 	// closed is set (under Server.pendingMu) once the stream's cleanup has
 	// failed its pending requests, so no new request is tagged to it.
@@ -469,3 +477,44 @@ func (s *Server) disconnectAgent(id string) {
 // maxMessageSize is the largest gRPC message the cluster server sends or
 // accepts. A variable so tests can lower it.
 var maxMessageSize = cluster.MaxMessageSize
+
+// renewalAcceptFraction: the hub signs a renewal only once the agent's
+// current certificate has less than this fraction of its life left.
+// Agents ask at one third; the margin allows for clock differences. A
+// variable so tests can renew fresh certificates.
+var renewalAcceptFraction = 0.5
+
+// renewalMinInterval is the shortest time between two renewals the hub
+// signs for one host. Agents wait ten minutes before asking again.
+const renewalMinInterval = 5 * time.Minute
+
+// refuseRenewal says why the hub will not sign this renewal request, or
+// returns "" and counts it against the host's rate limit. The agent's
+// current certificate must be due for renewal, and the request must be
+// for a new key.
+func (s *Server) refuseRenewal(hostID string, as *agentStream, csrDER []byte) string {
+	if leaf := as.peerCert; leaf != nil {
+		life := leaf.NotAfter.Sub(leaf.NotBefore)
+		if left := time.Until(leaf.NotAfter); float64(left) > float64(life)*renewalAcceptFraction {
+			return "the current certificate is not due for renewal"
+		}
+		csr, err := x509.ParseCertificateRequest(csrDER)
+		if err != nil {
+			return "the request is not a valid CSR"
+		}
+		if pub, ok := leaf.PublicKey.(interface{ Equal(crypto.PublicKey) bool }); ok && pub.Equal(csr.PublicKey) {
+			return "the request reuses the key of the current certificate"
+		}
+	}
+
+	s.renewMu.Lock()
+	defer s.renewMu.Unlock()
+	if last, ok := s.lastRenewal[hostID]; ok && time.Since(last) < renewalMinInterval {
+		return "a certificate was renewed for this host minutes ago"
+	}
+	if s.lastRenewal == nil {
+		s.lastRenewal = make(map[string]time.Time)
+	}
+	s.lastRenewal[hostID] = time.Now()
+	return ""
+}

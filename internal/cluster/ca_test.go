@@ -1,9 +1,11 @@
 package cluster
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -478,5 +480,39 @@ func verifyCertChain(t *testing.T, ca *CA, cert *x509.Certificate) {
 	})
 	if err != nil {
 		t.Errorf("cert chain verification failed: %v", err)
+	}
+}
+
+// Agents make ECDSA P-256 keys. The CA signs only ECDSA P-256 or P-384
+// keys, so a weak or odd key never gets an agent certificate.
+func TestSignCSR_AcceptsOnlyECDSAP256OrP384(t *testing.T) {
+	ca, err := EnsureCA(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrFor := func(key crypto.Signer) []byte {
+		der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "x"}}, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return der
+	}
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p521, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	p384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	p256, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+
+	for name, key := range map[string]crypto.Signer{"RSA": rsaKey, "P-521": p521} {
+		if _, _, err := ca.SignCSR(csrFor(key), "host"); err == nil {
+			t.Errorf("signed a CSR for a %s key", name)
+		}
+	}
+	for name, key := range map[string]crypto.Signer{"P-256": p256, "P-384": p384} {
+		if _, _, err := ca.SignCSR(csrFor(key), "host"); err != nil {
+			t.Errorf("refused a CSR for a %s key: %v", name, err)
+		}
 	}
 }
