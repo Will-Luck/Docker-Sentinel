@@ -2,6 +2,10 @@ package verify
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -83,5 +87,58 @@ func TestAvailable(t *testing.T) {
 	v := New(&testLogger{}, WithCosignPath("/nonexistent/cosign"))
 	if v.Available() {
 		t.Error("expected not available for non-existent path")
+	}
+}
+
+// fakeCosign writes a script that records its arguments and succeeds.
+func fakeCosign(t *testing.T) (path, argsFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	argsFile = filepath.Join(dir, "args")
+	path = filepath.Join(dir, "cosign")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil { //nolint:gosec // the fake cosign must be executable
+		t.Fatal(err)
+	}
+	return path, argsFile
+}
+
+// Keyless verification without an expected identity and issuer accepts a
+// signature from anyone with a Sigstore certificate, so it is refused.
+func TestKeylessNeedsIdentityAndIssuer(t *testing.T) {
+	path, argsFile := fakeCosign(t)
+	v := New(nil, WithCosignPath(path), WithKeyless())
+
+	res := v.Verify(context.Background(), "app@sha256:abc")
+
+	if res.Verified || !strings.Contains(res.Error, "identity") {
+		t.Errorf("result = %+v, want keyless refused without an identity", res)
+	}
+	if _, err := os.Stat(argsFile); err == nil {
+		t.Error("cosign ran with no identity to check")
+	}
+}
+
+// With an identity and issuer, cosign is asked to check exactly those.
+func TestKeylessChecksTheIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		regexp bool
+		want   []string
+	}{
+		{false, []string{"--certificate-identity", "https://github.com/o/r/.github/workflows/release.yml@refs/heads/main", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com"}},
+		{true, []string{"--certificate-identity-regexp", "https://github.com/o/r/.github/workflows/release.yml@refs/heads/main", "--certificate-oidc-issuer-regexp", "https://token.actions.githubusercontent.com"}},
+	} {
+		path, argsFile := fakeCosign(t)
+		v := New(nil, WithCosignPath(path), WithKeyless(),
+			WithKeylessIdentity("https://github.com/o/r/.github/workflows/release.yml@refs/heads/main", "https://token.actions.githubusercontent.com", tc.regexp))
+
+		if res := v.Verify(context.Background(), "app@sha256:abc"); !res.Verified {
+			t.Fatalf("result = %+v", res)
+		}
+		raw, _ := os.ReadFile(argsFile)
+		got := strings.Fields(string(raw))
+		if !slices.Equal(got, append([]string{"verify", "app@sha256:abc"}, tc.want...)) {
+			t.Errorf("cosign args = %v, want the identity checks %v", got, tc.want)
+		}
 	}
 }

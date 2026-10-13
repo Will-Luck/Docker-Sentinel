@@ -47,7 +47,12 @@ type Verifier struct {
 	cosignPath string // path to cosign binary (default: "cosign")
 	keyPath    string // path to public key PEM for keyed verification
 	keyless    bool   // use Sigstore keyless (Fulcio + Rekor)
-	log        Logger
+	// identity and issuer are the certificate identity and OIDC issuer a
+	// keyless signature must carry; identityRegexp matches them as
+	// regular expressions.
+	identity, issuer string
+	identityRegexp   bool
+	log              Logger
 }
 
 // Option configures a Verifier.
@@ -66,6 +71,16 @@ func WithKeyPath(path string) Option {
 // WithKeyless enables Sigstore keyless verification.
 func WithKeyless() Option {
 	return func(v *Verifier) { v.keyless = true }
+}
+
+// WithKeylessIdentity sets the certificate identity (for GitHub Actions,
+// the workflow URL with its ref) and the OIDC issuer a keyless signature
+// must carry. With regexp they are matched as regular expressions. Keyless
+// verification is refused without them: any Sigstore certificate would do.
+func WithKeylessIdentity(identity, issuer string, regexp bool) Option {
+	return func(v *Verifier) {
+		v.identity, v.issuer, v.identityRegexp = identity, issuer, regexp
+	}
 }
 
 // New creates a Verifier with the given options.
@@ -98,14 +113,17 @@ func (v *Verifier) Verify(ctx context.Context, imageRef string) *Result {
 	if v.keyPath != "" {
 		args = append(args, "--key", v.keyPath)
 	} else if v.keyless {
-		// Keyless verification uses Sigstore's transparency log.
-		// COSIGN_EXPERIMENTAL=1 is deprecated in newer cosign versions,
-		// but --certificate-identity-regexp and --certificate-oidc-issuer-regexp
-		// are the new way. For broad verification, use ".*" patterns.
-		args = append(args,
-			"--certificate-identity-regexp", ".*",
-			"--certificate-oidc-issuer-regexp", ".*",
-		)
+		// Keyless verification uses Sigstore's transparency log and proves
+		// only who signed: without the expected identity and issuer any
+		// Sigstore certificate would pass, so it is refused.
+		if v.identity == "" || v.issuer == "" {
+			return &Result{Error: "keyless verification needs the expected certificate identity and OIDC issuer"}
+		}
+		identityFlag, issuerFlag := "--certificate-identity", "--certificate-oidc-issuer"
+		if v.identityRegexp {
+			identityFlag, issuerFlag = identityFlag+"-regexp", issuerFlag+"-regexp"
+		}
+		args = append(args, identityFlag, v.identity, issuerFlag, v.issuer)
 	} else {
 		return &Result{Error: "no verification key or keyless mode configured"}
 	}
