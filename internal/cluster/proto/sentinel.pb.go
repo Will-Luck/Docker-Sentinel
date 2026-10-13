@@ -917,7 +917,16 @@ type UpdateContainerRequest struct {
 	// X-Registry-Auth value (URL-safe base64 AuthConfig JSON) for the target
 	// image's registry, so the agent's daemon can pull from a private registry
 	// with the credentials stored on the hub. Empty when there are none.
-	RegistryAuth  string `protobuf:"bytes,20,opt,name=registry_auth,json=registryAuth,proto3" json:"registry_auth,omitempty"`
+	RegistryAuth string `protobuf:"bytes,20,opt,name=registry_auth,json=registryAuth,proto3" json:"registry_auth,omitempty"`
+	// Images the container ran before its current one (from the hub's update
+	// history, newest first, at most 10): image IDs, digest references or
+	// tags. The agent leaves out of the new container the values that came
+	// from any of them. Agents before v3.0.0 ignore it.
+	PreviousImages []string `protobuf:"bytes,10,rep,name=previous_images,json=previousImages,proto3" json:"previous_images,omitempty"`
+	// The lifecycle hooks the hub has stored for this container. They win
+	// over the container's sentinel.hook.* labels, phase by phase, as on the
+	// hub. Agents before v3.0.0 ignore it.
+	Hooks         []*HookSpec `protobuf:"bytes,11,rep,name=hooks,proto3" json:"hooks,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -987,6 +996,81 @@ func (x *UpdateContainerRequest) GetRegistryAuth() string {
 	return ""
 }
 
+func (x *UpdateContainerRequest) GetPreviousImages() []string {
+	if x != nil {
+		return x.PreviousImages
+	}
+	return nil
+}
+
+func (x *UpdateContainerRequest) GetHooks() []*HookSpec {
+	if x != nil {
+		return x.Hooks
+	}
+	return nil
+}
+
+// A lifecycle hook to run in a container.
+type HookSpec struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Phase          string                 `protobuf:"bytes,1,opt,name=phase,proto3" json:"phase,omitempty"`     // "pre-update" or "post-update"
+	Command        []string               `protobuf:"bytes,2,rep,name=command,proto3" json:"command,omitempty"` // argv, run as given
+	TimeoutSeconds int32                  `protobuf:"varint,3,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *HookSpec) Reset() {
+	*x = HookSpec{}
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HookSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HookSpec) ProtoMessage() {}
+
+func (x *HookSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HookSpec.ProtoReflect.Descriptor instead.
+func (*HookSpec) Descriptor() ([]byte, []int) {
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *HookSpec) GetPhase() string {
+	if x != nil {
+		return x.Phase
+	}
+	return ""
+}
+
+func (x *HookSpec) GetCommand() []string {
+	if x != nil {
+		return x.Command
+	}
+	return nil
+}
+
+func (x *HookSpec) GetTimeoutSeconds() int32 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
 type ContainerActionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ContainerName string                 `protobuf:"bytes,1,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
@@ -997,7 +1081,7 @@ type ContainerActionRequest struct {
 
 func (x *ContainerActionRequest) Reset() {
 	*x = ContainerActionRequest{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[10]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1009,7 +1093,7 @@ func (x *ContainerActionRequest) String() string {
 func (*ContainerActionRequest) ProtoMessage() {}
 
 func (x *ContainerActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[10]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1022,7 +1106,7 @@ func (x *ContainerActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerActionRequest.ProtoReflect.Descriptor instead.
 func (*ContainerActionRequest) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{10}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ContainerActionRequest) GetContainerName() string {
@@ -1049,7 +1133,7 @@ type FetchLogsRequest struct {
 
 func (x *FetchLogsRequest) Reset() {
 	*x = FetchLogsRequest{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[11]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1061,7 +1145,7 @@ func (x *FetchLogsRequest) String() string {
 func (*FetchLogsRequest) ProtoMessage() {}
 
 func (x *FetchLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[11]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1074,7 +1158,7 @@ func (x *FetchLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchLogsRequest.ProtoReflect.Descriptor instead.
 func (*FetchLogsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{11}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *FetchLogsRequest) GetContainerName() string {
@@ -1104,7 +1188,7 @@ type FetchLogsResult struct {
 
 func (x *FetchLogsResult) Reset() {
 	*x = FetchLogsResult{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[12]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1116,7 +1200,7 @@ func (x *FetchLogsResult) String() string {
 func (*FetchLogsResult) ProtoMessage() {}
 
 func (x *FetchLogsResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[12]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1129,7 +1213,7 @@ func (x *FetchLogsResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchLogsResult.ProtoReflect.Descriptor instead.
 func (*FetchLogsResult) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{12}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *FetchLogsResult) GetRequestId() string {
@@ -1180,7 +1264,7 @@ type ContainerActionResult struct {
 
 func (x *ContainerActionResult) Reset() {
 	*x = ContainerActionResult{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[13]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1192,7 +1276,7 @@ func (x *ContainerActionResult) String() string {
 func (*ContainerActionResult) ProtoMessage() {}
 
 func (x *ContainerActionResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[13]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1205,7 +1289,7 @@ func (x *ContainerActionResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerActionResult.ProtoReflect.Descriptor instead.
 func (*ContainerActionResult) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{13}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ContainerActionResult) GetRequestId() string {
@@ -1260,7 +1344,7 @@ type UpdateResult struct {
 
 func (x *UpdateResult) Reset() {
 	*x = UpdateResult{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[14]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1272,7 +1356,7 @@ func (x *UpdateResult) String() string {
 func (*UpdateResult) ProtoMessage() {}
 
 func (x *UpdateResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[14]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1285,7 +1369,7 @@ func (x *UpdateResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateResult.ProtoReflect.Descriptor instead.
 func (*UpdateResult) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{14}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *UpdateResult) GetRequestId() string {
@@ -1360,7 +1444,7 @@ type PullImageRequest struct {
 
 func (x *PullImageRequest) Reset() {
 	*x = PullImageRequest{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[15]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1372,7 +1456,7 @@ func (x *PullImageRequest) String() string {
 func (*PullImageRequest) ProtoMessage() {}
 
 func (x *PullImageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[15]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1385,7 +1469,7 @@ func (x *PullImageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PullImageRequest.ProtoReflect.Descriptor instead.
 func (*PullImageRequest) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{15}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *PullImageRequest) GetImageRef() string {
@@ -1407,7 +1491,7 @@ type RunHookRequest struct {
 
 func (x *RunHookRequest) Reset() {
 	*x = RunHookRequest{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[16]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1419,7 +1503,7 @@ func (x *RunHookRequest) String() string {
 func (*RunHookRequest) ProtoMessage() {}
 
 func (x *RunHookRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[16]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1432,7 +1516,7 @@ func (x *RunHookRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunHookRequest.ProtoReflect.Descriptor instead.
 func (*RunHookRequest) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{16}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RunHookRequest) GetContainerName() string {
@@ -1477,7 +1561,7 @@ type HookResult struct {
 
 func (x *HookResult) Reset() {
 	*x = HookResult{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[17]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1489,7 +1573,7 @@ func (x *HookResult) String() string {
 func (*HookResult) ProtoMessage() {}
 
 func (x *HookResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[17]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1502,7 +1586,7 @@ func (x *HookResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HookResult.ProtoReflect.Descriptor instead.
 func (*HookResult) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{17}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *HookResult) GetRequestId() string {
@@ -1556,7 +1640,7 @@ type RollbackRequest struct {
 
 func (x *RollbackRequest) Reset() {
 	*x = RollbackRequest{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[18]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1568,7 +1652,7 @@ func (x *RollbackRequest) String() string {
 func (*RollbackRequest) ProtoMessage() {}
 
 func (x *RollbackRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[18]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1581,7 +1665,7 @@ func (x *RollbackRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RollbackRequest.ProtoReflect.Descriptor instead.
 func (*RollbackRequest) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{18}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RollbackRequest) GetContainerName() string {
@@ -1603,7 +1687,7 @@ type RollbackResult struct {
 
 func (x *RollbackResult) Reset() {
 	*x = RollbackResult{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[19]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1615,7 +1699,7 @@ func (x *RollbackResult) String() string {
 func (*RollbackResult) ProtoMessage() {}
 
 func (x *RollbackResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[19]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1628,7 +1712,7 @@ func (x *RollbackResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RollbackResult.ProtoReflect.Descriptor instead.
 func (*RollbackResult) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{19}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RollbackResult) GetRequestId() string {
@@ -1673,7 +1757,7 @@ type StateReport struct {
 
 func (x *StateReport) Reset() {
 	*x = StateReport{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[20]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1685,7 +1769,7 @@ func (x *StateReport) String() string {
 func (*StateReport) ProtoMessage() {}
 
 func (x *StateReport) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[20]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1698,7 +1782,7 @@ func (x *StateReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateReport.ProtoReflect.Descriptor instead.
 func (*StateReport) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{20}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *StateReport) GetHostId() string {
@@ -1757,7 +1841,7 @@ type StateAck struct {
 
 func (x *StateAck) Reset() {
 	*x = StateAck{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[21]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1769,7 +1853,7 @@ func (x *StateAck) String() string {
 func (*StateAck) ProtoMessage() {}
 
 func (x *StateAck) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[21]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1782,7 +1866,7 @@ func (x *StateAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateAck.ProtoReflect.Descriptor instead.
 func (*StateAck) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{21}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *StateAck) GetAccepted() bool {
@@ -1817,7 +1901,7 @@ type PolicySync struct {
 
 func (x *PolicySync) Reset() {
 	*x = PolicySync{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[22]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1829,7 +1913,7 @@ func (x *PolicySync) String() string {
 func (*PolicySync) ProtoMessage() {}
 
 func (x *PolicySync) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[22]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1842,7 +1926,7 @@ func (x *PolicySync) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicySync.ProtoReflect.Descriptor instead.
 func (*PolicySync) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{22}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *PolicySync) GetPolicies() map[string]string {
@@ -1868,13 +1952,18 @@ type SettingsSync struct {
 	HooksEnabled     bool                   `protobuf:"varint,5,opt,name=hooks_enabled,json=hooksEnabled,proto3" json:"hooks_enabled,omitempty"`
 	DependencyAware  bool                   `protobuf:"varint,6,opt,name=dependency_aware,json=dependencyAware,proto3" json:"dependency_aware,omitempty"`
 	RollbackPolicy   string                 `protobuf:"bytes,7,opt,name=rollback_policy,json=rollbackPolicy,proto3" json:"rollback_policy,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Start updated containers on fresh anonymous volumes. Hubs before
+	// v3.0.0 never send SettingsSync.
+	RemoveVolumes bool `protobuf:"varint,8,opt,name=remove_volumes,json=removeVolumes,proto3" json:"remove_volumes,omitempty"`
+	// Tag the old image as a backup before an update.
+	ImageBackup   bool `protobuf:"varint,9,opt,name=image_backup,json=imageBackup,proto3" json:"image_backup,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SettingsSync) Reset() {
 	*x = SettingsSync{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[23]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1886,7 +1975,7 @@ func (x *SettingsSync) String() string {
 func (*SettingsSync) ProtoMessage() {}
 
 func (x *SettingsSync) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[23]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1899,7 +1988,7 @@ func (x *SettingsSync) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettingsSync.ProtoReflect.Descriptor instead.
 func (*SettingsSync) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{23}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SettingsSync) GetPollInterval() *durationpb.Duration {
@@ -1951,6 +2040,20 @@ func (x *SettingsSync) GetRollbackPolicy() string {
 	return ""
 }
 
+func (x *SettingsSync) GetRemoveVolumes() bool {
+	if x != nil {
+		return x.RemoveVolumes
+	}
+	return false
+}
+
+func (x *SettingsSync) GetImageBackup() bool {
+	if x != nil {
+		return x.ImageBackup
+	}
+	return false
+}
+
 type OfflineJournal struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Entries       []*JournalEntry        `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
@@ -1960,7 +2063,7 @@ type OfflineJournal struct {
 
 func (x *OfflineJournal) Reset() {
 	*x = OfflineJournal{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[24]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1972,7 +2075,7 @@ func (x *OfflineJournal) String() string {
 func (*OfflineJournal) ProtoMessage() {}
 
 func (x *OfflineJournal) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[24]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1985,7 +2088,7 @@ func (x *OfflineJournal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OfflineJournal.ProtoReflect.Descriptor instead.
 func (*OfflineJournal) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{24}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *OfflineJournal) GetEntries() []*JournalEntry {
@@ -2014,7 +2117,7 @@ type JournalEntry struct {
 
 func (x *JournalEntry) Reset() {
 	*x = JournalEntry{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[25]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2026,7 +2129,7 @@ func (x *JournalEntry) String() string {
 func (*JournalEntry) ProtoMessage() {}
 
 func (x *JournalEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[25]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2039,7 +2142,7 @@ func (x *JournalEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JournalEntry.ProtoReflect.Descriptor instead.
 func (*JournalEntry) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{25}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *JournalEntry) GetId() string {
@@ -2128,7 +2231,7 @@ type CertRenewalCSR struct {
 
 func (x *CertRenewalCSR) Reset() {
 	*x = CertRenewalCSR{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[26]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2140,7 +2243,7 @@ func (x *CertRenewalCSR) String() string {
 func (*CertRenewalCSR) ProtoMessage() {}
 
 func (x *CertRenewalCSR) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[26]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2153,7 +2256,7 @@ func (x *CertRenewalCSR) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CertRenewalCSR.ProtoReflect.Descriptor instead.
 func (*CertRenewalCSR) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{26}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *CertRenewalCSR) GetCsr() []byte {
@@ -2172,7 +2275,7 @@ type CertRenewalResponse struct {
 
 func (x *CertRenewalResponse) Reset() {
 	*x = CertRenewalResponse{}
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[27]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2184,7 +2287,7 @@ func (x *CertRenewalResponse) String() string {
 func (*CertRenewalResponse) ProtoMessage() {}
 
 func (x *CertRenewalResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[27]
+	mi := &file_internal_cluster_proto_sentinel_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2197,7 +2300,7 @@ func (x *CertRenewalResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CertRenewalResponse.ProtoReflect.Descriptor instead.
 func (*CertRenewalResponse) Descriptor() ([]byte, []int) {
-	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{27}
+	return file_internal_cluster_proto_sentinel_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *CertRenewalResponse) GetAgentCert() []byte {
@@ -2281,14 +2384,21 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"containers\x18\x02 \x03(\v2\x1f.sentinel.cluster.ContainerInfoR\n" +
 	"containers\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\"\x17\n" +
-	"\x15ListContainersRequest\"\xcb\x01\n" +
+	"\x15ListContainersRequest\"\xa6\x02\n" +
 	"\x16UpdateContainerRequest\x12%\n" +
 	"\x0econtainer_name\x18\x01 \x01(\tR\rcontainerName\x12!\n" +
 	"\ftarget_image\x18\x02 \x01(\tR\vtargetImage\x12#\n" +
 	"\rtarget_digest\x18\x03 \x01(\tR\ftargetDigest\x12\x1d\n" +
 	"\n" +
 	"skip_hooks\x18\x04 \x01(\bR\tskipHooks\x12#\n" +
-	"\rregistry_auth\x18\x14 \x01(\tR\fregistryAuth\"W\n" +
+	"\rregistry_auth\x18\x14 \x01(\tR\fregistryAuth\x12'\n" +
+	"\x0fprevious_images\x18\n" +
+	" \x03(\tR\x0epreviousImages\x120\n" +
+	"\x05hooks\x18\v \x03(\v2\x1a.sentinel.cluster.HookSpecR\x05hooks\"c\n" +
+	"\bHookSpec\x12\x14\n" +
+	"\x05phase\x18\x01 \x01(\tR\x05phase\x12\x18\n" +
+	"\acommand\x18\x02 \x03(\tR\acommand\x12'\n" +
+	"\x0ftimeout_seconds\x18\x03 \x01(\x05R\x0etimeoutSeconds\"W\n" +
 	"\x16ContainerActionRequest\x12%\n" +
 	"\x0econtainer_name\x18\x01 \x01(\tR\rcontainerName\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\"O\n" +
@@ -2365,7 +2475,7 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"\x0edefault_policy\x18\x02 \x01(\tR\rdefaultPolicy\x1a;\n" +
 	"\rPoliciesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xd8\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa2\x03\n" +
 	"\fSettingsSync\x12>\n" +
 	"\rpoll_interval\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\fpollInterval\x12<\n" +
 	"\fgrace_period\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\vgracePeriod\x12,\n" +
@@ -2373,7 +2483,9 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"\rimage_cleanup\x18\x04 \x01(\bR\fimageCleanup\x12#\n" +
 	"\rhooks_enabled\x18\x05 \x01(\bR\fhooksEnabled\x12)\n" +
 	"\x10dependency_aware\x18\x06 \x01(\bR\x0fdependencyAware\x12'\n" +
-	"\x0frollback_policy\x18\a \x01(\tR\x0erollbackPolicy\"J\n" +
+	"\x0frollback_policy\x18\a \x01(\tR\x0erollbackPolicy\x12%\n" +
+	"\x0eremove_volumes\x18\b \x01(\bR\rremoveVolumes\x12!\n" +
+	"\fimage_backup\x18\t \x01(\bR\vimageBackup\"J\n" +
 	"\x0eOfflineJournal\x128\n" +
 	"\aentries\x18\x01 \x03(\v2\x1e.sentinel.cluster.JournalEntryR\aentries\"\xed\x02\n" +
 	"\fJournalEntry\x12\x0e\n" +
@@ -2414,7 +2526,7 @@ func file_internal_cluster_proto_sentinel_proto_rawDescGZIP() []byte {
 	return file_internal_cluster_proto_sentinel_proto_rawDescData
 }
 
-var file_internal_cluster_proto_sentinel_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
+var file_internal_cluster_proto_sentinel_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_internal_cluster_proto_sentinel_proto_goTypes = []any{
 	(*EnrollRequest)(nil),          // 0: sentinel.cluster.EnrollRequest
 	(*EnrollResponse)(nil),         // 1: sentinel.cluster.EnrollResponse
@@ -2426,75 +2538,77 @@ var file_internal_cluster_proto_sentinel_proto_goTypes = []any{
 	(*ContainerList)(nil),          // 7: sentinel.cluster.ContainerList
 	(*ListContainersRequest)(nil),  // 8: sentinel.cluster.ListContainersRequest
 	(*UpdateContainerRequest)(nil), // 9: sentinel.cluster.UpdateContainerRequest
-	(*ContainerActionRequest)(nil), // 10: sentinel.cluster.ContainerActionRequest
-	(*FetchLogsRequest)(nil),       // 11: sentinel.cluster.FetchLogsRequest
-	(*FetchLogsResult)(nil),        // 12: sentinel.cluster.FetchLogsResult
-	(*ContainerActionResult)(nil),  // 13: sentinel.cluster.ContainerActionResult
-	(*UpdateResult)(nil),           // 14: sentinel.cluster.UpdateResult
-	(*PullImageRequest)(nil),       // 15: sentinel.cluster.PullImageRequest
-	(*RunHookRequest)(nil),         // 16: sentinel.cluster.RunHookRequest
-	(*HookResult)(nil),             // 17: sentinel.cluster.HookResult
-	(*RollbackRequest)(nil),        // 18: sentinel.cluster.RollbackRequest
-	(*RollbackResult)(nil),         // 19: sentinel.cluster.RollbackResult
-	(*StateReport)(nil),            // 20: sentinel.cluster.StateReport
-	(*StateAck)(nil),               // 21: sentinel.cluster.StateAck
-	(*PolicySync)(nil),             // 22: sentinel.cluster.PolicySync
-	(*SettingsSync)(nil),           // 23: sentinel.cluster.SettingsSync
-	(*OfflineJournal)(nil),         // 24: sentinel.cluster.OfflineJournal
-	(*JournalEntry)(nil),           // 25: sentinel.cluster.JournalEntry
-	(*CertRenewalCSR)(nil),         // 26: sentinel.cluster.CertRenewalCSR
-	(*CertRenewalResponse)(nil),    // 27: sentinel.cluster.CertRenewalResponse
-	nil,                            // 28: sentinel.cluster.ContainerInfo.LabelsEntry
-	nil,                            // 29: sentinel.cluster.PolicySync.PoliciesEntry
-	(*timestamppb.Timestamp)(nil),  // 30: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),    // 31: google.protobuf.Duration
+	(*HookSpec)(nil),               // 10: sentinel.cluster.HookSpec
+	(*ContainerActionRequest)(nil), // 11: sentinel.cluster.ContainerActionRequest
+	(*FetchLogsRequest)(nil),       // 12: sentinel.cluster.FetchLogsRequest
+	(*FetchLogsResult)(nil),        // 13: sentinel.cluster.FetchLogsResult
+	(*ContainerActionResult)(nil),  // 14: sentinel.cluster.ContainerActionResult
+	(*UpdateResult)(nil),           // 15: sentinel.cluster.UpdateResult
+	(*PullImageRequest)(nil),       // 16: sentinel.cluster.PullImageRequest
+	(*RunHookRequest)(nil),         // 17: sentinel.cluster.RunHookRequest
+	(*HookResult)(nil),             // 18: sentinel.cluster.HookResult
+	(*RollbackRequest)(nil),        // 19: sentinel.cluster.RollbackRequest
+	(*RollbackResult)(nil),         // 20: sentinel.cluster.RollbackResult
+	(*StateReport)(nil),            // 21: sentinel.cluster.StateReport
+	(*StateAck)(nil),               // 22: sentinel.cluster.StateAck
+	(*PolicySync)(nil),             // 23: sentinel.cluster.PolicySync
+	(*SettingsSync)(nil),           // 24: sentinel.cluster.SettingsSync
+	(*OfflineJournal)(nil),         // 25: sentinel.cluster.OfflineJournal
+	(*JournalEntry)(nil),           // 26: sentinel.cluster.JournalEntry
+	(*CertRenewalCSR)(nil),         // 27: sentinel.cluster.CertRenewalCSR
+	(*CertRenewalResponse)(nil),    // 28: sentinel.cluster.CertRenewalResponse
+	nil,                            // 29: sentinel.cluster.ContainerInfo.LabelsEntry
+	nil,                            // 30: sentinel.cluster.PolicySync.PoliciesEntry
+	(*timestamppb.Timestamp)(nil),  // 31: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),    // 32: google.protobuf.Duration
 }
 var file_internal_cluster_proto_sentinel_proto_depIdxs = []int32{
 	4,  // 0: sentinel.cluster.AgentMessage.heartbeat:type_name -> sentinel.cluster.Heartbeat
 	7,  // 1: sentinel.cluster.AgentMessage.container_list:type_name -> sentinel.cluster.ContainerList
-	14, // 2: sentinel.cluster.AgentMessage.update_result:type_name -> sentinel.cluster.UpdateResult
-	17, // 3: sentinel.cluster.AgentMessage.hook_result:type_name -> sentinel.cluster.HookResult
-	19, // 4: sentinel.cluster.AgentMessage.rollback_result:type_name -> sentinel.cluster.RollbackResult
-	24, // 5: sentinel.cluster.AgentMessage.offline_journal:type_name -> sentinel.cluster.OfflineJournal
-	26, // 6: sentinel.cluster.AgentMessage.cert_renewal:type_name -> sentinel.cluster.CertRenewalCSR
-	13, // 7: sentinel.cluster.AgentMessage.container_action_result:type_name -> sentinel.cluster.ContainerActionResult
-	12, // 8: sentinel.cluster.AgentMessage.fetch_logs_result:type_name -> sentinel.cluster.FetchLogsResult
+	15, // 2: sentinel.cluster.AgentMessage.update_result:type_name -> sentinel.cluster.UpdateResult
+	18, // 3: sentinel.cluster.AgentMessage.hook_result:type_name -> sentinel.cluster.HookResult
+	20, // 4: sentinel.cluster.AgentMessage.rollback_result:type_name -> sentinel.cluster.RollbackResult
+	25, // 5: sentinel.cluster.AgentMessage.offline_journal:type_name -> sentinel.cluster.OfflineJournal
+	27, // 6: sentinel.cluster.AgentMessage.cert_renewal:type_name -> sentinel.cluster.CertRenewalCSR
+	14, // 7: sentinel.cluster.AgentMessage.container_action_result:type_name -> sentinel.cluster.ContainerActionResult
+	13, // 8: sentinel.cluster.AgentMessage.fetch_logs_result:type_name -> sentinel.cluster.FetchLogsResult
 	4,  // 9: sentinel.cluster.ServerMessage.heartbeat:type_name -> sentinel.cluster.Heartbeat
 	8,  // 10: sentinel.cluster.ServerMessage.list_containers:type_name -> sentinel.cluster.ListContainersRequest
 	9,  // 11: sentinel.cluster.ServerMessage.update_container:type_name -> sentinel.cluster.UpdateContainerRequest
-	15, // 12: sentinel.cluster.ServerMessage.pull_image:type_name -> sentinel.cluster.PullImageRequest
-	16, // 13: sentinel.cluster.ServerMessage.run_hook:type_name -> sentinel.cluster.RunHookRequest
-	18, // 14: sentinel.cluster.ServerMessage.rollback:type_name -> sentinel.cluster.RollbackRequest
-	22, // 15: sentinel.cluster.ServerMessage.policy_sync:type_name -> sentinel.cluster.PolicySync
-	23, // 16: sentinel.cluster.ServerMessage.settings_sync:type_name -> sentinel.cluster.SettingsSync
-	27, // 17: sentinel.cluster.ServerMessage.cert_renewal_response:type_name -> sentinel.cluster.CertRenewalResponse
-	10, // 18: sentinel.cluster.ServerMessage.container_action:type_name -> sentinel.cluster.ContainerActionRequest
-	11, // 19: sentinel.cluster.ServerMessage.fetch_logs:type_name -> sentinel.cluster.FetchLogsRequest
-	30, // 20: sentinel.cluster.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
-	28, // 21: sentinel.cluster.ContainerInfo.labels:type_name -> sentinel.cluster.ContainerInfo.LabelsEntry
-	30, // 22: sentinel.cluster.ContainerInfo.created:type_name -> google.protobuf.Timestamp
+	16, // 12: sentinel.cluster.ServerMessage.pull_image:type_name -> sentinel.cluster.PullImageRequest
+	17, // 13: sentinel.cluster.ServerMessage.run_hook:type_name -> sentinel.cluster.RunHookRequest
+	19, // 14: sentinel.cluster.ServerMessage.rollback:type_name -> sentinel.cluster.RollbackRequest
+	23, // 15: sentinel.cluster.ServerMessage.policy_sync:type_name -> sentinel.cluster.PolicySync
+	24, // 16: sentinel.cluster.ServerMessage.settings_sync:type_name -> sentinel.cluster.SettingsSync
+	28, // 17: sentinel.cluster.ServerMessage.cert_renewal_response:type_name -> sentinel.cluster.CertRenewalResponse
+	11, // 18: sentinel.cluster.ServerMessage.container_action:type_name -> sentinel.cluster.ContainerActionRequest
+	12, // 19: sentinel.cluster.ServerMessage.fetch_logs:type_name -> sentinel.cluster.FetchLogsRequest
+	31, // 20: sentinel.cluster.Heartbeat.timestamp:type_name -> google.protobuf.Timestamp
+	29, // 21: sentinel.cluster.ContainerInfo.labels:type_name -> sentinel.cluster.ContainerInfo.LabelsEntry
+	31, // 22: sentinel.cluster.ContainerInfo.created:type_name -> google.protobuf.Timestamp
 	5,  // 23: sentinel.cluster.ContainerInfo.ports:type_name -> sentinel.cluster.PortMapping
 	6,  // 24: sentinel.cluster.ContainerList.containers:type_name -> sentinel.cluster.ContainerInfo
-	31, // 25: sentinel.cluster.UpdateResult.duration:type_name -> google.protobuf.Duration
-	6,  // 26: sentinel.cluster.StateReport.containers:type_name -> sentinel.cluster.ContainerInfo
-	30, // 27: sentinel.cluster.StateReport.timestamp:type_name -> google.protobuf.Timestamp
-	29, // 28: sentinel.cluster.PolicySync.policies:type_name -> sentinel.cluster.PolicySync.PoliciesEntry
-	31, // 29: sentinel.cluster.SettingsSync.poll_interval:type_name -> google.protobuf.Duration
-	31, // 30: sentinel.cluster.SettingsSync.grace_period:type_name -> google.protobuf.Duration
-	25, // 31: sentinel.cluster.OfflineJournal.entries:type_name -> sentinel.cluster.JournalEntry
-	30, // 32: sentinel.cluster.JournalEntry.timestamp:type_name -> google.protobuf.Timestamp
-	31, // 33: sentinel.cluster.JournalEntry.duration:type_name -> google.protobuf.Duration
-	0,  // 34: sentinel.cluster.EnrollmentService.Enroll:input_type -> sentinel.cluster.EnrollRequest
-	2,  // 35: sentinel.cluster.AgentService.Channel:input_type -> sentinel.cluster.AgentMessage
-	20, // 36: sentinel.cluster.AgentService.ReportState:input_type -> sentinel.cluster.StateReport
-	1,  // 37: sentinel.cluster.EnrollmentService.Enroll:output_type -> sentinel.cluster.EnrollResponse
-	3,  // 38: sentinel.cluster.AgentService.Channel:output_type -> sentinel.cluster.ServerMessage
-	21, // 39: sentinel.cluster.AgentService.ReportState:output_type -> sentinel.cluster.StateAck
-	37, // [37:40] is the sub-list for method output_type
-	34, // [34:37] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	10, // 25: sentinel.cluster.UpdateContainerRequest.hooks:type_name -> sentinel.cluster.HookSpec
+	32, // 26: sentinel.cluster.UpdateResult.duration:type_name -> google.protobuf.Duration
+	6,  // 27: sentinel.cluster.StateReport.containers:type_name -> sentinel.cluster.ContainerInfo
+	31, // 28: sentinel.cluster.StateReport.timestamp:type_name -> google.protobuf.Timestamp
+	30, // 29: sentinel.cluster.PolicySync.policies:type_name -> sentinel.cluster.PolicySync.PoliciesEntry
+	32, // 30: sentinel.cluster.SettingsSync.poll_interval:type_name -> google.protobuf.Duration
+	32, // 31: sentinel.cluster.SettingsSync.grace_period:type_name -> google.protobuf.Duration
+	26, // 32: sentinel.cluster.OfflineJournal.entries:type_name -> sentinel.cluster.JournalEntry
+	31, // 33: sentinel.cluster.JournalEntry.timestamp:type_name -> google.protobuf.Timestamp
+	32, // 34: sentinel.cluster.JournalEntry.duration:type_name -> google.protobuf.Duration
+	0,  // 35: sentinel.cluster.EnrollmentService.Enroll:input_type -> sentinel.cluster.EnrollRequest
+	2,  // 36: sentinel.cluster.AgentService.Channel:input_type -> sentinel.cluster.AgentMessage
+	21, // 37: sentinel.cluster.AgentService.ReportState:input_type -> sentinel.cluster.StateReport
+	1,  // 38: sentinel.cluster.EnrollmentService.Enroll:output_type -> sentinel.cluster.EnrollResponse
+	3,  // 39: sentinel.cluster.AgentService.Channel:output_type -> sentinel.cluster.ServerMessage
+	22, // 40: sentinel.cluster.AgentService.ReportState:output_type -> sentinel.cluster.StateAck
+	38, // [38:41] is the sub-list for method output_type
+	35, // [35:38] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_internal_cluster_proto_sentinel_proto_init() }
@@ -2532,7 +2646,7 @@ func file_internal_cluster_proto_sentinel_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_cluster_proto_sentinel_proto_rawDesc), len(file_internal_cluster_proto_sentinel_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   30,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

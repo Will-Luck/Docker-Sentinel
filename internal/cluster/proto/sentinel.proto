@@ -128,6 +128,22 @@ message UpdateContainerRequest {
   // image's registry, so the agent's daemon can pull from a private registry
   // with the credentials stored on the hub. Empty when there are none.
   string registry_auth = 20;
+  // Images the container ran before its current one (from the hub's update
+  // history, newest first, at most 10): image IDs, digest references or
+  // tags. The agent leaves out of the new container the values that came
+  // from any of them. Agents before v3.0.0 ignore it.
+  repeated string previous_images = 10;
+  // The lifecycle hooks the hub has stored for this container. They win
+  // over the container's sentinel.hook.* labels, phase by phase, as on the
+  // hub. Agents before v3.0.0 ignore it.
+  repeated HookSpec hooks = 11;
+}
+
+// A lifecycle hook to run in a container.
+message HookSpec {
+  string phase = 1;              // "pre-update" or "post-update"
+  repeated string command = 2;   // argv, run as given
+  int32 timeout_seconds = 3;
 }
 
 message ContainerActionRequest {
@@ -239,6 +255,11 @@ message SettingsSync {
   bool hooks_enabled = 5;
   bool dependency_aware = 6;
   string rollback_policy = 7;
+  // Start updated containers on fresh anonymous volumes. Hubs before
+  // v3.0.0 never send SettingsSync.
+  bool remove_volumes = 8;
+  // Tag the old image as a backup before an update.
+  bool image_backup = 9;
 }
 
 // --- Offline journal ---
