@@ -3,7 +3,11 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -121,4 +125,49 @@ func TestOversizeMessage_LoggedWithHost(t *testing.T) {
 		out := logs.String()
 		return strings.Contains(out, "larger than") && strings.Contains(out, hostID)
 	}, "hub log does not name the host whose message was too large")
+}
+
+// The 64 MB message limit applies before a client has shown a certificate,
+// so one connection must not be able to open an unbounded number of
+// streams. The server announces its limit in its HTTP/2 settings, which
+// this reads by hand: a 9-byte frame header, then 6-byte (id, value) pairs.
+func TestServer_LimitsConcurrentStreams(t *testing.T) {
+	srv, addr, _, _ := testServer(t)
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(srv.ca.CACertPEM())
+	conn, err := tls.Dial("tcp", addr, &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS13, NextProtos: []string{"h2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Client preface, then an empty SETTINGS frame.
+	if _, err := conn.Write(append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), 0, 0, 0, 0x4, 0, 0, 0, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		hdr := make([]byte, 9)
+		if _, err := io.ReadFull(conn, hdr); err != nil {
+			t.Fatalf("reading server frame: %v", err)
+		}
+		length := int(hdr[0])<<16 | int(hdr[1])<<8 | int(hdr[2])
+		payload := make([]byte, length)
+		if _, err := io.ReadFull(conn, payload); err != nil {
+			t.Fatalf("reading server frame: %v", err)
+		}
+		const settingsFrame, ackFlag = 0x4, 0x1
+		if hdr[3] != settingsFrame || hdr[4]&ackFlag != 0 {
+			continue
+		}
+		const maxConcurrentStreams = 0x3
+		for i := 0; i+6 <= len(payload); i += 6 {
+			if binary.BigEndian.Uint16(payload[i:]) == maxConcurrentStreams {
+				if v := binary.BigEndian.Uint32(payload[i+2:]); v != 64 {
+					t.Errorf("server MAX_CONCURRENT_STREAMS = %d, want 64", v)
+				}
+				return
+			}
+		}
+		t.Fatal("server announced no MAX_CONCURRENT_STREAMS limit")
+	}
 }

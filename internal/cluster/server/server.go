@@ -246,6 +246,9 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 		grpc.Creds(creds),
 		grpc.MaxRecvMsgSize(maxMessageSize),
 		grpc.MaxSendMsgSize(maxMessageSize),
+		// The message limit applies before a client has shown a
+		// certificate; cap how many streams one connection can hold.
+		grpc.MaxConcurrentStreams(maxConcurrentStreams),
 		grpc.StatsHandler(&oversizeLogger{log: s.log}),
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: keepaliveTime, Timeout: keepaliveTimeout}),
 		// Agents ping every 30 seconds; allow that, idle streams included.
@@ -489,6 +492,10 @@ func (s *Server) disconnectAgent(id string) {
 // maxMessageSize is the largest gRPC message the cluster server sends or
 // accepts. A variable so tests can lower it.
 var maxMessageSize = cluster.MaxMessageSize
+
+// maxConcurrentStreams caps the streams on one connection. An agent uses
+// one long-lived stream plus a few short calls.
+const maxConcurrentStreams = 64
 
 // renewalAcceptFraction: the hub signs a renewal only once the agent's
 // current certificate has less than this fraction of its life left.
