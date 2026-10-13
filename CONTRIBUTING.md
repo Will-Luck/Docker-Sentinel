@@ -4,7 +4,7 @@ Thanks for your interest in contributing. This guide covers everything you need 
 
 ## Prerequisites
 
-- **Go 1.24+**
+- **Go 1.26+**
 - **Docker** (for integration tests and building images)
 - **Node.js** (for esbuild frontend bundling)
 

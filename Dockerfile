@@ -1,4 +1,8 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
+
+# The golang image sets GOTOOLCHAIN=local. With auto, a cached base image
+# older than go.mod's toolchain line fetches that release instead.
+ENV GOTOOLCHAIN=auto
 
 RUN apk add --no-cache git make
 
@@ -15,7 +19,7 @@ RUN make frontend
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /sentinel ./cmd/sentinel
 
-FROM alpine:3.21
+FROM alpine:3.24
 
 ARG VERSION=dev
 ARG BUILD_DATE=unknown
@@ -30,7 +34,7 @@ LABEL org.opencontainers.image.source="https://github.com/Will-Luck/Docker-Senti
       org.opencontainers.image.description="Container update orchestrator with per-container policies and automatic rollback" \
       sentinel.self=true
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /sentinel /usr/local/bin/sentinel
 

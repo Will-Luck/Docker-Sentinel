@@ -102,7 +102,7 @@ make frontend   # Build JS/CSS bundles (esbuild)
 make docker     # Build Docker image
 ```
 
-Requires Go 1.24+, Node.js, and Docker.
+Requires Go 1.26+, Node.js, and Docker.
 
 ## Licence
 
