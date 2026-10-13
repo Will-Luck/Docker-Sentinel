@@ -425,7 +425,12 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	for _, svc := range swarmServices {
 		liveNames[svc.Spec.Name] = true
 	}
-	// Add remote cluster container keys (hostID::name format).
+	// Add remote cluster container keys (hostID::name format). A remote
+	// entry can only be judged stale for a host that is connected and
+	// listed its containers this scan. Entries of any other host (not yet
+	// reconnected after a hub restart, partitioned, or whose list failed)
+	// are kept as they are.
+	listedHosts := make(map[string]bool)
 	if u.cluster != nil {
 		for _, hostID := range u.cluster.ConnectedHosts() {
 			remoteContainers, err := u.cluster.ListContainers(ctx, hostID)
@@ -433,9 +438,15 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				u.log.Debug("prune: failed to list remote containers", "host", hostID, "error", err)
 				continue
 			}
+			listedHosts[hostID] = true
 			for _, rc := range remoteContainers {
 				liveNames[store.ScopedKey(hostID, rc.Name)] = true
 			}
+		}
+	}
+	for _, p := range u.queue.List() {
+		if p.HostID != "" && !listedHosts[p.HostID] {
+			liveNames[p.Key()] = true
 		}
 	}
 	if pruned := u.queue.Prune(liveNames); pruned > 0 {
