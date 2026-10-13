@@ -384,7 +384,7 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 	return &proto.StateAck{
 		Accepted:       true,
 		Message:        "state received",
-		ServerFeatures: []string{cluster.FeatureCertRenewal},
+		ServerFeatures: []string{cluster.FeatureCertRenewal, cluster.FeatureKeepalive},
 	}, nil
 }
 

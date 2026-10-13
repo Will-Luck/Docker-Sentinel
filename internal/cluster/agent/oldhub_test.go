@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
@@ -24,6 +26,7 @@ type fakeHub struct {
 	features []string
 	channel  chan struct{}
 	got      chan *proto.AgentMessage
+	opens    atomic.Int32 // Channel streams opened
 }
 
 func (h *fakeHub) ReportState(context.Context, *proto.StateReport) (*proto.StateAck, error) {
@@ -31,6 +34,7 @@ func (h *fakeHub) ReportState(context.Context, *proto.StateReport) (*proto.State
 }
 
 func (h *fakeHub) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerMessage]) error {
+	h.opens.Add(1)
 	select {
 	case h.channel <- struct{}{}:
 	default:
@@ -159,4 +163,72 @@ func TestRunSession_ExplainsOversizeContainerList(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "larger than the server accepts") {
 		t.Fatalf("runSession error = %v, want one saying the container list is too large", err)
 	}
+}
+
+// runAgentAgainst runs an enrolled agent against the fake hub at addr until
+// the test ends.
+func runAgentAgainst(t *testing.T, addr, caDir string) *Agent {
+	t.Helper()
+	dataDir := t.TempDir()
+	provisionAgent(t, caDir, dataDir, "host-ka", time.Now())
+	a := New(Config{ServerAddr: addr, HostName: "ka", DataDir: dataDir}, newFakeHost(), noopLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = a.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	return a
+}
+
+// A hub before v2.17.0 runs gRPC's default ping policy: a client may ping
+// at most every five minutes, and one that pings more often is cut off
+// with "too_many_pings". The agent must not ping such a hub every 30
+// seconds, or it is disconnected over and over (after a hub rollback, say).
+func TestKeepalive_OldHubIsNotPingedTooOften(t *testing.T) {
+	if testing.Short() {
+		t.Skip("needs about 45 seconds of keepalive pings")
+	}
+	defer func(d time.Duration) { keepaliveFast = d }(keepaliveFast)
+	keepaliveFast = 10 * time.Second // the shortest gRPC allows
+
+	caDir := t.TempDir()
+	h := &fakeHub{channel: make(chan struct{}, 1), got: make(chan *proto.AgentMessage, 16)}
+	addr := startFakeHub(t, caDir, h) // gRPC's default keepalive enforcement
+	runAgentAgainst(t, addr, caDir)
+
+	select {
+	case <-h.channel:
+	case <-time.After(10 * time.Second):
+		t.Fatal("agent never opened its stream")
+	}
+	time.Sleep(45 * time.Second)
+	if n := h.opens.Load(); n != 1 {
+		t.Errorf("agent opened %d streams in 45s against an old hub, want 1 (it was cut off for pinging too often)", n)
+	}
+}
+
+// A hub that advertises keepalive gets the 30-second pings, so a partition
+// is noticed quickly.
+func TestKeepalive_FastPingsWhenTheHubAdvertisesThem(t *testing.T) {
+	caDir := t.TempDir()
+	h := &fakeHub{
+		features: []string{cluster.FeatureKeepalive},
+		channel:  make(chan struct{}, 1), got: make(chan *proto.AgentMessage, 16),
+	}
+	addr := startFakeHub(t, caDir, h, grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}))
+	a := runAgentAgainst(t, addr, caDir)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if a.dialledKeepalive() == keepaliveFast && h.opens.Load() >= 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("agent keepalive = %v after connecting to a hub that advertises keepalive, want %v", a.dialledKeepalive(), keepaliveFast)
 }

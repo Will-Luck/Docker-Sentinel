@@ -131,6 +131,13 @@ type Agent struct {
 	// certificates safely. Hubs before v2.17.0 do not.
 	hubRenews atomic.Bool
 
+	// hubKeepalive is whether the last hub said it accepts frequent
+	// keepalive pings; the next connection is dialled to match.
+	hubKeepalive atomic.Bool
+	// keepaliveDialled is the keepalive interval (nanoseconds) the
+	// current connection was dialled with.
+	keepaliveDialled atomic.Int64
+
 	// updating holds the names of containers being updated (beginUpdate).
 	updatingMu sync.Mutex
 	updating   map[string]bool
@@ -237,10 +244,11 @@ func (a *Agent) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		// A planned reconnect to start using a renewed certificate: no
-		// backoff, and the agent was never really offline.
-		if errors.Is(err, errCertRenewed) {
-			a.log.Info("reconnecting with the renewed certificate")
+		// A planned reconnect (to use a renewed certificate, or to match
+		// the server's keepalive policy): no backoff, and the agent was
+		// never really offline.
+		if errors.Is(err, errCertRenewed) || errors.Is(err, errKeepaliveChanged) {
+			a.log.Info(err.Error())
 			bo.reset()
 			continue
 		}
@@ -325,6 +333,19 @@ func (a *Agent) runSession(ctx context.Context) error {
 	}
 	a.log.Info("state report accepted", "message", ack.Message)
 	a.hubRenews.Store(slices.Contains(ack.GetServerFeatures(), cluster.FeatureCertRenewal))
+
+	// Match the keepalive interval to what this server accepts: a server
+	// before v2.17.0 cuts off a client that pings every 30 seconds. If the
+	// connection was dialled for the other kind of server, redial now.
+	fastOK := slices.Contains(ack.GetServerFeatures(), cluster.FeatureKeepalive)
+	a.hubKeepalive.Store(fastOK)
+	want := keepaliveSlow
+	if fastOK {
+		want = keepaliveFast
+	}
+	if a.dialledKeepalive() != want {
+		return errKeepaliveChanged
+	}
 
 	// Open bidirectional channel.
 	stream, err := a.service.Channel(ctx)
@@ -477,6 +498,10 @@ func (a *Agent) connect(ctx context.Context) error {
 		MinVersion:   tls.VersionTLS13,
 	}
 
+	ka := keepaliveSlow
+	if a.hubKeepalive.Load() {
+		ka = keepaliveFast
+	}
 	conn, err := grpc.NewClient(
 		a.cfg.ServerAddr,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
@@ -485,13 +510,15 @@ func (a *Agent) connect(ctx context.Context) error {
 			grpc.MaxCallSendMsgSize(cluster.MaxMessageSize),
 		),
 		// Ping the server when the connection is quiet, so a partition is
-		// noticed in about 40 seconds instead of when TCP gives up.
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 10 * time.Second, PermitWithoutStream: true}),
+		// noticed in about 40 seconds instead of when TCP gives up. Only a
+		// server that advertises it gets the fast pings.
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: ka, Timeout: 10 * time.Second, PermitWithoutStream: true}),
 	)
 	if err != nil {
 		return fmt.Errorf("dial server: %w", err)
 	}
 
+	a.keepaliveDialled.Store(int64(ka))
 	a.conn = conn
 	a.enrollment = proto.NewEnrollmentServiceClient(conn)
 	a.service = proto.NewAgentServiceClient(conn)
@@ -580,4 +607,22 @@ func (a *Agent) ContainerCount() int {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.containerCount
+}
+
+// Keepalive intervals for the agent's connection. keepaliveFast is used
+// only with a server that advertises FeatureKeepalive; otherwise the agent
+// stays within gRPC's default server policy. Variables so tests can
+// shorten them.
+var (
+	keepaliveFast = 30 * time.Second
+	keepaliveSlow = 5 * time.Minute
+)
+
+// errKeepaliveChanged ends a session so the agent redials with the
+// keepalive interval the server accepts.
+var errKeepaliveChanged = errors.New("reconnecting to match the server's keepalive policy")
+
+// dialledKeepalive is the keepalive interval of the current connection.
+func (a *Agent) dialledKeepalive() time.Duration {
+	return time.Duration(a.keepaliveDialled.Load())
 }

@@ -7,6 +7,12 @@ import "time"
 // valid until the agent connects with the new one.
 const FeatureCertRenewal = "cert-renewal"
 
+// FeatureKeepalive is the server feature that says the server accepts
+// keepalive pings every 30 seconds. gRPC's default, which servers before
+// v2.17.0 run, cuts off a client that pings more often than every five
+// minutes.
+const FeatureKeepalive = "keepalive"
+
 // MaxMessageSize is the largest gRPC message the cluster server and agents
 // exchange. A host with many containers and large labels sends a container
 // list well over gRPC's 4 MB default.
