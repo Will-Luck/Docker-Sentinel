@@ -36,7 +36,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	start := u.clock.Now()
 
-	// 1. Inspect and snapshot the current container.
+	// 1. Inspect the current container. Its snapshot is stored only once
+	// this version has been replaced (after validation), so a failed or
+	// skipped attempt never displaces the snapshot a rollback restores.
 	inspect, err := u.docker.InspectContainer(ctx, id)
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", name, err)
@@ -45,9 +47,6 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	snapshotData, err := json.Marshal(inspect)
 	if err != nil {
 		return fmt.Errorf("marshal snapshot for %s: %w", name, err)
-	}
-	if err := u.store.SaveSnapshot(name, snapshotData); err != nil {
-		return fmt.Errorf("save snapshot for %s: %w", name, err)
 	}
 
 	if inspect.Config == nil {
@@ -61,7 +60,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	if targetImage != "" {
 		pullImage = targetImage
 	}
-	u.log.Info("saved snapshot", "name", name, "image", oldImage)
+	u.log.Info("starting update", "name", name, "image", oldImage)
 	u.publishEvent(events.EventContainerUpdate, name, "update started")
 
 	u.notifier.Notify(ctx, notify.Event{
@@ -282,8 +281,12 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		return fmt.Errorf("new container %s failed validation", name)
 	}
 
-	// The new container is good: remove the old one.
+	// The new container is good: remove the old one and keep its snapshot
+	// for a later rollback.
 	sw.commit(ctx, removeVolumes)
+	if err := u.store.SaveSnapshot(name, snapshotData); err != nil {
+		u.log.Warn("failed to save the rollback snapshot", "name", name, "error", err)
+	}
 
 	// 6.5. Run post-update hooks (store entries, else the new container's labels).
 	if u.hooks != nil && u.cfg.HooksEnabled() {
