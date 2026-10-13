@@ -83,16 +83,21 @@ func (u *Updater) pruneImageBackups(ctx context.Context, imageRef string) {
 		u.log.Debug("image backup: could not list images to prune old backups", "error", err)
 		return
 	}
-	prefix := backupBase(imageRef) + backupTagMarker
+	// Match by repository, not by text: the daemon lists Docker Hub tags
+	// in short form (nginx:...), while imageRef may be in full form.
+	repo := repoKey(backupBase(imageRef))
+	marker := strings.TrimPrefix(backupTagMarker, ":")
 	var tags []string
 	for _, img := range images {
 		for _, t := range img.RepoTags {
-			if strings.HasPrefix(t, prefix) {
+			base := backupBase(t)
+			if strings.HasPrefix(strings.TrimPrefix(t, base+":"), marker) && repoKey(base) == repo {
 				tags = append(tags, t)
 			}
 		}
 	}
-	slices.Sort(tags)
+	// The timestamp after the marker orders them.
+	slices.SortFunc(tags, func(a, b string) int { return strings.Compare(a[len(backupBase(a)):], b[len(backupBase(b)):]) })
 	for _, t := range tags[:max(len(tags)-imageBackupsKept, 0)] {
 		if err := u.docker.RemoveImage(ctx, t); err != nil {
 			u.log.Warn("image backup: could not remove an old backup", "tag", t, "error", err)
