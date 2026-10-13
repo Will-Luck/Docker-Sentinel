@@ -278,7 +278,7 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 	// only after the new one passes validation, so a failure can bring it back.
 	u.log.Info("replacing container", "name", name, "image", pullImage)
 	sw := newSwap(u.docker, u.log, u.store, swapSpec{
-		kind: swapUpdate, name: name, oldID: id, old: inspect, stopTimeout: 30,
+		kind: swapUpdate, name: name, oldID: id, old: inspect, stopTimeout: stopTimeout(inspect.Config, 30),
 		snapshot: snapshotData, removeVolumes: removeVolumes,
 	})
 	if err := sw.replace(ctx, rc, true, nil); err != nil {
@@ -580,19 +580,60 @@ func (u *Updater) validateContainer(ctx context.Context, id string) (bool, error
 	case "unhealthy":
 		return false, nil
 	case "starting":
-		return u.waitForHealthy(ctx, id)
+		return u.waitForHealthy(ctx, id, healthWaitTimeout(inspect.Config))
 	default:
 		return true, nil
 	}
 }
 
 const healthPollInterval = 2 * time.Second
-const healthPollTimeout = 60 * time.Second
+
+// healthPollTimeout is the shortest wait for a healthcheck to decide, and
+// healthPollMax the longest.
+const (
+	healthPollTimeout = 60 * time.Second
+	healthPollMax     = 30 * time.Minute
+)
+
+// healthWaitTimeout is how long the daemon can take to call a container
+// healthy or unhealthy: its start period, then a check per retry (and one
+// more) at the interval, each taking up to the check timeout. Docker's
+// defaults (30s interval and timeout, 3 retries) apply where the
+// healthcheck leaves them unset. The wait is at least healthPollTimeout and
+// at most healthPollMax.
+func healthWaitTimeout(cfg *container.Config) time.Duration {
+	if cfg == nil || cfg.Healthcheck == nil {
+		return healthPollTimeout
+	}
+	hc := cfg.Healthcheck
+	interval, timeout, retries := hc.Interval, hc.Timeout, hc.Retries
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	if retries <= 0 {
+		retries = 3
+	}
+	wait := max(hc.StartPeriod, 0) + (interval+timeout)*time.Duration(retries+1)
+	return min(max(wait, healthPollTimeout), healthPollMax)
+}
+
+// stopTimeout returns the seconds to give a container to stop: Sentinel's
+// floor, or the container's own stop timeout when that is longer (the
+// timeout passed to the daemon overrides the container's).
+func stopTimeout(cfg *container.Config, floor int) int {
+	if cfg != nil && cfg.StopTimeout != nil && *cfg.StopTimeout > floor {
+		return *cfg.StopTimeout
+	}
+	return floor
+}
 
 // waitForHealthy polls the container's healthcheck status until it resolves
-// to healthy/unhealthy or the timeout expires.
-func (u *Updater) waitForHealthy(ctx context.Context, id string) (bool, error) {
-	deadline := u.clock.Now().Add(healthPollTimeout)
+// to healthy/unhealthy or wait expires.
+func (u *Updater) waitForHealthy(ctx context.Context, id string, wait time.Duration) (bool, error) {
+	deadline := u.clock.Now().Add(wait)
 	for {
 		select {
 		case <-ctx.Done():
@@ -877,7 +918,7 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 
 	snapshot, _ := json.Marshal(inspect)
 	sw := newSwap(u.docker, u.log, u.store, swapSpec{
-		kind: swapFinalise, name: name, oldID: id, old: inspect, stopTimeout: 10, snapshot: snapshot,
+		kind: swapFinalise, name: name, oldID: id, old: inspect, stopTimeout: stopTimeout(inspect.Config, 10), snapshot: snapshot,
 	})
 	// The recreate goes by tag: make sure it runs the image that was validated.
 	if err := sw.replace(ctx, rc, true, verifyImage(u.docker, inspect.Image)); err != nil {
@@ -1070,7 +1111,7 @@ func (u *Updater) recreateNamespaceConsumer(ctx context.Context, consumerID, con
 
 	snapshot, _ := json.Marshal(consumer)
 	sw := newSwap(u.docker, u.log, u.store, swapSpec{
-		kind: swapConsumer, name: consumerName, oldID: consumerID, old: consumer, stopTimeout: 10, snapshot: snapshot,
+		kind: swapConsumer, name: consumerName, oldID: consumerID, old: consumer, stopTimeout: stopTimeout(consumer.Config, 10), snapshot: snapshot,
 	})
 	if err := sw.replace(ctx, rc, sw.oldRunning, verifyImage(u.docker, consumer.Image)); err != nil {
 		u.log.Error("failed to recreate network dependent", "dependent", consumerName, "error", err)

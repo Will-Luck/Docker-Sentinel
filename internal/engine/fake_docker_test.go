@@ -68,6 +68,8 @@ type fakeDocker struct {
 	slowStop     map[string]bool
 	pendingStops []string
 
+	stopTimeouts map[string]int // the last stop timeout given, by container ID
+
 	// Crash injection: once crashAfter container calls have been made, every
 	// later call panics with errCrash (crashPanics, a process crash) or
 	// returns errDaemonGone (the daemon went away). With crashLate the crash
@@ -363,7 +365,7 @@ func (f *fakeDocker) StartContainer(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeDocker) StopContainer(_ context.Context, id string, _ int) error {
+func (f *fakeDocker) StopContainer(_ context.Context, id string, timeout int) error {
 	if err := f.tick(); err != nil {
 		return err
 	}
@@ -371,6 +373,10 @@ func (f *fakeDocker) StopContainer(_ context.Context, id string, _ int) error {
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	f.record("stop " + id)
+	if f.stopTimeouts == nil {
+		f.stopTimeouts = make(map[string]int)
+	}
+	f.stopTimeouts[id] = timeout
 	c := f.find(id)
 	if c == nil {
 		return notFound(id)

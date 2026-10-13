@@ -867,7 +867,7 @@ func (u *Updater) findReplacement(ctx context.Context, rec store.SwapRecord) (co
 // removeReplacement stops and removes a swap's replacement.
 func (u *Updater) removeReplacement(ctx context.Context, c container.InspectResponse) error {
 	if c.State != nil && c.State.Running {
-		if err := u.docker.StopContainer(ctx, c.ID, 10); err != nil {
+		if err := u.docker.StopContainer(ctx, c.ID, stopTimeout(c.Config, 10)); err != nil {
 			u.log.Warn("stopping the unfinished replacement failed", "name", containerNameOf(c), "error", err)
 		}
 	}

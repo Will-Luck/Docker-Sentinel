@@ -75,7 +75,7 @@ func rollbackContainer(ctx context.Context, d docker.API, j swapJournal, name st
 	// The live container's own snapshot lets recovery, or this function,
 	// rebuild it should it be gone (a --rm container deleted on stop).
 	liveSnapshot, _ := json.Marshal(live)
-	sw := newSwap(d, log, j, swapSpec{kind: swapRollback, name: name, oldID: liveID, old: live, stopTimeout: 30, snapshot: liveSnapshot})
+	sw := newSwap(d, log, j, swapSpec{kind: swapRollback, name: name, oldID: liveID, old: live, stopTimeout: stopTimeout(live.Config, 30), snapshot: liveSnapshot})
 	if err := sw.replace(ctx, rc, true, verify); err != nil {
 		undoTag()
 		if !sw.changed() {
