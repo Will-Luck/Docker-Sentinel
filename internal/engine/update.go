@@ -293,7 +293,9 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 			return fmt.Errorf("replace %s: %w", name, err)
 		}
 		u.log.Error("replacement failed, restoring the old container", "name", name, "error", err)
-		restoreErr := u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, err)
+		restoreErr := u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, err, store.UpdateRecord{
+			OldImage: oldImage, OldDigest: extractDigestForRecord(inspect), NewImage: pullImage, NewDigest: newDigest,
+		})
 		// Only a new container that would not start says something about the
 		// image; a failed create, stop or journal write does not.
 		var se *swapError
@@ -323,21 +325,29 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 		return ctx.Err()
 	}
 	if err != nil || !healthy {
-		u.log.Error("validation failed, rolling back", "name", name, "error", err)
+		reason := u.validationFailure(ctx, newID, err)
+		u.log.Error("validation failed, rolling back", "name", name, "reason", reason)
 		u.publishEvent(events.EventContainerUpdate, name, "update failed")
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventUpdateFailed,
 			ContainerName: name,
 			OldImage:      oldImage,
-			Error:         fmt.Sprintf("validation failed: %v", err),
+			NewImage:      pullImage,
+			Error:         "validation failed: " + reason.Error(),
 			Timestamp:     u.clock.Now(),
 		})
 		metrics.UpdatesTotal.WithLabelValues("failed").Inc()
-		cause := errors.New("new container failed validation")
-		if err != nil {
-			cause = fmt.Errorf("validation failed: %w", err)
+		cause := fmt.Errorf("new container failed validation: %w", reason)
+		images := store.UpdateRecord{
+			OldImage: oldImage, OldDigest: extractDigestForRecord(inspect), NewImage: pullImage, NewDigest: newDigest,
 		}
-		if restoreErr := u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, cause); restoreErr != nil {
+		failedRow := images
+		failedRow.Timestamp, failedRow.ContainerName, failedRow.Outcome = u.clock.Now(), name, "failed"
+		failedRow.Duration, failedRow.Error = u.clock.Since(start), cause.Error()
+		if recErr := u.store.RecordUpdate(failedRow); recErr != nil {
+			u.log.Warn("failed to persist validation failure record", "name", name, "error", recErr)
+		}
+		if restoreErr := u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, cause, images); restoreErr != nil {
 			return fmt.Errorf("new container %s failed validation: %w", name, restoreErr)
 		}
 		return fmt.Errorf("%w: new container %s failed validation", ErrRolledBack, name)
@@ -588,6 +598,56 @@ func (u *Updater) validateContainer(ctx context.Context, id string) (bool, error
 	}
 }
 
+// validationFailure returns why the new container id failed validation:
+// err when validation itself failed, else what its state shows (it exited,
+// keeps restarting, or its healthcheck failed), so the log, the
+// notification and the history give a reason.
+func (u *Updater) validationFailure(ctx context.Context, id string, err error) error {
+	if err != nil {
+		return err
+	}
+	c, inspectErr := u.docker.InspectContainer(context.WithoutCancel(ctx), id)
+	if inspectErr != nil {
+		return fmt.Errorf("its state could not be read: %w", inspectErr)
+	}
+	return errors.New(describeUnhealthy(c))
+}
+
+// describeUnhealthy says, for users, why a container is not running healthy.
+func describeUnhealthy(c container.InspectResponse) string {
+	st := c.State
+	switch {
+	case st == nil:
+		return "its state could not be read"
+	case st.Restarting:
+		return fmt.Sprintf("it keeps restarting (restart count %d, last exit code %d)", c.RestartCount, st.ExitCode)
+	case !st.Running:
+		msg := fmt.Sprintf("it exited (exit code %d", st.ExitCode)
+		if st.OOMKilled {
+			msg += ", out of memory"
+		}
+		if st.Error != "" {
+			msg += ": " + st.Error
+		}
+		return msg + ")"
+	case st.Health != nil && st.Health.Status == container.Unhealthy:
+		msg := "its healthcheck reports unhealthy"
+		if n := len(st.Health.Log); n > 0 && st.Health.Log[n-1] != nil {
+			if out := strings.TrimSpace(st.Health.Log[n-1].Output); out != "" {
+				if len(out) > 200 {
+					out = out[:200] + "..."
+				}
+				msg += ": " + out
+			}
+		}
+		return msg
+	case st.Health != nil && st.Health.Status == container.Starting:
+		return "its healthcheck did not report healthy in time"
+	default:
+		return "it did not pass validation"
+	}
+}
+
 const healthPollInterval = 2 * time.Second
 
 // healthPollTimeout is the shortest wait for a healthcheck to decide, and
@@ -667,9 +727,9 @@ func (u *Updater) waitForHealthy(ctx context.Context, id string, wait time.Durat
 // on stop, or the rename back fails) it recreates the container from the
 // snapshot instead. Either way the outcome is recorded as a rollback.
 // It returns the restore's own error.
-func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapshotData []byte, start time.Time, cause error) error {
+func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapshotData []byte, start time.Time, cause error, images store.UpdateRecord) error {
 	err := u.restoreOld(ctx, sw, snapshotData)
-	u.reportRollback(ctx, sw.name, err, start, cause, store.UpdateRecord{})
+	u.reportRollback(ctx, sw.name, err, start, cause, images)
 	return err
 }
 
