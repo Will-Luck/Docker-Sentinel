@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 # The golang image sets GOTOOLCHAIN=local. With auto, a cached base image
 # older than go.mod's toolchain line fetches that release instead.

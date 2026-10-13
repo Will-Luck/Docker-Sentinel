@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: golang:1.26-alpine
+      image: golang:1.27-alpine
       network: gitea_default
     steps:
       - name: Install dependencies
@@ -46,7 +46,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     container:
-      image: golang:1.26-alpine
+      image: golang:1.27-alpine
       network: gitea_default
     steps:
       - name: Install dependencies
@@ -70,7 +70,7 @@ jobs:
   vulncheck:
     runs-on: ubuntu-latest
     container:
-      image: golang:1.26-alpine
+      image: golang:1.27-alpine
       network: gitea_default
     steps:
       - name: Install dependencies

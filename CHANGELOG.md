@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Portainer updates are dropped at startup, and `SENTINEL_PORTAINER_URL` /
   `SENTINEL_PORTAINER_TOKEN` are ignored with a warning.
 
+### Changed
+
+- Built with Go 1.27.2 (was 1.26.9). Two effects of Go 1.27: the macOS
+  binaries need macOS 13 or later, and Sentinel exits at startup if
+  `GODEBUG` sets one of the settings Go 1.27 removed to its old value
+  (`tlsrsakex`, `tls10server`, `tls3des`, `tlsunsafeekm`, `x509keypairleaf`,
+  `asynctimerchan`, `x509sha1`). Remove such a setting before upgrading.
+  Building from source still works with Go 1.26 or later, which fetches
+  go1.27.2 through `GOTOOLCHAIN=auto`.
+
 ## [2.16.1] - 2026-10-13
 
 ### Security
