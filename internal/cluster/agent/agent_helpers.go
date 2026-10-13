@@ -501,8 +501,10 @@ func (a *Agent) listLocalContainers(ctx context.Context) ([]*proto.ContainerInfo
 			continue
 		}
 		ci := containerInfoFromSummary(&summaries[i])
-		// A container parked mid-update is not one of the host's own.
-		if strings.HasSuffix(ci.Name, parkedSuffix) {
+		// A container parked by an update that is running now is part of
+		// that update, not one of the host's own. One with no update
+		// running is stranded and may be the only copy, so it is reported.
+		if a.parkedByRunningUpdate(ci.Name) {
 			continue
 		}
 
@@ -515,6 +517,18 @@ func (a *Agent) listLocalContainers(ctx context.Context) ([]*proto.ContainerInfo
 		out = append(out, ci)
 	}
 	return out, nil
+}
+
+// parkedByRunningUpdate reports whether name is the parked copy of a
+// container whose update is in progress.
+func (a *Agent) parkedByRunningUpdate(name string) bool {
+	base, ok := strings.CutSuffix(name, parkedSuffix)
+	if !ok {
+		return false
+	}
+	a.updatingMu.Lock()
+	defer a.updatingMu.Unlock()
+	return a.updating[base]
 }
 
 // containerInfoFromSummary converts a Docker container.Summary into a

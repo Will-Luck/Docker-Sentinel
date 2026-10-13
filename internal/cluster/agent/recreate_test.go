@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -436,24 +437,46 @@ func TestHandleUpdateContainer_OldContainerLeftOverIsReported(t *testing.T) {
 	}
 }
 
-// The parked copy is an implementation detail of an update: it must not be
-// reported to the hub as a container of its own.
-func TestListLocalContainers_HidesParkedContainers(t *testing.T) {
-	h := newFakeHost()
-	h.addContainer("web", "nginx:2", true)
-	h.addContainer("web-sentinel-old", "nginx:1", false)
-	a := newTestAgent(t.TempDir(), h)
-
+func listedNames(t *testing.T, a *Agent) []string {
+	t.Helper()
 	got, err := a.listLocalContainers(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].GetName() != "web" {
-		var names []string
-		for _, c := range got {
-			names = append(names, c.GetName())
-		}
-		t.Errorf("listed %v, want only web", names)
+	var names []string
+	for _, c := range got {
+		names = append(names, c.GetName())
+	}
+	sort.Strings(names)
+	return names
+}
+
+// While its update runs, the parked copy is part of that update and is
+// not reported to the hub as a container of its own.
+func TestListLocalContainers_HidesParkedContainerDuringItsUpdate(t *testing.T) {
+	h := newFakeHost()
+	h.addContainer("web", "nginx:2", true)
+	h.addContainer("web-sentinel-old", "nginx:1", false)
+	a := newTestAgent(t.TempDir(), h)
+	a.beginUpdate("web")
+	defer a.endUpdate("web")
+
+	if got := listedNames(t, a); fmt.Sprint(got) != "[web]" {
+		t.Errorf("listed %v during the update of web, want [web]", got)
+	}
+}
+
+// A parked container with no update running is stranded (an interrupted
+// recreate, a reboot, a failed rename back): it may be the only copy of
+// the workload. Hiding it would make it vanish from Sentinel, and its
+// queued update would then be pruned. It is reported under its own name.
+func TestListLocalContainers_ReportsStrandedParkedContainer(t *testing.T) {
+	h := newFakeHost()
+	h.addContainer("web-sentinel-old", "nginx:1", false)
+	a := newTestAgent(t.TempDir(), h)
+
+	if got := listedNames(t, a); fmt.Sprint(got) != "[web-sentinel-old]" {
+		t.Errorf("listed %v, want the stranded [web-sentinel-old]", got)
 	}
 }
 
