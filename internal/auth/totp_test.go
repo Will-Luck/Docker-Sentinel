@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -164,5 +165,27 @@ func TestConfirmTOTPReturnsUsableRecoveryCodes(t *testing.T) {
 		if ValidateRecoveryCode(c, stored.RecoveryCodes) < 0 {
 			t.Fatalf("code shown to the user does not validate: %q", c)
 		}
+	}
+}
+
+// Once a lockout has expired the failed-attempt count starts again, so one
+// wrong password does not lock the account for another 30 minutes.
+func TestLoginAfterLockoutExpiryStartsCountingAgain(t *testing.T) {
+	svc := newTestService(true)
+	hash, _ := HashPassword("correct-horse-battery")
+	_ = svc.Users.CreateUser(User{
+		ID: "u1", Username: "alice", PasswordHash: hash, RoleID: "admin",
+		Locked: true, LockedUntil: time.Now().Add(-time.Minute), FailedLogins: accountLockout,
+	})
+	_, _, err := svc.Login(context.Background(), "alice", "typo", "10.0.0.2", "ua")
+	if err != ErrInvalidCredentials {
+		t.Fatalf("wrong password after expiry = %v, want ErrInvalidCredentials", err)
+	}
+	u, _ := svc.Users.GetUser("u1")
+	if u.Locked || u.FailedLogins != 1 {
+		t.Errorf("after one typo: Locked=%v FailedLogins=%d, want unlocked with 1", u.Locked, u.FailedLogins)
+	}
+	if _, _, err := svc.Login(context.Background(), "alice", "correct-horse-battery", "10.0.0.3", "ua"); errors.Is(err, ErrAccountLocked) {
+		t.Errorf("correct password refused as locked after one typo")
 	}
 }

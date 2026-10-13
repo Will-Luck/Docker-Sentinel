@@ -182,6 +182,13 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 	if user.Locked && time.Now().Before(user.LockedUntil) {
 		return nil, nil, ErrAccountLocked
 	}
+	if user.Locked {
+		// The lockout has expired: start counting failures again, or the
+		// next typo would lock the account for another full period.
+		user.Locked = false
+		user.LockedUntil = time.Time{}
+		user.FailedLogins = 0
+	}
 
 	if !CheckPassword(user.PasswordHash, password) {
 		// Record failure and potentially lock account.
