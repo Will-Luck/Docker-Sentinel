@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- With signature verification set to enforce, updates went ahead without
+  any signature check when cosign was not available (the official image
+  ships none), with only an info line at startup. Such updates are now
+  refused and recorded as failed ("signature verification is set to
+  enforce but cosign is not available"), each scan sends one notification
+  for them, and startup logs a warning; warn mode still updates and logs
+  each one. A mode saved in Settings now applies without a restart, and a
+  `sentinel.verify` label is honoured when the global mode is disabled.
 - A cluster host being revoked could keep a valid certificate: a
   certificate renewal arriving during the revoke was recorded just before
   the host was removed, and its certificate was never revoked. Revoking
@@ -38,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration value exposes a credential. `GET /api/settings/webhook-info`
   returned the whole inbound webhook secret when it was 12 characters or
   shorter; it now returns at most a four-character prefix.
+- After an account lockout expired, the failed-attempt count was not reset, so
+  one wrong password locked the account again for another 30 minutes. The
+  count now starts again when a lockout expires.
 - Webhook notification channels now mask every header that looks like a
   credential (Basic auth, cookies, passwords as well as tokens and keys) and
   the secret path of the webhook URL when channels are shown to the Viewer
