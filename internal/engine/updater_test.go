@@ -258,11 +258,16 @@ func TestUpdateContainerRollbackOnValidationFailure(t *testing.T) {
 		t.Fatal("expected error from failed validation")
 	}
 
-	// Should have attempted rollback: stop+remove new container, then create rollback.
-	// removeCalls: 1 (old container) + 1 (failed new) + 0 (rollback doesn't remove)
-	// createCalls: 1 (new container) + 1 (rollback container)
-	if len(mock.createCalls) < 2 {
-		t.Errorf("createCalls = %d, want >= 2 (new + rollback)", len(mock.createCalls))
+	// The failed replacement is removed and the old container itself comes
+	// back: no second create, and the old one is never removed.
+	if len(mock.createCalls) != 1 {
+		t.Errorf("createCalls = %v, want only the failed replacement", mock.createCalls)
+	}
+	if len(mock.removeCalls) != 1 || mock.removeCalls[0] != "new-nginx" {
+		t.Errorf("removeCalls = %v, want [new-nginx]", mock.removeCalls)
+	}
+	if len(mock.startCalls) != 2 || mock.startCalls[1] != "aaa" {
+		t.Errorf("startCalls = %v, want the replacement, then the old container again", mock.startCalls)
 	}
 }
 
@@ -511,26 +516,9 @@ func TestFinaliseErrorType(t *testing.T) {
 	}
 }
 
-func TestFinaliseStageIsDestructive(t *testing.T) {
-	tests := []struct {
-		stage       string
-		destructive bool
-	}{
-		{"inspect", false},
-		{"stop", false},
-		{"remove", true},
-		{"create", true},
-		{"start", true},
-	}
-	for _, tt := range tests {
-		if got := finaliseStageIsDestructive(tt.stage); got != tt.destructive {
-			t.Errorf("finaliseStageIsDestructive(%q) = %v, want %v", tt.stage, got, tt.destructive)
-		}
-	}
-}
-
 // TestFinaliseContainerReturnsStageErrors verifies that each error return in
-// finaliseContainer is wrapped with the correct stage.
+// finaliseContainer is wrapped with the correct stage, and that a failed
+// swap puts the validated container back (down stays false).
 func TestFinaliseContainerReturnsStageErrors(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -545,7 +533,7 @@ func TestFinaliseContainerReturnsStageErrors(t *testing.T) {
 			wantStage: "inspect",
 		},
 		{
-			name: "stop failure",
+			name: "rename failure",
 			setup: func(m *mockDocker) {
 				m.inspectResults["cid"] = container.InspectResponse{
 					ID: "cid",
@@ -556,25 +544,9 @@ func TestFinaliseContainerReturnsStageErrors(t *testing.T) {
 					HostConfig:      &container.HostConfig{},
 					NetworkSettings: &container.NetworkSettings{},
 				}
-				m.stopErr["cid"] = fmt.Errorf("timeout")
+				m.renameErrTo["myapp-sentinel-old"] = fmt.Errorf("name in use")
 			},
-			wantStage: "stop",
-		},
-		{
-			name: "remove failure",
-			setup: func(m *mockDocker) {
-				m.inspectResults["cid"] = container.InspectResponse{
-					ID: "cid",
-					Config: &container.Config{
-						Image:  "img:latest",
-						Labels: map[string]string{"sentinel.maintenance": "true"},
-					},
-					HostConfig:      &container.HostConfig{},
-					NetworkSettings: &container.NetworkSettings{},
-				}
-				m.removeErr["cid"] = fmt.Errorf("device busy")
-			},
-			wantStage: "remove",
+			wantStage: "rename",
 		},
 		{
 			name: "create failure",
@@ -628,7 +600,35 @@ func TestFinaliseContainerReturnsStageErrors(t *testing.T) {
 			if fErr.stage != tt.wantStage {
 				t.Errorf("stage = %q, want %q", fErr.stage, tt.wantStage)
 			}
+			if fErr.down {
+				t.Errorf("down = true, want the validated container put back: ops=%v", mock.ops)
+			}
 		})
+	}
+}
+
+// A stop or remove failure during finalise no longer fails it: the
+// replacement starts while the old container is renamed aside, and the old
+// one is force-removed at the end.
+func TestFinaliseContainerToleratesStopAndRemoveFailures(t *testing.T) {
+	mock := newMockDocker()
+	mock.inspectResults["cid"] = container.InspectResponse{
+		ID:              "cid",
+		State:           &container.State{Running: true},
+		Config:          &container.Config{Image: "img:latest", Labels: map[string]string{"sentinel.maintenance": "true"}},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+	mock.stopErr["cid"] = fmt.Errorf("timeout")
+	mock.removeErr["cid"] = fmt.Errorf("device busy")
+
+	u, _ := newTestUpdater(t, mock)
+	newID, err := u.finaliseContainer(context.Background(), "cid", "myapp")
+	if err != nil {
+		t.Fatalf("finaliseContainer: %v", err)
+	}
+	if newID != "new-myapp" {
+		t.Errorf("newID = %q, want new-myapp", newID)
 	}
 }
 
@@ -672,28 +672,26 @@ func setupUpdateMock(t *testing.T) (*mockDocker, *Updater) {
 	return mock, u
 }
 
-// TestUpdateFinaliseStopFailureRecordsWarning tests the non-destructive path:
-// finalise stop fails, so the container is still running (with maintenance label).
-// Should record "partial" and NOT attempt rollback.
-func TestUpdateFinaliseStopFailureRecordsWarning(t *testing.T) {
+// TestUpdateFinaliseRenameFailureRecordsWarning tests the path where the
+// finalise swap fails and the validated container stays in place (with the
+// maintenance label). Should record "partial" and NOT attempt rollback.
+func TestUpdateFinaliseRenameFailureRecordsWarning(t *testing.T) {
 	mock, u := setupUpdateMock(t)
 
-	// Make finalise stop fail (non-destructive stage).
-	// Step 4 stops "aaa" (different ID), so stopErr only affects finalise.
-	mock.stopErr["new-nginx"] = fmt.Errorf("stop timeout")
+	// The update swap renames "aaa"; only the finalise swap renames new-nginx.
+	mock.renameErr["new-nginx"] = fmt.Errorf("name in use")
 
 	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
 	if err == nil {
-		t.Fatal("expected error from finalise stop failure")
+		t.Fatal("expected error from finalise rename failure")
 	}
 
-	// Should be a finaliseError with stage "stop".
 	var fErr *finaliseError
 	if !errors.As(err, &fErr) {
 		t.Fatalf("expected *finaliseError, got %T: %v", err, err)
 	}
-	if fErr.stage != "stop" {
-		t.Errorf("stage = %q, want %q", fErr.stage, "stop")
+	if fErr.stage != "rename" || fErr.down {
+		t.Errorf("stage = %q down = %v, want rename with the container in place", fErr.stage, fErr.down)
 	}
 
 	// Should NOT have attempted rollback.
@@ -718,33 +716,34 @@ func TestUpdateFinaliseStopFailureRecordsWarning(t *testing.T) {
 	}
 }
 
-// TestUpdateFinaliseRemoveFailureTriggersRollback tests the destructive path:
-// finalise remove fails after the container was stopped, so it is likely down.
-// Should trigger rollback and record "failed".
-func TestUpdateFinaliseRemoveFailureTriggersRollback(t *testing.T) {
+// TestUpdateFinaliseLostContainerTriggersRollback tests the path where the
+// finalise swap fails and the validated container cannot be given its name
+// back, so the service may be missing. Should roll back from the snapshot
+// and record "failed".
+func TestUpdateFinaliseLostContainerTriggersRollback(t *testing.T) {
 	mock, u := setupUpdateMock(t)
 
-	// Make finalise remove fail. Step 4 removes "aaa" (different ID), so
-	// removeErr["new-nginx"] only affects finalise.
-	mock.removeErr["new-nginx"] = fmt.Errorf("device busy")
+	// The finalise create (the second create) fails, and so does renaming
+	// new-nginx back to "nginx".
+	mock.createErrOnCall[2] = fmt.Errorf("image not found")
+	mock.renameErrTo["nginx"] = fmt.Errorf("daemon gone")
 
 	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
 	if err == nil {
-		t.Fatal("expected error from finalise remove failure")
+		t.Fatal("expected error from finalise failure")
 	}
 
 	var fErr *finaliseError
 	if !errors.As(err, &fErr) {
 		t.Fatalf("expected *finaliseError, got %T: %v", err, err)
 	}
-	if fErr.stage != "remove" {
-		t.Errorf("stage = %q, want %q", fErr.stage, "remove")
+	if fErr.stage != "create" || !fErr.down {
+		t.Errorf("stage = %q down = %v, want create with the container lost", fErr.stage, fErr.down)
 	}
 
-	// Destructive stage -- should have attempted rollback.
-	// createCalls: 1 (step 5 new) + 1 (rollback from snapshot) = 2
-	if len(mock.createCalls) < 2 {
-		t.Errorf("createCalls = %d, want >= 2 (step-5 + rollback)", len(mock.createCalls))
+	// createCalls: 1 (update) + 1 (failed finalise) + 1 (rollback from snapshot)
+	if len(mock.createCalls) != 3 {
+		t.Errorf("createCalls = %v, want 3 (update, finalise, rollback)", mock.createCalls)
 	}
 
 	// History should record "failed", never "success".
@@ -790,9 +789,9 @@ func TestUpdateFinaliseInspectFailureRecordsWarning(t *testing.T) {
 		t.Errorf("stage = %q, want %q", fErr.stage, "inspect")
 	}
 
-	// Verify non-destructive classification.
-	if finaliseStageIsDestructive(fErr.stage) {
-		t.Error("inspect should not be classified as destructive")
+	// Nothing changed, so the container is not down.
+	if fErr.down {
+		t.Error("an inspect failure must not mark the container as down")
 	}
 }
 

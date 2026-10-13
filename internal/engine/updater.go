@@ -35,20 +35,17 @@ type ImageVerifier interface {
 }
 
 // finaliseError wraps an error with the stage at which finaliseContainer failed.
-// Stage values: "inspect", "stop", "remove", "create", "start".
+// Stage values: "inspect", or a swap stage ("rename", "create", "verify", "start").
 type finaliseError struct {
 	stage string
 	err   error
+	// down is set when the validated container could not be put back after
+	// the swap failed, so the service may be missing.
+	down bool
 }
 
 func (e *finaliseError) Error() string { return fmt.Sprintf("finalise %s: %v", e.stage, e.err) }
 func (e *finaliseError) Unwrap() error { return e.err }
-
-// finaliseStageIsDestructive returns true if the failure stage means the
-// container was already removed and is likely down.
-func finaliseStageIsDestructive(stage string) bool {
-	return stage == "remove" || stage == "create" || stage == "start"
-}
 
 // Updater performs container scanning and update operations.
 type Updater struct {

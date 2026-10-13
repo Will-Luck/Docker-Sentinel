@@ -21,7 +21,8 @@ import (
 )
 
 // UpdateContainer performs the full update lifecycle for a single container:
-// snapshot → pull → stop → remove → create → start → validate → (rollback on failure).
+// snapshot → pull → swap (rename old aside, create new, stop old, start new)
+// → validate → remove old, or restore the old container on failure.
 // Returns ErrUpdateInProgress if the container already has an update running.
 //
 // targetImage overrides the image to pull for semver version bumps (e.g.
@@ -225,56 +226,33 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 	}
 
-	// The replacement mounts the old container's anonymous volumes, so
-	// remove_volumes must not delete them with the old container.
+	// 4. Build the replacement. It mounts the old container's anonymous
+	// volumes and leaves out the old image's defaults.
 	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{
 		Image:    targetImage,
 		OldImage: u.imageDefaults(ctx, oldImageID, name),
 	})
-
-	// 4. Stop and remove the old container.
-	u.log.Info("stopping old container", "name", name)
-	if err := u.docker.StopContainer(ctx, id, 30); err != nil {
-		u.log.Warn("stop failed, proceeding with force remove", "name", name, "error", err)
-	}
+	newConfig := rc.Config
+	u.writeBackHookLabels(name, newConfig)
+	addMaintenanceLabel(newConfig)
+	// remove_volumes must not delete the volumes the new container took over.
 	removeVolumes := docker.ContainerRemoveVolumes(inspect.Config.Labels) || u.isRemoveVolumes()
 	if removeVolumes && len(rc.CarriedVolumes) > 0 {
 		u.log.Info("keeping the anonymous volumes the new container takes over", "name", name, "volumes", len(rc.CarriedVolumes))
 		removeVolumes = false
 	}
-	var removeErr error
-	if removeVolumes {
-		removeErr = u.docker.RemoveContainerWithVolumes(ctx, id)
-	} else {
-		removeErr = u.docker.RemoveContainer(ctx, id)
-	}
-	if removeErr != nil {
-		if mErr := u.store.SetMaintenance(name, false); mErr != nil {
-			u.log.Warn("failed to clear maintenance flag after remove failure", "name", name, "error", mErr)
-		}
-		return fmt.Errorf("remove old container %s: %w", name, removeErr)
-	}
 
-	// 5. Create and start the new container.
-	newConfig, hostConfig, netConfig := rc.Config, rc.HostConfig, rc.NetworkingConfig
-	u.writeBackHookLabels(name, newConfig)
-	addMaintenanceLabel(newConfig)
-
-	u.log.Info("creating new container", "name", name, "image", pullImage)
-	newID, err := u.docker.CreateContainer(ctx, name, newConfig, hostConfig, netConfig)
-	if err != nil {
-		u.log.Error("create failed, rolling back", "name", name, "error", err)
-		u.doRollback(ctx, name, snapshotData, start)
-		return fmt.Errorf("create new container %s: %w", name, err)
+	// 5. Swap the new container in: rename the old one aside, create the new
+	// one, stop the old one, start the new one. The old container is removed
+	// only after the new one passes validation, so a failure can bring it back.
+	u.log.Info("replacing container", "name", name, "image", pullImage)
+	sw := newSwap(u.docker, u.log, name, id, inspect, 30)
+	if err := sw.replace(ctx, rc, true, nil); err != nil {
+		u.log.Error("replacement failed, restoring the old container", "name", name, "error", err)
+		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, err)
+		return fmt.Errorf("replace %s: %w", name, err)
 	}
-
-	if err := u.docker.StartContainer(ctx, newID); err != nil {
-		u.log.Error("start failed, rolling back", "name", name, "error", err)
-		// Clean up the failed new container, then rollback.
-		_ = u.docker.RemoveContainer(ctx, newID)
-		u.doRollback(ctx, name, snapshotData, start)
-		return fmt.Errorf("start new container %s: %w", name, err)
-	}
+	newID := sw.newID
 
 	// 6. Wait grace period and validate.
 	gracePeriod := u.cfg.GracePeriod()
@@ -300,11 +278,12 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			Timestamp:     u.clock.Now(),
 		})
 		metrics.UpdatesTotal.WithLabelValues("failed").Inc()
-		_ = u.docker.StopContainer(ctx, newID, 10)
-		_ = u.docker.RemoveContainer(ctx, newID)
-		u.doRollback(ctx, name, snapshotData, start)
+		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, fmt.Errorf("validation failed: %v", err))
 		return fmt.Errorf("new container %s failed validation", name)
 	}
+
+	// The new container is good: remove the old one.
+	sw.commit(ctx, removeVolumes)
 
 	// 6.5. Run post-update hooks (store entries, else the new container's labels).
 	if u.hooks != nil && u.cfg.HooksEnabled() {
@@ -317,21 +296,13 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	finaliseNewID, finaliseErr := u.finaliseContainer(ctx, newID, name)
 	if finaliseErr != nil {
 		var fErr *finaliseError
-		if errors.As(finaliseErr, &fErr) && finaliseStageIsDestructive(fErr.stage) {
-			// Container is likely DOWN — old was removed but new create/start failed.
-			u.log.Error("finalise failed at destructive stage, container is likely down",
+		if errors.As(finaliseErr, &fErr) && fErr.down {
+			// The validated container could not be put back after the
+			// finalise swap failed, so the service may be missing: recreate
+			// the old version from the snapshot.
+			u.log.Error("finalise failed and the updated container could not be restored, rolling back",
 				"name", name, "stage", fErr.stage, "error", fErr.err)
-
-			// On start failure the new container exists but isn't running — remove it
-			// before rollback to avoid name conflict.
-			if fErr.stage == "start" {
-				if rmErr := u.docker.RemoveContainer(ctx, finaliseNewID); rmErr != nil {
-					u.log.Warn("failed to remove broken finalise container before rollback",
-						"name", name, "error", rmErr)
-				}
-			}
-
-			u.doRollback(ctx, name, snapshotData, start)
+			u.reportRollback(ctx, name, rollback(ctx, u.docker, name, snapshotData, u.log), start, finaliseErr)
 
 			// Record as failed — never as success.
 			duration := u.clock.Since(start)
@@ -360,9 +331,10 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			return finaliseErr
 		}
 
-		// Non-destructive stage (inspect or stop) — container is likely still
-		// running with the old image. Don't rollback but don't record success.
-		u.log.Warn("finalise failed at non-destructive stage, container may still be running with maintenance label",
+		// The validated container is still in place, running the new image
+		// with the maintenance label. Don't roll back, but don't record
+		// success either.
+		u.log.Warn("finalise failed, container is running with the maintenance label",
 			"name", name, "error", finaliseErr)
 
 		if mErr := u.store.SetMaintenance(name, false); mErr != nil {
@@ -571,17 +543,40 @@ func (u *Updater) waitForHealthy(ctx context.Context, id string) (bool, error) {
 	}
 }
 
-// doRollback performs a rollback and records the failure.
-func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []byte, start time.Time) {
-	if err := rollback(ctx, u.docker, name, snapshotData, u.log); err != nil {
-		u.log.Error("rollback also failed", "name", name, "error", err)
+// restoreAfterFailedUpdate brings the old container back after a failed
+// update swap. When that is impossible (the daemon deletes a --rm container
+// on stop, or the rename back fails) it recreates the container from the
+// snapshot instead. Either way the outcome is recorded as a rollback.
+func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapshotData []byte, start time.Time, cause error) {
+	err := sw.undo(ctx)
+	if err == nil {
+		u.log.Info("old container restored", "name", sw.name)
+	} else {
+		u.log.Warn("could not restore the old container, recreating it from the snapshot", "name", sw.name, "error", err)
+		err = rollback(ctx, u.docker, sw.name, snapshotData, u.log)
+	}
+	u.reportRollback(ctx, sw.name, err, start, cause)
+}
+
+// reportRollback records and notifies the result of rolling a failed update
+// back. rbErr is the rollback's own error; cause is why the update failed.
+func (u *Updater) reportRollback(ctx context.Context, name string, rbErr error, start time.Time, cause error) {
+	// Report even when the update was cancelled by a shutdown.
+	ctx = context.WithoutCancel(ctx)
+	reason := "update failed"
+	if cause != nil {
+		reason = cause.Error()
+	}
+	if rbErr != nil {
+		u.log.Error("rollback also failed", "name", name, "error", rbErr)
 		u.publishEvent(events.EventContainerUpdate, name, "rollback failed")
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventRollbackFailed,
 			ContainerName: name,
-			Error:         err.Error(),
+			Error:         rbErr.Error(),
 			Timestamp:     u.clock.Now(),
 		})
+		reason += "; rollback failed: " + rbErr.Error()
 	} else {
 		// Apply rollback policy setting — change the container's policy to prevent
 		// the next scan from immediately retrying the same broken update.
@@ -609,7 +604,7 @@ func (u *Updater) doRollback(ctx context.Context, name string, snapshotData []by
 		ContainerName: name,
 		Outcome:       "rollback",
 		Duration:      u.clock.Since(start),
-		Error:         "update validation failed",
+		Error:         reason,
 	}); err != nil {
 		u.log.Warn("failed to persist rollback record", "name", name, "error", err)
 	}
@@ -692,8 +687,9 @@ func addMaintenanceLabel(cfg *container.Config) {
 // that has the sentinel.maintenance label removed. This ensures
 // Docker-Guardian can see the container after a successful update.
 //
-// The process is: inspect -> clone config without label -> stop -> remove
-// -> create -> start. Returns the new container ID.
+// It recreates the container through a swap, so a failure puts the
+// validated container back (or sets down on the error when it cannot).
+// Returns the new container ID, or id when nothing changed.
 func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (string, error) {
 	inspect, err := u.docker.InspectContainer(ctx, id)
 	if err != nil {
@@ -714,30 +710,28 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 	}
 
 	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{})
-	cleanConfig, hostConfig, netConfig := rc.Config, rc.HostConfig, rc.NetworkingConfig
-	delete(cleanConfig.Labels, guardian.MaintenanceLabel)
+	delete(rc.Config.Labels, guardian.MaintenanceLabel)
 
 	u.log.Info("finalising container (removing maintenance label)", "name", name)
 
-	if err := u.docker.StopContainer(ctx, id, 10); err != nil {
-		return id, &finaliseError{stage: "stop", err: err}
+	sw := newSwap(u.docker, u.log, name, id, inspect, 10)
+	if err := sw.replace(ctx, rc, true, nil); err != nil {
+		fErr := &finaliseError{stage: "swap", err: err}
+		var se *swapError
+		if errors.As(err, &se) {
+			fErr.stage, fErr.err = se.stage, se.err
+		}
+		if undoErr := sw.undo(ctx); undoErr != nil {
+			fErr.err = fmt.Errorf("%w; putting the updated container back failed: %v", fErr.err, undoErr)
+			fErr.down = true
+		}
+		return id, fErr
 	}
+	// The finalised container mounts the same volumes, so keep them.
+	sw.commit(ctx, false)
 
-	if err := u.docker.RemoveContainer(ctx, id); err != nil {
-		return id, &finaliseError{stage: "remove", err: err}
-	}
-
-	newID, err := u.docker.CreateContainer(ctx, name, cleanConfig, hostConfig, netConfig)
-	if err != nil {
-		return id, &finaliseError{stage: "create", err: err}
-	}
-
-	if err := u.docker.StartContainer(ctx, newID); err != nil {
-		return newID, &finaliseError{stage: "start", err: err}
-	}
-
-	u.log.Info("finalised container", "name", name, "new_id", truncateID(newID))
-	return newID, nil
+	u.log.Info("finalised container", "name", name, "new_id", truncateID(sw.newID))
+	return sw.newID, nil
 }
 
 // extractDigestForRecord gets the image digest from an inspect response.

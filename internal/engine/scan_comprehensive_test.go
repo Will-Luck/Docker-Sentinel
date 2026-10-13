@@ -291,16 +291,16 @@ func TestUpdateContainerStartFailure(t *testing.T) {
 		t.Fatal("expected error from start failure")
 	}
 
-	// Start failed → code removes the broken container then rolls back.
-	// removeCalls: 1 (old container) + 1 (failed new-nginx) + possibly rollback cleanup
-	if len(mock.removeCalls) < 2 {
-		t.Errorf("removeCalls = %d, want >= 2 (old + failed new)", len(mock.removeCalls))
+	// Start failed: the broken replacement is removed and the old container,
+	// which was only renamed aside and stopped, is restored and started.
+	if len(mock.removeCalls) != 1 || mock.removeCalls[0] != "new-nginx" {
+		t.Errorf("removeCalls = %v, want [new-nginx] (the old container is kept)", mock.removeCalls)
 	}
-
-	// Rollback should have been attempted (creates another container).
-	// createCalls: 1 (new-nginx that failed to start) + 1 (rollback)
-	if len(mock.createCalls) < 2 {
-		t.Errorf("createCalls = %d, want >= 2 (new + rollback)", len(mock.createCalls))
+	if len(mock.createCalls) != 1 {
+		t.Errorf("createCalls = %v, want 1 (the old container is restored, not rebuilt)", mock.createCalls)
+	}
+	if n := len(mock.startCalls); n == 0 || mock.startCalls[n-1] != "aaa" {
+		t.Errorf("startCalls = %v, want the old container started again last", mock.startCalls)
 	}
 }
 
