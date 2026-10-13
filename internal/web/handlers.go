@@ -595,6 +595,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		view = containerView{
+			ID:              rc.ID,
 			Name:            rc.Name,
 			Image:           rc.Image,
 			Tag:             tag,

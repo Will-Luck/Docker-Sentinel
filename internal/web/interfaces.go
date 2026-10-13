@@ -226,6 +226,8 @@ type ClusterProvider interface {
 
 // RemoteContainer represents a container on a remote host.
 type RemoteContainer struct {
+	// ID is the container ID its agent reported.
+	ID    string `json:"id,omitempty"`
 	Name  string `json:"name"`
 	Image string `json:"image"`
 	// ImageDigest is the digest its agent reported for the image it runs.

@@ -130,3 +130,20 @@ func TestClusterPage_AgentVersionShownOnce(t *testing.T) {
 		}
 	}
 }
+
+// A remote container's page shows its container ID and names its host; with no
+// ID known it leaves the row out instead of showing it blank.
+func TestContainerPage_RemoteShowsIDAndHost(t *testing.T) {
+	id := strings.Repeat("ab", 32)
+	out := renderAny(t, "container.html", containerDetailData{Container: containerView{Name: "whoami", ID: id, HostID: "h1", HostName: "Agent One"}})
+	if !strings.Contains(out, `title="`+id+`"`) {
+		t.Errorf("container ID missing")
+	}
+	if !strings.Contains(out, "Agent One") {
+		t.Errorf("the page does not name the host")
+	}
+	out = renderAny(t, "container.html", containerDetailData{Container: containerView{Name: "whoami", HostID: "h1", HostName: "Agent One"}})
+	if strings.Contains(out, `id="container-id"`) {
+		t.Errorf("a blank container ID row is shown")
+	}
+}

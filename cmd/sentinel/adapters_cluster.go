@@ -103,6 +103,7 @@ func (a *clusterAdapter) AllHostContainers() []web.RemoteContainer {
 				})
 			}
 			result = append(result, web.RemoteContainer{
+				ID:          c.ID,
 				Name:        c.Name,
 				Image:       c.Image,
 				ImageDigest: c.ImageDigest,
