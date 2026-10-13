@@ -40,6 +40,7 @@ type ScanResult struct {
 	Failed      int
 	RateLimited int // containers skipped due to rate limits
 	UpToDate    int // containers where the registry confirmed no update
+	CheckFailed int // containers whose registry check failed
 	Errors      []error
 
 	// Swarm service stats (only populated when Swarm mode is active).
@@ -650,6 +651,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.publishEvent(events.EventScanProgress, name, fmt.Sprintf("checked=%d total=%d", i+1, len(containers)))
 		if u.setAside(name) || u.store.HasSwap(name) {
 			u.log.Debug("skipping a container with a swap in progress or unresolved", "name", name)
+			result.Skipped++
 			continue
 		}
 		labels := c.Labels
@@ -724,6 +726,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				Error:         check.Error.Error(),
 			})
 			result.Errors = append(result.Errors, fmt.Errorf("%s: %w", name, check.Error))
+			result.CheckFailed++
 			continue
 		}
 
@@ -791,6 +794,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		// Filter out ignored versions so they don't trigger notifications or queuing.
 		if u.filterIgnored(name, &check) {
 			u.log.Debug("all newer versions ignored", "name", name)
+			result.UpToDate++
 			continue
 		}
 
@@ -799,6 +803,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		// Manual and pinned containers still see it.
 		if policy == docker.PolicyAuto && u.rolledBackBefore(ctx, name, imageRef, check) {
 			u.log.Debug("update was rolled back before, waiting for a newer one", "name", name)
+			result.Skipped++
 			continue
 		}
 
@@ -895,6 +900,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 					NewImage:      scanTarget,
 					Outcome:       "dry_run",
 				})
+				result.Skipped++ // nothing is changed in a dry run
 				continue
 			}
 			pullOnly := docker.ContainerPullOnly(labels) || u.isPullOnly()
@@ -1049,8 +1055,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		Timestamp: u.clock.Now(),
 		Outcome:   "scan_summary",
 		Type:      "scan",
-		Error: fmt.Sprintf("%d checked, %d up to date, %d updated, %d queued, %d skipped, %d rate limited, %d failed",
-			result.Total-result.Skipped, result.UpToDate, result.Updated, result.Queued, result.Skipped, result.RateLimited, result.Failed),
+		Error: fmt.Sprintf("%d checked, %d up to date, %d updated, %d queued, %d skipped, %d rate limited, %d failed, %d check failed",
+			result.Total-result.Skipped, result.UpToDate, result.Updated, result.Queued, result.Skipped, result.RateLimited, result.Failed, result.CheckFailed),
 		Duration: time.Since(scanStart),
 	})
 

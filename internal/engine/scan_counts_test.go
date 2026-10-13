@@ -116,3 +116,39 @@ func TestScanPrunesNotifyStateOfRemovedContainers(t *testing.T) {
 		t.Errorf("notify state = %+v, want it pruned for a removed container", st)
 	}
 }
+
+// Every container the summary calls checked lands in exactly one count, so the
+// numbers add up. A registry check that fails is its own count (it used to be
+// in none, so "checked" exceeded the sum).
+func TestScanSummaryCountsAddUp(t *testing.T) {
+	mock, u := setupScanOne(t, map[string]string{})
+	mock.distErr["localhost:1/nginx:latest"] = io.ErrUnexpectedEOF
+
+	result := u.Scan(context.Background(), ScanScheduled)
+
+	checked := result.Total - result.Skipped
+	sum := result.UpToDate + result.Updated + result.Queued + result.RateLimited + result.Failed + result.CheckFailed
+	if checked != sum {
+		t.Errorf("checked = %d, but the counts add up to %d", checked, sum)
+	}
+	history, _ := u.store.ListHistory(10, "")
+	for _, h := range history {
+		if h.Outcome == "scan_summary" && !strings.Contains(h.Error, "1 check failed") {
+			t.Errorf("summary = %q, want the failed check counted", h.Error)
+		}
+	}
+}
+
+// Ignored versions, a rolled-back update and a dry run each land in a count too.
+func TestScanSummaryCountsAddUpForIgnoredAndDryRun(t *testing.T) {
+	_, u := setupScanOne(t, map[string]string{})
+	if err := u.store.SaveSetting("dry_run", "true"); err != nil {
+		t.Fatal(err)
+	}
+	result := u.Scan(context.Background(), ScanScheduled)
+	checked := result.Total - result.Skipped
+	sum := result.UpToDate + result.Updated + result.Queued + result.RateLimited + result.Failed + result.CheckFailed
+	if checked != sum {
+		t.Errorf("dry run: checked = %d, counts add up to %d (%+v)", checked, sum, result)
+	}
+}
