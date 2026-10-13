@@ -18,6 +18,7 @@ func TestSwapJournalRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec.NewID = "new"
+	rec.StopTimeout, rec.Stopping, rec.WatchUntil = 30, true, time.Unix(50, 0).UTC()
 	if err := s.SaveSwap(rec); err != nil {
 		t.Fatal(err)
 	}
@@ -28,6 +29,9 @@ func TestSwapJournalRoundTrip(t *testing.T) {
 	recs, err := s.ListSwaps()
 	if err != nil || len(recs) != 2 || recs[0].Name != "db" || recs[1].NewID != "new" || !recs[1].OldRunning {
 		t.Fatalf("ListSwaps = %+v, %v", recs, err)
+	}
+	if w := recs[1]; w.StopTimeout != 30 || !w.Stopping || !w.WatchUntil.Equal(time.Unix(50, 0)) || !recs[0].WatchUntil.IsZero() {
+		t.Errorf("stop fields = %+v / %+v, want them kept, and no watch on db", w, recs[0])
 	}
 
 	if err := s.DeleteSwap("web"); err != nil {

@@ -36,6 +36,15 @@ type SwapRecord struct {
 	RestartPolicy  string `json:"restart_policy,omitempty"`
 	RestartRetries int    `json:"restart_retries,omitempty"`
 	RestartChanged bool   `json:"restart_changed,omitempty"`
+	// StopTimeout is the timeout, in seconds, given to the old container's
+	// stop. Stopping is set while that stop is in flight: the daemon carries
+	// on with a stop when Sentinel goes away, and can stop the old container
+	// after recovery has put it back. WatchUntil is set when recovery
+	// restores an old container that may be stopped that way; the record
+	// stays until then, and the container is started again if it stops.
+	StopTimeout int       `json:"stop_timeout,omitempty"`
+	Stopping    bool      `json:"stopping,omitempty"`
+	WatchUntil  time.Time `json:"watch_until,omitzero"`
 	// Committed is set once the replacement is accepted; only the removal
 	// of the old container is then left to do.
 	Committed     bool `json:"committed,omitempty"`

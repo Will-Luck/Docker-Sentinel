@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
@@ -58,6 +59,13 @@ type fakeDocker struct {
 	restartUpdateErr  error
 	failPolicyTo      map[container.RestartPolicyMode]error // by the policy set
 	removeVolumeCalls []string
+
+	// slowStop holds containers whose stop the daemon carries out late, as
+	// dockerd does when Sentinel is killed while it waits for a stop: the
+	// stop call takes Sentinel down (it panics with errCrash) and the stop
+	// only takes effect at finishSlowStops, after whatever recovery did.
+	slowStop     map[string]bool
+	pendingStops []string
 
 	// Crash injection: once crashAfter container calls have been made, every
 	// later call panics with errCrash (crashPanics, a process crash) or
@@ -131,7 +139,25 @@ func newFakeDocker() *fakeDocker {
 		stopErrStopped: make(map[string]error),
 		failRenameOnce: make(map[string]error),
 		failRemoveOnce: make(map[string]error),
+		slowStop:       make(map[string]bool),
 	}
+}
+
+// finishSlowStops carries out the stops slowStop held back: each container
+// still there stops, and a --rm one is deleted.
+func (f *fakeDocker) finishSlowStops() {
+	f.fmu.Lock()
+	defer f.fmu.Unlock()
+	for _, id := range f.pendingStops {
+		if c, ok := f.containers[id]; ok {
+			f.record("late stop " + id)
+			c.running = false
+			if c.host.AutoRemove {
+				delete(f.containers, id)
+			}
+		}
+	}
+	f.pendingStops = nil
 }
 
 func notFound(what string) error {
@@ -348,6 +374,11 @@ func (f *fakeDocker) StopContainer(_ context.Context, id string, _ int) error {
 	if c == nil {
 		return notFound(id)
 	}
+	if f.slowStop[c.id] {
+		delete(f.slowStop, c.id)
+		f.pendingStops = append(f.pendingStops, c.id)
+		panic(errCrash)
+	}
 	if err, ok := f.failStop[id]; ok {
 		return err
 	}
@@ -481,12 +512,89 @@ func newFakeUpdater(t *testing.T, f *fakeDocker) *Updater {
 // Sentinel would be.
 func newFakeUpdaterOn(t *testing.T, f *fakeDocker, s *store.Store) *Updater {
 	t.Helper()
+	return newFakeUpdaterWith(t, f, s, newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+}
+
+// newFakeUpdaterWith is newFakeUpdaterOn with its own clock.
+func newFakeUpdaterWith(t *testing.T, f *fakeDocker, s *store.Store, clk clock.Clock) *Updater {
+	t.Helper()
 	log := logging.New(false)
 	cfg := config.NewTestConfig()
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetGracePeriod(time.Second)
-	return NewUpdater(f, registry.NewChecker(f, log), s, NewQueue(s, nil, nil), cfg, log,
-		newMockClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), notify.NewMulti(log), nil)
+	return NewUpdater(f, registry.NewChecker(f, log), s, NewQueue(s, nil, nil), cfg, log, clk, notify.NewMulti(log), nil)
+}
+
+// stepClock is a clock that moves only with Advance. After fires once
+// Advance passes its deadline, or never when held. It is safe for
+// concurrent use, so a background goroutine can wait on it.
+type stepClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	held   bool
+	timers []stepTimer
+}
+
+type stepTimer struct {
+	at time.Time
+	ch chan time.Time
+}
+
+func newStepClock(held bool) *stepClock {
+	return &stepClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), held: held}
+}
+
+func (c *stepClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *stepClock) Since(t time.Time) time.Duration { return c.Now().Sub(t) }
+
+func (c *stepClock) After(d time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ch := make(chan time.Time, 1)
+	switch {
+	case c.held:
+	case d <= 0:
+		ch <- c.now
+	default:
+		c.timers = append(c.timers, stepTimer{at: c.now.Add(d), ch: ch})
+	}
+	return ch
+}
+
+func (c *stepClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+	kept := c.timers[:0]
+	for _, tm := range c.timers {
+		if tm.at.After(c.now) {
+			kept = append(kept, tm)
+			continue
+		}
+		tm.ch <- c.now
+	}
+	c.timers = kept
+}
+
+// waitForTimer waits until something waits on the clock.
+func (c *stepClock) waitForTimer(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		n := len(c.timers)
+		c.mu.Unlock()
+		if n > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("nothing is waiting on the clock")
 }
 
 // assertFakeOps checks that want appear in the fake's call log in order.

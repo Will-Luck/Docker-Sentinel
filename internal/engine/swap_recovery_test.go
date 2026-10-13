@@ -294,7 +294,7 @@ func TestFailedRenameBackStillStartsOldContainer(t *testing.T) {
 // recovery never puts the replaced container back.
 func TestCommitRetriesJournalWhenRemovalFails(t *testing.T) {
 	f, u, _ := setupFakeUpdate(t, true, nil)
-	j := &flakyJournal{Store: u.store, fail: map[int]bool{3: true}} // 1 start, 2 new ID, 3 commit
+	j := &flakyJournal{Store: u.store, fail: map[int]bool{5: true}} // 1 start, 2 new ID, 3 stopping, 4 stopped, 5 commit
 	sw, old := swapFor(t, f, u, j)
 	if err := sw.replace(context.Background(), recreateFrom(old), true, nil); err != nil {
 		t.Fatalf("replace: %v", err)

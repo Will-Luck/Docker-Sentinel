@@ -89,6 +89,8 @@ type Updater struct {
 	selfUpdateQueued atomic.Bool                // set when a self-update is queued during scan
 	selfUpdateKey    atomic.Value               // stores queue key (string) of the self-update entry
 	shutdownCtx      context.Context            // optional: ends every update and rollback on shutdown
+	watching         atomic.Bool                // the watch of restored containers is running (watchRestored)
+	watchers         sync.WaitGroup             // tracks that watch
 }
 
 // NewUpdater creates an Updater with all dependencies.

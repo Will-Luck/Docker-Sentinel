@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/guardian"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -129,6 +130,7 @@ func newSwap(d docker.API, log *logging.Logger, j swapJournal, spec swapSpec) *s
 		OldID:         spec.oldID,
 		OldRunning:    s.oldRunning,
 		AutoRemove:    autoRemove,
+		StopTimeout:   spec.stopTimeout,
 		RemoveVolumes: spec.removeVolumes,
 		Snapshot:      spec.snapshot,
 	}
@@ -216,7 +218,22 @@ func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, veri
 
 	if s.oldRunning {
 		s.disableRestart(ctx)
-		if err := s.d.StopContainer(ctx, s.oldID, s.stopTimeout); err != nil {
+		// The daemon carries on with a stop when Sentinel goes away, so it
+		// can stop the old container after recovery has put it back. The
+		// journal says when that can happen, and recovery watches for it.
+		s.rec.Stopping = true
+		if err := s.save(); err != nil {
+			s.rec.Stopping = false
+			return &swapError{stage: "journal", err: fmt.Errorf("journal the stop: %w", err)}
+		}
+		err := s.d.StopContainer(ctx, s.oldID, s.stopTimeout)
+		if ctx.Err() == nil {
+			// The call returned: the daemon is done with the stop. If this
+			// save fails, recovery only watches for nothing.
+			s.rec.Stopping = false
+			_ = s.save()
+		}
+		if err != nil {
 			// Never start the replacement while the old container may still
 			// run on the same volumes and ports.
 			old, inspectErr := s.d.InspectContainer(ctx, s.oldID)
@@ -420,7 +437,11 @@ func (s *swap) commit(ctx context.Context) {
 
 // pendingSwapError explains, for users, a container whose earlier swap did
 // not finish.
-func pendingSwapError(name string) error {
+func (u *Updater) pendingSwapError(name string) error {
+	if rec, _, _ := u.store.GetSwap(name); !rec.WatchUntil.IsZero() {
+		return fmt.Errorf("%w: its old container was put back, and Sentinel watches it until %s in case Docker stops it; try again after that",
+			ErrSwapPending, rec.WatchUntil.Format(time.TimeOnly))
+	}
 	return fmt.Errorf("%w: Sentinel retries it at every scan; if it cannot, check %s and %s%s by hand and then discard the record with DELETE /api/swaps/%s",
 		ErrSwapPending, name, name, replacedSuffix, name)
 }
@@ -436,6 +457,10 @@ func pendingSwapError(name string) error {
 // It then clears maintenance flags left set in the store and finalises any
 // running container still carrying the maintenance label, so
 // Docker-Guardian sees it again.
+//
+// An old container put back while the daemon may still be carrying out the
+// stop Sentinel asked for is watched in the background, until ctx ends, so
+// that it is started again if that stop ends it (see watchRestored).
 func (u *Updater) RecoverInterruptedUpdates(ctx context.Context) {
 	u.resolvePendingSwaps(ctx)
 
@@ -476,21 +501,41 @@ func (u *Updater) resolvePendingSwaps(ctx context.Context) {
 		u.log.Warn("could not read the swap journal", "error", err)
 		return
 	}
+	watch := false
 	for _, rec := range recs {
 		if !u.tryLock(rec.Name) {
 			continue // a swap of it is in progress
 		}
-		u.resolvePendingSwap(ctx, rec)
+		if u.resolvePendingSwap(ctx, rec, u.clock.Now()) {
+			watch = true
+		}
 		u.unlock(rec.Name)
+	}
+	if watch {
+		u.watchRestored(ctx)
 	}
 }
 
-// resolvePendingSwap recovers one journalled swap. After
-// swapRecoveryAttempts failures it notifies once, saying what to do.
-func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord) {
-	u.log.Warn("resolving an interrupted container swap", "name", rec.Name, "kind", rec.Kind, "attempt", rec.Attempts+1)
-	changed, err := u.recoverSwap(ctx, rec)
+// resolvePendingSwap recovers one journalled swap, as of now. After
+// swapRecoveryAttempts failures it notifies once, saying what to do. It
+// reports whether the record is kept to watch the restored container.
+//
+// The daemon carries on with a stop when Sentinel goes away. When the old
+// container was being stopped (rec.Stopping), recovery may put it back while
+// that stop is still running; the stop then ends it, and a restart policy
+// does not start a container stopped that way. So the record is kept until
+// the stop timeout, plus a margin, has passed (rec.WatchUntil): until then
+// each resolution starts the container again if it has stopped, and logs and
+// records that in the history.
+func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord, now time.Time) (watched bool) {
+	watching := !rec.WatchUntil.IsZero()
+	if !watching {
+		u.log.Warn("resolving an interrupted container swap", "name", rec.Name, "kind", rec.Kind, "attempt", rec.Attempts+1)
+	}
+	changed, oldKept, err := u.recoverSwap(ctx, rec)
 	if err != nil {
+		// A failed resolution leaves the watch: the scans retry it.
+		rec.WatchUntil = time.Time{}
 		rec.Attempts++
 		u.log.Error("could not resolve the swap, retrying at the next scan", "name", rec.Name, "attempts", rec.Attempts, "error", err)
 		if rec.Attempts >= swapRecoveryAttempts && !rec.Notified {
@@ -507,7 +552,28 @@ func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord) 
 		if err := u.store.SaveSwap(rec); err != nil {
 			u.log.Warn("could not update the swap journal", "name", rec.Name, "error", err)
 		}
-		return
+		return false
+	}
+	if changed && watching {
+		u.startedAgain(ctx, rec, now)
+	}
+	if oldKept && rec.Stopping {
+		if !watching {
+			rec.WatchUntil = now.Add(stopWatchWindow(rec.StopTimeout))
+			u.log.Info("watching the restored container until the stop Sentinel had asked for has timed out",
+				"name", rec.Name, "until", rec.WatchUntil)
+		}
+		if now.Before(rec.WatchUntil) {
+			if err := u.store.SaveSwap(rec); err != nil {
+				u.log.Warn("could not journal the watch of the restored container", "name", rec.Name, "error", err)
+			}
+			if changed {
+				if current, err := u.docker.InspectContainer(ctx, rec.Name); err == nil {
+					u.afterProviderChange(ctx, rec.Name, current.ID, rec.OldID, rec.NewID)
+				}
+			}
+			return true
+		}
 	}
 	if err := u.store.DeleteSwap(rec.Name); err != nil {
 		u.log.Warn("could not clear the swap journal", "name", rec.Name, "error", err)
@@ -515,11 +581,166 @@ func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord) 
 	if err := u.store.SetMaintenance(rec.Name, false); err != nil {
 		u.log.Warn("could not clear the maintenance flag", "name", rec.Name, "error", err)
 	}
+	u.finishRecovered(ctx, rec, changed)
+	return false
+}
+
+// finishRecovered settles the container a resolved swap left under the name:
+// the containers depending on it are repaired when it changed, and it is
+// finalised when it runs with the maintenance label (the old container of a
+// finalise swap, or a kept replacement), as at startup.
+func (u *Updater) finishRecovered(ctx context.Context, rec store.SwapRecord, changed bool) {
+	current, err := u.docker.InspectContainer(ctx, rec.Name)
+	if err != nil {
+		if !docker.IsNotFound(err) {
+			u.log.Warn("could not inspect the recovered container", "name", rec.Name, "error", err)
+		}
+		return
+	}
 	if changed {
-		if current, err := u.docker.InspectContainer(ctx, rec.Name); err == nil {
-			u.afterProviderChange(ctx, rec.Name, current.ID, rec.OldID, rec.NewID)
+		u.afterProviderChange(ctx, rec.Name, current.ID, rec.OldID, rec.NewID)
+	}
+	if current.State == nil || !current.State.Running || current.Config == nil || !guardian.HasMaintenanceLabel(current.Config.Labels) {
+		return
+	}
+	u.log.Warn("finishing an interrupted update (removing the maintenance label)", "name", rec.Name)
+	newID, err := u.finaliseContainer(ctx, current.ID, rec.Name)
+	if err != nil {
+		u.log.Error("could not finalise the recovered container", "name", rec.Name, "error", err)
+		return
+	}
+	u.afterProviderChange(ctx, rec.Name, newID, current.ID)
+}
+
+// stopWatchMargin is added to a stop timeout for the daemon to kill the
+// container once the timeout is over, and report it.
+const stopWatchMargin = 10 * time.Second
+
+// defaultStopTimeout is assumed for a record that does not give one.
+const defaultStopTimeout = 30
+
+// watchInterval is how often a watched container is checked.
+const watchInterval = 2 * time.Second
+
+// stopWatchWindow is how long a restored container is watched: the stop
+// timeout Sentinel gave the daemon (in seconds), plus a margin.
+func stopWatchWindow(timeout int) time.Duration {
+	if timeout <= 0 {
+		timeout = defaultStopTimeout
+	}
+	return time.Duration(timeout)*time.Second + stopWatchMargin
+}
+
+// startedAgain logs and records in the history that a container recovery
+// had put back was stopped by the daemon and has been started again.
+func (u *Updater) startedAgain(ctx context.Context, rec store.SwapRecord, now time.Time) {
+	u.log.Warn("the daemon stopped the restored container after recovery (a stop Sentinel had asked for before it went down); started it again", "name", rec.Name)
+	entry := store.UpdateRecord{
+		Timestamp:     now,
+		ContainerName: rec.Name,
+		Outcome:       "rollback",
+		Error: "the update was interrupted and the old container put back, but the daemon then finished " +
+			"stopping it (Sentinel had asked it to before it went down); Sentinel started it again",
+	}
+	if c, err := u.docker.InspectContainer(ctx, rec.Name); err == nil && c.Config != nil {
+		entry.OldImage = c.Config.Image
+		entry.OldDigest = c.Image
+	}
+	if err := u.store.RecordUpdate(entry); err != nil {
+		u.log.Warn("could not record the restart in the history", "name", rec.Name, "error", err)
+	}
+	u.publishEvent(events.EventContainerUpdate, rec.Name, "started again after an interrupted update")
+}
+
+// watchRestored starts the watch of the restored containers whose swap
+// records say to (WatchUntil), unless it is running. It ends when no record
+// is watched any more, or when ctx (or the shutdown context, once set) ends.
+// Every watchInterval it starts a watched container again if it has stopped,
+// and resolves each record whose watch is over; a record whose resolution
+// fails leaves the watch for the scans to retry.
+func (u *Updater) watchRestored(ctx context.Context) {
+	if u.shutdownCtx != nil {
+		ctx = u.shutdownCtx
+	}
+	if !u.watching.CompareAndSwap(false, true) {
+		return
+	}
+	u.watchers.Add(1)
+	go func() {
+		defer u.watchers.Done()
+		u.runWatch(ctx)
+	}()
+}
+
+func (u *Updater) runWatch(ctx context.Context) {
+	now := u.clock.Now()
+	for {
+		recs := u.watchedSwaps()
+		if len(recs) == 0 {
+			u.watching.Store(false)
+			// A record may have been added since: carry on, unless another
+			// watch has started for it.
+			if len(u.watchedSwaps()) == 0 || !u.watching.CompareAndSwap(false, true) {
+				return
+			}
+			continue
+		}
+		// The next check is due at the next interval or the first watch end,
+		// with a floor so a record that is busy is not polled in a loop.
+		wait := watchInterval
+		for _, rec := range recs {
+			wait = min(wait, rec.WatchUntil.Sub(now))
+		}
+		wait = max(wait, watchInterval/8)
+		select {
+		case <-ctx.Done():
+			u.watching.Store(false)
+			return
+		case now = <-u.clock.After(wait):
+		}
+		for _, rec := range recs {
+			u.checkWatched(ctx, rec.Name, now)
 		}
 	}
+}
+
+// watchedSwaps returns the swap records whose container is being watched.
+func (u *Updater) watchedSwaps() []store.SwapRecord {
+	recs, err := u.store.ListSwaps()
+	if err != nil {
+		u.log.Warn("could not read the swap journal", "error", err)
+		return nil
+	}
+	var watched []store.SwapRecord
+	for _, rec := range recs {
+		if !rec.WatchUntil.IsZero() {
+			watched = append(watched, rec)
+		}
+	}
+	return watched
+}
+
+// checkWatched checks one watched container, as of now. A busy container
+// (an update or a scan's recovery holds it) is checked at the next tick.
+func (u *Updater) checkWatched(ctx context.Context, name string, now time.Time) {
+	if !u.tryLock(name) {
+		return
+	}
+	defer u.unlock(name)
+	rec, found, err := u.store.GetSwap(name)
+	if err != nil || !found || rec.WatchUntil.IsZero() {
+		return // resolved meanwhile
+	}
+	// Once begun, a check runs to its end, like a swap.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
+	defer cancel()
+	if now.Before(rec.WatchUntil) {
+		c, err := u.docker.InspectContainer(ctx, rec.OldID)
+		if err == nil && c.State != nil && c.State.Running {
+			return
+		}
+	}
+	u.resolvePendingSwap(ctx, rec, now)
 }
 
 // DiscardSwap removes the journal record of a swap that cannot be resolved,
@@ -541,7 +762,8 @@ func (u *Updater) DiscardSwap(name string) error {
 
 // recoverSwap resolves one journalled swap. changed reports that the
 // container running under the name was replaced or (re)started, so the
-// containers depending on it need repairing.
+// containers depending on it need repairing. oldKept reports that the old
+// container was kept and put back (the second case below).
 //
 //   - Committed and the replacement exists: the old container is removed.
 //   - Otherwise, while the old container exists: the replacement (known by
@@ -553,15 +775,15 @@ func (u *Updater) DiscardSwap(name string) error {
 //     snapshot) the replacement is kept and started.
 //   - Both are gone: the old container is rebuilt from its snapshot, unless
 //     some other container has taken the name meanwhile.
-func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (changed bool, err error) {
+func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (changed, oldKept bool, err error) {
 	old, err := u.docker.InspectContainer(ctx, rec.OldID)
 	oldGone := docker.IsNotFound(err)
 	if err != nil && !oldGone {
-		return false, fmt.Errorf("inspect the old container: %w", err)
+		return false, false, fmt.Errorf("inspect the old container: %w", err)
 	}
 	replacement, newFound, err := u.findReplacement(ctx, rec)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
 	switch {
@@ -573,41 +795,47 @@ func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (change
 			err = u.docker.RemoveContainer(ctx, rec.OldID)
 		}
 		if err != nil && !docker.IsNotFound(err) {
-			return false, fmt.Errorf("remove the replaced container: %w", err)
+			return false, false, fmt.Errorf("remove the replaced container: %w", err)
 		}
-		return true, nil
+		return true, false, nil
 
 	case !oldGone:
-		u.log.Warn("the swap had not finished, restoring the old container", "name", rec.Name)
+		if rec.WatchUntil.IsZero() {
+			u.log.Warn("the swap had not finished, restoring the old container", "name", rec.Name)
+		}
 		if newFound {
 			if err := u.removeReplacement(ctx, replacement); err != nil {
-				return false, err
+				return false, true, err
 			}
 		}
-		return u.restoreOldContainer(ctx, rec, old)
+		changed, err = u.restoreOldContainer(ctx, rec, old)
+		return changed, true, err
 
 	case newFound && rec.Kind == swapUpdate && !rec.Committed && rec.Snapshot != nil:
 		// The update was never validated, and its old container (a --rm
 		// one) is gone: put the old version back from its snapshot.
 		u.log.Warn("the old container is gone and the update was not validated, rebuilding it", "name", rec.Name)
-		return u.replaceWithRebuild(ctx, rec, replacement)
+		changed, err = u.replaceWithRebuild(ctx, rec, replacement)
+		return changed, false, err
 
 	case newFound:
 		u.log.Warn("the old container is gone, keeping its replacement", "name", rec.Name)
 		if rec.OldRunning && (replacement.State == nil || !replacement.State.Running) {
 			if err := u.docker.StartContainer(ctx, replacement.ID); err != nil {
 				if rec.Snapshot == nil {
-					return false, fmt.Errorf("start the replacement: %w", err)
+					return false, false, fmt.Errorf("start the replacement: %w", err)
 				}
 				// It will not start: put the old container back instead.
 				u.log.Warn("the replacement does not start, rebuilding the old container", "name", rec.Name, "error", err)
-				return u.replaceWithRebuild(ctx, rec, replacement)
+				changed, err = u.replaceWithRebuild(ctx, rec, replacement)
+				return changed, false, err
 			}
 		}
-		return true, nil
+		return true, false, nil
 
 	default:
-		return u.rebuildFromJournal(ctx, rec)
+		changed, err = u.rebuildFromJournal(ctx, rec)
+		return changed, false, err
 	}
 }
 

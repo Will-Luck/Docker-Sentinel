@@ -381,7 +381,7 @@ func (u *Updater) RollbackContainer(ctx context.Context, name string) error {
 	}
 	defer u.unlock(name)
 	if u.store.HasSwap(name) {
-		return pendingSwapError(name)
+		return u.pendingSwapError(name)
 	}
 	ctx, stop := u.withShutdown(ctx)
 	defer stop()

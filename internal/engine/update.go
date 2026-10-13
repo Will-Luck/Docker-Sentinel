@@ -42,7 +42,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	// An earlier swap that did not finish holds the only way back to its
 	// old container: change nothing (no hooks, no pull) until it is resolved.
 	if u.store.HasSwap(name) {
-		return pendingSwapError(name)
+		return u.pendingSwapError(name)
 	}
 	ctx, stop := u.withShutdown(ctx)
 	defer stop()

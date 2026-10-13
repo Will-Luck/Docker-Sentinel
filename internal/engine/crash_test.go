@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
@@ -45,6 +47,19 @@ func crashScenarios() []crashScenario {
 				rollbackSetup(&container.HostConfig{AutoRemove: true})(f, u)
 				f.failStart["app-1"] = errors.New("OCI error")
 			}, run: rollback},
+		// Sentinel goes down while the daemon stops the old container, and
+		// the daemon finishes that stop after recovery put it back.
+		{name: "update-slow-stop", running: true, host: &container.HostConfig{RestartPolicy: unlessStopped},
+			setup: func(f *fakeDocker, _ *Updater) { f.slowStop["old"] = true }, run: update},
+		{name: "update-rm-slow-stop", running: true, host: &container.HostConfig{AutoRemove: true},
+			setup: func(f *fakeDocker, _ *Updater) { f.slowStop["old"] = true }, run: update},
+		{name: "finalise-slow-stop", running: true, host: &container.HostConfig{RestartPolicy: unlessStopped},
+			setup: func(f *fakeDocker, _ *Updater) { f.slowStop["app-1"] = true }, run: update},
+		{name: "rollback-slow-stop", running: true, host: &container.HostConfig{RestartPolicy: unlessStopped},
+			setup: func(f *fakeDocker, u *Updater) {
+				rollbackSetup(&container.HostConfig{RestartPolicy: unlessStopped})(f, u)
+				f.slowStop["old"] = true
+			}, run: rollback},
 	}
 }
 
@@ -82,6 +97,34 @@ func newCrashFixture(t *testing.T, sc crashScenario) (*fakeDocker, *Updater, *st
 		sc.setup(f, u)
 	}
 	return f, u, s
+}
+
+// recoverAfterCrash is a restarted Sentinel: its startup recovery runs,
+// the daemon then finishes any stop it was still carrying out, and the
+// scans' retries see the watch of restored containers through to its end.
+// The background watch is held still, so it never acts.
+func recoverAfterCrash(t *testing.T, f *fakeDocker, s *store.Store) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clk := newStepClock(true)
+	u := newFakeUpdaterWith(t, f, s, clk)
+	u.RecoverInterruptedUpdates(ctx)
+	f.finishSlowStops()
+	for range 3 {
+		if recs, err := s.ListSwaps(); err != nil || len(recs) == 0 {
+			return
+		}
+		clk.Advance(time.Hour)
+		u.resolvePendingSwaps(ctx)
+	}
+}
+
+// runOp runs the scenario's operation until it ends or crashes. A stop the
+// daemon was carrying out slowly happens once only.
+func runOp(f *fakeDocker, sc crashScenario, u *Updater) {
+	_ = runUntilCrash(func() error { return sc.run(u) })
+	clear(f.slowStop)
 }
 
 // runUntilCrash runs op and swallows the simulated crash.
@@ -138,10 +181,12 @@ func checkRecovered(t *testing.T, f *fakeDocker, s *store.Store, sc crashScenari
 // one copy of the service with its original restart policy. Every call
 // position of every operation is tried.
 func TestCrashAtEveryStepRecovers(t *testing.T) {
+	cases := 0
+	defer func() { t.Logf("%d crash cases", cases) }()
 	for _, sc := range crashScenarios() {
 		// Count the calls of an uninterrupted run.
 		f, u, _ := newCrashFixture(t, sc)
-		_ = sc.run(u)
+		runOp(f, sc, u)
 		total := f.callCount()
 		if total == 0 {
 			t.Fatalf("%s: no container calls counted", sc.name)
@@ -156,12 +201,12 @@ func TestCrashAtEveryStepRecovers(t *testing.T) {
 				where := fmt.Sprintf("%s/%s %d of %d", sc.name, mode.name, n, total)
 				f, u, s := newCrashFixture(t, sc)
 				f.setCrash(n, mode.panics, mode.late)
-				_ = runUntilCrash(func() error { return sc.run(u) })
+				runOp(f, sc, u)
 				f.setCrash(0, false, false)
 
-				restarted := newFakeUpdaterOn(t, f, s)
-				restarted.RecoverInterruptedUpdates(context.Background())
+				recoverAfterCrash(t, f, s)
 				checkRecovered(t, f, s, sc, where)
+				cases++
 				if t.Failed() {
 					return
 				}
@@ -174,18 +219,20 @@ func TestCrashAtEveryStepRecovers(t *testing.T) {
 // update, crash the recovery at every point as well, then let a third
 // start recover cleanly.
 func TestCrashDuringRecoveryRecovers(t *testing.T) {
+	cases := 0
+	defer func() { t.Logf("%d crash cases", cases) }()
 	for _, sc := range crashScenarios() {
 		f, u, _ := newCrashFixture(t, sc)
-		_ = sc.run(u)
+		runOp(f, sc, u)
 		total := f.callCount()
 		for n := 1; n <= total; n++ {
 			// Find how many calls the recovery of this crash makes.
 			f, u, s := newCrashFixture(t, sc)
 			f.setCrash(n, false, true)
-			_ = runUntilCrash(func() error { return sc.run(u) })
+			runOp(f, sc, u)
 			f.setCrash(0, false, false)
 			probe := cloneCrashState(t, f, s)
-			newFakeUpdaterOn(t, probe.f, probe.s).RecoverInterruptedUpdates(context.Background())
+			recoverAfterCrash(t, probe.f, probe.s)
 			recoveryCalls := probe.f.callCount()
 
 			for m := 1; m <= recoveryCalls; m++ {
@@ -193,12 +240,13 @@ func TestCrashDuringRecoveryRecovers(t *testing.T) {
 				st := cloneCrashState(t, f, s)
 				st.f.setCrash(m, false, true)
 				_ = runUntilCrash(func() error {
-					newFakeUpdaterOn(t, st.f, st.s).RecoverInterruptedUpdates(context.Background())
+					recoverAfterCrash(t, st.f, st.s)
 					return nil
 				})
 				st.f.setCrash(0, false, false)
-				newFakeUpdaterOn(t, st.f, st.s).RecoverInterruptedUpdates(context.Background())
+				recoverAfterCrash(t, st.f, st.s)
 				checkRecovered(t, st.f, st.s, sc, where)
+				cases++
 				if t.Failed() {
 					return
 				}
@@ -228,6 +276,7 @@ func cloneCrashState(t *testing.T, f *fakeDocker, s *store.Store) crashState {
 		c.containers[id] = &cp
 	}
 	c.seq = f.seq
+	c.pendingStops = slices.Clone(f.pendingStops)
 	cs := testStore(t)
 	recs, err := s.ListSwaps()
 	if err != nil {
