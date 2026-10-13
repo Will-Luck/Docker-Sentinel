@@ -356,7 +356,7 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 
 	u.publishEvent(events.EventServiceUpdate, name, "service update started")
 
-	if err := u.docker.UpdateService(ctx, serviceID, svc.Meta.Version, newSpec, ""); err != nil {
+	if err := u.docker.UpdateService(ctx, serviceID, svc.Meta.Version, newSpec, u.registryAuthFor(newSpec.TaskTemplate.ContainerSpec.Image)); err != nil {
 		u.notifier.Notify(ctx, notify.Event{
 			Type:          notify.EventUpdateFailed,
 			ContainerName: name,
@@ -503,4 +503,18 @@ func updateStatusIsStale(cur, prior *swarm.UpdateStatus) bool {
 		return false
 	}
 	return cur.StartedAt == nil || !cur.StartedAt.After(*prior.StartedAt)
+}
+
+// registryAuthFor returns the X-Registry-Auth value for the stored credentials
+// of image's registry, so the swarm nodes can pull it. Empty when there are none.
+func (u *Updater) registryAuthFor(image string) string {
+	cs := u.checker.CredentialStore()
+	if cs == nil {
+		return ""
+	}
+	creds, err := cs.GetRegistryCredentials()
+	if err != nil {
+		return ""
+	}
+	return registry.EncodedAuthFor(creds, image)
 }

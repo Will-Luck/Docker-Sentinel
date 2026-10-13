@@ -2,6 +2,8 @@ package registry
 
 import (
 	"strings"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 )
 
 // RegistryCredential holds login credentials for a container registry.
@@ -57,4 +59,20 @@ func FindByRegistry(creds []RegistryCredential, registry string) *RegistryCreden
 		}
 	}
 	return nil
+}
+
+// EncodedAuthFor returns the X-Registry-Auth value for the stored credential
+// that matches imageRef's registry, or "" when there is none. Docker Hub
+// credentials are sent with the address the daemon knows Hub by.
+func EncodedAuthFor(creds []RegistryCredential, imageRef string) string {
+	host := RegistryHost(imageRef)
+	c := FindByRegistry(creds, host)
+	if c == nil || c.Username == "" {
+		return ""
+	}
+	server := host
+	if host == "docker.io" {
+		server = "https://index.docker.io/v1/"
+	}
+	return docker.EncodeRegistryAuth(c.Username, c.Secret, server)
 }

@@ -75,13 +75,14 @@ type Server struct {
 	proto.UnimplementedEnrollmentServiceServer
 	proto.UnimplementedAgentServiceServer
 
-	ca       *cluster.CA
-	registry *Registry
-	store    ClusterStore
-	history  HistoryRecorder
-	bus      *events.Bus
-	log      *slog.Logger
-	hmacKey  []byte // 32-byte random key for HMAC-SHA256 token signing
+	ca           *cluster.CA
+	registryAuth func(imageRef string) string // optional: credentials sent with updates
+	registry     *Registry
+	store        ClusterStore
+	history      HistoryRecorder
+	bus          *events.Bus
+	log          *slog.Logger
+	hmacKey      []byte // 32-byte random key for HMAC-SHA256 token signing
 
 	grpcSrv  *grpc.Server
 	mu       sync.RWMutex            // protects streams and stopping
@@ -204,6 +205,13 @@ func (s *Server) Registry() *Registry {
 // journal entries. Called after construction by main.go.
 func (s *Server) SetHistoryRecorder(h HistoryRecorder) {
 	s.history = h
+}
+
+// SetRegistryAuth sets where the hub gets registry credentials from. The
+// X-Registry-Auth value for an update's target image is sent to the agent with
+// the request, so the agent's daemon can pull from a private registry.
+func (s *Server) SetRegistryAuth(fn func(imageRef string) string) {
+	s.registryAuth = fn
 }
 
 // Start starts the gRPC server with mTLS on the given address.

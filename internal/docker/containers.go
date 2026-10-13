@@ -106,7 +106,7 @@ func (c *Client) NetworkConnect(ctx context.Context, networkID string, container
 
 // PullImage pulls an image by reference, waiting for pull to complete.
 func (c *Client) PullImage(ctx context.Context, refStr string) error {
-	resp, err := c.api.ImagePull(ctx, refStr, client.ImagePullOptions{})
+	resp, err := c.api.ImagePull(ctx, refStr, client.ImagePullOptions{RegistryAuth: c.registryAuth(ctx, refStr)})
 	if err != nil {
 		return err
 	}
@@ -136,10 +136,10 @@ func (c *Client) ImageID(ctx context.Context, imageRef string) (string, error) {
 }
 
 // DistributionDigest queries the registry for the current digest of an image
-// reference. The request carries no registry credentials, so a private
-// registry fails with an authorisation error.
+// reference, with the registry credentials stored in Sentinel (see
+// SetRegistryAuth).
 func (c *Client) DistributionDigest(ctx context.Context, imageRef string) (string, error) {
-	resp, err := c.api.DistributionInspect(ctx, imageRef, client.DistributionInspectOptions{})
+	resp, err := c.api.DistributionInspect(ctx, imageRef, client.DistributionInspectOptions{EncodedRegistryAuth: c.registryAuth(ctx, imageRef)})
 	if err != nil {
 		return "", err
 	}

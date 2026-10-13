@@ -252,12 +252,17 @@ func (s *Server) RollbackContainerSync(ctx context.Context, hostID, containerNam
 }
 
 func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName, targetImage, targetDigest, purpose string) (*proto.UpdateResult, error) {
+	var registryAuth string
+	if s.registryAuth != nil && targetImage != "" {
+		registryAuth = s.registryAuth(targetImage)
+	}
 	resp, err := s.request(ctx, hostID, "update result", purpose, updateTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_UpdateContainer{
 			UpdateContainer: &proto.UpdateContainerRequest{
 				ContainerName: containerName,
 				TargetImage:   targetImage,
 				TargetDigest:  targetDigest,
+				RegistryAuth:  registryAuth,
 			},
 		},
 	})

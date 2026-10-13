@@ -24,7 +24,8 @@ const minAPIVersion = "1.44"
 
 // Client wraps the Docker API client.
 type Client struct {
-	api *client.Client
+	api    *client.Client
+	authFn RegistryAuthFunc // optional: registry credentials for pulls and digest lookups
 }
 
 // TLSConfig holds paths to TLS certificates for connecting to a Docker

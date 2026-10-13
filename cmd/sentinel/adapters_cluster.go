@@ -15,6 +15,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
 )
@@ -253,6 +254,14 @@ func (m *clusterManager) Start() error {
 		return fmt.Errorf("create cluster server: %w", err)
 	}
 	m.srv.SetHistoryRecorder(m.db)
+	// Updates carry the stored credentials of the target registry to the agent.
+	m.srv.SetRegistryAuth(func(ref string) string {
+		creds, err := m.db.GetRegistryCredentials()
+		if err != nil {
+			return ""
+		}
+		return registry.EncodedAuthFor(creds, ref)
+	})
 
 	// Read advertise addresses for TLS cert SANs. Inside Docker, the container
 	// only sees its bridge network IPs, but agents connect via the host's

@@ -914,6 +914,10 @@ type UpdateContainerRequest struct {
 	TargetImage   string                 `protobuf:"bytes,2,opt,name=target_image,json=targetImage,proto3" json:"target_image,omitempty"`    // image reference to update to
 	TargetDigest  string                 `protobuf:"bytes,3,opt,name=target_digest,json=targetDigest,proto3" json:"target_digest,omitempty"` // expected digest of the new image
 	SkipHooks     bool                   `protobuf:"varint,4,opt,name=skip_hooks,json=skipHooks,proto3" json:"skip_hooks,omitempty"`         // skip pre/post-update hooks
+	// X-Registry-Auth value (URL-safe base64 AuthConfig JSON) for the target
+	// image's registry, so the agent's daemon can pull from a private registry
+	// with the credentials stored on the hub. Empty when there are none.
+	RegistryAuth  string `protobuf:"bytes,20,opt,name=registry_auth,json=registryAuth,proto3" json:"registry_auth,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -974,6 +978,13 @@ func (x *UpdateContainerRequest) GetSkipHooks() bool {
 		return x.SkipHooks
 	}
 	return false
+}
+
+func (x *UpdateContainerRequest) GetRegistryAuth() string {
+	if x != nil {
+		return x.RegistryAuth
+	}
+	return ""
 }
 
 type ContainerActionRequest struct {
@@ -2270,13 +2281,14 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"containers\x18\x02 \x03(\v2\x1f.sentinel.cluster.ContainerInfoR\n" +
 	"containers\x12\x14\n" +
 	"\x05error\x18\x03 \x01(\tR\x05error\"\x17\n" +
-	"\x15ListContainersRequest\"\xa6\x01\n" +
+	"\x15ListContainersRequest\"\xcb\x01\n" +
 	"\x16UpdateContainerRequest\x12%\n" +
 	"\x0econtainer_name\x18\x01 \x01(\tR\rcontainerName\x12!\n" +
 	"\ftarget_image\x18\x02 \x01(\tR\vtargetImage\x12#\n" +
 	"\rtarget_digest\x18\x03 \x01(\tR\ftargetDigest\x12\x1d\n" +
 	"\n" +
-	"skip_hooks\x18\x04 \x01(\bR\tskipHooks\"W\n" +
+	"skip_hooks\x18\x04 \x01(\bR\tskipHooks\x12#\n" +
+	"\rregistry_auth\x18\x14 \x01(\tR\fregistryAuth\"W\n" +
 	"\x16ContainerActionRequest\x12%\n" +
 	"\x0econtainer_name\x18\x01 \x01(\tR\rcontainerName\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\"O\n" +

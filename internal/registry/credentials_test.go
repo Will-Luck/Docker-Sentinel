@@ -1,6 +1,10 @@
 package registry
 
-import "testing"
+import (
+	"encoding/base64"
+	"encoding/json"
+	"testing"
+)
 
 func TestMaskCredentialSecrets(t *testing.T) {
 	tests := []struct {
@@ -97,5 +101,34 @@ func TestFindByRegistry(t *testing.T) {
 				t.Errorf("expected ID %q, got %q", tt.wantID, got.ID)
 			}
 		})
+	}
+}
+
+func TestEncodedAuthFor(t *testing.T) {
+	creds := []RegistryCredential{
+		{Registry: "docker.io", Username: "hubuser", Secret: "hubpat"},
+		{Registry: "ghcr.io", Username: "ghuser", Secret: "ghpat"},
+	}
+	decode := func(enc string) map[string]string {
+		raw, err := base64.URLEncoding.DecodeString(enc)
+		if err != nil {
+			t.Fatalf("decode %q: %v", enc, err)
+		}
+		var m map[string]string
+		_ = json.Unmarshal(raw, &m)
+		return m
+	}
+
+	if got := decode(EncodedAuthFor(creds, "ghcr.io/org/app:1")); got["username"] != "ghuser" || got["serveraddress"] != "ghcr.io" {
+		t.Errorf("ghcr = %v", got)
+	}
+	// Official and namespaced Hub images use the Hub credential.
+	for _, ref := range []string{"nginx:latest", "gitea/gitea:1.22"} {
+		if got := decode(EncodedAuthFor(creds, ref)); got["username"] != "hubuser" || got["serveraddress"] != "https://index.docker.io/v1/" {
+			t.Errorf("%s = %v", ref, got)
+		}
+	}
+	if got := EncodedAuthFor(creds, "quay.io/org/app:1"); got != "" {
+		t.Errorf("no credential for quay.io but got %q", got)
 	}
 }

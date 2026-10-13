@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -173,6 +174,9 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 	defer a.endUpdate(name)
 
 	a.log.Info("updating container", "name", name, "target", targetImage, "request_id", requestID)
+
+	// Pulls and digest lookups for this update use the credentials the hub sent.
+	ctx = docker.WithRegistryAuth(ctx, req.GetRegistryAuth())
 
 	isSelf := a.isSelfContainer(ctx, name)
 	if isSelf {

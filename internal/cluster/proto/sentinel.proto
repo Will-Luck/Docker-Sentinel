@@ -124,6 +124,10 @@ message UpdateContainerRequest {
   string target_image = 2;    // image reference to update to
   string target_digest = 3;   // expected digest of the new image
   bool skip_hooks = 4;        // skip pre/post-update hooks
+  // X-Registry-Auth value (URL-safe base64 AuthConfig JSON) for the target
+  // image's registry, so the agent's daemon can pull from a private registry
+  // with the credentials stored on the hub. Empty when there are none.
+  string registry_auth = 20;
 }
 
 message ContainerActionRequest {

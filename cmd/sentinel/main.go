@@ -572,6 +572,16 @@ func main() {
 	// End (and undo) in-flight updates on shutdown, dashboard ones included.
 	updater.SetShutdownContext(ctx)
 
+	// Pulls and digest lookups against a private registry use the credentials
+	// stored in Sentinel.
+	client.SetRegistryAuth(func(ref string) string {
+		creds, err := db.GetRegistryCredentials()
+		if err != nil {
+			return ""
+		}
+		return registry.EncodedAuthFor(creds, ref)
+	})
+
 	selfUpdater := engine.NewSelfUpdater(client, log)
 	selfUpdater.SetUpdater(updater)
 	selfUpdater.SetDockerSock(cfg.DockerSock)
