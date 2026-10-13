@@ -84,10 +84,21 @@ func formatTitle(t EventType) string {
 	return "Sentinel: " + strings.Join(words, " ")
 }
 
-// formatMessage builds the notification body from event fields.
+// formatMessage builds the notification body from event fields. A custom
+// template saved for the event type replaces the built-in body.
 func formatMessage(e Event) string {
+	if body, ok := renderCustom(e); ok {
+		return body
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Container: %s\n", e.ContainerName)
+	if names := summaryNames(e); names != nil {
+		fmt.Fprintf(&b, "Containers (%d):\n", len(names))
+		for _, n := range names {
+			fmt.Fprintf(&b, "- %s\n", n)
+		}
+	} else {
+		fmt.Fprintf(&b, "Container: %s\n", e.ContainerName)
+	}
 	if e.OldImage != "" {
 		fmt.Fprintf(&b, "Old image: %s\n", e.OldImage)
 	}
@@ -102,8 +113,24 @@ func formatMessage(e Event) string {
 
 // formatMessageMarkdown builds the notification body with markdown formatting.
 func formatMessageMarkdown(e Event) string {
+	return formatMarkdownWith(e, func(s string) string { return s })
+}
+
+// formatMarkdownWith builds the markdown body, passing free text (the error)
+// through protect so a provider can neutralise its own markup characters.
+func formatMarkdownWith(e Event, protect func(string) string) string {
+	if body, ok := renderCustom(e); ok {
+		return protect(body)
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Container:** `%s`\n", e.ContainerName)
+	if names := summaryNames(e); names != nil {
+		fmt.Fprintf(&b, "**Containers (%d):**\n", len(names))
+		for _, n := range names {
+			fmt.Fprintf(&b, "- `%s`\n", n)
+		}
+	} else {
+		fmt.Fprintf(&b, "**Container:** `%s`\n", e.ContainerName)
+	}
 	if e.OldImage != "" {
 		fmt.Fprintf(&b, "**Old image:** `%s`\n", e.OldImage)
 	}
@@ -111,9 +138,30 @@ func formatMessageMarkdown(e Event) string {
 		fmt.Fprintf(&b, "**New image:** `%s`\n", e.NewImage)
 	}
 	if e.Error != "" {
-		fmt.Fprintf(&b, "**Error:** %s\n", e.Error)
+		fmt.Fprintf(&b, "**Error:** %s\n", protect(e.Error))
 	}
 	return b.String()
+}
+
+// summaryNames returns the container names of a digest or batched summary,
+// or nil for a single-container event.
+func summaryNames(e Event) []string {
+	if len(e.ContainerNames) > 1 {
+		return e.ContainerNames
+	}
+	return nil
+}
+
+// truncateRunes shortens s to at most n runes, ending in "..." when cut.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 3 {
+		return string(r[:n])
+	}
+	return string(r[:n-3]) + "..."
 }
 
 // priority returns Gotify priority: 8 for failures, 5 for everything else.

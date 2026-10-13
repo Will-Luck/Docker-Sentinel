@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -36,7 +37,7 @@ func (t *Telegram) Name() string { return "telegram" }
 
 // Send posts a notification message via the Telegram Bot API.
 func (t *Telegram) Send(ctx context.Context, event Event) error {
-	text := formatTitle(event.Type) + "\n" + formatMessageMarkdown(event)
+	text := formatTitle(event.Type) + "\n" + formatTelegram(event)
 	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
 
 	body, err := json.Marshal(telegramPayload{
@@ -70,4 +71,16 @@ type telegramPayload struct {
 	ChatID    string `json:"chat_id"`
 	Text      string `json:"text"`
 	ParseMode string `json:"parse_mode,omitempty"`
+}
+
+// formatTelegram builds the body for Telegram's legacy Markdown. Free text
+// (the error, or a whole custom template) goes in a code span, because a
+// stray underscore or asterisk anywhere else makes the Bot API reject the
+// message with a 400.
+func formatTelegram(e Event) string {
+	return truncateRunes(formatMarkdownWith(e, telegramCode), 4000)
+}
+
+func telegramCode(s string) string {
+	return "`" + strings.ReplaceAll(s, "`", "'") + "`"
 }

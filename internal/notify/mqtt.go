@@ -76,12 +76,13 @@ func (m *MQTT) Send(ctx context.Context, event Event) error {
 	defer client.Disconnect(250)
 
 	payload := mqttPayload{
-		Type:          string(event.Type),
-		ContainerName: event.ContainerName,
-		OldImage:      event.OldImage,
-		NewImage:      event.NewImage,
-		Error:         event.Error,
-		Timestamp:     event.Timestamp.UTC().Format(time.RFC3339),
+		Type:           string(event.Type),
+		ContainerName:  event.ContainerName,
+		ContainerNames: event.ContainerNames,
+		OldImage:       event.OldImage,
+		NewImage:       event.NewImage,
+		Error:          event.Error,
+		Timestamp:      event.Timestamp.UTC().Format(time.RFC3339),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -99,10 +100,11 @@ func (m *MQTT) Send(ctx context.Context, event Event) error {
 }
 
 type mqttPayload struct {
-	Type          string `json:"type"`
-	ContainerName string `json:"container_name"`
-	OldImage      string `json:"old_image,omitempty"`
-	NewImage      string `json:"new_image,omitempty"`
-	Error         string `json:"error,omitempty"`
-	Timestamp     string `json:"timestamp"`
+	Type           string   `json:"type"`
+	ContainerName  string   `json:"container_name"`
+	ContainerNames []string `json:"container_names,omitempty"`
+	OldImage       string   `json:"old_image,omitempty"`
+	NewImage       string   `json:"new_image,omitempty"`
+	Error          string   `json:"error,omitempty"`
+	Timestamp      string   `json:"timestamp"`
 }

@@ -3,6 +3,7 @@ package notify
 import (
 	"bytes"
 	"strings"
+	"sync/atomic"
 	"text/template"
 	"time"
 )
@@ -20,6 +21,9 @@ type TemplateData struct {
 	Title         string
 	Emoji         string
 	Severity      string
+
+	// ContainerNames lists every container of a digest or batched summary.
+	ContainerNames []string
 }
 
 // TemplateEngine renders notification messages using Go text/template.
@@ -115,5 +119,65 @@ func sampleData(eventType string) TemplateData {
 		Title:         "Update Available",
 		Emoji:         "\U0001f504",
 		Severity:      "info",
+	}
+}
+
+// customEngine holds the templates providers render notification bodies with.
+var customEngine atomic.Pointer[TemplateEngine]
+
+// SetCustomTemplates replaces the custom notification templates used by every
+// provider (event type -> template). nil or empty restores the built-in
+// formats.
+func SetCustomTemplates(customs map[string]string) {
+	if len(customs) == 0 {
+		customEngine.Store(nil)
+		return
+	}
+	cp := make(map[string]string, len(customs))
+	for k, v := range customs {
+		cp[k] = v
+	}
+	customEngine.Store(NewTemplateEngine(cp))
+}
+
+// renderCustom renders the custom template saved for the event's type. ok is
+// false when there is none or it fails to execute, so callers fall back to
+// the built-in body.
+func renderCustom(e Event) (string, bool) {
+	eng := customEngine.Load()
+	if eng == nil {
+		return "", false
+	}
+	tmplStr := eng.customs[string(e.Type)]
+	if tmplStr == "" {
+		return "", false
+	}
+	body, err := executeTemplate(tmplStr, templateDataFor(e))
+	if err != nil {
+		return "", false
+	}
+	return body, true
+}
+
+func templateDataFor(e Event) TemplateData {
+	severity := "info"
+	switch e.Type {
+	case EventUpdateFailed, EventRollbackFailed:
+		severity = "error"
+	case EventUpdateSucceeded, EventRollbackOK:
+		severity = "success"
+	}
+	return TemplateData{
+		ContainerName:  e.ContainerName,
+		ContainerNames: e.ContainerNames,
+		OldImage:       e.OldImage,
+		NewImage:       e.NewImage,
+		OldDigest:      e.OldDigest,
+		NewDigest:      e.NewDigest,
+		Error:          e.Error,
+		Type:           string(e.Type),
+		Timestamp:      e.Timestamp,
+		Title:          formatTitle(e.Type),
+		Severity:       severity,
 	}
 }

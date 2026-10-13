@@ -42,7 +42,7 @@ func (p *Pushover) Send(ctx context.Context, event Event) error {
 		"token":   {p.appToken},
 		"user":    {p.userKey},
 		"title":   {formatTitle(event.Type)},
-		"message": {formatMessage(event)},
+		"message": {pushoverMessage(event)},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
@@ -62,4 +62,9 @@ func (p *Pushover) Send(ctx context.Context, event Event) error {
 		return fmt.Errorf("pushover returned %s", resp.Status)
 	}
 	return nil
+}
+
+// pushoverMessage is the body capped at the 1024 characters Pushover accepts.
+func pushoverMessage(e Event) string {
+	return truncateRunes(formatMessage(e), 1024)
 }

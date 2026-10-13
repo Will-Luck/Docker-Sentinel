@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// maxAggregatedError bounds the combined error text of a batched failure
+// summary so no provider rejects it for length.
+const maxAggregatedError = 1000
+
 // isBatchable returns true for event types that should be batched.
 // Events like update_started, container_state, rollback_* pass through immediately
 // since they represent unique, time-sensitive occurrences.
@@ -109,7 +113,7 @@ func aggregateEvents(events []Event) []Event {
 						errs = append(errs, e.ContainerName+": "+e.Error)
 					}
 				}
-				errMsg := strings.Join(errs, "; ")
+				errMsg := truncateRunes(strings.Join(errs, "; "), maxAggregatedError)
 				result = append(result, Event{
 					Type:           EventUpdateFailed,
 					ContainerName:  fmt.Sprintf("%d containers", len(failed)),

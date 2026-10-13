@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -28,6 +29,9 @@ func NewDiscord(webhookURL string) *Discord {
 	}
 }
 
+// discordFieldMax is the longest embed field value Discord accepts.
+const discordFieldMax = 1024
+
 // Name returns the provider name for logging.
 func (d *Discord) Name() string { return "discord" }
 
@@ -39,9 +43,16 @@ func (d *Discord) Send(ctx context.Context, event Event) error {
 		Timestamp: event.Timestamp.UTC().Format(time.RFC3339),
 	}
 
-	embed.Fields = append(embed.Fields, discordField{
-		Name: "Container", Value: event.ContainerName, Inline: true,
-	})
+	if names := summaryNames(event); names != nil {
+		embed.Fields = append(embed.Fields, discordField{
+			Name:  fmt.Sprintf("Containers (%d)", len(names)),
+			Value: truncateRunes(strings.Join(names, "\n"), discordFieldMax),
+		})
+	} else {
+		embed.Fields = append(embed.Fields, discordField{
+			Name: "Container", Value: event.ContainerName, Inline: true,
+		})
+	}
 	if event.OldImage != "" {
 		embed.Fields = append(embed.Fields, discordField{
 			Name: "Old Image", Value: event.OldImage, Inline: true,
@@ -54,7 +65,7 @@ func (d *Discord) Send(ctx context.Context, event Event) error {
 	}
 	if event.Error != "" {
 		embed.Fields = append(embed.Fields, discordField{
-			Name: "Error", Value: event.Error, Inline: false,
+			Name: "Error", Value: truncateRunes(event.Error, discordFieldMax), Inline: false,
 		})
 	}
 
