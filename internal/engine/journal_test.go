@@ -147,6 +147,40 @@ func TestUpdateContainerRemovesFinishedLeftover(t *testing.T) {
 	assertFakeOps(t, f, "remove stale", "rename old app-sentinel-old")
 }
 
+// An earlier swap whose commit could not remove the old container left its
+// record; the next swap of the same container finishes it first instead of
+// overwriting the record.
+func TestSwapFinishesCommittedLeftoverFirst(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, true, nil)
+	f.add("prev", "app-sentinel-old", "app:latest", false, nil, nil)
+	if err := u.store.SaveSwap(store.SwapRecord{Name: "app", OldID: "prev", NewID: "old", Committed: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v (containers %v)", err, f.names())
+	}
+	assertFakeOps(t, f, "remove prev", "rename old app-sentinel-old")
+}
+
+// An unresolved, uncommitted swap record is the only way back to the old
+// container. A new swap refuses rather than overwrite it.
+func TestSwapRefusesWhileEarlierSwapIsUnresolved(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, true, nil)
+	pending := store.SwapRecord{Name: "app", OldID: "stuck", NewID: "old"}
+	if err := u.store.SaveSwap(pending); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err == nil {
+		t.Fatal("expected the update to refuse")
+	}
+	assertNoFakeOp(t, f, "rename old app-sentinel-old")
+	if recs := journal(t, u); len(recs) != 1 || recs[0].OldID != "stuck" {
+		t.Errorf("journal = %+v, want the earlier record kept", recs)
+	}
+}
+
 // --- Recovery ---
 
 // interrupted puts the state of a swap Sentinel stopped in the middle of

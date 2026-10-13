@@ -67,6 +67,25 @@ func (s *Store) DeleteSwap(name string) error {
 	})
 }
 
+// GetSwap returns the journal record for name, if there is one.
+func (s *Store) GetSwap(name string) (SwapRecord, bool, error) {
+	var rec SwapRecord
+	found := false
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSwapJournal)
+		if b == nil {
+			return nil
+		}
+		v := b.Get([]byte(name))
+		if v == nil {
+			return nil
+		}
+		found = true
+		return json.Unmarshal(v, &rec)
+	})
+	return rec, found, err
+}
+
 // HasSwap reports whether a swap of the container called name is
 // journalled.
 func (s *Store) HasSwap(name string) bool {

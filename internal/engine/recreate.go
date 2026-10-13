@@ -42,6 +42,7 @@ const (
 // implements it. A nil journal turns journalling off.
 type swapJournal interface {
 	SaveSwap(rec store.SwapRecord) error
+	GetSwap(name string) (store.SwapRecord, bool, error)
 	DeleteSwap(name string) error
 }
 
@@ -155,6 +156,9 @@ func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, veri
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
 	defer cancel()
 
+	if err := s.resolvePending(ctx); err != nil {
+		return &swapError{stage: "journal", err: err}
+	}
 	s.removeLeftover(ctx)
 	s.rec.Started = time.Now().UTC()
 	if err := s.save(); err != nil {
@@ -202,6 +206,35 @@ func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, veri
 	}
 	s.newStarted = true
 	return nil
+}
+
+// resolvePending deals with the journal record an earlier swap of the same
+// container left. A committed one only had the old container's removal
+// left to do, which is done now. An uncommitted one is the only way back to
+// that swap's old container, so the new swap refuses rather than overwrite
+// it; startup recovery resolves it.
+func (s *swap) resolvePending(ctx context.Context) error {
+	if s.journal == nil {
+		return nil
+	}
+	rec, ok, err := s.journal.GetSwap(s.name)
+	if err != nil || !ok {
+		return err
+	}
+	if !rec.Committed {
+		return fmt.Errorf("an earlier swap of %s is not resolved yet; Sentinel resolves it at its next start", s.name)
+	}
+	if rec.OldID != s.oldID {
+		if rec.RemoveVolumes {
+			err = s.d.RemoveContainerWithVolumes(ctx, rec.OldID)
+		} else {
+			err = s.d.RemoveContainer(ctx, rec.OldID)
+		}
+		if err != nil && !docker.IsNotFound(err) && !rec.AutoRemove {
+			return fmt.Errorf("remove the container an earlier swap replaced: %w", err)
+		}
+	}
+	return s.journal.DeleteSwap(s.name)
 }
 
 // removeLeftover removes a stopped <name>-sentinel-old that an earlier swap
@@ -334,8 +367,9 @@ func (s *swap) commit(ctx context.Context) {
 		err = s.d.RemoveContainer(ctx, s.oldID)
 	}
 	switch {
-	case err == nil, docker.IsNotFound(err):
-		// A --rm container is deleted by the daemon when it stops.
+	case err == nil, docker.IsNotFound(err), s.rec.AutoRemove:
+		// A --rm container is deleted by the daemon when it stops, so its
+		// removal may fail while the daemon is still at it.
 		s.forget()
 	default:
 		s.log.Warn("could not remove the replaced container", "name", s.name+replacedSuffix, "error", err)
