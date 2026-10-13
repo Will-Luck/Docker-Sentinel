@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
@@ -278,9 +279,11 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			}
 
 			// Record update in host-scoped history. (The cluster server
-			// publishes the result to the dashboard, with the host.)
+			// publishes the result to the dashboard, with the host.) An
+			// unanswered update's row is replaced by the agent's result
+			// if it comes later.
 			if err := u.store.RecordUpdate(store.UpdateRecord{
-				Timestamp:     u.clock.Now(),
+				Timestamp:     cluster.HistoryTime(updateErr, u.clock.Now()),
 				ContainerName: scopedName,
 				OldImage:      ur.OldImage,
 				OldDigest:     ur.OldDigest,

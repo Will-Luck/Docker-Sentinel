@@ -560,9 +560,15 @@ func (s *Server) recordLateUpdate(hostID string, ur *proto.UpdateResult) {
 		HostID:        hostID,
 		HostName:      hostName,
 	}
-	// A rollback that finished late is a rollback, not an update to undo.
-	if s.takeLate(hostID, ur.RequestId) == "rollback" {
-		rec.Type = "rollback"
+	// A rollback that finished late is a rollback, not an update to undo;
+	// the result replaces the failure the caller recorded.
+	if lr := s.takeLate(hostID, ur.RequestId); lr.purpose != "" {
+		if lr.purpose == "rollback" {
+			rec.Type = "rollback"
+		}
+		if !lr.recordAt.IsZero() {
+			rec.Timestamp = lr.recordAt
+		}
 	}
 	if err := s.history.RecordUpdate(rec); err != nil {
 		s.log.Warn("failed to record late update result", "hostID", hostID, "container", ur.ContainerName, "error", err)
@@ -674,7 +680,20 @@ func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 			dur = e.GetDuration().AsDuration()
 		}
 
+		// An update the hub stopped waiting for (the stream dropped): its
+		// result replaces the failure the caller recorded.
+		var recType string
+		if lr := s.takeLate(hostID, e.GetId()); lr.purpose != "" {
+			if lr.purpose == "rollback" {
+				recType = "rollback"
+			}
+			if !lr.recordAt.IsZero() {
+				ts = lr.recordAt
+			}
+		}
+
 		rec := store.UpdateRecord{
+			Type:          recType,
 			Timestamp:     ts,
 			ContainerName: store.ScopedKey(hostID, e.Container),
 			OldImage:      e.OldImage,

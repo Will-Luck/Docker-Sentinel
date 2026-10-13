@@ -900,7 +900,9 @@ func (s *Server) recordRemoteUpdate(start time.Time, hostID, hostName, name, old
 		return
 	}
 	rec := UpdateRecord{
-		Timestamp:     start,
+		// An unanswered update's row is replaced by the agent's result if
+		// it comes later.
+		Timestamp:     cluster.HistoryTime(updateErr, start),
 		ContainerName: store.ScopedKey(hostID, name),
 		OldImage:      oldImage,
 		NewImage:      newImage,

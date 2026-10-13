@@ -209,7 +209,9 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 				newImage = remoteUpdateTarget(update.CurrentImage, approveTarget)
 			}
 			_ = s.deps.Store.RecordUpdate(UpdateRecord{
-				Timestamp:     start,
+				// An unanswered remote update's row is replaced by the
+				// agent's result if it comes later.
+				Timestamp:     cluster.HistoryTime(err, start),
 				ContainerName: update.Key(),
 				OldImage:      update.CurrentImage,
 				OldDigest:     update.CurrentDigest,

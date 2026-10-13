@@ -170,10 +170,17 @@ func (s *Server) request(ctx context.Context, hostID, what, purpose string, time
 
 	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
 	if err != nil {
-		if purpose != "" && ctx.Err() != nil {
-			s.rememberLate(hostID, reqID, purpose)
+		err = fmt.Errorf("await %s: %w", what, err)
+		if purpose == "" {
+			return nil, err
 		}
-		return nil, fmt.Errorf("await %s: %w", what, err)
+		// The stream dropped or the hub stopped waiting: the agent may
+		// still do it, and say so later (late, or from its offline
+		// journal). Its result then replaces the failure the caller
+		// records at recordAt.
+		recordAt := time.Now().UTC()
+		s.rememberLate(hostID, reqID, purpose, recordAt)
+		return nil, &cluster.UnansweredError{HostID: hostID, RequestID: reqID, RecordAt: recordAt, Err: err}
 	}
 	return resp, nil
 }
@@ -185,9 +192,12 @@ const lateRequestTTL = time.Hour
 type lateRequest struct {
 	purpose string
 	at      time.Time
+	// recordAt is when the caller's failure row is recorded; the late
+	// result is recorded at the same time, replacing it.
+	recordAt time.Time
 }
 
-func (s *Server) rememberLate(hostID, requestID, purpose string) {
+func (s *Server) rememberLate(hostID, requestID, purpose string, recordAt time.Time) {
 	s.lateMu.Lock()
 	defer s.lateMu.Unlock()
 	if s.late == nil {
@@ -199,21 +209,21 @@ func (s *Server) rememberLate(hostID, requestID, purpose string) {
 			delete(s.late, k)
 		}
 	}
-	s.late[hostID+":"+requestID] = lateRequest{purpose: purpose, at: now}
+	s.late[hostID+":"+requestID] = lateRequest{purpose: purpose, at: now, recordAt: recordAt}
 }
 
 // takeLate returns (and forgets) the purpose of a request the hub stopped
 // waiting for, or "".
-func (s *Server) takeLate(hostID, requestID string) string {
+func (s *Server) takeLate(hostID, requestID string) lateRequest {
 	s.lateMu.Lock()
 	defer s.lateMu.Unlock()
 	key := hostID + ":" + requestID
 	lr, ok := s.late[key]
 	if !ok || time.Since(lr.at) > lateRequestTTL {
-		return ""
+		return lateRequest{}
 	}
 	delete(s.late, key)
-	return lr.purpose
+	return lr
 }
 
 // ListContainersSync sends a ListContainersRequest to the agent and blocks

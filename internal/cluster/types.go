@@ -5,6 +5,33 @@ import (
 	"time"
 )
 
+// UnansweredError is returned for an update or rollback the agent did not
+// answer: its stream dropped, or the hub stopped waiting. The agent may
+// still have carried it out. A caller that records the request as failed
+// does so at RecordAt (see HistoryTime): the agent's result, if it comes
+// later (late, or replayed from its offline journal on reconnecting), is
+// recorded at the same time and replaces that row.
+type UnansweredError struct {
+	HostID    string
+	RequestID string
+	RecordAt  time.Time
+	Err       error
+}
+
+func (e *UnansweredError) Error() string { return e.Err.Error() }
+func (e *UnansweredError) Unwrap() error { return e.Err }
+
+// HistoryTime is the time to record a failed remote request's history row
+// at: for an unanswered one, the time its late result will replace it at;
+// otherwise fallback.
+func HistoryTime(err error, fallback time.Time) time.Time {
+	var un *UnansweredError
+	if errors.As(err, &un) && !un.RecordAt.IsZero() {
+		return un.RecordAt
+	}
+	return fallback
+}
+
 // ErrUpdateSkipped is returned for a remote update that a pre-update hook
 // asked to skip (exit 75): nothing was changed. Like a local skip, it is
 // neither a success nor a failure.
