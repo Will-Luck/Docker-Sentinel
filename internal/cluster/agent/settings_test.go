@@ -83,3 +83,22 @@ func TestHandleSettingsSync_GracePeriod(t *testing.T) {
 		t.Errorf("grace period = %v, want the agent's own 10s", got)
 	}
 }
+
+// smoke F8: clearing the hub's rollback policy ("No change") never reached
+// agents: an empty value was taken as "not sent". A SettingsSync carries
+// every setting, so an empty rollback policy clears it.
+func TestHandleSettingsSync_ClearsTheRollbackPolicy(t *testing.T) {
+	a := newTestAgent(t.TempDir(), newMockDocker())
+	a.handleSettingsSync(&proto.SettingsSync{RollbackPolicy: "manual"})
+	a.handleSettingsSync(&proto.SettingsSync{RollbackPolicy: ""})
+	if got := a.policies.rollbackPolicy; got != "" {
+		t.Errorf("rollback policy = %q after the hub cleared it, want empty", got)
+	}
+	again := newTestAgent(a.cfg.DataDir, newMockDocker())
+	if err := again.loadPolicyCache(); err != nil {
+		t.Fatal(err)
+	}
+	if got := again.policies.rollbackPolicy; got != "" {
+		t.Errorf("cached rollback policy = %q, want empty", got)
+	}
+}

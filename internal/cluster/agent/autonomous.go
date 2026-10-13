@@ -115,9 +115,9 @@ func (pc *policyCache) applySettingsSync(sync *proto.SettingsSync) {
 	pc.imageBackup = sync.GetImageBackup()
 	pc.settingsReceived = true
 
-	if rp := sync.GetRollbackPolicy(); rp != "" {
-		pc.rollbackPolicy = rp
-	}
+	// A SettingsSync carries every setting (servers send it whole), so an
+	// empty rollback policy is the server's "No change": it clears it.
+	pc.rollbackPolicy = sync.GetRollbackPolicy()
 }
 
 // resolvePolicy determines the effective policy for a container.
