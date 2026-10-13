@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -165,6 +166,101 @@ func TestRollbackCarriesAnonymousVolumes(t *testing.T) {
 	}
 	if !hostConfigUsesVolume(mock.createHostHistory[0], pgDataVolume) {
 		t.Errorf("rollback create did not pass the old anonymous volume: %+v", mock.createHostHistory[0])
+	}
+}
+
+// oldPostgresImage is the config of the image "aaa" was created from in
+// setupImageDefaultsUpdate.
+func oldPostgresImage() *container.Config {
+	return &container.Config{
+		Env:         []string{"PATH=/usr/lib/postgresql/16/bin:/usr/bin", "PG_MAJOR=16"},
+		Labels:      map[string]string{"org.opencontainers.image.version": "16.1"},
+		Entrypoint:  []string{"docker-entrypoint.sh"},
+		Cmd:         []string{"postgres"},
+		WorkingDir:  "/",
+		User:        "postgres",
+		StopSignal:  "SIGINT",
+		Healthcheck: &container.HealthConfig{Test: []string{"CMD", "pg_isready"}},
+		ExposedPorts: network.PortSet{
+			network.MustParsePort("5432/tcp"): {},
+		},
+	}
+}
+
+// setupImageDefaultsUpdate builds an update whose old container config is
+// the daemon's merge of the old image's defaults and the user's own values.
+func setupImageDefaultsUpdate(t *testing.T) (*mockDocker, *Updater) {
+	t.Helper()
+	mock, u := setupUpdateWithScanVerify(t)
+	img := oldPostgresImage()
+	mock.imageConfigs["sha256:old111"] = img
+
+	old := mock.inspectResults["aaa"]
+	old.Config = &container.Config{
+		Image:        "docker.io/library/nginx:latest",
+		Env:          append([]string{"POSTGRES_PASSWORD=secret"}, img.Env...),
+		Labels:       map[string]string{"org.opencontainers.image.version": "16.1", "com.example.owner": "ops"},
+		Entrypoint:   img.Entrypoint,
+		Cmd:          img.Cmd,
+		WorkingDir:   img.WorkingDir,
+		User:         img.User,
+		StopSignal:   img.StopSignal,
+		Healthcheck:  &container.HealthConfig{Test: []string{"CMD", "pg_isready"}},
+		ExposedPorts: network.PortSet{network.MustParsePort("5432/tcp"): {}},
+	}
+	mock.inspectResults["aaa"] = old
+	return mock, u
+}
+
+// The daemon fills a field from the image only where the create request
+// leaves it empty, so copying the old container's merged config keeps the
+// old image's env, labels, entrypoint, healthcheck and so on, and the new
+// image's values never apply.
+func TestUpdateContainerDropsOldImageDefaults(t *testing.T) {
+	mock, u := setupImageDefaultsUpdate(t)
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v", err)
+	}
+	cfg := mock.createHistory[0]
+	if !slices.Equal(cfg.Env, []string{"POSTGRES_PASSWORD=secret"}) {
+		t.Errorf("Env = %v, want only the user's POSTGRES_PASSWORD (old image PATH and PG_MAJOR dropped)", cfg.Env)
+	}
+	if _, ok := cfg.Labels["org.opencontainers.image.version"]; ok {
+		t.Errorf("old image version label kept: %v", cfg.Labels)
+	}
+	if cfg.Labels["com.example.owner"] != "ops" || cfg.Labels["sentinel.maintenance"] != "true" {
+		t.Errorf("user or Sentinel labels lost: %v", cfg.Labels)
+	}
+	if cfg.Entrypoint != nil || cfg.Cmd != nil || cfg.WorkingDir != "" || cfg.User != "" || cfg.StopSignal != "" || cfg.Healthcheck != nil {
+		t.Errorf("old image defaults kept: Entrypoint=%v Cmd=%v WorkingDir=%q User=%q StopSignal=%q Healthcheck=%v",
+			cfg.Entrypoint, cfg.Cmd, cfg.WorkingDir, cfg.User, cfg.StopSignal, cfg.Healthcheck)
+	}
+	if len(cfg.ExposedPorts) != 0 {
+		t.Errorf("ExposedPorts = %v, want the old image's EXPOSE dropped", cfg.ExposedPorts)
+	}
+}
+
+// A rollback recreates the snapshot as it was, image defaults included.
+func TestRollbackKeepsSnapshotConfig(t *testing.T) {
+	mock := newMockDocker()
+	img := oldPostgresImage()
+	mock.imageConfigs["postgres:16"] = img
+	snap := container.InspectResponse{
+		ID:              "old-id",
+		Name:            "/pg",
+		Config:          &container.Config{Image: "postgres:16", Env: img.Env, Cmd: img.Cmd},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+	data, _ := json.Marshal(snap)
+
+	if err := rollback(context.Background(), mock, "pg", data, logging.New(false)); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	cfg := mock.createHistory[0]
+	if !slices.Equal(cfg.Env, img.Env) || !slices.Equal(cfg.Cmd, img.Cmd) {
+		t.Errorf("rollback changed the snapshot config: Env=%v Cmd=%v", cfg.Env, cfg.Cmd)
 	}
 }
 

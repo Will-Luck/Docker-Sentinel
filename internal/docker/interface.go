@@ -48,6 +48,14 @@ type API interface {
 	Close() error
 }
 
+// ImageConfigReader reads the default container config baked into an image.
+// Client implements it. It is kept out of API so that the many test doubles
+// of API need not implement it; callers type-assert and carry on without
+// it when it is missing.
+type ImageConfigReader interface {
+	ImageConfig(ctx context.Context, ref string) (*container.Config, error)
+}
+
 // ImageSummary represents a Docker image for listing.
 type ImageSummary struct {
 	ID       string
@@ -63,5 +71,8 @@ type ImagePruneResult struct {
 	SpaceReclaimed int64
 }
 
-// Verify Client implements API at compile time.
-var _ API = (*Client)(nil)
+// Verify Client implements API and ImageConfigReader at compile time.
+var (
+	_ API               = (*Client)(nil)
+	_ ImageConfigReader = (*Client)(nil)
+)

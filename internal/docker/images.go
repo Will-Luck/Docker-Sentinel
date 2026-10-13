@@ -3,6 +3,8 @@ package docker
 import (
 	"context"
 
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 )
 
@@ -46,6 +48,42 @@ func (c *Client) PruneImages(ctx context.Context) (ImagePruneResult, error) {
 		ImagesDeleted:  len(report.Report.ImagesDeleted),
 		SpaceReclaimed: int64(report.Report.SpaceReclaimed), //nolint:gosec // space reclaimed won't exceed int64 max
 	}, nil
+}
+
+// ImageConfig returns the default container config baked into an image (its
+// ENV, CMD, ENTRYPOINT, LABEL and so on), looked up by ID or reference.
+func (c *Client) ImageConfig(ctx context.Context, ref string) (*container.Config, error) {
+	resp, err := c.api.ImageInspect(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	ic := resp.Config
+	if ic == nil {
+		return &container.Config{}, nil
+	}
+	cfg := &container.Config{
+		User:        ic.User,
+		Env:         ic.Env,
+		Cmd:         ic.Cmd,
+		Entrypoint:  ic.Entrypoint,
+		WorkingDir:  ic.WorkingDir,
+		Labels:      ic.Labels,
+		StopSignal:  ic.StopSignal,
+		Volumes:     ic.Volumes,
+		Healthcheck: ic.Healthcheck,
+		Shell:       ic.Shell,
+		OnBuild:     ic.OnBuild,
+		ArgsEscaped: ic.ArgsEscaped,
+	}
+	if len(ic.ExposedPorts) > 0 {
+		cfg.ExposedPorts = make(network.PortSet, len(ic.ExposedPorts))
+		for p := range ic.ExposedPorts {
+			if port, err := network.ParsePort(p); err == nil {
+				cfg.ExposedPorts[port] = struct{}{}
+			}
+		}
+	}
+	return cfg, nil
 }
 
 // RemoveImageByID removes an image by its ID, pruning untagged children.

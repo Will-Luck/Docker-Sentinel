@@ -3,6 +3,7 @@ package docker
 import (
 	"maps"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -26,6 +27,12 @@ type RecreateOptions struct {
 	// Image is the image reference for the replacement. Empty keeps the
 	// image reference of the inspected container.
 	Image string
+	// OldImage is the config of the image the inspected container was
+	// created from. When set, values the container got from that image
+	// rather than from the user are dropped (see StripImageDefaults), so the
+	// daemon fills them from the new image. Leave it nil to recreate the
+	// container as it was, as a rollback does.
+	OldImage *container.Config
 }
 
 // RecreateConfig builds the create request for a container that replaces
@@ -40,6 +47,9 @@ func RecreateConfig(inspect container.InspectResponse, opts RecreateOptions) Rec
 	carried := CarryAnonymousVolumes(cfg, hostCfg, inspect.Mounts)
 	if opts.Image != "" {
 		cfg.Image = opts.Image
+	}
+	if opts.OldImage != nil {
+		StripImageDefaults(cfg, hostCfg, opts.OldImage)
 	}
 	netCfg := NetworkingConfigFrom(inspect.NetworkSettings)
 	netCfg = SanitiseForNetworkMode(cfg, hostCfg, netCfg)
@@ -121,6 +131,78 @@ func CarryAnonymousVolumes(cfg *container.Config, hostCfg *container.HostConfig,
 		carried = append(carried, old.Name)
 	}
 	return carried
+}
+
+// StripImageDefaults removes from cfg the values that came from the image
+// the container was created from (img) rather than from the user, the way
+// Watchtower does.
+//
+// The daemon merges an image's defaults into the container config at create
+// time, filling a field only where the request leaves it empty. A container's
+// inspect config is that merged result, so copying it to a new container
+// would keep the old image's values and the new image's would never apply:
+// a stale PATH, the old version label, the old entrypoint and healthcheck.
+// After stripping, the daemon fills those fields from the new image. A value
+// the user set that happens to equal the old image's default is dropped too;
+// the two cannot be told apart.
+//
+// Dropped: env entries equal to an image entry, labels with the image's key
+// and value, the entrypoint (and then the cmd) when equal to the image's,
+// an equal healthcheck, working dir, user and stop signal, and the image's
+// exposed ports and volumes. Ports that are published stay exposed.
+func StripImageDefaults(cfg *container.Config, hostCfg *container.HostConfig, img *container.Config) {
+	if cfg == nil || img == nil {
+		return
+	}
+	cfg.Env = slices.DeleteFunc(cfg.Env, func(e string) bool { return slices.Contains(img.Env, e) })
+	if len(cfg.Env) == 0 {
+		cfg.Env = nil
+	}
+	for k, v := range img.Labels {
+		if cv, ok := cfg.Labels[k]; ok && cv == v {
+			delete(cfg.Labels, k)
+		}
+	}
+	// The daemon fills Cmd from the image only when Entrypoint is empty, so
+	// Cmd can come from the image only if Entrypoint did.
+	if slices.Equal(cfg.Entrypoint, img.Entrypoint) {
+		cfg.Entrypoint = nil
+		if slices.Equal(cfg.Cmd, img.Cmd) {
+			cfg.Cmd = nil
+		}
+	}
+	if cfg.Healthcheck != nil && img.Healthcheck != nil && reflect.DeepEqual(*cfg.Healthcheck, *img.Healthcheck) {
+		cfg.Healthcheck = nil
+	}
+	if cfg.WorkingDir == img.WorkingDir {
+		cfg.WorkingDir = ""
+	}
+	if cfg.User == img.User {
+		cfg.User = ""
+	}
+	if cfg.StopSignal == img.StopSignal {
+		cfg.StopSignal = ""
+	}
+	for p := range img.ExposedPorts {
+		delete(cfg.ExposedPorts, p)
+	}
+	if hostCfg != nil {
+		for p := range hostCfg.PortBindings {
+			if cfg.ExposedPorts == nil {
+				cfg.ExposedPorts = make(network.PortSet)
+			}
+			cfg.ExposedPorts[p] = struct{}{}
+		}
+	}
+	if len(cfg.ExposedPorts) == 0 {
+		cfg.ExposedPorts = nil
+	}
+	for v := range img.Volumes {
+		delete(cfg.Volumes, v)
+	}
+	if len(cfg.Volumes) == 0 {
+		cfg.Volumes = nil
+	}
 }
 
 // SanitiseForNetworkMode removes the fields the daemon filled in on the

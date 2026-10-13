@@ -227,7 +227,10 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 
 	// The replacement mounts the old container's anonymous volumes, so
 	// remove_volumes must not delete them with the old container.
-	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{Image: targetImage})
+	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{
+		Image:    targetImage,
+		OldImage: u.imageDefaults(ctx, oldImageID, name),
+	})
 
 	// 4. Stop and remove the old container.
 	u.log.Info("stopping old container", "name", name)
@@ -643,6 +646,23 @@ func containerName(c container.Summary) string {
 // isSentinel returns true if the container appears to be Sentinel itself.
 func isSentinel(labels map[string]string) bool {
 	return labels["sentinel.self"] == "true"
+}
+
+// imageDefaults returns the config of the image a container was created
+// from, so the recreate can drop the values that came from it. It returns
+// nil, which keeps the old config whole, when the image cannot be read.
+func (u *Updater) imageDefaults(ctx context.Context, imageID, name string) *container.Config {
+	reader, ok := u.docker.(docker.ImageConfigReader)
+	if !ok || imageID == "" {
+		return nil
+	}
+	cfg, err := reader.ImageConfig(ctx, imageID)
+	if err != nil {
+		u.log.Warn("could not read the old image's defaults, keeping the old config as it is",
+			"name", name, "image", imageID, "error", err)
+		return nil
+	}
+	return cfg
 }
 
 // writeBackHookLabels copies the container's stored hooks onto the new

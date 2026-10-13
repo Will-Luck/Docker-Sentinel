@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"maps"
 	"net/netip"
 	"slices"
 	"testing"
@@ -214,6 +215,88 @@ func TestRecreateConfigReportsCarriedVolumes(t *testing.T) {
 	}
 	if len(inspect.HostConfig.Mounts) != 0 {
 		t.Errorf("inspect host config modified: %+v", inspect.HostConfig.Mounts)
+	}
+}
+
+func TestStripImageDefaultsKeepsUserValues(t *testing.T) {
+	img := &container.Config{
+		Env:          []string{"PATH=/old/bin", "LANG=C"},
+		Labels:       map[string]string{"org.opencontainers.image.version": "1.0", "shared": "image"},
+		Entrypoint:   []string{"/entry"},
+		Cmd:          []string{"serve"},
+		WorkingDir:   "/app",
+		User:         "app",
+		StopSignal:   "SIGTERM",
+		Healthcheck:  &container.HealthConfig{Test: []string{"CMD", "true"}},
+		ExposedPorts: network.PortSet{network.MustParsePort("80/tcp"): {}, network.MustParsePort("443/tcp"): {}},
+		Volumes:      map[string]struct{}{"/data": {}},
+	}
+	cfg := &container.Config{
+		Env:          []string{"PATH=/custom", "LANG=C", "TOKEN=x"},
+		Labels:       map[string]string{"org.opencontainers.image.version": "1.0", "shared": "user", "mine": "1"},
+		Entrypoint:   []string{"/my-entry"},
+		Cmd:          []string{"serve"},
+		WorkingDir:   "/srv",
+		User:         "root",
+		StopSignal:   "SIGTERM",
+		Healthcheck:  &container.HealthConfig{Test: []string{"CMD", "curl", "-f", "localhost"}},
+		ExposedPorts: network.PortSet{network.MustParsePort("80/tcp"): {}, network.MustParsePort("9000/tcp"): {}},
+		Volumes:      map[string]struct{}{"/data": {}, "/cache": {}},
+	}
+	hc := &container.HostConfig{PortBindings: network.PortMap{network.MustParsePort("443/tcp"): {{HostPort: "8443"}}}}
+
+	StripImageDefaults(cfg, hc, img)
+
+	if !slices.Equal(cfg.Env, []string{"PATH=/custom", "TOKEN=x"}) {
+		t.Errorf("Env = %v", cfg.Env)
+	}
+	if len(cfg.Labels) != 2 || cfg.Labels["shared"] != "user" || cfg.Labels["mine"] != "1" {
+		t.Errorf("Labels = %v", cfg.Labels)
+	}
+	// An explicit entrypoint stops the daemon filling Cmd from the image,
+	// so the Cmd must stay even though it equals the image's.
+	if !slices.Equal(cfg.Entrypoint, []string{"/my-entry"}) || !slices.Equal(cfg.Cmd, []string{"serve"}) {
+		t.Errorf("Entrypoint = %v Cmd = %v", cfg.Entrypoint, cfg.Cmd)
+	}
+	if cfg.WorkingDir != "/srv" || cfg.User != "root" || cfg.StopSignal != "" || cfg.Healthcheck == nil {
+		t.Errorf("WorkingDir=%q User=%q StopSignal=%q Healthcheck=%v", cfg.WorkingDir, cfg.User, cfg.StopSignal, cfg.Healthcheck)
+	}
+	wantPorts := network.PortSet{network.MustParsePort("9000/tcp"): {}, network.MustParsePort("443/tcp"): {}}
+	if !maps.Equal(cfg.ExposedPorts, wantPorts) {
+		t.Errorf("ExposedPorts = %v, want %v (the user's port and the published one)", cfg.ExposedPorts, wantPorts)
+	}
+	if !maps.Equal(cfg.Volumes, map[string]struct{}{"/cache": {}}) {
+		t.Errorf("Volumes = %v", cfg.Volumes)
+	}
+}
+
+func TestStripImageDefaultsDropsImageEntrypointAndCmd(t *testing.T) {
+	img := &container.Config{Entrypoint: []string{"/entry"}, Cmd: []string{"serve"}}
+	cfg := &container.Config{Entrypoint: []string{"/entry"}, Cmd: []string{"serve"}, Env: []string{"A=1"}}
+
+	StripImageDefaults(cfg, nil, img)
+
+	if cfg.Entrypoint != nil || cfg.Cmd != nil {
+		t.Errorf("Entrypoint = %v Cmd = %v, want both dropped", cfg.Entrypoint, cfg.Cmd)
+	}
+
+	cfg = &container.Config{Entrypoint: []string{"/entry"}, Cmd: []string{"worker"}}
+	StripImageDefaults(cfg, nil, img)
+	if cfg.Entrypoint != nil || !slices.Equal(cfg.Cmd, []string{"worker"}) {
+		t.Errorf("Entrypoint = %v Cmd = %v, want the image entrypoint dropped and the user's cmd kept", cfg.Entrypoint, cfg.Cmd)
+	}
+}
+
+func TestRecreateConfigWithoutOldImageKeepsConfig(t *testing.T) {
+	inspect := container.InspectResponse{
+		Config:     &container.Config{Image: "app:1", Env: []string{"PATH=/old"}, Cmd: []string{"serve"}},
+		HostConfig: &container.HostConfig{},
+	}
+
+	rc := RecreateConfig(inspect, RecreateOptions{})
+
+	if !slices.Equal(rc.Config.Env, []string{"PATH=/old"}) || !slices.Equal(rc.Config.Cmd, []string{"serve"}) {
+		t.Errorf("config changed without OldImage: %+v", rc.Config)
 	}
 }
 
