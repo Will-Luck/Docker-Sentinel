@@ -336,19 +336,24 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 	} else {
 		// Digest-only update on a mutable tag. Swarm pins the service to
 		// tag@sha256:<digest> and does not re-resolve a pinned reference, so
-		// resubmitting the spec unchanged rolls nothing out. Drop the old pin,
-		// re-pin to the digest the registry serves now when it can be resolved,
-		// and bump ForceUpdate so the manager schedules a rollout regardless.
+		// resubmitting the spec unchanged rolls nothing out. Re-pin to the
+		// digest the registry serves now and bump ForceUpdate so the manager
+		// schedules a rollout regardless. If the digest cannot be looked up
+		// (private registry, outage) the update fails and the spec is left
+		// alone: submitting the bare tag would drop the pin, and later scans
+		// could no longer see the service's digest.
 		base := oldImage
 		if i := strings.Index(base, "@sha256:"); i > 0 {
 			base = base[:i]
 		}
-		containerSpec.Image = base
-		if digest, err := u.docker.DistributionDigest(ctx, base); err == nil && digest != "" {
-			containerSpec.Image = base + "@" + digest
-		} else if err != nil {
-			u.log.Debug("could not resolve new service digest, submitting unpinned tag", "name", name, "image", base, "error", err)
+		digest, err := u.docker.DistributionDigest(ctx, base)
+		if err == nil && digest == "" {
+			err = fmt.Errorf("registry returned no digest")
 		}
+		if err != nil {
+			return fmt.Errorf("resolve new digest for service %s (%s): %w", name, base, err)
+		}
+		containerSpec.Image = base + "@" + digest
 		newSpec.TaskTemplate.ForceUpdate++
 	}
 	var priorStatus *swarm.UpdateStatus

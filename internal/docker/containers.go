@@ -130,7 +130,8 @@ func (c *Client) ImageID(ctx context.Context, imageRef string) (string, error) {
 }
 
 // DistributionDigest queries the registry for the current digest of an image
-// reference, using the daemon's configured credentials.
+// reference. The request carries no registry credentials, so a private
+// registry fails with an authorisation error.
 func (c *Client) DistributionDigest(ctx context.Context, imageRef string) (string, error) {
 	resp, err := c.api.DistributionInspect(ctx, imageRef, client.DistributionInspectOptions{})
 	if err != nil {

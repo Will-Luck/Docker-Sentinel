@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +57,7 @@ func newDigestOnlyFixture(t *testing.T, startsNew bool) (*Updater, *specCapturin
 		Spec:         spec,
 		UpdateStatus: &swarm.UpdateStatus{State: swarm.UpdateStateCompleted, StartedAt: &staleStart},
 	}
+	mock.distDigests["nginx:latest"] = "sha256:cccc"
 	u, clk := newSwarmTestUpdater(t, mock)
 	u.clock = steppingClock{clk}
 	capture := &specCapturingDocker{mockDocker: mock, startsNew: startsNew, newStarted: clk.Now().Add(time.Second)}
@@ -83,17 +86,23 @@ func TestUpdateServiceDigestOnlyRepinsToRegistryDigest(t *testing.T) {
 	}
 }
 
-func TestUpdateServiceDigestOnlyDropsPinWhenRegistryUnreachable(t *testing.T) {
-	u, capture, _ := newDigestOnlyFixture(t, true)
+// When the new digest cannot be looked up (private registry, outage) the
+// update fails with a clear error and the spec is left alone: submitting the
+// bare tag would drop the digest pin and later scans would lose the service's
+// digest for good.
+func TestUpdateServiceDigestOnlyFailsWhenDigestLookupFails(t *testing.T) {
+	u, capture, mock := newDigestOnlyFixture(t, true)
+	mock.distErr["nginx:latest"] = fmt.Errorf("unauthorized")
 
-	if err := u.UpdateService(context.Background(), "svc-1", "web", ""); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := u.UpdateService(context.Background(), "svc-1", "web", "")
+	if err == nil {
+		t.Fatal("expected an error when the registry digest cannot be resolved")
 	}
-	if got := capture.specs[0].TaskTemplate.ContainerSpec.Image; got != "nginx:latest" {
-		t.Errorf("submitted image = %q, want the unpinned tag nginx:latest", got)
+	if !strings.Contains(err.Error(), "unauthorized") || !strings.Contains(err.Error(), "digest") {
+		t.Errorf("error %q should name the digest lookup and carry the cause", err)
 	}
-	if capture.specs[0].TaskTemplate.ForceUpdate != 5 {
-		t.Errorf("ForceUpdate = %d, want 5", capture.specs[0].TaskTemplate.ForceUpdate)
+	if len(capture.specs) != 0 {
+		t.Errorf("UpdateService was called %d times; the spec must be left unchanged", len(capture.specs))
 	}
 }
 

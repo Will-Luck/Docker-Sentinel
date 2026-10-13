@@ -298,6 +298,7 @@ func TestUpdateServiceNoTargetImage(t *testing.T) {
 		UpdateStatus: &swarm.UpdateStatus{State: swarm.UpdateStateCompleted},
 	}
 
+	mock.distDigests["nginx:1.25"] = "sha256:newer"
 	u, _ := newSwarmTestUpdater(t, mock)
 	err := u.UpdateService(context.Background(), "svc-1", "digest-svc", "")
 	if err != nil {
