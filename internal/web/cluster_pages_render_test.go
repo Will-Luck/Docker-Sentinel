@@ -39,3 +39,15 @@ func TestDashboardRow_SelfRowShowsRealState(t *testing.T) {
 		t.Errorf("exited self row should say exited, not Running")
 	}
 }
+
+// A long server version string must wrap inside its card, not overflow it.
+func TestClusterPage_ServerCardValueIsTextSized(t *testing.T) {
+	out := renderPage(t, "cluster.html", pageData{Page: "cluster", ClusterEnabled: true, ServerVersion: "v3.0.0-rc1-123-gabcdef0123456789-dirty"})
+	if !strings.Contains(out, `class="stat-value stat-value-text" id="stat-version"`) {
+		t.Errorf("server version value should use the text-sized style")
+	}
+	css, _ := staticFS.ReadFile("static/style.css")
+	if !strings.Contains(string(css), "overflow-wrap: anywhere") || !strings.Contains(string(css), ".stat-value-text") {
+		t.Errorf("stylesheet lacks the wrap and text-size rules")
+	}
+}

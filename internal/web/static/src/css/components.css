@@ -161,6 +161,13 @@
         font-size: 1.75rem;
         font-weight: 700;
         font-family: var(--font-mono);
+        overflow-wrap: anywhere;
+    }
+
+    /* A value that is text, such as a long version string, not a count. */
+    & .stat-value-text {
+        font-size: 1.05rem;
+        line-height: 1.75rem;
     }
 }
 
