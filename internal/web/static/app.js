@@ -2473,6 +2473,9 @@
     }, 800);
   }
   var _queueReloadTimer = null;
+  function queueEventNeedsReload(message, bulkActive) {
+    return !bulkActive;
+  }
   function scheduleQueueReload() {
     if (_queueReloadTimer) clearTimeout(_queueReloadTimer);
     _queueReloadTimer = setTimeout(function() {
@@ -2724,10 +2727,8 @@
         scheduleDigestBannerRefresh();
         updateQueueBadge();
       } else if (document.querySelector(".queue-table")) {
-        var msg = data.message || "";
-        var isNew = msg === "added" || msg.indexOf("queued") !== -1;
         var bulkActive = window._queueBulkInProgress && window._queueBulkInProgress();
-        if (isNew && !bulkActive) {
+        if (queueEventNeedsReload(data.message || "", bulkActive)) {
           scheduleQueueReload();
         } else {
           updateQueueBadge();

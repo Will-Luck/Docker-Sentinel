@@ -34,6 +34,14 @@ function scheduleReload() {
 
 // Longer delay (2s) so batch approvals don't cause repeated reloads.
 var _queueReloadTimer = null;
+// queueEventNeedsReload says whether a queue_change event should reload the
+// queue page: always, except while this page runs a bulk action, which
+// updates its own rows. Reloading only for additions left a row up for an
+// entry removed elsewhere.
+function queueEventNeedsReload(message, bulkActive) {
+    return !bulkActive;
+}
+
 function scheduleQueueReload() {
     if (_queueReloadTimer) clearTimeout(_queueReloadTimer);
     _queueReloadTimer = setTimeout(function () {
@@ -360,11 +368,11 @@ function initSSE() {
             scheduleDigestBannerRefresh();
             updateQueueBadge();
         } else if (document.querySelector(".queue-table")) {
-            // Only reload for new items; removals are handled by row-level JS.
-            var msg = data.message || "";
-            var isNew = msg === "added" || msg.indexOf("queued") !== -1;
+            // Any change to the queue, from anywhere (another client, the API,
+            // an auto-update, a scan finding it up to date), reloads the page
+            // so it matches the queue.
             var bulkActive = window._queueBulkInProgress && window._queueBulkInProgress();
-            if (isNew && !bulkActive) {
+            if (queueEventNeedsReload(data.message || "", bulkActive)) {
                 scheduleQueueReload();
             } else {
                 updateQueueBadge();
