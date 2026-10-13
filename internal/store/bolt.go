@@ -742,6 +742,48 @@ func ScopedKey(hostID, name string) string {
 	return hostID + "::" + name
 }
 
+// MigrateRemoteHistoryKeys rewrites remote history rows saved before
+// v2.17.0 under the plain container name (host ID set, no "::" in the
+// name) to the "hostID::name" key that every remote row now uses. It
+// returns how many rows it changed; running it again changes none.
+func (s *Store) MigrateRemoteHistoryKeys() (int, error) {
+	var changed int
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b, err := bucket(tx, bucketHistory)
+		if err != nil {
+			return err
+		}
+		type row struct{ key, value []byte }
+		var rows []row
+		c := b.Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			var rec UpdateRecord
+			if err := json.Unmarshal(v, &rec); err != nil {
+				continue
+			}
+			if rec.HostID == "" || strings.Contains(rec.ContainerName, "::") {
+				continue
+			}
+			rec.ContainerName = ScopedKey(rec.HostID, rec.ContainerName)
+			data, err := json.Marshal(rec)
+			if err != nil {
+				return fmt.Errorf("marshal history row: %w", err)
+			}
+			rows = append(rows, row{key: append([]byte(nil), k...), value: data})
+		}
+		// Written after the scan: a bolt cursor must not see its bucket
+		// change under it.
+		for _, r := range rows {
+			if err := b.Put(r.key, r.value); err != nil {
+				return err
+			}
+		}
+		changed = len(rows)
+		return nil
+	})
+	return changed, err
+}
+
 // ---------------------------------------------------------------------------
 // Cluster host registration
 // ---------------------------------------------------------------------------

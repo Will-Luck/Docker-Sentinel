@@ -34,9 +34,9 @@ func historyAdapter(t *testing.T) (*clusterAdapter, *store.Store) {
 
 // Remote rollback needs the last successful update of that container on
 // that host. Rows written before v2.17.0 by an approved update or the
-// offline journal carry the plain name plus the host ID; they must count.
-// (The host is not connected here, so a rollback that found its history
-// fails at the dispatch step instead.)
+// offline journal carry the plain name plus the host ID; after the startup
+// migration they must count. (The host is not connected here, so a
+// rollback that found its history fails at the dispatch step instead.)
 func TestRollbackRemoteContainer_FindsLegacyApprovedHistory(t *testing.T) {
 	a, db := historyAdapter(t)
 	if err := db.RecordUpdate(store.UpdateRecord{
@@ -45,6 +45,7 @@ func TestRollbackRemoteContainer_FindsLegacyApprovedHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	migrateRemoteHistory(db, slog.New(slog.DiscardHandler))
 
 	err := a.RollbackRemoteContainer(context.Background(), "host-1", "nginx")
 	if err == nil || strings.Contains(err.Error(), "no successful update history") {
@@ -69,9 +70,46 @@ func TestRollbackRemoteContainer_IgnoresOtherHostsHistory(t *testing.T) {
 		}
 	}
 
+	migrateRemoteHistory(db, slog.New(slog.DiscardHandler))
+
 	err := a.RollbackRemoteContainer(context.Background(), "host-1", "nginx")
 	if err == nil || !strings.Contains(err.Error(), "no successful update history") {
 		t.Fatalf("rollback on host-1 used another host's history: %v", err)
+	}
+}
+
+// With a migrated old row and a new row for the same container, the most
+// recent successful update decides the rollback image, whichever kind it
+// was.
+func TestLastRemoteOldImage_NewestOfMigratedAndNewRows(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		legacyAt, scopedAt time.Duration
+		want               string
+	}{
+		{"new row is newer", 0, time.Minute, "nginx:1.25"},
+		{"old row is newer", time.Minute, 0, "nginx:1.24"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, db := historyAdapter(t)
+			now := time.Now()
+			for _, rec := range []store.UpdateRecord{
+				{Timestamp: now.Add(tc.legacyAt), ContainerName: "nginx", OldImage: "nginx:1.24", Outcome: "success", HostID: "host-1"},
+				{Timestamp: now.Add(tc.scopedAt), ContainerName: store.ScopedKey("host-1", "nginx"), OldImage: "nginx:1.25", Outcome: "success", HostID: "host-1"},
+			} {
+				if err := db.RecordUpdate(rec); err != nil {
+					t.Fatal(err)
+				}
+			}
+			migrateRemoteHistory(db, slog.New(slog.DiscardHandler))
+			got, err := lastRemoteOldImage(db, "host-1", "nginx")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("rollback image = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

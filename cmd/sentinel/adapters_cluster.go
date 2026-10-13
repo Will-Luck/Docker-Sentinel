@@ -173,40 +173,34 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 
 // lastRemoteOldImage returns the old image of the most recent successful
 // update of containerName on hostID, or "" if there is none. Remote history
-// rows are keyed "hostID::name". Rows written before v2.17.0 by an approved
-// update or the offline journal used the plain name with the host ID set,
-// and still count; same-named containers on other hosts do not.
+// rows are keyed "hostID::name" (rows from before v2.17.0 are moved to that
+// key when the cluster starts, migrateRemoteHistory). Rollback rows are not
+// updates to undo and are skipped.
 func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, error) {
-	scoped, err := st.ListHistoryByContainer(store.ScopedKey(hostID, containerName), 20)
+	recs, err := st.ListHistoryByContainer(store.ScopedKey(hostID, containerName), 50)
 	if err != nil {
 		return "", fmt.Errorf("lookup update history for %s on %s: %w", containerName, hostID, err)
 	}
-	legacy, err := st.ListHistoryByContainer(containerName, 100)
-	if err != nil {
-		return "", fmt.Errorf("lookup update history for %s on %s: %w", containerName, hostID, err)
-	}
-	var best *store.UpdateRecord
-	consider := func(recs []store.UpdateRecord, legacyRows bool) {
-		for i := range recs {
-			rec := &recs[i]
-			if legacyRows && rec.HostID != hostID {
-				continue
-			}
-			// A rollback row is not an update to undo.
-			if rec.Outcome != "success" || rec.OldImage == "" || rec.Type == "rollback" {
-				continue
-			}
-			if best == nil || rec.Timestamp.After(best.Timestamp) {
-				best = rec
-			}
+	for _, rec := range recs { // newest first
+		if rec.Outcome == "success" && rec.OldImage != "" && rec.Type != "rollback" {
+			return rec.OldImage, nil
 		}
 	}
-	consider(scoped, false)
-	consider(legacy, true)
-	if best == nil {
-		return "", nil
+	return "", nil
+}
+
+// migrateRemoteHistory moves remote history rows written before v2.17.0
+// (plain container name with the host ID set) to the "hostID::name" key.
+// It is cheap and safe to run on every cluster start.
+func migrateRemoteHistory(db *store.Store, log *slog.Logger) {
+	n, err := db.MigrateRemoteHistoryKeys()
+	if err != nil {
+		log.Warn("could not move old remote history rows to their host-scoped key", "error", err)
+		return
 	}
-	return best.OldImage, nil
+	if n > 0 {
+		log.Info("moved old remote history rows to their host-scoped key", "rows", n)
+	}
 }
 
 // clusterManager implements web.ClusterLifecycle for dynamic cluster
@@ -242,6 +236,8 @@ func (m *clusterManager) Start() error {
 	if port == "" {
 		port = "9443"
 	}
+
+	migrateRemoteHistory(m.db, m.log)
 
 	ca, err := cluster.EnsureCA(m.dataDir)
 	if err != nil {
