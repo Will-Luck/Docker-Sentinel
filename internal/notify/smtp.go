@@ -87,6 +87,7 @@ func (s *SMTP) Send(ctx context.Context, event Event) error {
 		if dialErr != nil {
 			return fmt.Errorf("smtp tls dial: %w", dialErr)
 		}
+		defer guardConn(ctx, conn)()
 		c, err = smtp.NewClient(conn, s.host)
 		if err != nil {
 			conn.Close()
@@ -97,6 +98,7 @@ func (s *SMTP) Send(ctx context.Context, event Event) error {
 		if dialErr != nil {
 			return fmt.Errorf("smtp dial: %w", dialErr)
 		}
+		defer guardConn(ctx, conn)()
 		c, err = smtp.NewClient(conn, s.host)
 		if err != nil {
 			conn.Close()
@@ -152,4 +154,23 @@ func (s *SMTP) Send(ctx context.Context, event Event) error {
 	}
 
 	return c.Quit()
+}
+
+// guardConn makes conn I/O respect ctx: it applies the context deadline to
+// the socket and closes the connection if the context ends first, so a server
+// that accepts the connection and then goes quiet cannot block the caller
+// past the timeout. The returned func releases the guard.
+func guardConn(ctx context.Context, conn net.Conn) func() {
+	if dl, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(dl)
+	}
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stop:
+		}
+	}()
+	return func() { close(stop) }
 }
