@@ -503,3 +503,34 @@ func (a *Agent) sendHookResult(stream proto.AgentService_ChannelClient, requestI
 	}
 	return a.sendMsg(stream, msg)
 }
+
+// reportSelfUpdateOutcome tells the hub how a self-update ended when it did not
+// succeed. The hub got "success" when the helper started, before the swap, so
+// a rollback or failure is sent afterwards, through the offline journal, which
+// is replayed to the hub on connecting and recorded in its history.
+func (a *Agent) reportSelfUpdateOutcome(out *selfupdate.Outcome) {
+	if out == nil || out.Result == selfupdate.ResultSuccess || a.journal == nil {
+		return
+	}
+	reason := "self-update failed: " + out.Error
+	if out.Result == selfupdate.ResultRolledBack {
+		reason = "self-update rolled back: " + out.Error
+	}
+	name := out.ContainerName
+	if name == "" {
+		name = "sentinel-agent"
+	}
+	err := a.journal.Add(cluster.JournalEntry{
+		ID:        "self-update-" + out.FinishedAt.UTC().Format("20060102T150405.000Z"),
+		Timestamp: out.FinishedAt.UTC(),
+		Action:    "update",
+		Container: name,
+		OldImage:  out.OldImage,
+		NewImage:  out.NewImage,
+		Outcome:   "failed",
+		Error:     reason,
+	})
+	if err != nil {
+		a.log.Error("could not keep the self-update outcome for the hub", "error", err)
+	}
+}

@@ -29,11 +29,12 @@ const (
 
 // Outcome is what the helper records.
 type Outcome struct {
-	Result     string    `json:"result"`
-	Error      string    `json:"error,omitempty"`
-	OldImage   string    `json:"old_image"`
-	NewImage   string    `json:"new_image"`
-	FinishedAt time.Time `json:"finished_at"`
+	Result        string    `json:"result"`
+	ContainerName string    `json:"container_name,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	OldImage      string    `json:"old_image"`
+	NewImage      string    `json:"new_image"`
+	FinishedAt    time.Time `json:"finished_at"`
 }
 
 // Runner carries the helper's dependencies. Poll is how often the new
@@ -55,7 +56,7 @@ func (r Runner) Run(ctx context.Context, spec Spec) Outcome {
 		r.Log.Warn("self-update helper: could not mark the swap as in progress", "error", err)
 	}
 	out := r.run(ctx, spec)
-	out.OldImage, out.NewImage, out.FinishedAt = spec.OldImage, spec.NewImage, time.Now().UTC()
+	out.ContainerName, out.OldImage, out.NewImage, out.FinishedAt = spec.FinalName, spec.OldImage, spec.NewImage, time.Now().UTC()
 	if err := WriteOutcome(spec.OutcomeDir, out); err != nil {
 		r.Log.Warn("self-update helper: could not record the outcome", "error", err)
 	}

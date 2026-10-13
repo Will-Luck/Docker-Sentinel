@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
@@ -50,5 +53,41 @@ func TestSelfUpdateContainerHandsOverToHelperWhenSocketIsMounted(t *testing.T) {
 	// Only the helper was started; it starts the replacement.
 	if len(mock.startCalls) != 1 {
 		t.Errorf("start calls = %v, want only the helper", mock.startCalls)
+	}
+}
+
+// The agent reports success to the hub as soon as the helper starts. If the
+// swap is then rolled back, the new instance tells the hub, so its history and
+// notifications do not keep saying the agent was updated.
+func TestAgentJournalsARolledBackSelfUpdateForTheHub(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestAgent(dir, newMockDocker())
+	j, err := newJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.journal = j
+
+	a.reportSelfUpdateOutcome(&selfupdate.Outcome{
+		Result: selfupdate.ResultRolledBack, Error: "the new container stopped or is restarting",
+		ContainerName: "sentinel-agent", OldImage: "sentinel:v1", NewImage: "sentinel:v2",
+		FinishedAt: time.Now(),
+	})
+
+	entries := j.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("journal entries = %d, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.Outcome != "failed" || e.Container != "sentinel-agent" || e.NewImage != "sentinel:v2" ||
+		!strings.Contains(e.Error, "rolled back") || !strings.Contains(e.Error, "restarting") {
+		t.Errorf("entry = %+v", e)
+	}
+
+	// A successful swap, or none, adds nothing.
+	a.reportSelfUpdateOutcome(&selfupdate.Outcome{Result: selfupdate.ResultSuccess})
+	a.reportSelfUpdateOutcome(nil)
+	if n := j.Len(); n != 1 {
+		t.Errorf("journal entries = %d after a success and nil, want 1", n)
 	}
 }
