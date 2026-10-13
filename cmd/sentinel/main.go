@@ -565,9 +565,10 @@ func main() {
 	updater.SetHADiscovery(haDiscovery)
 	defer haDiscovery.Close()
 	applyHADiscovery(db, haDiscovery, log)
+	haWorker := startApplyWorker(ctx, func() { applyHADiscovery(db, haDiscovery, log) })
 	settingSaved = func(key string) {
 		if key == "ha_discovery_enabled" || key == "ha_discovery_prefix" {
-			go applyHADiscovery(db, haDiscovery, log)
+			haWorker.trigger()
 		}
 	}
 
