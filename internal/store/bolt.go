@@ -82,6 +82,9 @@ const (
 const (
 	SettingScannerMode      = "scanner_mode"      // "disabled" / "pre-update" / "post-update"
 	SettingScannerThreshold = "scanner_threshold" // "CRITICAL" / "HIGH" / "MEDIUM" / "LOW"
+	SettingCloudAuthECR     = "cloud_auth_ecr"    // JSON: region, access_key, secret_key, account_id
+	SettingCloudAuthACR     = "cloud_auth_acr"    // JSON: tenant_id, client_id, client_secret, login_server
+	SettingCloudAuthGCR     = "cloud_auth_gcr"    // JSON: service_account_json
 	SettingTrivyPath        = "trivy_path"        // path to trivy binary (default: "trivy")
 )
 

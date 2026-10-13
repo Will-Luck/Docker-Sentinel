@@ -462,6 +462,9 @@ func main() {
 	checker.SetCredentialStore(db)
 	checker.SetRateLimitTracker(rateTracker)
 	checker.SetDigestEquivalenceChecker(db)
+	if cloud := buildCloudAuth(db, log); cloud != nil {
+		checker.SetCloudAuth(cloud)
+	}
 	if vs := db.VersionScope(); vs != "default" {
 		checker.SetDefaultScope(docker.ScopeStrict)
 	}
@@ -574,13 +577,7 @@ func main() {
 
 	// Pulls and digest lookups against a private registry use the credentials
 	// stored in Sentinel.
-	client.SetRegistryAuth(func(ref string) string {
-		creds, err := db.GetRegistryCredentials()
-		if err != nil {
-			return ""
-		}
-		return registry.EncodedAuthFor(creds, ref)
-	})
+	client.SetRegistryAuth(checker.EncodedAuth)
 
 	selfUpdater := engine.NewSelfUpdater(client, log)
 	selfUpdater.SetUpdater(updater)

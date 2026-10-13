@@ -3,9 +3,11 @@ package registry
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry/cloudauth"
 )
 
 // CheckResult holds the outcome of a registry digest check.
@@ -39,6 +41,7 @@ type Checker struct {
 	tracker      *RateLimitTracker        // optional: records rate limit headers
 	equiv        DigestEquivalenceChecker // optional: cached digest equivalence lookups
 	defaultScope docker.SemverScope       // global version scope (relaxed or strict)
+	cloud        *cloudauth.Registry      // optional: ECR/ACR/GCR providers
 }
 
 // NewChecker creates a registry checker.
@@ -64,6 +67,49 @@ func (c *Checker) SetRateLimitTracker(t *RateLimitTracker) {
 // SetDigestEquivalenceChecker attaches a digest equivalence cache.
 func (c *Checker) SetDigestEquivalenceChecker(eq DigestEquivalenceChecker) {
 	c.equiv = eq
+}
+
+// SetCloudAuth attaches the cloud registry providers (ECR, ACR, GCR). A host
+// one of them matches is authenticated through it when no credential is stored
+// for that host.
+func (c *Checker) SetCloudAuth(r *cloudauth.Registry) {
+	c.cloud = r
+}
+
+// credentialFor returns the credential for a registry host: the one stored in
+// Sentinel, else one from a matching cloud provider, else nil.
+func (c *Checker) credentialFor(ctx context.Context, host string) *RegistryCredential {
+	if c.creds != nil {
+		if creds, err := c.creds.GetRegistryCredentials(); err == nil {
+			if cred := FindByRegistry(creds, host); cred != nil {
+				return cred
+			}
+		}
+	}
+	if c.cloud == nil {
+		return nil
+	}
+	user, secret, err := c.cloud.GetCredentials(ctx, host)
+	if err != nil {
+		c.log.Warn("cloud registry login failed", "registry", host, "error", err)
+		return nil
+	}
+	if user == "" {
+		return nil
+	}
+	return &RegistryCredential{Registry: host, Username: user, Secret: secret}
+}
+
+// EncodedAuth returns the X-Registry-Auth value for imageRef's registry (see
+// EncodedAuthFor), from the stored credentials or a cloud provider.
+func (c *Checker) EncodedAuth(imageRef string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cred := c.credentialFor(ctx, RegistryHost(imageRef))
+	if cred == nil {
+		return ""
+	}
+	return EncodedAuthFor([]RegistryCredential{*cred}, imageRef)
 }
 
 // SetDefaultScope sets the global version scope used when a container
@@ -208,13 +254,7 @@ func (c *Checker) CheckVersionedWithDigest(ctx context.Context, imageRef, knownD
 	repo := RepoPath(imageRef)
 	host := RegistryHost(imageRef)
 
-	var cred *RegistryCredential
-	if c.creds != nil {
-		creds, err := c.creds.GetRegistryCredentials()
-		if err == nil {
-			cred = FindByRegistry(creds, host)
-		}
-	}
+	cred := c.credentialFor(ctx, host)
 
 	token, err := FetchToken(ctx, repo, cred, host)
 	if err != nil {
@@ -278,13 +318,7 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string, scope doc
 	host := RegistryHost(imageRef)
 
 	// Look up stored credentials for this registry.
-	var cred *RegistryCredential
-	if c.creds != nil {
-		creds, err := c.creds.GetRegistryCredentials()
-		if err == nil {
-			cred = FindByRegistry(creds, host)
-		}
-	}
+	cred := c.credentialFor(ctx, host)
 
 	token, err := FetchToken(ctx, repo, cred, host)
 	if err != nil {
@@ -324,13 +358,7 @@ func (c *Checker) CheckVersioned(ctx context.Context, imageRef string, scope doc
 func (c *Checker) resolveLatestVersions(ctx context.Context, imageRef string, result *CheckResult) {
 	host := RegistryHost(imageRef)
 
-	var cred *RegistryCredential
-	if c.creds != nil {
-		creds, err := c.creds.GetRegistryCredentials()
-		if err == nil {
-			cred = FindByRegistry(creds, host)
-		}
-	}
+	cred := c.credentialFor(ctx, host)
 
 	repo := RepoPath(imageRef)
 	token, err := FetchToken(ctx, repo, cred, host)
