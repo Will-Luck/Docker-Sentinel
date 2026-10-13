@@ -280,6 +280,20 @@ func previousImages(db *store.Store, hostID, name, current string) []*proto.Prev
 	return out
 }
 
+// clusterListenPort is the port the cluster server listens on:
+// SENTINEL_CLUSTER_PORT when it is set (it wins, as SENTINEL_CLUSTER_ENABLED
+// does; the cluster settings form saves its port with every change), else
+// the saved setting, else 9443.
+func clusterListenPort(envPort, saved string) string {
+	switch {
+	case envPort != "":
+		return envPort
+	case saved != "":
+		return saved
+	}
+	return "9443"
+}
+
 // settingsSyncFrom is the SettingsSync message of the hub's settings.
 func settingsSyncFrom(st engine.AgentSettings) *proto.SettingsSync {
 	return &proto.SettingsSync{
@@ -341,6 +355,7 @@ type clusterManager struct {
 	updater *engine.Updater
 	ctrl    *web.ClusterController // stable pointer in Dependencies
 	dataDir string                 // CA/cert storage directory
+	envPort string                 // SENTINEL_CLUSTER_PORT, when set
 }
 
 func (m *clusterManager) Start() error {
@@ -353,11 +368,8 @@ func (m *clusterManager) Start() error {
 		return nil // already running
 	}
 
-	// Read port from DB, fall back to default.
-	port, _ := m.db.LoadSetting(store.SettingClusterPort)
-	if port == "" {
-		port = "9443"
-	}
+	saved, _ := m.db.LoadSetting(store.SettingClusterPort)
+	port := clusterListenPort(m.envPort, saved)
 
 	migrateRemoteHistory(m.db, m.log)
 

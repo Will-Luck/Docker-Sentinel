@@ -224,6 +224,9 @@ func (a *Agent) recoverSwaps(ctx context.Context) {
 // command loop. Run blocks until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("agent starting", "server", a.cfg.ServerAddr, "host", a.cfg.HostName)
+	// Commands still running (an update half way through) finish before
+	// Run returns and the caller closes the database under them.
+	defer a.drain()
 
 	if err := os.MkdirAll(a.cfg.DataDir, 0700); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
@@ -364,6 +367,34 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 			return ctx.Err()
 		case <-time.After(wait):
+		}
+	}
+}
+
+// drainTimeout bounds how long a stopping agent waits for the commands it
+// is running. An update still running then is finished or undone by the
+// swap journal when the agent starts again.
+var drainTimeout = 90 * time.Second
+
+// drain waits, up to drainTimeout, until no command handler is running and
+// no container is held by an update or a recovery.
+func (a *Agent) drain() {
+	ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+	defer cancel()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	logged := false
+	for a.inflight.Load() > 0 || (a.swaps != nil && !a.swaps.WaitIdle(ctx)) {
+		if !logged {
+			a.log.Info("waiting for running commands to finish before stopping", "running", a.inflight.Load())
+			logged = true
+		}
+		select {
+		case <-ctx.Done():
+			a.log.Warn("stopping with commands still running; an interrupted update is finished or undone at the next start",
+				"running", a.inflight.Load())
+			return
+		case <-tick.C:
 		}
 	}
 }

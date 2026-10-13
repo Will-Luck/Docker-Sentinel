@@ -618,6 +618,7 @@ func main() {
 		updater: updater,
 		ctrl:    clusterCtrl,
 		dataDir: cfg.ClusterDataDir,
+		envPort: os.Getenv("SENTINEL_CLUSTER_PORT"),
 	}
 
 	// Env var takes precedence; fall back to DB setting.

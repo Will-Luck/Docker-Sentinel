@@ -74,25 +74,19 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		AuthEnabledEnv: cfg.AuthEnabled,
 	})
 
-	agentWeb := web.NewAgentServer(web.AgentDeps{
+	agentWeb := startAgentWeb(cfg, web.AgentDeps{
 		Auth:          authSvc,
 		SettingsStore: &settingsStoreAdapter{db},
 		Log:           log.Logger,
 		Version:       versionString(),
-	})
-
-	go func() {
-		addr := net.JoinHostPort("", cfg.WebPort)
-		if err := agentWeb.ListenAndServe(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("agent web server error", "error", err)
-		}
-	}()
-
-	defer func() {
-		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = agentWeb.Shutdown(shutCtx)
-	}()
+	}, log)
+	if agentWeb != nil {
+		defer func() {
+			shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = agentWeb.Shutdown(shutCtx)
+		}()
+	}
 
 	agentCfg := agent.Config{
 		ServerAddr:         cfg.ServerAddr,
@@ -108,14 +102,42 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	}
 
 	a := agent.New(agentCfg, client, log.Logger)
-	agentWeb.SetStatusProvider(a)
+	if agentWeb != nil {
+		agentWeb.SetStatusProvider(a)
+	}
 
 	log.Info("starting agent mode", "server", cfg.ServerAddr, "host", cfg.HostName)
-	if err := a.Run(ctx); err != nil {
+	if err := agentExitErr(a.Run(ctx)); err != nil {
 		log.Error("agent exited with error", "error", err)
 		os.Exit(1)
 	}
 	log.Info("agent shutdown complete")
+}
+
+// startAgentWeb starts the agent's web UI, unless SENTINEL_WEB_ENABLED is
+// false (it then returns nil).
+func startAgentWeb(cfg *config.Config, deps web.AgentDeps, log *logging.Logger) *web.AgentServer {
+	if !cfg.WebEnabled {
+		log.Info("agent web UI disabled (SENTINEL_WEB_ENABLED=false)")
+		return nil
+	}
+	srv := web.NewAgentServer(deps)
+	go func() {
+		addr := net.JoinHostPort("", cfg.WebPort)
+		if err := srv.ListenAndServe(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("agent web server error", "error", err)
+		}
+	}()
+	return srv
+}
+
+// agentExitErr is the error an agent's Run ended with, or nil when it was
+// stopped (its context cancelled), which is not a failure.
+func agentExitErr(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 // agentEnvSettings names the update settings the agent's environment sets

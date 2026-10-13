@@ -322,3 +322,26 @@ func stopAfterCreate(t *testing.T, h *fakeHost, a *Agent) {
 		t.Fatalf("the crash left %v, want app set aside", h.names())
 	}
 }
+
+// A stopping agent waits (within a bound) for the commands it is running,
+// such as an update half way through, before it returns and its database
+// is closed under them.
+func TestRun_WaitsForRunningCommands(t *testing.T) {
+	a := newSwapAgent(t, newFakeHost())
+	a.inflight.Add(1)
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		a.inflight.Add(-1)
+		close(done)
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	_ = a.Run(ctx)
+	select {
+	case <-done:
+	default:
+		t.Errorf("Run returned after %v with a command still running", time.Since(start))
+	}
+}
