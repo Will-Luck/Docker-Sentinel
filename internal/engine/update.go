@@ -975,8 +975,8 @@ func (u *Updater) afterProviderChange(ctx context.Context, name, currentID strin
 }
 
 // restartDependents restarts the running containers that depend on name
-// (sentinel.depends-on or compose depends_on labels, or its network
-// namespace), so they reconnect to the updated container. skip holds the
+// (sentinel.depends-on, compose depends_on with `restart: true`, or its
+// network namespace), so they reconnect to the updated container. skip holds the
 // namespace consumers repairNetworkNamespace already handled. The graph is
 // built from the containers running now, so it is never stale.
 func (u *Updater) restartDependents(ctx context.Context, name string, skip map[string]bool) {
@@ -997,14 +997,20 @@ func (u *Updater) restartDependents(ctx context.Context, name string, skip map[s
 			NetworkMode: c.HostConfig.NetworkMode,
 		})
 	}
-	for _, dep := range deps.Build(infos).Dependents(name) {
+	for _, dep := range deps.Build(infos).RestartDependents(name) {
 		if skip[dep] || strings.HasSuffix(dep, replacedSuffix) {
+			continue
+		}
+		// A dependent that is being updated itself is left to that update.
+		if !u.tryLock(dep) {
+			u.log.Info("dependent is being updated, not restarting it", "dependent", dep, "provider", name)
 			continue
 		}
 		u.log.Info("restarting dependent container", "dependent", dep, "provider", name)
 		if err := u.docker.RestartContainer(ctx, ids[dep]); err != nil {
 			u.log.Warn("failed to restart dependent", "dependent", dep, "error", err)
 		}
+		u.unlock(dep)
 	}
 }
 

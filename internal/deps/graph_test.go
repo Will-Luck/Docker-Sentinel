@@ -158,6 +158,79 @@ func TestComposeDependsOnResolvesServiceNames(t *testing.T) {
 	}
 }
 
+func composeInfo(name, project, service, dependsOn string) ContainerInfo {
+	labels := map[string]string{
+		"com.docker.compose.project": project,
+		"com.docker.compose.service": service,
+	}
+	if dependsOn != "" {
+		labels["com.docker.compose.depends_on"] = dependsOn
+	}
+	return ContainerInfo{Name: name, Labels: labels}
+}
+
+// compose restarts a dependent after its dependency changes only with
+// `restart: true`, written as the third field of the label. The edge is
+// still shown.
+func TestComposeDependsOnRestartsOnlyWithRestartTrue(t *testing.T) {
+	g := Build([]ContainerInfo{
+		composeInfo("p-db-1", "p", "db", ""),
+		composeInfo("p-api-1", "p", "api", "db:service_started:true"),
+		composeInfo("p-web-1", "p", "web", "db:service_started:false"),
+		composeInfo("p-old-1", "p", "old", "db:service_started"),
+		{Name: "tool", Labels: map[string]string{"sentinel.depends-on": "p-db-1"}},
+	})
+
+	if got := g.Dependents("p-db-1"); len(got) != 4 {
+		t.Errorf("Dependents = %v, want all four shown", got)
+	}
+	got := g.RestartDependents("p-db-1")
+	if len(got) != 2 || got[0] != "p-api-1" || got[1] != "tool" {
+		t.Errorf("RestartDependents = %v, want [p-api-1 tool]", got)
+	}
+}
+
+// A scaled service has several containers; a dependent depends on all.
+func TestComposeDependsOnScaledService(t *testing.T) {
+	g := Build([]ContainerInfo{
+		composeInfo("p-db-1", "p", "db", ""),
+		composeInfo("p-db-2", "p", "db", ""),
+		composeInfo("p-api-1", "p", "api", "db:service_started:true"),
+	})
+
+	if got := g.Dependencies("p-api-1"); len(got) != 2 {
+		t.Errorf("Dependencies = %v, want both db containers", got)
+	}
+}
+
+// compose depends_on names a service of the same project, even when a
+// container elsewhere happens to have that name.
+func TestComposeDependsOnResolvesServiceFirst(t *testing.T) {
+	g := Build([]ContainerInfo{
+		{Name: "db", Labels: map[string]string{}},
+		composeInfo("p-db-1", "p", "db", ""),
+		composeInfo("p-api-1", "p", "api", "db:service_started:true"),
+	})
+
+	if got := g.Dependencies("p-api-1"); len(got) != 1 || got[0] != "p-db-1" {
+		t.Errorf("Dependencies = %v, want [p-db-1]", got)
+	}
+}
+
+// Containers of different cluster hosts (named host::name by the
+// dashboard) never depend on each other through compose services.
+func TestComposeDependsOnStaysOnItsHost(t *testing.T) {
+	g := Build([]ContainerInfo{
+		composeInfo("h1::p-db-1", "p", "db", ""),
+		composeInfo("h2::p-db-1", "p", "db", ""),
+		composeInfo("h1::p-api-1", "p", "api", "db:service_started:true"),
+	})
+
+	if got := g.Dependencies("h1::p-api-1"); len(got) != 1 || got[0] != "h1::p-db-1" {
+		t.Errorf("Dependencies = %v, want [h1::p-db-1]", got)
+	}
+}
+
 func TestDependents(t *testing.T) {
 	containers := []ContainerInfo{
 		{Name: "db", Labels: map[string]string{}},

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // ContainerInfo holds the minimal info needed to build the dependency graph.
@@ -27,17 +28,38 @@ const (
 type Graph struct {
 	adj map[string][]string // container -> its dependencies (what it depends ON)
 	all map[string]bool     // all known container names
+	// restart holds the edges along which a dependent is restarted when its
+	// dependency changes: every edge except a compose depends_on entry
+	// without `restart: true`. Keyed by edge{dependent, dependency}.
+	restart map[edge]bool
+}
+
+type edge struct{ from, to string }
+
+// hostOf returns the cluster host prefix of a dashboard container name
+// ("host::name"), or "" for a local container.
+func hostOf(name string) string {
+	if i := strings.Index(name, "::"); i >= 0 {
+		return name[:i]
+	}
+	return ""
 }
 
 // Build constructs the dependency graph from container info.
+//
+// Edges come from sentinel.depends-on (container names), compose
+// depends_on (services of the same compose project and host, every
+// container of a scaled service; a name that is no such service is taken
+// as a container name), and a container: network mode (by name or ID).
 func Build(containers []ContainerInfo) *Graph {
 	g := &Graph{
-		adj: make(map[string][]string),
-		all: make(map[string]bool),
+		adj:     make(map[string][]string),
+		all:     make(map[string]bool),
+		restart: make(map[edge]bool),
 	}
 
 	byID := make(map[string]string)
-	type service struct{ project, name string }
+	type service struct{ host, project, name string }
 	byService := make(map[service][]string)
 	for _, c := range containers {
 		g.all[c.Name] = true
@@ -45,27 +67,36 @@ func Build(containers []ContainerInfo) *Graph {
 			byID[c.ID] = c.Name
 		}
 		if p, s := c.Labels[composeProjectLabel], c.Labels[composeServiceLabel]; p != "" && s != "" {
-			k := service{p, s}
+			k := service{hostOf(c.Name), p, s}
 			byService[k] = append(byService[k], c.Name)
 		}
 	}
 
 	for _, c := range containers {
 		var deps []string
-
-		// Label-based dependencies. A name that is not a container is looked
-		// up as a compose service of the same project (compose names its
-		// containers <project>-<service>-1), when exactly one container runs it.
-		for _, dep := range ParseDependsOn(c.Labels) {
-			if !g.all[dep] {
-				if p := c.Labels[composeProjectLabel]; p != "" {
-					if names := byService[service{p, dep}]; len(names) == 1 {
-						dep = names[0]
-					}
-				}
+		add := func(dep string, restart bool) {
+			if !g.all[dep] || dep == "" {
+				return
 			}
-			if g.all[dep] && !slices.Contains(deps, dep) {
+			if !slices.Contains(deps, dep) {
 				deps = append(deps, dep)
+			}
+			if restart {
+				g.restart[edge{c.Name, dep}] = true
+			}
+		}
+
+		for _, dep := range ParseSentinelDependsOn(c.Labels) {
+			add(dep, true)
+		}
+
+		for _, dep := range ParseComposeDependsOn(c.Labels) {
+			names := byService[service{hostOf(c.Name), c.Labels[composeProjectLabel], dep.Service}]
+			if c.Labels[composeProjectLabel] == "" || len(names) == 0 {
+				names = []string{dep.Service}
+			}
+			for _, n := range names {
+				add(n, dep.Restart)
 			}
 		}
 
@@ -74,9 +105,7 @@ func Build(containers []ContainerInfo) *Graph {
 			if name, ok := byID[netDep]; ok {
 				netDep = name
 			}
-			if g.all[netDep] && !slices.Contains(deps, netDep) {
-				deps = append(deps, netDep)
-			}
+			add(netDep, true)
 		}
 
 		if len(deps) > 0 {
@@ -196,6 +225,19 @@ func (g *Graph) Dependents(name string) []string {
 		}
 	}
 	sort.Strings(result)
+	return result
+}
+
+// RestartDependents returns the containers to restart after the given
+// container changed: its dependents, except those that depend on it only
+// through a compose depends_on entry without `restart: true`.
+func (g *Graph) RestartDependents(name string) []string {
+	var result []string
+	for _, dependent := range g.Dependents(name) {
+		if g.restart[edge{dependent, name}] {
+			result = append(result, dependent)
+		}
+	}
 	return result
 }
 

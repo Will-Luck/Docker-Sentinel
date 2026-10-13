@@ -49,6 +49,24 @@ func TestUpdateContainerRestartsDependents(t *testing.T) {
 	}
 }
 
+// A dependent that is itself being updated is not restarted under it, and
+// a compose dependent without `restart: true` is not restarted at all.
+func TestUpdateContainerSkipsBusyAndNoRestartDependents(t *testing.T) {
+	mock, u := setupDependentsUpdate(t)
+	mock.containers[2].Labels["com.docker.compose.depends_on"] = "proxy:service_started:false"
+	if !u.tryLock("app") {
+		t.Fatal("tryLock")
+	}
+	defer u.unlock("app")
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v", err)
+	}
+	if len(mock.restartCalls) != 0 {
+		t.Errorf("restartCalls = %v, want none (app busy, web without restart: true)", mock.restartCalls)
+	}
+}
+
 func TestUpdateContainerDependentsNotRestartedWhenDisabled(t *testing.T) {
 	mock, u := setupDependentsUpdate(t)
 	u.cfg.SetDependencyAware(false)
