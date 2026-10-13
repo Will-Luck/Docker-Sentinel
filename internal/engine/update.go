@@ -166,6 +166,7 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 			u.log.Warn("image backup tag failed", "name", name, "tag", backupTag, "error", tagErr)
 		} else {
 			u.log.Info("image backup tag created", "name", name, "tag", backupTag)
+			u.pruneImageBackups(ctx, oldImage)
 		}
 	}
 
@@ -826,7 +827,14 @@ func (u *Updater) reportRollback(ctx context.Context, name string, rbErr error, 
 // backupTag builds the backup image reference for the current image before an update.
 // Format: base-repo:sentinel-backup-20060102-150405
 func (u *Updater) backupTag(imageRef string) string {
-	ts := u.clock.Now().Format("20060102-150405")
+	return backupBase(imageRef) + backupTagMarker + u.clock.Now().Format("20060102-150405")
+}
+
+// backupTagMarker starts the tag of an image backup.
+const backupTagMarker = ":sentinel-backup-"
+
+// backupBase returns the repository part of an image reference.
+func backupBase(imageRef string) string {
 	base := imageRef
 	if i := strings.Index(base, "@"); i >= 0 {
 		base = base[:i]
@@ -836,7 +844,7 @@ func (u *Updater) backupTag(imageRef string) string {
 			base = base[:i]
 		}
 	}
-	return base + ":sentinel-backup-" + ts
+	return base
 }
 
 // containerName extracts the container name, stripping the leading /.
