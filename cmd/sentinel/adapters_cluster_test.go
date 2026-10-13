@@ -117,7 +117,7 @@ func TestClusterManager_StopWithConnectedAgentThenRestart(t *testing.T) {
 	}()
 	select {
 	case <-stopped:
-	case <-time.After(10 * time.Second):
+	case <-time.After(2 * time.Second):
 		t.Fatal("turning cluster mode off did not return while an agent was connected")
 	}
 	waitUntil(t, 5*time.Second, func() bool { return !ag.Connected() }, "agent should see its stream end")

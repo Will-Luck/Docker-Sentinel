@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // connectedStream opens an agent Channel with the given credentials and
@@ -179,4 +181,64 @@ func pendingOn(srv *Server, as *agentStream) int {
 		}
 	}
 	return n
+}
+
+// An agent that reconnects while the server is stopping must be turned
+// away, not registered: Stop has already ended the streams it knew about
+// and would otherwise wait for this one.
+func TestChannel_RefusedWhileStopping(t *testing.T) {
+	srv, addr, _, _ := testServer(t)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+
+	srv.mu.Lock()
+	srv.stopping = true
+	srv.mu.Unlock()
+
+	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := proto.NewAgentServiceClient(conn).Channel(ctx)
+	if err != nil {
+		t.Fatalf("Channel: %v", err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.Unavailable {
+		t.Errorf("Channel during Stop: %v, want Unavailable", err)
+	}
+	if hs, _ := srv.Registry().Get(hostID); hs.Connected {
+		t.Error("host marked connected during Stop")
+	}
+}
+
+// Agents that keep reconnecting while the server stops do not hold Stop up.
+func TestStop_ReturnsWhileAgentsKeepReconnecting(t *testing.T) {
+	srv, addr, _, _ := testServer(t)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
+	client := proto.NewAgentServiceClient(conn)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for ctx.Err() == nil {
+			stream, err := client.Channel(ctx)
+			if err == nil {
+				_, _ = stream.Recv()
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	waitFor(t, 3*time.Second, func() bool {
+		hs, _ := srv.Registry().Get(hostID)
+		return hs.Connected
+	}, "agent should connect")
+
+	done := make(chan struct{})
+	go func() { srv.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return within 2s while an agent kept reconnecting")
+	}
 }
