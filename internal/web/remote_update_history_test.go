@@ -143,3 +143,55 @@ func TestApiApprove_RemoteHistoryNewDigest(t *testing.T) {
 		})
 	}
 }
+
+type listingHistory struct {
+	recordingHistory
+	existing []UpdateRecord
+}
+
+func (h *listingHistory) ListHistoryByContainer(string, int) ([]UpdateRecord, error) {
+	return h.existing, nil
+}
+
+type failingUpdater struct{ err error }
+
+func (f failingUpdater) UpdateContainer(context.Context, string, string, string) error { return f.err }
+func (failingUpdater) IsUpdating(string) bool                                          { return false }
+func (failingUpdater) IsIdle() bool                                                    { return true }
+func (failingUpdater) SelfUpdateQueued() bool                                          { return false }
+
+// A local update the engine refused (signature check, pre-update hook) is
+// already in the history. Approve must not add a second failed row.
+func TestApiApprove_LocalFailureNotRecordedTwice(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		engineLogged bool
+		wantRows     int
+	}{{"engine already recorded it", true, 0}, {"engine recorded nothing", false, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			hist := &listingHistory{}
+			if tc.engineLogged {
+				hist.existing = []UpdateRecord{{ContainerName: "web", Outcome: "failed", Timestamp: time.Now().Add(time.Hour)}}
+			}
+			srv := &Server{deps: Dependencies{
+				Queue:    &approvingQueue{items: []PendingUpdate{{ContainerID: "id", ContainerName: "web", CurrentImage: "nginx:1"}}},
+				Store:    hist,
+				Updater:  failingUpdater{err: errors.New("signature verification failed")},
+				Docker:   &mockContainerLister{},
+				EventBus: events.New(),
+				Log:      slog.Default(),
+			}}
+			r := httptest.NewRequest(http.MethodPost, "/api/approve/web", nil)
+			r.SetPathValue("key", "web")
+			w := httptest.NewRecorder()
+			srv.apiApprove(w, r)
+			time.Sleep(300 * time.Millisecond)
+			hist.mu.Lock()
+			n := len(hist.recs)
+			hist.mu.Unlock()
+			if n != tc.wantRows {
+				t.Errorf("web added %d failed rows, want %d", n, tc.wantRows)
+			}
+		})
+	}
+}

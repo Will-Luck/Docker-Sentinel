@@ -193,6 +193,9 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			s.deps.Log.Error("approved update failed", "name", name, "error", err)
+			if update.HostID == "" && s.engineRecordedSince(update.ContainerName, start) {
+				return
+			}
 			// Remote rows are keyed "hostID::name" (update.Key()), like
 			// every other remote history row; local keys are the name.
 			newImage := approveTarget
@@ -306,4 +309,13 @@ func recordedNewDigest(u PendingUpdate) string {
 		return ""
 	}
 	return u.RemoteDigest
+}
+
+// engineRecordedSince reports whether the history already holds a row for the
+// container from this attempt. The engine records the failures it knows
+// about (a refused signature check, an aborted pre-update hook), so the
+// handler adds a row only for failures the engine did not record.
+func (s *Server) engineRecordedSince(name string, since time.Time) bool {
+	recs, err := s.deps.Store.ListHistoryByContainer(name, 1)
+	return err == nil && len(recs) > 0 && !recs[0].Timestamp.Before(since)
 }
