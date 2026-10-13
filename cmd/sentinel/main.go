@@ -89,6 +89,11 @@ func main() {
 		cfg.CookieSecure = cfg.TLSEnabled()
 	}
 	log := logging.New(cfg.LogJSON)
+
+	for _, p := range cfg.EnvProblems() {
+		log.Error("environment variable could not be parsed, using the default",
+			"variable", p.Key, "value", p.Value, "default", p.Default, "expected", p.Want)
+	}
 	warnRemovedEnv(log.Logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

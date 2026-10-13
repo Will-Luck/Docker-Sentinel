@@ -387,3 +387,62 @@ func TestConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestUnparseableEnvKeepsRunningWithDefault(t *testing.T) {
+	t.Setenv("SENTINEL_POLL_INTERVAL", "86400")
+	t.Setenv("SENTINEL_WEB_ENABLED", "maybe")
+	t.Setenv("SENTINEL_SCAN_CONCURRENCY", "two")
+	c := Load()
+	if err := c.Validate(); err != nil {
+		t.Fatalf("a typo must not stop startup: %v", err)
+	}
+	if c.PollInterval() != 6*time.Hour {
+		t.Errorf("poll interval = %s, want the 6h default", c.PollInterval())
+	}
+	got := map[string]EnvProblem{}
+	for _, p := range c.EnvProblems() {
+		got[p.Key] = p
+	}
+	for key, val := range map[string]string{
+		"SENTINEL_POLL_INTERVAL":    "86400",
+		"SENTINEL_WEB_ENABLED":      "maybe",
+		"SENTINEL_SCAN_CONCURRENCY": "two",
+	} {
+		p, ok := got[key]
+		if !ok {
+			t.Fatalf("no problem reported for %s", key)
+		}
+		if p.Value != val || p.Default == "" {
+			t.Errorf("%s: value %q default %q", key, p.Value, p.Default)
+		}
+	}
+	if got["SENTINEL_POLL_INTERVAL"].Default != "6h0m0s" {
+		t.Errorf("default = %q", got["SENTINEL_POLL_INTERVAL"].Default)
+	}
+}
+
+func TestEnvProblemNeverCarriesSecrets(t *testing.T) {
+	if !isSecretEnv("SENTINEL_GOTIFY_TOKEN", "x") || !isSecretEnv("SENTINEL_NPM_PASSWORD", "x") ||
+		!isSecretEnv("SENTINEL_WEBHOOK_URL", "https://u:p@host/x") {
+		t.Fatal("secret variables not recognised")
+	}
+	if isSecretEnv("SENTINEL_POLL_INTERVAL", "86400") {
+		t.Fatal("ordinary variable treated as secret")
+	}
+	r := &envReader{}
+	r.bad("SENTINEL_X_TOKEN", "hunter2", "false", "true or false")
+	if r.problems[0].Value != "" {
+		t.Fatal("secret value kept")
+	}
+}
+
+func TestValidateAcceptsDefaultsAndGoodEnv(t *testing.T) {
+	t.Setenv("SENTINEL_POLL_INTERVAL", "30m")
+	t.Setenv("SENTINEL_WEB_ENABLED", "no")
+	if err := Load().Validate(); err != nil {
+		t.Fatalf("valid env rejected: %v", err)
+	}
+	if got := Load().HistoryRetentionDays; got != 90 {
+		t.Errorf("default retention = %d, want 90", got)
+	}
+}

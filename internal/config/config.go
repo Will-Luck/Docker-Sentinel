@@ -68,6 +68,15 @@ type Config struct {
 	NPMEmail    string
 	NPMPassword string
 
+	// Retention: history and activity-log records older than this many days
+	// are pruned (update and rollback records are kept). 0 keeps everything.
+	// SENTINEL_HISTORY_RETENTION_DAYS, default 90; a saved setting overrides it.
+	HistoryRetentionDays int
+
+	// envProblems holds environment values that were set but could not be
+	// parsed; the default was used instead. See EnvProblems.
+	envProblems []EnvProblem
+
 	// mu protects the mutable runtime fields below.
 	mu                sync.RWMutex
 	pollInterval      time.Duration // how often to scan for updates
@@ -103,60 +112,65 @@ func NewTestConfig() *Config {
 
 // Load reads all configuration from environment variables with defaults.
 func Load() *Config {
-	return &Config{
+	r := &envReader{}
+	c := &Config{
 		DockerSock:          envStr("SENTINEL_DOCKER_SOCK", "/var/run/docker.sock"),
-		pollInterval:        envDuration("SENTINEL_POLL_INTERVAL", 6*time.Hour),
-		gracePeriod:         envDuration("SENTINEL_GRACE_PERIOD", 30*time.Second),
+		pollInterval:        r.duration("SENTINEL_POLL_INTERVAL", 6*time.Hour),
+		gracePeriod:         r.duration("SENTINEL_GRACE_PERIOD", 30*time.Second),
 		defaultPolicy:       envStr("SENTINEL_DEFAULT_POLICY", "manual"),
-		latestAutoUpdate:    envBool("SENTINEL_LATEST_AUTO_UPDATE", false),
+		latestAutoUpdate:    r.bool("SENTINEL_LATEST_AUTO_UPDATE", false),
 		DBPath:              envStr("SENTINEL_DB_PATH", "/data/sentinel.db"),
-		LogJSON:             envBool("SENTINEL_LOG_JSON", true),
+		LogJSON:             r.bool("SENTINEL_LOG_JSON", true),
 		GotifyURL:           envStr("SENTINEL_GOTIFY_URL", ""),
 		GotifyToken:         envStr("SENTINEL_GOTIFY_TOKEN", ""),
 		WebhookURL:          envStr("SENTINEL_WEBHOOK_URL", ""),
 		WebhookHeaders:      envStr("SENTINEL_WEBHOOK_HEADERS", ""),
 		WebPort:             envStr("SENTINEL_WEB_PORT", "8080"),
-		WebEnabled:          envBool("SENTINEL_WEB_ENABLED", true),
+		WebEnabled:          r.bool("SENTINEL_WEB_ENABLED", true),
 		HostAddress:         envStr("SENTINEL_HOST", ""),
-		AuthEnabled:         envBoolPtr("SENTINEL_AUTH_ENABLED"),
-		SessionExpiry:       envDuration("SENTINEL_SESSION_EXPIRY", 720*time.Hour),
-		CookieSecure:        envBool("SENTINEL_COOKIE_SECURE", true),
+		AuthEnabled:         r.boolPtr("SENTINEL_AUTH_ENABLED"),
+		SessionExpiry:       r.duration("SENTINEL_SESSION_EXPIRY", 720*time.Hour),
+		CookieSecure:        r.bool("SENTINEL_COOKIE_SECURE", true),
 		TLSCert:             envStr("SENTINEL_TLS_CERT", ""),
 		TLSKey:              envStr("SENTINEL_TLS_KEY", ""),
-		TLSAuto:             envBool("SENTINEL_TLS_AUTO", false),
+		TLSAuto:             r.bool("SENTINEL_TLS_AUTO", false),
 		WebAuthnRPID:        envStr("SENTINEL_WEBAUTHN_RPID", ""),
 		WebAuthnDisplayName: envStr("SENTINEL_WEBAUTHN_DISPLAY_NAME", "Docker-Sentinel"),
 		WebAuthnOrigins:     envStr("SENTINEL_WEBAUTHN_ORIGINS", ""),
-		imageCleanup:        envBool("SENTINEL_IMAGE_CLEANUP", true),
+		imageCleanup:        r.bool("SENTINEL_IMAGE_CLEANUP", true),
 		schedule:            envStr("SENTINEL_SCHEDULE", ""),
-		hooksEnabled:        envBool("SENTINEL_HOOKS", false),
-		hooksWriteLabels:    envBool("SENTINEL_HOOKS_WRITE_LABELS", false),
-		dependencyAware:     envBool("SENTINEL_DEPS", true),
+		hooksEnabled:        r.bool("SENTINEL_HOOKS", false),
+		hooksWriteLabels:    r.bool("SENTINEL_HOOKS_WRITE_LABELS", false),
+		dependencyAware:     r.bool("SENTINEL_DEPS", true),
 		rollbackPolicy:      envStr("SENTINEL_ROLLBACK_POLICY", ""),
-		MetricsEnabled:      envBool("SENTINEL_METRICS", false),
+		MetricsEnabled:      r.bool("SENTINEL_METRICS", false),
 		MetricsTextfile:     envStr("SENTINEL_METRICS_TEXTFILE", ""),
-		imageBackup:         envBool("SENTINEL_IMAGE_BACKUP", false),
-		showStopped:         envBool("SENTINEL_SHOW_STOPPED", true),
-		removeVolumes:       envBool("SENTINEL_REMOVE_VOLUMES", false),
-		scanConcurrency:     envInt("SENTINEL_SCAN_CONCURRENCY", 1),
+		imageBackup:         r.bool("SENTINEL_IMAGE_BACKUP", false),
+		showStopped:         r.bool("SENTINEL_SHOW_STOPPED", true),
+		removeVolumes:       r.bool("SENTINEL_REMOVE_VOLUMES", false),
+		scanConcurrency:     r.int("SENTINEL_SCAN_CONCURRENCY", 1),
 		maintenanceWindow:   envStr("SENTINEL_MAINTENANCE_WINDOW", ""),
 
 		// Cluster / multi-host
 		Mode:                 envStr("SENTINEL_MODE", ""),
-		ClusterEnabled:       envBool("SENTINEL_CLUSTER", false),
+		ClusterEnabled:       r.bool("SENTINEL_CLUSTER", false),
 		ClusterPort:          envStr("SENTINEL_CLUSTER_PORT", "9443"),
 		ClusterDataDir:       envStr("SENTINEL_CLUSTER_DIR", "/data/cluster"),
 		ClusterAdvertiseAddr: envStr("SENTINEL_CLUSTER_ADVERTISE", ""),
 		ServerAddr:           envStr("SENTINEL_SERVER_ADDR", ""),
 		EnrollToken:          envStr("SENTINEL_ENROLL_TOKEN", ""),
 		HostName:             envStr("SENTINEL_HOST_NAME", ""),
-		GracePeriodOffline:   envDuration("SENTINEL_GRACE_PERIOD_OFFLINE", 30*time.Minute),
+		GracePeriodOffline:   r.duration("SENTINEL_GRACE_PERIOD_OFFLINE", 30*time.Minute),
 
 		// NPM integration
 		NPMURL:      envStr("SENTINEL_NPM_URL", ""),
 		NPMEmail:    envStr("SENTINEL_NPM_EMAIL", ""),
 		NPMPassword: envStr("SENTINEL_NPM_PASSWORD", ""),
+
+		HistoryRetentionDays: r.int("SENTINEL_HISTORY_RETENTION_DAYS", 90),
 	}
+	c.envProblems = r.problems
+	return c
 }
 
 // Validate checks configuration for invalid values.
@@ -168,6 +182,9 @@ func (c *Config) Validate() error {
 	c.mu.RUnlock()
 
 	var errs []error
+	if c.HistoryRetentionDays < 0 {
+		errs = append(errs, fmt.Errorf("SENTINEL_HISTORY_RETENTION_DAYS must be >= 0 (0 keeps everything), got %d", c.HistoryRetentionDays))
+	}
 	if pi <= 0 {
 		errs = append(errs, fmt.Errorf("SENTINEL_POLL_INTERVAL must be > 0, got %s", pi))
 	}
@@ -279,53 +296,116 @@ func envStr(key, def string) string {
 	return def
 }
 
-// envBoolPtr returns a *bool from env. Returns nil if unset (lets DB default apply).
-func envBoolPtr(key string) *bool {
+// envReader parses typed environment variables and remembers every value
+// that is set but unparseable, so Validate can refuse to start instead of
+// quietly using the default.
+type envReader struct{ problems []EnvProblem }
+
+// EnvProblem describes an environment variable that was set but could not be
+// parsed, so its default is in use.
+type EnvProblem struct {
+	Key     string
+	Value   string // empty when the value is secret and must not be logged
+	Default string
+	Want    string // what a valid value looks like
+}
+
+// EnvProblems returns the environment values that could not be parsed. The
+// server keeps running with the defaults and logs each one at startup.
+func (c *Config) EnvProblems() []EnvProblem {
+	return append([]EnvProblem(nil), c.envProblems...)
+}
+
+func (r *envReader) bad(key, value, def, want string) {
+	if isSecretEnv(key, value) {
+		value = ""
+	}
+	r.problems = append(r.problems, EnvProblem{Key: key, Value: value, Default: def, Want: want})
+}
+
+// isSecretEnv reports whether a variable's value must never be logged.
+func isSecretEnv(key, value string) bool {
+	k := strings.ToUpper(key)
+	for _, w := range []string{"TOKEN", "PASSWORD", "SECRET", "KEY"} {
+		if strings.Contains(k, w) {
+			return true
+		}
+	}
+	return strings.Contains(value, "://") && strings.Contains(value, "@")
+}
+
+// boolPtr returns a *bool from env. Returns nil if unset (lets DB default apply).
+func (r *envReader) boolPtr(key string) *bool {
 	v := os.Getenv(key)
 	if v == "" {
 		return nil
 	}
-	b, err := strconv.ParseBool(v)
+	b, err := parseBool(v)
 	if err != nil {
+		r.bad(key, v, "unset", "true or false")
 		return nil
 	}
 	return &b
 }
 
-func envBool(key string, def bool) bool {
+func (r *envReader) bool(key string, def bool) bool {
 	v := os.Getenv(key)
 	if v == "" {
 		return def
 	}
-	b, err := strconv.ParseBool(v)
+	b, err := parseBool(v)
 	if err != nil {
+		r.bad(key, v, strconv.FormatBool(def), "true or false")
 		return def
 	}
 	return b
 }
 
-func envInt(key string, def int) int {
+func (r *envReader) int(key string, def int) int {
 	v := os.Getenv(key)
 	if v == "" {
 		return def
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
+		r.bad(key, v, strconv.Itoa(def), "a whole number")
 		return def
 	}
 	return n
 }
 
-func envDuration(key string, def time.Duration) time.Duration {
+func (r *envReader) duration(key string, def time.Duration) time.Duration {
 	v := os.Getenv(key)
 	if v == "" {
 		return def
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
+		r.bad(key, v, def.String(), "a duration with a unit, for example 6h or 30m")
 		return def
 	}
 	return d
+}
+
+// parseBool accepts what strconv does plus yes/no/on/off, which people
+// naturally write.
+func parseBool(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "yes", "y", "on":
+		return true, nil
+	case "no", "n", "off":
+		return false, nil
+	}
+	return strconv.ParseBool(strings.TrimSpace(v))
+}
+
+// envBool, envDuration are the lenient forms: a bad value gives the default.
+func envBool(key string, def bool) bool {
+	return (&envReader{}).bool(key, def)
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	return (&envReader{}).duration(key, def)
 }
 
 // PollInterval returns the current poll interval (thread-safe).
