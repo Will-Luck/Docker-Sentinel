@@ -74,6 +74,8 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	// Remove containers left behind by earlier self-updates before anything else.
 	if s.selfUpdater != nil {
 		s.selfUpdater.CleanupOldInstances(ctx)
+		// An in-process upgrade leaves the old container until it exits.
+		s.selfUpdater.CleanupAfter(ctx, 2*time.Minute)
 	}
 
 	if s.readyGate != nil {

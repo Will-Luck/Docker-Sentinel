@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -27,11 +26,11 @@ type SelfUpdater struct {
 	docker docker.API
 	log    *logging.Logger
 
-	updater  *Updater // supplies the signature-verification gate
-	socket   string   // Docker socket path in this container ("" = default)
-	dataDir  string   // directory of the database, for the helper's outcome file
-	poll     time.Duration
-	hostname func() (string, error) // test seam; os.Hostname when nil
+	updater *Updater // supplies the signature-verification gate
+	socket  string   // Docker socket path in this container ("" = default)
+	dataDir string   // directory of the database, for the helper's outcome file
+	poll    time.Duration
+	selfID  func() string // test seam; selfupdate.SelfID when nil
 }
 
 // NewSelfUpdater creates a SelfUpdater.
@@ -211,15 +210,28 @@ func isPortConflict(err error) bool {
 
 // CleanupOldInstances is the self-update housekeeping done at startup. First,
 // an instance that a host restart left parked as "<name>-old-<ts>" puts itself
-// back (selfupdate.Recover); then containers left behind by earlier
+// back (selfupdate.Recover); then this instance's own leftovers from earlier
 // self-updates are removed (selfupdate.CleanupLeftovers).
 func (su *SelfUpdater) CleanupOldInstances(ctx context.Context) {
-	hostname := os.Hostname
-	if su.hostname != nil {
-		hostname = su.hostname
+	id := selfupdate.SelfID
+	if su.selfID != nil {
+		id = su.selfID
 	}
-	if h, err := hostname(); err == nil {
-		selfupdate.Recover(ctx, su.docker, h, su.dataDir, su.log)
-	}
-	selfupdate.CleanupLeftovers(ctx, su.docker, su.dataDir, su.log)
+	self := id()
+	selfupdate.Recover(ctx, su.docker, self, su.dataDir, su.log)
+	selfupdate.CleanupLeftovers(ctx, su.docker, self, su.dataDir, su.log)
+}
+
+// CleanupAfter runs the leftover cleanup again after delay, in the background,
+// until ctx ends. After an upgrade by the in-process path the old container
+// only exits once the new one has started, so it is still there when the
+// cleanup at startup runs.
+func (su *SelfUpdater) CleanupAfter(ctx context.Context, delay time.Duration) {
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(delay):
+			su.CleanupOldInstances(ctx)
+		}
+	}()
 }

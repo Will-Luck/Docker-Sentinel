@@ -426,7 +426,7 @@ func TestCleanupLeftoversRemovesOnlyExitedLeftovers(t *testing.T) {
 		mk("keep-unlabelled", "grafana-old-111", "exited", nil),
 		mk("helper-done", "sentinel-self-update-helper", "exited", map[string]string{HelperLabel: "true"}),
 	}
-	CleanupLeftovers(context.Background(), f, "", nopLog{})
+	CleanupLeftovers(context.Background(), f, "cur", "", nopLog{})
 
 	if want := []string{"gone1", "gone2", "helper-done"}; !slices.Equal(removed(f), want) {
 		t.Errorf("removed %v, want %v", removed(f), want)
@@ -445,7 +445,7 @@ func TestCleanupLeftoversKeepsOldContainerWhileAHelperIsActive(t *testing.T) {
 			mk("old", "sentinel-old-1700000000", "exited", self),
 			mk("helper", "sentinel-self-update-helper", state, map[string]string{HelperLabel: "true"}),
 		}
-		CleanupLeftovers(context.Background(), f, "", nopLog{})
+		CleanupLeftovers(context.Background(), f, "cur", "", nopLog{})
 		if len(f.events) != 0 {
 			t.Errorf("helper %s: removed %v while the swap was in progress", state, f.events)
 		}
@@ -462,7 +462,7 @@ func TestCleanupLeftoversKeepsOldContainerWhileTheOutcomeSaysInProgress(t *testi
 	f.state["cur"] = &container.State{Running: true}
 	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self)}
 
-	CleanupLeftovers(context.Background(), f, dir, nopLog{})
+	CleanupLeftovers(context.Background(), f, "cur", dir, nopLog{})
 	if len(f.events) != 0 {
 		t.Errorf("removed %v during an in-progress swap", f.events)
 	}
@@ -489,7 +489,7 @@ func TestCleanupLeftoversNeedsAHealthyRunningReplacement(t *testing.T) {
 		self := map[string]string{"sentinel.self": "true"}
 		f.state["cur"] = st
 		f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self)}
-		CleanupLeftovers(context.Background(), f, "", nopLog{})
+		CleanupLeftovers(context.Background(), f, "cur", "", nopLog{})
 		if len(f.events) != 0 {
 			t.Errorf("%s: removed %v", name, f.events)
 		}
@@ -498,7 +498,7 @@ func TestCleanupLeftoversNeedsAHealthyRunningReplacement(t *testing.T) {
 	self := map[string]string{"sentinel.self": "true"}
 	f.state["cur"] = &container.State{Running: true, Health: &container.Health{Status: container.Healthy}}
 	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self)}
-	CleanupLeftovers(context.Background(), f, "", nopLog{})
+	CleanupLeftovers(context.Background(), f, "cur", "", nopLog{})
 	if !slices.Equal(removed(f), []string{"old"}) {
 		t.Errorf("healthy replacement: removed %v", removed(f))
 	}
@@ -686,7 +686,7 @@ func TestCleanupLeftoversTreatsAStaleCreatedHelperAsDead(t *testing.T) {
 	stale.Created = time.Now().Add(-20 * time.Minute).Unix()
 	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self), stale}
 
-	CleanupLeftovers(context.Background(), f, "", nopLog{})
+	CleanupLeftovers(context.Background(), f, "cur", "", nopLog{})
 
 	if !slices.Equal(removed(f), []string{"helper", "old"}) {
 		t.Errorf("removed %v, want the stale helper and the old container", removed(f))
@@ -701,8 +701,51 @@ func TestCleanupLeftoversKeepsAFreshCreatedHelper(t *testing.T) {
 	fresh.Created = time.Now().Add(-time.Minute).Unix()
 	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self), fresh}
 
-	CleanupLeftovers(context.Background(), f, "", nopLog{})
+	CleanupLeftovers(context.Background(), f, "cur", "", nopLog{})
 	if len(f.events) != 0 {
 		t.Errorf("removed %v while a fresh helper exists", f.events)
+	}
+}
+
+// ---- smoke-test findings F2, F3, F4 ----
+func TestCleanupLeftoversTouchesOnlyThisInstancesOwnLeftovers(t *testing.T) {
+	f, mk := cleanupFixture()
+	self := map[string]string{"sentinel.self": "true"}
+	f.state["agent-id"] = &container.State{Running: true}
+	f.state["hub-id"] = &container.State{Running: true}
+	dead := map[string]string{HelperLabel: "true"}
+	f.list = []container.Summary{
+		mk("agent-id", "lh2-agent", "running", self),
+		mk("hub-id", "lh-sentinel", "running", self),
+		mk("mine", "lh2-agent-old-1700000000", "exited", self),
+		mk("theirs", "lh-sentinel-old-1700000001", "exited", self),
+		mk("my-helper", "lh2-agent-self-update-helper", "exited", dead),
+		mk("their-helper", "lh-sentinel-self-update-helper", "exited", dead),
+	}
+	CleanupLeftovers(context.Background(), f, "agent-id", "", nopLog{})
+	if want := []string{"mine", "my-helper"}; !slices.Equal(removed(f), want) {
+		t.Errorf("removed %v, want only %v", removed(f), want)
+	}
+}
+
+func TestCleanupLeftoversDoesNothingWhenItCannotTellWhichInstanceItIs(t *testing.T) {
+	f, mk := cleanupFixture()
+	self := map[string]string{"sentinel.self": "true"}
+	f.state["cur"] = &container.State{Running: true}
+	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self)}
+	CleanupLeftovers(context.Background(), f, "", "", nopLog{})
+	if len(f.events) != 0 {
+		t.Errorf("removed %v without knowing whose leftovers they are", f.events)
+	}
+}
+
+func TestOwnContainerIDReadsTheMountInfo(t *testing.T) {
+	id := strings.Repeat("ab12", 16)
+	mi := "123 98 0:50 /var/lib/docker/containers/" + id + "/resolv.conf /etc/resolv.conf rw - ext4 /dev/sda rw\n"
+	if got := containerIDFromMountInfo(mi); got != id {
+		t.Errorf("id = %q, want %q", got, id)
+	}
+	if got := containerIDFromMountInfo("nothing here"); got != "" {
+		t.Errorf("id = %q from a mountinfo with no container path", got)
 	}
 }

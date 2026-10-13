@@ -140,6 +140,7 @@ func TestCleanupOldInstancesRemovesOnlyStoppedLeftovers(t *testing.T) {
 	}
 	mock.inspectResults["cur"] = container.InspectResponse{State: &container.State{Running: true}}
 	su := NewSelfUpdater(mock, newTestSelfUpdater(mock).log)
+	su.selfID = func() string { return "cur" }
 
 	su.CleanupOldInstances(context.Background())
 
@@ -160,7 +161,9 @@ func TestSchedulerStartupRemovesOldInstances(t *testing.T) {
 	mock.inspectResults["cur"] = container.InspectResponse{State: &container.State{Running: true}}
 	u, clk := newTestUpdater(t, mock)
 	sched := NewScheduler(u, u.cfg, u.log, clk)
-	sched.SetSelfUpdater(NewSelfUpdater(mock, u.log))
+	su := NewSelfUpdater(mock, u.log)
+	su.selfID = func() string { return "cur" }
+	sched.SetSelfUpdater(su)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -309,7 +312,7 @@ func TestStartupPutsAParkedInstanceBackAfterAnInterruptedSwap(t *testing.T) {
 		{ID: "new1", Names: []string{"/sentinel"}, State: "created", Labels: self},
 	}
 	su := NewSelfUpdater(mock, newTestSelfUpdater(mock).log)
-	su.hostname = func() (string, error) { return "abcdef123456", nil }
+	su.selfID = func() string { return "abcdef123456" }
 
 	su.CleanupOldInstances(context.Background())
 
@@ -319,4 +322,55 @@ func TestStartupPutsAParkedInstanceBackAfterAnInterruptedSwap(t *testing.T) {
 	if len(mock.renameCalls) != 1 || mock.renameCalls[0].id != "abcdef1234567890" || mock.renameCalls[0].newName != "sentinel" {
 		t.Errorf("renames = %+v, want this instance renamed back to sentinel", mock.renameCalls)
 	}
+}
+
+// After an in-process upgrade the old container only exits once the new one has
+// started, so the cleanup runs again a while after start.
+func TestCleanupAfterRemovesALeftoverThatAppearedAfterStartup(t *testing.T) {
+	mock := newMockDocker()
+	self := map[string]string{"sentinel.self": "true"}
+	mock.containers = []container.Summary{{ID: "cur", Names: []string{"/sentinel"}, State: "running", Labels: self}}
+	mock.inspectResults["cur"] = container.InspectResponse{State: &container.State{Running: true}}
+	live := &growingList{mockDocker: mock}
+	live.list = mock.containers
+	su := NewSelfUpdater(live, newTestSelfUpdater(mock).log)
+	su.selfID = func() string { return "cur" }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	su.CleanupOldInstances(ctx)
+	su.CleanupAfter(ctx, 20*time.Millisecond)
+	live.add(container.Summary{ID: "old", Names: []string{"/sentinel-old-1700000000"}, State: "exited", Labels: self})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mock.mu.Lock()
+		got := slices.Contains(mock.removeCalls, "old")
+		mock.mu.Unlock()
+		if got {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Error("the leftover that appeared after startup was never removed")
+}
+
+// growingList is a Docker double whose container list can change while a
+// background goroutine reads it.
+type growingList struct {
+	*mockDocker
+	lmu  sync.Mutex
+	list []container.Summary
+}
+
+func (g *growingList) add(c container.Summary) {
+	g.lmu.Lock()
+	g.list = append(slices.Clone(g.list), c)
+	g.lmu.Unlock()
+}
+
+func (g *growingList) ListAllContainers(context.Context) ([]container.Summary, error) {
+	g.lmu.Lock()
+	defer g.lmu.Unlock()
+	return slices.Clone(g.list), nil
 }

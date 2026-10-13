@@ -259,14 +259,20 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Report how a self-update that just replaced the previous agent ended,
 	// and remove what an earlier one left behind.
 	// An agent a host restart left parked as "<name>-old-<ts>" puts itself back.
-	var selfOutcome *selfupdate.Outcome
-	if host, err := os.Hostname(); err == nil {
-		selfOutcome = selfupdate.Recover(ctx, a.docker, host, a.cfg.DataDir, a.log)
-	}
+	selfID := selfupdate.SelfID()
+	selfOutcome := selfupdate.Recover(ctx, a.docker, selfID, a.cfg.DataDir, a.log)
 	if selfOutcome == nil {
 		selfOutcome = selfupdate.ReportOutcome(a.cfg.DataDir, a.log)
 	}
-	selfupdate.CleanupLeftovers(ctx, a.docker, a.cfg.DataDir, a.log)
+	selfupdate.CleanupLeftovers(ctx, a.docker, selfID, a.cfg.DataDir, a.log)
+	// An in-process upgrade leaves the old container until it exits.
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(2 * time.Minute):
+			selfupdate.CleanupLeftovers(ctx, a.docker, selfID, a.cfg.DataDir, a.log)
+		}
+	}()
 
 	// Restore cached policies and the hub's last settings first: autonomous
 	// mode needs them, and the recovery below follows the settings.
