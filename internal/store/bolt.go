@@ -269,6 +269,32 @@ func (s *Store) RecordUpdate(rec UpdateRecord) error {
 	})
 }
 
+// RecordUpdateIfAbsent records rec unless a history row already exists at
+// its time (history is keyed by time), and reports whether it did. The
+// failure of a remote update the agent did not answer is recorded this
+// way, at the time the agent's late result is recorded at: a result that
+// got there first is kept.
+func (s *Store) RecordUpdateIfAbsent(rec UpdateRecord) (bool, error) {
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return false, fmt.Errorf("marshal update record: %w", err)
+	}
+	inserted := false
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		b, err := bucket(tx, bucketHistory)
+		if err != nil {
+			return err
+		}
+		key := []byte(rec.Timestamp.UTC().Format(time.RFC3339Nano))
+		if b.Get(key) != nil {
+			return nil
+		}
+		inserted = true
+		return b.Put(key, data)
+	})
+	return inserted, err
+}
+
 // normaliseHistoryCursor rewrites a cursor timestamp in UTC, the form history
 // keys are stored in. A cursor copied from a record's JSON carries the local
 // offset the record was written with and would otherwise sort wrongly.

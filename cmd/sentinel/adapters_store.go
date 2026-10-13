@@ -112,6 +112,29 @@ func (a *storeAdapter) RecordUpdate(rec web.UpdateRecord) error {
 	})
 }
 
+// The web layer records an unanswered remote update's failure through it.
+var _ interface {
+	RecordUpdateIfAbsent(web.UpdateRecord) (bool, error)
+} = (*storeAdapter)(nil)
+
+// RecordUpdateIfAbsent records rec unless a history row exists at its time.
+func (a *storeAdapter) RecordUpdateIfAbsent(rec web.UpdateRecord) (bool, error) {
+	return a.s.RecordUpdateIfAbsent(store.UpdateRecord{
+		Timestamp:     rec.Timestamp,
+		ContainerName: rec.ContainerName,
+		OldImage:      rec.OldImage,
+		OldDigest:     rec.OldDigest,
+		NewImage:      rec.NewImage,
+		NewDigest:     rec.NewDigest,
+		Outcome:       rec.Outcome,
+		Duration:      rec.Duration,
+		Error:         rec.Error,
+		Type:          rec.Type,
+		HostID:        rec.HostID,
+		HostName:      rec.HostName,
+	})
+}
+
 // aboutStoreAdapter converts store.Store to web.AboutStore.
 type aboutStoreAdapter struct{ s *store.Store }
 

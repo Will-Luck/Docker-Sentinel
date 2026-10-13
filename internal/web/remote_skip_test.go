@@ -1,11 +1,13 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -140,4 +142,63 @@ func TestRemoteUpdate_RowIsRefreshedAfterTheUpdate(t *testing.T) {
 		}
 		waitState(t, srv, ch)
 	})
+}
+
+// insertingHistory is a history store with a conditional insert, holding
+// rows by time as the real one does.
+type insertingHistory struct {
+	nopHistory
+	mu   sync.Mutex
+	rows map[time.Time]UpdateRecord
+}
+
+func (h *insertingHistory) RecordUpdate(r UpdateRecord) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.rows[r.Timestamp.UTC()] = r
+	return nil
+}
+
+func (h *insertingHistory) RecordUpdateIfAbsent(r UpdateRecord) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.rows[r.Timestamp.UTC()]; ok {
+		return false, nil
+	}
+	h.rows[r.Timestamp.UTC()] = r
+	return true, nil
+}
+
+// The failure row of an unanswered remote update must not overwrite the
+// agent's result when that arrived first at the same time key: on the
+// approve path and on "Update now".
+func TestRemoteUpdate_UnansweredFailureKeepsAnEarlierResult(t *testing.T) {
+	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	unanswered := &cluster.UnansweredError{HostID: "h1", RequestID: "r1", RecordAt: at, Err: errors.New("agent disconnected")}
+	for _, path := range []string{"approve", "update now"} {
+		t.Run(path, func(t *testing.T) {
+			hist := &insertingHistory{rows: map[time.Time]UpdateRecord{at: {Timestamp: at, ContainerName: "h1::web", Outcome: "success"}}}
+			cp := &failingUpdateCluster{mockClusterProviderWithContainers: mockClusterProviderWithContainers{
+				hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"},
+				containers: []RemoteContainer{{Name: "web", Image: "nginx:1", HostID: "h1", HostName: "Agent One"}},
+			}, err: unanswered}
+			srv := remoteUpdateServer(cp, hist)
+			if path == "approve" {
+				srv.deps.Queue = &approvingQueue{items: []PendingUpdate{{HostID: "h1", HostName: "Agent One", ContainerName: "web", CurrentImage: "nginx:1"}}}
+				r := httptest.NewRequest(http.MethodPost, "/api/approve/h1::web", nil)
+				r.SetPathValue("key", "h1::web")
+				srv.apiApprove(httptest.NewRecorder(), r)
+			} else {
+				r := httptest.NewRequest(http.MethodPost, "/api/containers/web/update?host=h1", nil)
+				r.SetPathValue("name", "web")
+				srv.apiUpdate(httptest.NewRecorder(), r)
+			}
+			time.Sleep(200 * time.Millisecond)
+			hist.mu.Lock()
+			defer hist.mu.Unlock()
+			if len(hist.rows) != 1 || hist.rows[at].Outcome != "success" {
+				t.Errorf("history = %+v, want the earlier success kept", hist.rows)
+			}
+		})
+	}
 }

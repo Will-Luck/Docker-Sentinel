@@ -320,3 +320,21 @@ func TestScanRemotePullOnly_OnlyAConfirmedPullIsRecorded(t *testing.T) {
 		})
 	}
 }
+
+// A remote update the agent did not answer is recorded as failed at the
+// time its late result will be recorded at, so the result replaces it. If
+// the late result got there first, the failure must not overwrite it.
+func TestScanRemoteUnansweredFailureNeverOverwritesTheResult(t *testing.T) {
+	u, pc, _ := remotePolicyFixture(t, nil)
+	at := time.Date(2026, 1, 1, 12, 30, 0, 0, time.UTC)
+	pc.fakeCluster.updateErrValue = &cluster.UnansweredError{HostID: "h1", RequestID: "r1", RecordAt: at, Err: errors.New("agent disconnected")}
+	// The agent's true result arrived (late) before the scan wrote its failure.
+	if err := u.store.RecordUpdate(store.UpdateRecord{Timestamp: at, ContainerName: store.ScopedKey("h1", "web"), Outcome: "success", HostID: "h1"}); err != nil {
+		t.Fatal(err)
+	}
+	u.Scan(context.Background(), ScanScheduled)
+	recs, _ := u.store.ListHistoryByContainer(store.ScopedKey("h1", "web"), 5)
+	if len(recs) != 1 || recs[0].Outcome != "success" {
+		t.Errorf("history = %+v, want the late success kept", recs)
+	}
+}

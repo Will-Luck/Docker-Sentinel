@@ -282,8 +282,15 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			// Record update in host-scoped history. (The cluster server
 			// publishes the result to the dashboard, with the host.) An
 			// unanswered update's row is replaced by the agent's result
-			// if it comes later.
-			if err := u.store.RecordUpdate(store.UpdateRecord{
+			// if it comes later, and never overwrites one already there.
+			record := u.store.RecordUpdate
+			if cluster.Unanswered(updateErr) {
+				record = func(rec store.UpdateRecord) error {
+					_, err := u.store.RecordUpdateIfAbsent(rec)
+					return err
+				}
+			}
+			if err := record(store.UpdateRecord{
 				Timestamp:     cluster.HistoryTime(updateErr, u.clock.Now()),
 				ContainerName: scopedName,
 				OldImage:      ur.OldImage,

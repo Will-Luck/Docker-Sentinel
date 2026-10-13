@@ -21,6 +21,12 @@ type UnansweredError struct {
 func (e *UnansweredError) Error() string { return e.Err.Error() }
 func (e *UnansweredError) Unwrap() error { return e.Err }
 
+// Unanswered reports whether err is an UnansweredError.
+func Unanswered(err error) bool {
+	var un *UnansweredError
+	return errors.As(err, &un)
+}
+
 // HistoryTime is the time to record a failed remote request's history row
 // at: for an unanswered one, the time its late result will replace it at;
 // otherwise fallback.

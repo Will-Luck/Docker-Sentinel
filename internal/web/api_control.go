@@ -915,7 +915,28 @@ func (s *Server) recordRemoteUpdate(start time.Time, hostID, hostName, name, old
 		rec.Outcome = "failed"
 		rec.Error = updateErr.Error()
 	}
-	if err := s.deps.Store.RecordUpdate(rec); err != nil {
+	if err := s.recordRemoteFailure(updateErr, rec); err != nil {
 		s.deps.Log.Warn("failed to record remote update", "name", name, "host", hostID, "error", err)
 	}
+}
+
+// historyInserter is a HistoryStore that records a row only when none
+// exists at its time (store.Store.RecordUpdateIfAbsent).
+type historyInserter interface {
+	RecordUpdateIfAbsent(rec UpdateRecord) (bool, error)
+}
+
+// recordRemoteFailure records rec, the history row of a remote update that
+// failed with err (or worked, err nil). The failure of an update the agent
+// did not answer is recorded only if no row exists at its time: the
+// agent's late result, recorded at the same time, may have got there
+// first, and it wins.
+func (s *Server) recordRemoteFailure(err error, rec UpdateRecord) error {
+	if cluster.Unanswered(err) {
+		if ins, ok := s.deps.Store.(historyInserter); ok {
+			_, insErr := ins.RecordUpdateIfAbsent(rec)
+			return insErr
+		}
+	}
+	return s.deps.Store.RecordUpdate(rec)
 }
