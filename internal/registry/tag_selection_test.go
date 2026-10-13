@@ -79,3 +79,34 @@ func TestCheckVersioned_MutableTagKeepsFollowingTag(t *testing.T) {
 		})
 	}
 }
+
+func TestSemVerLessThan_PrereleaseNumbersCompareNumerically(t *testing.T) {
+	tests := []struct {
+		lo, hi string
+	}{
+		{"2.0.0-rc9", "2.0.0-rc10"},
+		{"2.0.0-beta.2", "2.0.0-beta.10"},
+		{"2.0.0-alpha", "2.0.0-beta"},
+		{"2.0.0-rc1", "2.0.0-rc.2"},
+		{"2.0.0-rc", "2.0.0-rc1"},
+		{"2.0.0-rc10", "2.0.0"},
+	}
+	for _, tt := range tests {
+		lo, ok1 := ParseSemVer(tt.lo)
+		hi, ok2 := ParseSemVer(tt.hi)
+		if !ok1 || !ok2 {
+			t.Fatalf("parse failed for %q / %q", tt.lo, tt.hi)
+		}
+		if !lo.LessThan(hi) {
+			t.Errorf("%s < %s reported false", tt.lo, tt.hi)
+		}
+		if hi.LessThan(lo) {
+			t.Errorf("%s < %s reported true", tt.hi, tt.lo)
+		}
+	}
+
+	got := rawVersions(NewerVersionsScoped("2.0.0-rc8", []string{"2.0.0-rc9", "2.0.0-rc10"}, docker.ScopeMajor, docker.ScopeDefault))
+	if strings.Join(got, ",") != "2.0.0-rc10,2.0.0-rc9" {
+		t.Errorf("newest-first order = %v, want rc10 before rc9", got)
+	}
+}

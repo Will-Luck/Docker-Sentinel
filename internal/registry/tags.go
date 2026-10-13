@@ -168,7 +168,8 @@ func ParseSemVer(tag string) (SemVer, bool) {
 // LessThan returns true if v is strictly less than other.
 // Pre-release versions are considered less than their release counterpart
 // (e.g. 1.2.3-rc1 < 1.2.3). When both have pre-release strings, they are
-// compared lexicographically.
+// compared identifier by identifier, with digit runs compared as numbers
+// (rc9 < rc10).
 func (v SemVer) LessThan(other SemVer) bool {
 	if v.Major != other.Major {
 		return v.Major < other.Major
@@ -188,10 +189,83 @@ func (v SemVer) LessThan(other SemVer) bool {
 		if other.Pre == "" {
 			return true // v is pre-release, other is release
 		}
-		return v.Pre < other.Pre
+		return comparePre(v.Pre, other.Pre) < 0
 	}
 
 	return false // equal
+}
+
+// preIdentifiers splits a pre-release string into comparable identifiers:
+// separators (. - _) delimit identifiers and every change between letters and
+// digits starts a new one, so "rc10" becomes ["rc", "10"] and "beta.2" becomes
+// ["beta", "2"].
+func preIdentifiers(pre string) []string {
+	var ids []string
+	start := 0
+	isDigit := func(b byte) bool { return b >= '0' && b <= '9' }
+	for i := 0; i <= len(pre); i++ {
+		boundary := i == len(pre)
+		if !boundary {
+			switch pre[i] {
+			case '.', '-', '_':
+				boundary = true
+			default:
+				boundary = i > start && isDigit(pre[i]) != isDigit(pre[i-1])
+			}
+		}
+		if !boundary {
+			continue
+		}
+		if i > start {
+			ids = append(ids, pre[start:i])
+		}
+		start = i
+		if i < len(pre) && (pre[i] == '.' || pre[i] == '-' || pre[i] == '_') {
+			start = i + 1
+		}
+	}
+	return ids
+}
+
+// comparePre orders two pre-release strings using semver precedence rules:
+// numeric identifiers compare as integers and sort before alphabetic ones,
+// alphabetic identifiers compare as strings, and a shorter identifier list
+// sorts before a longer one it prefixes. It returns -1, 0 or 1.
+func comparePre(a, b string) int {
+	ai, bi := preIdentifiers(a), preIdentifiers(b)
+	for i := 0; i < len(ai) && i < len(bi); i++ {
+		if c := compareIdentifier(ai[i], bi[i]); c != 0 {
+			return c
+		}
+	}
+	switch {
+	case len(ai) < len(bi):
+		return -1
+	case len(ai) > len(bi):
+		return 1
+	}
+	return 0
+}
+
+func compareIdentifier(a, b string) int {
+	aNum := a[0] >= '0' && a[0] <= '9'
+	bNum := b[0] >= '0' && b[0] <= '9'
+	switch {
+	case aNum && bNum:
+		a, b = strings.TrimLeft(a, "0"), strings.TrimLeft(b, "0")
+		if len(a) != len(b) {
+			if len(a) < len(b) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a, b)
+	case aNum:
+		return -1
+	case bNum:
+		return 1
+	}
+	return strings.Compare(a, b)
 }
 
 // NewerVersions filters tags to find semver versions newer than current,
