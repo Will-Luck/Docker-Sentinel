@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -461,8 +462,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.log.Warn("failed to clean old snapshots", "name", name, "error", err)
 	}
 
-	// 10. Handle shared network namespaces.
-	u.repairNetworkNamespace(ctx, finaliseNewID, name)
+	// 10. Handle shared network namespaces. Consumers reference the provider
+	// by the ID it had before the update (the original or the step-5 one).
+	u.repairNetworkNamespace(ctx, finaliseNewID, name, id, newID)
 
 	// 11. Clean up old image if enabled.
 	u.cleanupOldImage(ctx, oldImageID, name)
@@ -804,12 +806,19 @@ func truncateID(id string) string {
 
 // repairNetworkNamespace handles shared-namespace containers after an update.
 // It verifies the updated container's own namespace (if it's a consumer) and
-// restarts any dependents that share this container's namespace (if it's a provider).
-func (u *Updater) repairNetworkNamespace(ctx context.Context, id, name string) {
+// repairs the running containers that share this container's namespace (if
+// it's a provider). id is the provider's new ID and oldIDs the IDs it had
+// before the update. The daemon stores network_mode container:<name> as
+// container:<ID>, so consumers normally reference an old ID; a restart
+// cannot rejoin a removed container, so they are recreated on the new one.
+// Consumers that reference the name are restarted. It returns the names of
+// the consumers it repaired.
+func (u *Updater) repairNetworkNamespace(ctx context.Context, id, name string, oldIDs ...string) map[string]bool {
+	repaired := make(map[string]bool)
 	inspect, err := u.docker.InspectContainer(ctx, id)
 	if err != nil {
 		u.log.Warn("namespace check: inspect failed", "name", name, "error", err)
-		return
+		return repaired
 	}
 
 	// Case 1: this container uses another's namespace — verify it joined.
@@ -823,17 +832,17 @@ func (u *Updater) repairNetworkNamespace(ctx context.Context, id, name string) {
 		}
 	}
 
-	// Case 2: other containers may share this container's namespace — restart them.
+	// Case 2: other containers may share this container's namespace.
 	containers, err := u.docker.ListContainers(ctx)
 	if err != nil {
 		u.log.Warn("namespace check: list failed", "error", err)
-		return
+		return repaired
 	}
 
 	for _, c := range containers {
 		cName := containerName(c)
-		if cName == name {
-			continue // skip self
+		if cName == name || strings.HasSuffix(cName, replacedSuffix) {
+			continue // skip self, and containers set aside by a swap
 		}
 		dep, err := u.docker.InspectContainer(ctx, c.ID)
 		if err != nil {
@@ -843,13 +852,60 @@ func (u *Updater) repairNetworkNamespace(ctx context.Context, id, name string) {
 			continue
 		}
 		ref := dep.HostConfig.NetworkMode.ConnectedContainer()
-		if ref == name || ref == id {
+		switch {
+		case ref == name || sameContainerID(ref, id):
 			u.log.Info("restarting network dependent", "dependent", cName, "provider", name)
 			if err := u.docker.RestartContainer(ctx, c.ID); err != nil {
 				u.log.Warn("failed to restart dependent", "dependent", cName, "error", err)
 			}
+			repaired[cName] = true
+		case slices.ContainsFunc(oldIDs, func(old string) bool { return sameContainerID(ref, old) }):
+			u.recreateNamespaceConsumer(ctx, c.ID, cName, dep, id, name)
+			repaired[cName] = true
 		}
 	}
+	return repaired
+}
+
+// recreateNamespaceConsumer recreates a container that shared the network
+// namespace of a provider that has since been replaced, so that it joins
+// the provider's new container. It goes through a swap, so a failure
+// leaves the consumer as it was.
+func (u *Updater) recreateNamespaceConsumer(ctx context.Context, consumerID, consumerName string, consumer container.InspectResponse, providerID, providerName string) {
+	if !u.tryLock(consumerName) {
+		u.log.Warn("network dependent is being updated, not recreating it", "dependent", consumerName, "provider", providerName)
+		return
+	}
+	defer u.unlock(consumerName)
+
+	rc := docker.RecreateConfig(consumer, docker.RecreateOptions{})
+	rc.HostConfig.NetworkMode = container.NetworkMode("container:" + providerID)
+	u.log.Info("recreating network dependent on the updated provider", "dependent", consumerName, "provider", providerName)
+
+	sw := newSwap(u.docker, u.log, consumerName, consumerID, consumer, 10)
+	if err := sw.replace(ctx, rc, sw.oldRunning, nil); err != nil {
+		u.log.Error("failed to recreate network dependent", "dependent", consumerName, "error", err)
+		if undoErr := sw.undo(ctx); undoErr != nil {
+			u.log.Error("failed to restore network dependent", "dependent", consumerName, "error", undoErr)
+		}
+		return
+	}
+	sw.commit(ctx, false)
+}
+
+// sameContainerID reports whether two container IDs name the same
+// container, allowing for one of them to be a short (12+ digit) prefix.
+func sameContainerID(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	if len(a) < 12 || len(b) < 12 {
+		return false
+	}
+	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
 }
 
 // effectiveNotifyMode returns the notification mode for a container,

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -133,6 +134,41 @@ func TestRecoverInterruptedUpdatesFinalisesLabelledContainer(t *testing.T) {
 	if on, _ := u.store.GetMaintenance("db"); on {
 		t.Error("stale maintenance flag not cleared")
 	}
+}
+
+// The daemon stores network_mode container:<name> as container:<ID>, so a
+// consumer of an updated provider references the provider's old ID. A
+// restart cannot rejoin a removed container, so the consumer has to be
+// recreated on the new provider.
+func TestUpdateContainerRecreatesNamespaceConsumerOfOldID(t *testing.T) {
+	mock, u := setupUpdateWithScanVerify(t)
+	mock.containers = []container.Summary{
+		summary("new-nginx", "nginx", container.StateRunning, nil),
+		summary("qbit-id", "qbit", container.StateRunning, nil),
+	}
+	mock.inspectResults["qbit-id"] = container.InspectResponse{
+		ID:              "qbit-id",
+		Name:            "/qbit",
+		State:           &container.State{Running: true},
+		Config:          &container.Config{Image: "qbit:4", Hostname: "provider-host"},
+		HostConfig:      &container.HostConfig{NetworkMode: "container:aaa"},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v", err)
+	}
+	i := slices.Index(mock.createCalls, "qbit")
+	if i < 0 {
+		t.Fatalf("consumer of the provider's old ID was not recreated: createCalls=%v restartCalls=%v", mock.createCalls, mock.restartCalls)
+	}
+	if got := mock.createHostHistory[i].NetworkMode; got != "container:new-nginx" {
+		t.Errorf("consumer recreated with NetworkMode %q, want container:new-nginx", got)
+	}
+	if mock.createHistory[i].Hostname != "" {
+		t.Errorf("consumer recreated with Hostname %q; the daemon rejects it for container: mode", mock.createHistory[i].Hostname)
+	}
+	assertOps(t, mock, []string{"rename qbit-id qbit-sentinel-old", "create qbit", "stop qbit-id", "start new-qbit", "remove qbit-id"})
 }
 
 func TestUpdateContainerRefusesSetAsideContainer(t *testing.T) {
