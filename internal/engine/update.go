@@ -123,6 +123,10 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 			if errors.Is(err, hooks.ErrSkipUpdate) {
 				u.log.Info("pre-update hook requested skip", "name", name)
 				_ = u.store.SetMaintenance(name, false)
+				u.notifier.Notify(ctx, notify.Event{
+					Type: notify.EventUpdateSkipped, ContainerName: name, OldImage: oldImage,
+					Error: err.Error(), Timestamp: u.clock.Now(),
+				})
 				return errSkippedByHook
 			}
 			u.log.Warn("pre-update hook failed, aborting update", "name", name, "error", err)

@@ -72,7 +72,7 @@ func (d *Discord) Send(ctx context.Context, event Event) error {
 	}
 	if event.Error != "" {
 		embed.Fields = append(embed.Fields, discordField{
-			Name: "Error", Value: truncateRunes(event.Error, discordFieldMax), Inline: false,
+			Name: errorLabel(event), Value: truncateRunes(event.Error, discordFieldMax), Inline: false,
 		})
 	}
 

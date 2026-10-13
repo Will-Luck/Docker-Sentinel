@@ -4397,6 +4397,7 @@
     { key: "update_started", label: "Update Started" },
     { key: "update_succeeded", label: "Update Succeeded" },
     { key: "update_failed", label: "Update Failed" },
+    { key: "update_skipped", label: "Update Skipped" },
     { key: "rollback_succeeded", label: "Rollback Succeeded" },
     { key: "rollback_failed", label: "Rollback Failed" },
     { key: "container_state", label: "State Change" }

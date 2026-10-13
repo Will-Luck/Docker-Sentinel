@@ -106,7 +106,7 @@ func formatMessage(e Event) string {
 		fmt.Fprintf(&b, "New image: %s\n", e.NewImage)
 	}
 	if e.Error != "" {
-		fmt.Fprintf(&b, "Error: %s\n", e.Error)
+		fmt.Fprintf(&b, "%s: %s\n", errorLabel(e), e.Error)
 	}
 	return b.String()
 }
@@ -138,7 +138,7 @@ func formatMarkdownWith(e Event, protect func(string) string) string {
 		fmt.Fprintf(&b, "**New image:** `%s`\n", e.NewImage)
 	}
 	if e.Error != "" {
-		fmt.Fprintf(&b, "**Error:** %s\n", protect(e.Error))
+		fmt.Fprintf(&b, "**%s:** %s\n", errorLabel(e), protect(e.Error))
 	}
 	return b.String()
 }
@@ -172,4 +172,13 @@ func priority(t EventType) int {
 	default:
 		return 5
 	}
+}
+
+// errorLabel names the free text of an event: for a skipped update it is the
+// hook's reason, not an error.
+func errorLabel(e Event) string {
+	if e.Type == EventUpdateSkipped {
+		return "Reason"
+	}
+	return "Error"
 }

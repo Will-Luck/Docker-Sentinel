@@ -275,6 +275,10 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			if ur.Outcome == "skipped" {
 				// A pre-update hook asked to skip it: nothing changed.
 				u.log.Info("remote update skipped by a pre-update hook", "host", host.HostName, "name", c.Name)
+				u.notifier.Notify(ctx, notify.Event{
+					Type: notify.EventUpdateSkipped, ContainerName: label, OldImage: c.Image,
+					Error: skipReason(ur.Error), Timestamp: u.clock.Now(),
+				})
 				result.Skipped++
 				continue
 			}
@@ -417,7 +421,7 @@ func (u *Updater) announceRemoteUpdate(ctx context.Context, key, label string, c
 
 // NotifyRemote sends the notification of a remote update that was not
 // started by a scan (the dashboard or the API): its start when ur is nil,
-// else its outcome. A skipped update sends nothing.
+// else its outcome. A skipped update sends update_skipped.
 func (u *Updater) NotifyRemote(ctx context.Context, hostName, name, oldImage string, ur *RemoteUpdateResult) {
 	if u.notifier == nil || u.clock == nil {
 		return
@@ -428,6 +432,11 @@ func (u *Updater) NotifyRemote(ctx context.Context, hostName, name, oldImage str
 		return
 	}
 	if ur.Outcome == "skipped" {
+		// Closes the "update started" sent before the hook ran.
+		u.notifier.Notify(ctx, notify.Event{
+			Type: notify.EventUpdateSkipped, ContainerName: label, OldImage: oldImage,
+			Error: skipReason(ur.Error), Timestamp: u.clock.Now(),
+		})
 		return
 	}
 	r := *ur
@@ -692,4 +701,13 @@ func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []contai
 	if checked > 0 {
 		u.publishEvent(events.EventGHCRCheck, "", fmt.Sprintf("checked %d images", checked))
 	}
+}
+
+// skipReason is the text of an update_skipped notification: what the agent
+// reported, or the standard reason when an older agent sent none.
+func skipReason(reported string) string {
+	if reported != "" {
+		return reported
+	}
+	return "a pre-update hook asked to skip the update (exit 75)"
 }

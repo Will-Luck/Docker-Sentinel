@@ -164,6 +164,8 @@ func templateDataFor(e Event) TemplateData {
 	switch e.Type {
 	case EventUpdateFailed, EventRollbackFailed:
 		severity = "error"
+	case EventUpdateSkipped:
+		severity = "warning"
 	case EventUpdateSucceeded, EventRollbackOK:
 		severity = "success"
 	}

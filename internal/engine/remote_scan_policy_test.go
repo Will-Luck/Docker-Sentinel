@@ -275,16 +275,19 @@ func TestNotifyRemote(t *testing.T) {
 	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", nil)
 	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", &RemoteUpdateResult{Outcome: "success", NewImage: "nginx:2"})
 	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", &RemoteUpdateResult{Outcome: "failed", Error: "pull failed"})
-	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", &RemoteUpdateResult{Outcome: "skipped"})
+	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", &RemoteUpdateResult{Outcome: "skipped", Error: "a pre-update hook asked to skip the update (exit 75)"})
 	got := cn.types()
-	want := []notify.EventType{notify.EventUpdateStarted, notify.EventUpdateSucceeded, notify.EventUpdateFailed}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
-		t.Errorf("notifications = %v, want %v (none for a skip)", got, want)
+	want := []notify.EventType{notify.EventUpdateStarted, notify.EventUpdateSucceeded, notify.EventUpdateFailed, notify.EventUpdateSkipped}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] || got[3] != want[3] {
+		t.Errorf("notifications = %v, want %v (a skip closes the started message)", got, want)
 	}
 	cn.mu.Lock()
 	defer cn.mu.Unlock()
 	if cn.events[0].ContainerName != "web on Agent One" {
 		t.Errorf("named %q, want web on Agent One", cn.events[0].ContainerName)
+	}
+	if cn.events[3].ContainerName != "web on Agent One" || cn.events[3].Error == "" {
+		t.Errorf("skipped event = %+v, want host in the name and the hook's reason", cn.events[3])
 	}
 }
 

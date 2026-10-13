@@ -15,6 +15,7 @@ const (
 	EventUpdateStarted    EventType = "update_started"
 	EventUpdateSucceeded  EventType = "update_succeeded"
 	EventUpdateFailed     EventType = "update_failed"
+	EventUpdateSkipped    EventType = "update_skipped"
 	EventRollbackOK       EventType = "rollback_succeeded"
 	EventRollbackFailed   EventType = "rollback_failed"
 	EventVersionAvailable EventType = "version_available"
@@ -30,6 +31,7 @@ func AllEventTypes() []EventType {
 		EventUpdateStarted,
 		EventUpdateSucceeded,
 		EventUpdateFailed,
+		EventUpdateSkipped,
 		EventRollbackOK,
 		EventRollbackFailed,
 		EventContainerState,

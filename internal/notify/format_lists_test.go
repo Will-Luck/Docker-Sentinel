@@ -178,3 +178,34 @@ func TestDiscordRendersCustomTemplate(t *testing.T) {
 		t.Fatalf("description is %d runes, Discord caps at 4096", len([]rune(d)))
 	}
 }
+
+func TestUpdateSkippedEvent(t *testing.T) {
+	found := false
+	for _, e := range AllEventTypes() {
+		if e == EventUpdateSkipped {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("update_skipped is not in AllEventTypes, so channels cannot toggle it")
+	}
+	if isBatchable(EventUpdateSkipped) {
+		t.Error("update_skipped closes an immediate message and must not be batched")
+	}
+	ev := Event{Type: EventUpdateSkipped, ContainerName: "web on Agent One", Error: "hook exited 75"}
+	if got := formatTitle(ev.Type); got != "Sentinel: Update Skipped" {
+		t.Errorf("title = %q", got)
+	}
+	for name, body := range map[string]string{"plain": formatMessage(ev), "markdown": formatMessageMarkdown(ev)} {
+		if !strings.Contains(body, "Reason") || strings.Contains(body, "Error") {
+			t.Errorf("%s body should label the hook's text as the reason, not an error: %q", name, body)
+		}
+	}
+	// A channel limited to other events does not receive it; one that lists it does.
+	sink := &stubNotifier{name: "s"}
+	_ = newFilteredNotifier(sink, []string{"update_failed"}).Send(context.Background(), ev)
+	_ = newFilteredNotifier(sink, []string{"update_skipped"}).Send(context.Background(), ev)
+	if len(sink.sent) != 1 {
+		t.Errorf("filter delivered %d, want 1", len(sink.sent))
+	}
+}

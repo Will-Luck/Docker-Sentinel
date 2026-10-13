@@ -259,6 +259,14 @@ func TestUpdateContainer_PreUpdateExit75Skips(t *testing.T) {
 	if failed := rec.ofType(notify.EventUpdateFailed); len(failed) != 0 {
 		t.Errorf("update_failed notifications = %d, want none for a requested skip", len(failed))
 	}
+	// "update started" went out before the hook ran, so the skip closes it.
+	skipped := rec.ofType(notify.EventUpdateSkipped)
+	if len(skipped) != 1 {
+		t.Fatalf("update_skipped notifications = %d, want 1", len(skipped))
+	}
+	if skipped[0].ContainerName != "nginx" || skipped[0].Error == "" {
+		t.Errorf("skipped event = %+v, want container nginx with the hook's reason", skipped[0])
+	}
 }
 
 func TestUpdateContainer_PostUpdateFailureOnlyWarns(t *testing.T) {
