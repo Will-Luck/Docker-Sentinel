@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -62,7 +63,7 @@ func rollbackContainer(ctx context.Context, d docker.API, j swapJournal, name st
 	verify := verifyImage(d, inspect.Image)
 
 	if liveID == "" {
-		newID, err := createAndStart(ctx, d, name, rc, verify)
+		newID, err := createAndStart(ctx, d, name, rc, verify, true)
 		if err != nil {
 			undoTag()
 			return "", err
@@ -71,13 +72,24 @@ func rollbackContainer(ctx context.Context, d docker.API, j swapJournal, name st
 		return newID, nil
 	}
 
-	sw := newSwap(d, log, j, swapSpec{kind: swapRollback, name: name, oldID: liveID, old: live, stopTimeout: 30})
+	// The live container's own snapshot lets recovery, or this function,
+	// rebuild it should it be gone (a --rm container deleted on stop).
+	liveSnapshot, _ := json.Marshal(live)
+	sw := newSwap(d, log, j, swapSpec{kind: swapRollback, name: name, oldID: liveID, old: live, stopTimeout: 30, snapshot: liveSnapshot})
 	if err := sw.replace(ctx, rc, true, verify); err != nil {
 		undoTag()
 		if !sw.changed() {
 			return "", fmt.Errorf("rollback %s, running container kept: %w", name, err)
 		}
-		if _, undoErr := sw.undoOrRetry(ctx); undoErr != nil {
+		gone, undoErr := sw.undoOrRetry(ctx)
+		switch {
+		case gone:
+			log.Warn("the running container is gone, rebuilding it", "name", name, "error", undoErr)
+			if _, rbErr := rebuildFromSnapshot(ctx, d, name, liveSnapshot, sw.oldRunning, sw.rec.Token, log); rbErr != nil {
+				return "", fmt.Errorf("rollback %s: %w (and the running container could not be rebuilt: %v)", name, err, rbErr)
+			}
+			sw.forget()
+		case undoErr != nil:
 			return "", fmt.Errorf("rollback %s: %w (and the running container could not be restored: %v)", name, err, undoErr)
 		}
 		return "", fmt.Errorf("rollback %s, running container kept: %w", name, err)
@@ -130,10 +142,90 @@ func verifyImage(d docker.API, want string) func(ctx context.Context, id string)
 	}
 }
 
-// createAndStart creates and starts a rollback container when no container
-// holds the name, and returns its ID. A container that is created but fails
-// to start is kept, so there is something to inspect and start by hand.
-func createAndStart(ctx context.Context, d docker.API, name string, rc docker.Recreate, verify func(context.Context, string) error) (string, error) {
+// nameHeldError says a rebuild did not happen because a container holds
+// the name. token is that container's swap token label, if any.
+type nameHeldError struct{ id, token string }
+
+func (e *nameHeldError) Error() string {
+	return "the name is held by container " + truncateID(e.id)
+}
+
+// rebuild is a prepared rebuild of a container from its snapshot: the
+// image is on the host and the create request built.
+type rebuild struct {
+	name    string
+	rc      docker.Recreate
+	verify  func(context.Context, string) error
+	undoTag func()
+}
+
+// prepareRebuild gets everything that can fail out of the way before a
+// container is rebuilt from its snapshot: the snapshot is read, and its
+// image must be on the host (or pull back to the same image ID). Nothing is
+// changed if it fails. A non-empty token is set as the sentinel.swap label,
+// so a recovery interrupted during the rebuild recognises the container.
+// replacing lists containers about to be removed, which do not count as
+// other users of the image tag.
+func prepareRebuild(ctx context.Context, d docker.API, name string, snapshot []byte, token string, log *logging.Logger, replacing ...string) (*rebuild, error) {
+	var inspect container.InspectResponse
+	if err := json.Unmarshal(snapshot, &inspect); err != nil {
+		return nil, fmt.Errorf("unmarshal snapshot: %w", err)
+	}
+	if inspect.Config == nil {
+		return nil, fmt.Errorf("snapshot of %s has no config", name)
+	}
+	undoTag, err := ensureImage(ctx, d, inspect.Config.Image, inspect.Image, log, replacing...)
+	if err != nil {
+		return nil, fmt.Errorf("image for %s: %w", name, err)
+	}
+	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{})
+	if token != "" {
+		rc.Config.Labels = maps.Clone(rc.Config.Labels)
+		if rc.Config.Labels == nil {
+			rc.Config.Labels = make(map[string]string)
+		}
+		rc.Config.Labels[swapLabel] = token
+	}
+	return &rebuild{name: name, rc: rc, verify: verifyImage(d, inspect.Image), undoTag: undoTag}, nil
+}
+
+// run creates the prepared container when no container holds its name,
+// starting it only when start is set (the original was running), and
+// returns its ID.
+func (r *rebuild) run(ctx context.Context, d docker.API, start bool) (string, error) {
+	holder, err := d.InspectContainer(ctx, r.name)
+	switch {
+	case err == nil:
+		r.undoTag()
+		held := &nameHeldError{id: holder.ID}
+		if holder.Config != nil {
+			held.token = holder.Config.Labels[swapLabel]
+		}
+		return "", held
+	case !docker.IsNotFound(err):
+		return "", fmt.Errorf("check the name %s: %w", r.name, err)
+	}
+	id, err := createAndStart(ctx, d, r.name, r.rc, r.verify, start)
+	if err != nil {
+		r.undoTag()
+	}
+	return id, err
+}
+
+// rebuildFromSnapshot prepares and runs a rebuild in one go.
+func rebuildFromSnapshot(ctx context.Context, d docker.API, name string, snapshot []byte, start bool, token string, log *logging.Logger) (string, error) {
+	r, err := prepareRebuild(ctx, d, name, snapshot, token, log)
+	if err != nil {
+		return "", err
+	}
+	return r.run(ctx, d, start)
+}
+
+// createAndStart creates (and, when start is set, starts) a container when
+// no container holds the name, and returns its ID. A container that is
+// created but fails to start is kept, so there is something to inspect and
+// start by hand.
+func createAndStart(ctx context.Context, d docker.API, name string, rc docker.Recreate, verify func(context.Context, string) error, start bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
 	defer cancel()
 
@@ -144,6 +236,9 @@ func createAndStart(ctx context.Context, d docker.API, name string, rc docker.Re
 	if err := verify(ctx, newID); err != nil {
 		_ = d.RemoveContainer(ctx, newID)
 		return "", err
+	}
+	if !start {
+		return newID, nil
 	}
 	if err := d.StartContainer(ctx, newID); err != nil {
 		return newID, fmt.Errorf("start rollback container: %w", err)
@@ -285,6 +380,9 @@ func (u *Updater) RollbackContainer(ctx context.Context, name string) error {
 		return ErrUpdateInProgress
 	}
 	defer u.unlock(name)
+	if u.store.HasSwap(name) {
+		return pendingSwapError(name)
+	}
 	ctx, stop := u.withShutdown(ctx)
 	defer stop()
 

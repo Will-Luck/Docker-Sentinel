@@ -39,6 +39,11 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		return ErrUpdateInProgress
 	}
 	defer u.unlock(name)
+	// An earlier swap that did not finish holds the only way back to its
+	// old container: change nothing (no hooks, no pull) until it is resolved.
+	if u.store.HasSwap(name) {
+		return pendingSwapError(name)
+	}
 	ctx, stop := u.withShutdown(ctx)
 	defer stop()
 
@@ -262,8 +267,14 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			return fmt.Errorf("replace %s: %w", name, err)
 		}
 		u.log.Error("replacement failed, restoring the old container", "name", name, "error", err)
-		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, err)
-		return fmt.Errorf("%w: replace %s: %w", ErrRolledBack, name, err)
+		restoreErr := u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, err)
+		// Only a new container that would not start says something about the
+		// image; a failed create, stop or journal write does not.
+		var se *swapError
+		if restoreErr == nil && errors.As(err, &se) && se.stage == "start" {
+			return fmt.Errorf("%w: replace %s: %w", ErrRolledBack, name, err)
+		}
+		return fmt.Errorf("replace %s: %w", name, err)
 	}
 	newID := sw.newID
 
@@ -300,7 +311,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		if err != nil {
 			cause = fmt.Errorf("validation failed: %w", err)
 		}
-		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, cause)
+		if restoreErr := u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, cause); restoreErr != nil {
+			return fmt.Errorf("new container %s failed validation: %w", name, restoreErr)
+		}
 		return fmt.Errorf("%w: new container %s failed validation", ErrRolledBack, name)
 	}
 
@@ -379,7 +392,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 				Error:         finaliseErr.Error(),
 				Timestamp:     u.clock.Now(),
 			})
-			return fmt.Errorf("%w: %w", ErrRolledBack, finaliseErr)
+			return finaliseErr
 		}
 
 		// The validated container is still in place, running the new image
@@ -589,8 +602,11 @@ func (u *Updater) waitForHealthy(ctx context.Context, id string) (bool, error) {
 // update swap. When that is impossible (the daemon deletes a --rm container
 // on stop, or the rename back fails) it recreates the container from the
 // snapshot instead. Either way the outcome is recorded as a rollback.
-func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapshotData []byte, start time.Time, cause error) {
-	u.reportRollback(ctx, sw.name, u.restoreOld(ctx, sw, snapshotData), start, cause)
+// It returns the restore's own error.
+func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapshotData []byte, start time.Time, cause error) error {
+	err := u.restoreOld(ctx, sw, snapshotData)
+	u.reportRollback(ctx, sw.name, err, start, cause)
+	return err
 }
 
 // restoreOld brings the old container back after a failed or interrupted
@@ -630,7 +646,7 @@ func (u *Updater) undoUpdate(ctx context.Context, sw *swap, snapshotData []byte)
 	switch {
 	case gone:
 		u.log.Warn("the old container is gone, rebuilding it from the snapshot", "name", sw.name, "error", err)
-		id, err := rollbackContainer(ctx, u.docker, u.store, sw.name, snapshotData, u.log)
+		id, err := rebuildFromSnapshot(ctx, u.docker, sw.name, snapshotData, sw.oldRunning, sw.rec.Token, u.log)
 		if err != nil {
 			return "", err
 		}
@@ -931,7 +947,7 @@ func (u *Updater) repairNetworkNamespace(ctx context.Context, id, name string, o
 
 	for _, c := range containers {
 		cName := containerName(c)
-		if cName == name || strings.HasSuffix(cName, replacedSuffix) {
+		if cName == name || u.setAside(cName) {
 			continue // skip self, and containers set aside by a swap
 		}
 		dep, err := u.docker.InspectContainer(ctx, c.ID)
@@ -1000,7 +1016,7 @@ func (u *Updater) restartDependents(ctx context.Context, name string, skip map[s
 		})
 	}
 	for _, dep := range deps.Build(infos).RestartDependents(name) {
-		if skip[dep] || strings.HasSuffix(dep, replacedSuffix) {
+		if skip[dep] || u.setAside(dep) {
 			continue
 		}
 		// A dependent that is being updated itself is left to that update.

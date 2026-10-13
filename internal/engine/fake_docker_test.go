@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -52,8 +54,69 @@ type fakeDocker struct {
 	stopErrStopped    map[string]error // by container ID; the container stops anyway
 	failRename        map[string]error // by target name
 	failRenameOnce    map[string]error // by target name, only the first time
+	failRemoveOnce    map[string]error // by container ID, only the first time
 	restartUpdateErr  error
+	failPolicyTo      map[container.RestartPolicyMode]error // by the policy set
 	removeVolumeCalls []string
+
+	// Crash injection: once crashAfter container calls have been made, every
+	// later call panics with errCrash (crashPanics, a process crash) or
+	// returns errDaemonGone (the daemon went away). With crashLate the crash
+	// comes just after call crashAfter took effect, so its result is lost.
+	// 0 turns it off.
+	crashMu     sync.Mutex
+	crashAfter  int
+	crashPanics bool
+	crashLate   bool
+	calls       int
+}
+
+var (
+	errCrash      = errors.New("simulated crash")
+	errDaemonGone = errors.New("Cannot connect to the Docker daemon")
+)
+
+// tick counts a container call and applies crash injection before it.
+func (f *fakeDocker) tick() error {
+	f.crashMu.Lock()
+	f.calls++
+	crashed := f.crashAfter > 0 && f.calls > f.crashAfter
+	panics := f.crashPanics
+	f.crashMu.Unlock()
+	if !crashed {
+		return nil
+	}
+	if panics {
+		panic(errCrash)
+	}
+	return errDaemonGone
+}
+
+// late crashes after the call that reached crashAfter took effect.
+func (f *fakeDocker) late() {
+	f.crashMu.Lock()
+	hit := f.crashLate && f.crashAfter > 0 && f.calls == f.crashAfter
+	f.crashMu.Unlock()
+	if hit {
+		panic(errCrash)
+	}
+}
+
+// setCrash arms crash injection after n more container calls (0 disarms).
+// late makes the nth call take effect before the crash.
+func (f *fakeDocker) setCrash(n int, panics, late bool) {
+	f.crashMu.Lock()
+	defer f.crashMu.Unlock()
+	f.calls = 0
+	f.crashAfter = n
+	f.crashPanics = panics || late
+	f.crashLate = late
+}
+
+func (f *fakeDocker) callCount() int {
+	f.crashMu.Lock()
+	defer f.crashMu.Unlock()
+	return f.calls
 }
 
 func newFakeDocker() *fakeDocker {
@@ -67,6 +130,7 @@ func newFakeDocker() *fakeDocker {
 
 		stopErrStopped: make(map[string]error),
 		failRenameOnce: make(map[string]error),
+		failRemoveOnce: make(map[string]error),
 	}
 }
 
@@ -168,6 +232,10 @@ func (f *fakeDocker) summary(c *fakeContainer) container.Summary {
 }
 
 func (f *fakeDocker) ListContainers(_ context.Context) ([]container.Summary, error) {
+	if err := f.tick(); err != nil {
+		return nil, err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	var out []container.Summary
@@ -180,6 +248,10 @@ func (f *fakeDocker) ListContainers(_ context.Context) ([]container.Summary, err
 }
 
 func (f *fakeDocker) ListAllContainers(_ context.Context) ([]container.Summary, error) {
+	if err := f.tick(); err != nil {
+		return nil, err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	var out []container.Summary
@@ -190,6 +262,10 @@ func (f *fakeDocker) ListAllContainers(_ context.Context) ([]container.Summary, 
 }
 
 func (f *fakeDocker) InspectContainer(_ context.Context, idOrName string) (container.InspectResponse, error) {
+	if err := f.tick(); err != nil {
+		return container.InspectResponse{}, err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	c := f.find(idOrName)
@@ -210,6 +286,10 @@ func (f *fakeDocker) InspectContainer(_ context.Context, idOrName string) (conta
 }
 
 func (f *fakeDocker) CreateContainer(_ context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
+	if err := f.tick(); err != nil {
+		return "", err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	f.creates++
@@ -238,6 +318,10 @@ func (f *fakeDocker) CreateContainer(_ context.Context, name string, cfg *contai
 }
 
 func (f *fakeDocker) StartContainer(_ context.Context, id string) error {
+	if err := f.tick(); err != nil {
+		return err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	f.record("start " + id)
@@ -253,6 +337,10 @@ func (f *fakeDocker) StartContainer(_ context.Context, id string) error {
 }
 
 func (f *fakeDocker) StopContainer(_ context.Context, id string, _ int) error {
+	if err := f.tick(); err != nil {
+		return err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	f.record("stop " + id)
@@ -271,6 +359,10 @@ func (f *fakeDocker) StopContainer(_ context.Context, id string, _ int) error {
 }
 
 func (f *fakeDocker) RestartContainer(_ context.Context, id string) error {
+	if err := f.tick(); err != nil {
+		return err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	f.record("restart " + id)
@@ -283,6 +375,10 @@ func (f *fakeDocker) RestartContainer(_ context.Context, id string) error {
 }
 
 func (f *fakeDocker) remove(id string, withVolumes bool) error {
+	if err := f.tick(); err != nil {
+		return err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	op := "remove "
@@ -291,6 +387,10 @@ func (f *fakeDocker) remove(id string, withVolumes bool) error {
 		f.removeVolumeCalls = append(f.removeVolumeCalls, id)
 	}
 	f.record(op + id)
+	if err, ok := f.failRemoveOnce[id]; ok {
+		delete(f.failRemoveOnce, id)
+		return err
+	}
 	c := f.find(id)
 	if c == nil {
 		return notFound(id)
@@ -308,6 +408,10 @@ func (f *fakeDocker) RemoveContainerWithVolumes(_ context.Context, id string) er
 }
 
 func (f *fakeDocker) RenameContainer(_ context.Context, id, newName string) error {
+	if err := f.tick(); err != nil {
+		return err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	f.record("rename " + id + " " + newName)
@@ -332,11 +436,18 @@ func (f *fakeDocker) RenameContainer(_ context.Context, id, newName string) erro
 }
 
 func (f *fakeDocker) UpdateRestartPolicy(_ context.Context, id string, p container.RestartPolicy) error {
+	if err := f.tick(); err != nil {
+		return err
+	}
+	defer f.late()
 	f.fmu.Lock()
 	defer f.fmu.Unlock()
 	f.record("restart-policy " + id + " " + string(p.Name))
 	if f.restartUpdateErr != nil {
 		return f.restartUpdateErr
+	}
+	if err, ok := f.failPolicyTo[p.Name]; ok {
+		return err
 	}
 	c := f.find(id)
 	if c == nil {
@@ -363,7 +474,13 @@ func (f *fakeDocker) ops() []string {
 // period and the manual default policy.
 func newFakeUpdater(t *testing.T, f *fakeDocker) *Updater {
 	t.Helper()
-	s := testStore(t)
+	return newFakeUpdaterOn(t, f, testStore(t))
+}
+
+// newFakeUpdaterOn is newFakeUpdater on an existing store, as a restarted
+// Sentinel would be.
+func newFakeUpdaterOn(t *testing.T, f *fakeDocker, s *store.Store) *Updater {
+	t.Helper()
 	log := logging.New(false)
 	cfg := config.NewTestConfig()
 	cfg.SetDefaultPolicy("manual")

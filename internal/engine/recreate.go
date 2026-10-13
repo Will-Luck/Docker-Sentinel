@@ -2,20 +2,38 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/guardian"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
 )
 
 // replacedSuffix is added to a container's name while Sentinel replaces it.
 const replacedSuffix = "-sentinel-old"
+
+// swapLabel carries the swap token on a replacement container.
+const swapLabel = "sentinel.swap"
+
+// swapRecoveryAttempts is how many failed recovery attempts of a swap pass
+// before the user is notified.
+const swapRecoveryAttempts = 3
+
+// ErrSwapPending is returned for a container whose earlier swap did not
+// finish; nothing is changed until it is resolved.
+var ErrSwapPending = errors.New("an earlier update of this container did not finish")
+
+// ErrNoSwap is returned by DiscardSwap when there is no record to discard.
+var ErrNoSwap = errors.New("no unfinished swap is recorded for this container")
 
 // setAside reports whether name is a container that a journalled swap has
 // renamed out of the way (<name>-sentinel-old). Such a container is never
@@ -65,7 +83,6 @@ type swap struct {
 	name        string
 	oldID       string
 	oldRunning  bool
-	oldLabelled bool // the old container carries the maintenance label
 	stopTimeout int
 	restart     container.RestartPolicy
 
@@ -100,9 +117,6 @@ func newSwap(d docker.API, log *logging.Logger, j swapJournal, spec swapSpec) *s
 		// leaves the service stopped.
 		oldRunning:  spec.old.State == nil || spec.old.State.Running,
 		stopTimeout: spec.stopTimeout,
-	}
-	if spec.old.Config != nil {
-		s.oldLabelled = guardian.HasMaintenanceLabel(spec.old.Config.Labels)
 	}
 	autoRemove := false
 	if spec.old.HostConfig != nil {
@@ -148,10 +162,17 @@ func (s *swap) forget() {
 	}
 }
 
+// newSwapToken returns a random token for the sentinel.swap label.
+func newSwapToken() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // replace swaps in the replacement described by rc. When start is false
 // the replacement is created but not started (for a container that was not
 // running). verify, if set, checks the created container before the old
-// one is stopped. On error, call undo (or undoOrRetry).
+// one is stopped. On error, call undo (or undoOrRetry) when changed().
 func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, verify func(ctx context.Context, id string) error) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
 	defer cancel()
@@ -159,7 +180,7 @@ func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, veri
 	if err := s.resolvePending(ctx); err != nil {
 		return &swapError{stage: "journal", err: err}
 	}
-	s.removeLeftover(ctx)
+	s.rec.Token = newSwapToken()
 	s.rec.Started = time.Now().UTC()
 	if err := s.save(); err != nil {
 		return &swapError{stage: "journal", err: err}
@@ -170,14 +191,22 @@ func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, veri
 	}
 	s.renamed = true
 
-	newID, err := s.d.CreateContainer(ctx, s.name, rc.Config, rc.HostConfig, rc.NetworkingConfig)
+	// The token label lets recovery recognise the replacement even if
+	// Sentinel stops before its ID is journalled.
+	cfg := *rc.Config
+	cfg.Labels = maps.Clone(rc.Config.Labels)
+	if cfg.Labels == nil {
+		cfg.Labels = make(map[string]string)
+	}
+	cfg.Labels[swapLabel] = s.rec.Token
+	newID, err := s.d.CreateContainer(ctx, s.name, &cfg, rc.HostConfig, rc.NetworkingConfig)
 	if err != nil {
 		return &swapError{stage: "create", err: err}
 	}
 	s.newID = newID
 	s.rec.NewID = newID
 	if err := s.save(); err != nil {
-		s.log.Warn("could not journal the replacement", "name", s.name, "error", err)
+		return &swapError{stage: "journal", err: fmt.Errorf("journal the replacement: %w", err)}
 	}
 	if verify != nil {
 		if err := verify(ctx, newID); err != nil {
@@ -212,7 +241,7 @@ func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, veri
 // container left. A committed one only had the old container's removal
 // left to do, which is done now. An uncommitted one is the only way back to
 // that swap's old container, so the new swap refuses rather than overwrite
-// it; startup recovery resolves it.
+// it; the scan retries its recovery.
 func (s *swap) resolvePending(ctx context.Context) error {
 	if s.journal == nil {
 		return nil
@@ -222,7 +251,7 @@ func (s *swap) resolvePending(ctx context.Context) error {
 		return err
 	}
 	if !rec.Committed {
-		return fmt.Errorf("an earlier swap of %s is not resolved yet; Sentinel resolves it at its next start", s.name)
+		return fmt.Errorf("%w (%s)", ErrSwapPending, s.name)
 	}
 	if rec.OldID != s.oldID {
 		if rec.RemoveVolumes {
@@ -237,28 +266,11 @@ func (s *swap) resolvePending(ctx context.Context) error {
 	return s.journal.DeleteSwap(s.name)
 }
 
-// removeLeftover removes a stopped <name>-sentinel-old that an earlier swap
-// left behind after it had finished (its removal failed), so the name is
-// free. It only does so when the container being replaced runs and is not
-// itself an unvalidated update, which shows that swap had completed.
-func (s *swap) removeLeftover(ctx context.Context) {
-	if !s.oldRunning || s.oldLabelled {
-		return
-	}
-	left, err := s.d.InspectContainer(ctx, s.name+replacedSuffix)
-	if err != nil || left.ID == "" || left.ID == s.oldID || (left.State != nil && left.State.Running) {
-		return
-	}
-	s.log.Warn("removing a container an earlier update left behind", "name", s.name+replacedSuffix)
-	if err := s.d.RemoveContainer(ctx, left.ID); err != nil {
-		s.log.Warn("could not remove the leftover container", "name", s.name+replacedSuffix, "error", err)
-	}
-}
-
 // disableRestart sets the old container's restart policy to "no" before it
 // is stopped, so a reboot during the swap cannot start it next to its
-// replacement. undo puts the policy back. Failing to change it only loses
-// that protection.
+// replacement. undo puts the policy back. The change is journalled first and
+// skipped when that fails, so the policy can never be lost; failing to
+// change it only loses the protection.
 func (s *swap) disableRestart(ctx context.Context) {
 	updater, ok := s.d.(docker.RestartPolicyUpdater)
 	if !ok || s.restart.IsNone() {
@@ -268,10 +280,14 @@ func (s *swap) disableRestart(ctx context.Context) {
 	s.rec.RestartRetries = s.restart.MaximumRetryCount
 	s.rec.RestartChanged = true
 	if err := s.save(); err != nil {
-		s.log.Warn("could not journal the restart policy", "name", s.name, "error", err)
+		s.log.Warn("could not journal the restart policy, leaving it as it is", "name", s.name, "error", err)
+		s.rec.RestartChanged = false
+		return
 	}
 	if err := updater.UpdateRestartPolicy(ctx, s.oldID, container.RestartPolicy{Name: container.RestartPolicyDisabled}); err != nil {
 		s.log.Warn("could not disable the old container's restart policy", "name", s.name, "error", err)
+		s.rec.RestartChanged = false
+		_ = s.save()
 		return
 	}
 	s.restartChanged = true
@@ -283,9 +299,12 @@ func (s *swap) changed() bool {
 	return s.renamed || s.newID != ""
 }
 
-// undo reverts whatever replace did. It returns an error when the old
-// container could not be brought back, for example because the daemon
-// already deleted a --rm container on stop. It can be called again.
+// undo reverts whatever replace did and clears the journal record. It
+// returns an error when the old container could not be fully brought back
+// (its name, its restart policy, or running again); the record then stays,
+// so the swap is retried later. A failed rename back or policy restore does
+// not stop it starting the old container (under its set-aside name if need
+// be), so the service runs meanwhile. It can be called again.
 func (s *swap) undo(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
 	defer cancel()
@@ -304,25 +323,37 @@ func (s *swap) undo(ctx context.Context) error {
 		s.newID = ""
 		s.newStarted = false
 	}
+	var renameErr error
 	if s.renamed {
 		if err := s.d.RenameContainer(ctx, s.oldID, s.name); err != nil {
-			return fmt.Errorf("give the old container its name back: %w", err)
+			renameErr = err
+		} else {
+			s.renamed = false
 		}
-		s.renamed = false
 	}
+	var policyErr error
 	if s.restartChanged {
 		if updater, ok := s.d.(docker.RestartPolicyUpdater); ok {
 			if err := updater.UpdateRestartPolicy(ctx, s.oldID, s.restart); err != nil {
-				s.log.Warn("could not restore the old container's restart policy", "name", s.name, "error", err)
+				policyErr = err
+			} else {
+				s.restartChanged = false
 			}
+		} else {
+			s.restartChanged = false
 		}
-		s.restartChanged = false
 	}
 	if s.stopped {
 		if err := s.d.StartContainer(ctx, s.oldID); err != nil {
 			return fmt.Errorf("start the old container again: %w", err)
 		}
 		s.stopped = false
+	}
+	if renameErr != nil {
+		return fmt.Errorf("give the old container its name back (it runs as %s meanwhile): %w", s.name+replacedSuffix, renameErr)
+	}
+	if policyErr != nil {
+		return fmt.Errorf("restore the old container's restart policy: %w", policyErr)
 	}
 	s.forget()
 	return nil
@@ -350,15 +381,16 @@ func (s *swap) undoOrRetry(ctx context.Context) (gone bool, err error) {
 
 // commit removes the old container once the replacement is good. A
 // failure leaves the stopped old container under its replaced name and the
-// journal record in place, so RecoverInterruptedUpdates removes it at the
-// next start (or the next swap of the same container does).
+// committed journal record in place, so the scan's recovery or the next swap
+// of the same container removes it.
 func (s *swap) commit(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
 	defer cancel()
 
 	s.rec.Committed = true
-	if err := s.save(); err != nil {
-		s.log.Warn("could not journal the commit", "name", s.name, "error", err)
+	saveErr := s.save()
+	if saveErr != nil {
+		s.log.Warn("could not journal the commit", "name", s.name, "error", saveErr)
 	}
 	var err error
 	if s.rec.RemoveVolumes {
@@ -373,52 +405,39 @@ func (s *swap) commit(ctx context.Context) {
 		s.forget()
 	default:
 		s.log.Warn("could not remove the replaced container", "name", s.name+replacedSuffix, "error", err)
+		// The record must say committed, or recovery would put the replaced
+		// container back over the validated one.
+		if saveErr != nil {
+			if err := s.save(); err != nil {
+				s.log.Error("could not journal the commit; recovery may restore the replaced container", "name", s.name, "error", err)
+			}
+		}
 	}
 	s.renamed = false
 	s.stopped = false
 	s.restartChanged = false
 }
 
+// pendingSwapError explains, for users, a container whose earlier swap did
+// not finish.
+func pendingSwapError(name string) error {
+	return fmt.Errorf("%w: Sentinel retries it at every scan; if it cannot, check %s and %s%s by hand and then discard the record with DELETE /api/swaps/%s",
+		ErrSwapPending, name, name, replacedSuffix, name)
+}
+
 // RecoverInterruptedUpdates finishes or undoes the container swaps that an
 // update, rollback, finalise or network-dependent recreate left half done
 // because Sentinel stopped part way (a shutdown, a crash, a host reboot).
-// Call it once at startup, before any scan or update can run. It acts only on
-// swaps recorded in the journal, so a container whose own name happens to
-// end in -sentinel-old is never touched. For each record:
-//
-//   - the swap was committed and the replacement exists: the old container
-//     is removed;
-//   - otherwise, while the old container exists: the replacement (by its
-//     journalled ID only) is removed, the old container gets its name and
-//     restart policy back, and is started if it was running;
-//   - the old container is gone (a --rm container): the replacement is kept
-//     and started;
-//   - both are gone: the old container is rebuilt from its snapshot.
+// Call it once at startup, before any scan or update can run; each scan
+// then retries whatever is still pending. It acts only on swaps recorded in
+// the journal, so a container whose own name happens to end in
+// -sentinel-old is never touched. See recoverSwap for what happens to each.
 //
 // It then clears maintenance flags left set in the store and finalises any
 // running container still carrying the maintenance label, so
 // Docker-Guardian sees it again.
 func (u *Updater) RecoverInterruptedUpdates(ctx context.Context) {
-	recs, err := u.store.ListSwaps()
-	if err != nil {
-		u.log.Warn("startup recovery: could not read the swap journal", "error", err)
-	}
-	for _, rec := range recs {
-		u.log.Warn("startup recovery: resolving an interrupted container swap", "name", rec.Name, "kind", rec.Kind)
-		changed, err := u.recoverSwap(ctx, rec)
-		if err != nil {
-			u.log.Error("startup recovery: could not resolve the swap, leaving it for the next start", "name", rec.Name, "error", err)
-			continue
-		}
-		if err := u.store.DeleteSwap(rec.Name); err != nil {
-			u.log.Warn("startup recovery: could not clear the swap journal", "name", rec.Name, "error", err)
-		}
-		if changed {
-			if current, err := u.docker.InspectContainer(ctx, rec.Name); err == nil {
-				u.afterProviderChange(ctx, rec.Name, current.ID, rec.OldID, rec.NewID)
-			}
-		}
-	}
+	u.resolvePendingSwaps(ctx)
 
 	all, err := u.docker.ListAllContainers(ctx)
 	if err != nil {
@@ -427,6 +446,9 @@ func (u *Updater) RecoverInterruptedUpdates(ctx context.Context) {
 	}
 	for _, c := range all {
 		name := containerName(c)
+		if u.setAside(name) || u.store.HasSwap(name) {
+			continue // still part of a swap that is not resolved
+		}
 		if on, err := u.store.GetMaintenance(name); err == nil && on {
 			if err := u.store.SetMaintenance(name, false); err != nil {
 				u.log.Warn("startup recovery: could not clear the maintenance flag", "name", name, "error", err)
@@ -444,30 +466,107 @@ func (u *Updater) RecoverInterruptedUpdates(ctx context.Context) {
 	}
 }
 
-// recoverSwap resolves one journalled swap; see RecoverInterruptedUpdates.
-// changed reports that the container running under the name was replaced
-// or (re)started, so the containers depending on it need repairing.
+// resolvePendingSwaps tries to resolve every journalled swap whose
+// container no update holds right now. It runs at startup and at the start
+// of each scan, so a cause that clears up (the daemon was busy, a name was
+// briefly taken) needs no restart.
+func (u *Updater) resolvePendingSwaps(ctx context.Context) {
+	recs, err := u.store.ListSwaps()
+	if err != nil {
+		u.log.Warn("could not read the swap journal", "error", err)
+		return
+	}
+	for _, rec := range recs {
+		if !u.tryLock(rec.Name) {
+			continue // a swap of it is in progress
+		}
+		u.resolvePendingSwap(ctx, rec)
+		u.unlock(rec.Name)
+	}
+}
+
+// resolvePendingSwap recovers one journalled swap. After
+// swapRecoveryAttempts failures it notifies once, saying what to do.
+func (u *Updater) resolvePendingSwap(ctx context.Context, rec store.SwapRecord) {
+	u.log.Warn("resolving an interrupted container swap", "name", rec.Name, "kind", rec.Kind, "attempt", rec.Attempts+1)
+	changed, err := u.recoverSwap(ctx, rec)
+	if err != nil {
+		rec.Attempts++
+		u.log.Error("could not resolve the swap, retrying at the next scan", "name", rec.Name, "attempts", rec.Attempts, "error", err)
+		if rec.Attempts >= swapRecoveryAttempts && !rec.Notified {
+			rec.Notified = true
+			u.notifier.Notify(context.WithoutCancel(ctx), notify.Event{
+				Type:          notify.EventRollbackFailed,
+				ContainerName: rec.Name,
+				Error: fmt.Sprintf("Sentinel could not finish an interrupted update of %s after %d attempts (%v). "+
+					"Check %s and %s%s by hand, keep one working copy named %s, then discard the record with DELETE /api/swaps/%s.",
+					rec.Name, rec.Attempts, err, rec.Name, rec.Name, replacedSuffix, rec.Name, rec.Name),
+				Timestamp: u.clock.Now(),
+			})
+		}
+		if err := u.store.SaveSwap(rec); err != nil {
+			u.log.Warn("could not update the swap journal", "name", rec.Name, "error", err)
+		}
+		return
+	}
+	if err := u.store.DeleteSwap(rec.Name); err != nil {
+		u.log.Warn("could not clear the swap journal", "name", rec.Name, "error", err)
+	}
+	if err := u.store.SetMaintenance(rec.Name, false); err != nil {
+		u.log.Warn("could not clear the maintenance flag", "name", rec.Name, "error", err)
+	}
+	if changed {
+		if current, err := u.docker.InspectContainer(ctx, rec.Name); err == nil {
+			u.afterProviderChange(ctx, rec.Name, current.ID, rec.OldID, rec.NewID)
+		}
+	}
+}
+
+// DiscardSwap removes the journal record of a swap that cannot be resolved,
+// once the user has fixed the containers by hand. The record is logged
+// first. It refuses while an update of the container is running.
+func (u *Updater) DiscardSwap(name string) error {
+	if !u.tryLock(name) {
+		return ErrUpdateInProgress
+	}
+	defer u.unlock(name)
+	rec, found, readErr := u.store.GetSwap(name)
+	if !found {
+		return ErrNoSwap
+	}
+	rec.Snapshot = nil // not useful in the log
+	u.log.Warn("discarding a container swap record on request", "name", name, "record", fmt.Sprintf("%+v", rec), "read_error", readErr)
+	return u.store.DeleteSwap(name)
+}
+
+// recoverSwap resolves one journalled swap. changed reports that the
+// container running under the name was replaced or (re)started, so the
+// containers depending on it need repairing.
+//
+//   - Committed and the replacement exists: the old container is removed.
+//   - Otherwise, while the old container exists: the replacement (known by
+//     its journalled ID, or by the swap token label when Sentinel stopped
+//     before the ID was journalled) is removed, and the old container gets
+//     its name and restart policy back and is started if it was running.
+//   - The old container is gone (a --rm container): an update that was not
+//     committed is rebuilt from its snapshot; for other swaps (or without a
+//     snapshot) the replacement is kept and started.
+//   - Both are gone: the old container is rebuilt from its snapshot, unless
+//     some other container has taken the name meanwhile.
 func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (changed bool, err error) {
 	old, err := u.docker.InspectContainer(ctx, rec.OldID)
 	oldGone := docker.IsNotFound(err)
 	if err != nil && !oldGone {
 		return false, fmt.Errorf("inspect the old container: %w", err)
 	}
-	var replacement container.InspectResponse
-	newGone := true
-	if rec.NewID != "" {
-		replacement, err = u.docker.InspectContainer(ctx, rec.NewID)
-		switch {
-		case err == nil:
-			newGone = false
-		case !docker.IsNotFound(err):
-			return false, fmt.Errorf("inspect the replacement: %w", err)
-		}
+	replacement, newFound, err := u.findReplacement(ctx, rec)
+	if err != nil {
+		return false, err
 	}
 
 	switch {
-	case !oldGone && rec.Committed && !newGone:
-		u.log.Warn("startup recovery: the swap had finished, removing the replaced container", "name", rec.Name)
+	case !oldGone && rec.Committed && newFound:
+		u.log.Warn("the swap had finished, removing the replaced container", "name", rec.Name)
 		if rec.RemoveVolumes {
 			err = u.docker.RemoveContainerWithVolumes(ctx, rec.OldID)
 		} else {
@@ -479,55 +578,163 @@ func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (change
 		return true, nil
 
 	case !oldGone:
-		u.log.Warn("startup recovery: the swap had not finished, restoring the old container", "name", rec.Name)
-		if !newGone {
-			if replacement.State != nil && replacement.State.Running {
-				if err := u.docker.StopContainer(ctx, rec.NewID, 10); err != nil {
-					u.log.Warn("startup recovery: stopping the replacement failed", "name", rec.Name, "error", err)
-				}
-			}
-			if err := u.docker.RemoveContainer(ctx, rec.NewID); err != nil && !docker.IsNotFound(err) {
-				return false, fmt.Errorf("remove the unfinished replacement: %w", err)
+		u.log.Warn("the swap had not finished, restoring the old container", "name", rec.Name)
+		if newFound {
+			if err := u.removeReplacement(ctx, replacement); err != nil {
+				return false, err
 			}
 		}
-		if containerNameOf(old) != rec.Name {
-			if err := u.docker.RenameContainer(ctx, rec.OldID, rec.Name); err != nil {
-				return false, fmt.Errorf("give the old container its name back: %w", err)
-			}
-		}
-		if rec.RestartChanged {
-			if updater, ok := u.docker.(docker.RestartPolicyUpdater); ok {
-				policy := container.RestartPolicy{Name: container.RestartPolicyMode(rec.RestartPolicy), MaximumRetryCount: rec.RestartRetries}
-				if err := updater.UpdateRestartPolicy(ctx, rec.OldID, policy); err != nil {
-					u.log.Warn("startup recovery: could not restore the restart policy", "name", rec.Name, "error", err)
-				}
-			}
-		}
-		if rec.OldRunning && (old.State == nil || !old.State.Running) {
-			if err := u.docker.StartContainer(ctx, rec.OldID); err != nil {
-				return false, fmt.Errorf("start the restored container: %w", err)
-			}
-			return true, nil
-		}
-		return false, nil
+		return u.restoreOldContainer(ctx, rec, old)
 
-	case !newGone:
-		u.log.Warn("startup recovery: the old container is gone, keeping its replacement", "name", rec.Name)
+	case newFound && rec.Kind == swapUpdate && !rec.Committed && rec.Snapshot != nil:
+		// The update was never validated, and its old container (a --rm
+		// one) is gone: put the old version back from its snapshot.
+		u.log.Warn("the old container is gone and the update was not validated, rebuilding it", "name", rec.Name)
+		return u.replaceWithRebuild(ctx, rec, replacement)
+
+	case newFound:
+		u.log.Warn("the old container is gone, keeping its replacement", "name", rec.Name)
 		if rec.OldRunning && (replacement.State == nil || !replacement.State.Running) {
-			if err := u.docker.StartContainer(ctx, rec.NewID); err != nil {
-				return false, fmt.Errorf("start the replacement: %w", err)
+			if err := u.docker.StartContainer(ctx, replacement.ID); err != nil {
+				if rec.Snapshot == nil {
+					return false, fmt.Errorf("start the replacement: %w", err)
+				}
+				// It will not start: put the old container back instead.
+				u.log.Warn("the replacement does not start, rebuilding the old container", "name", rec.Name, "error", err)
+				return u.replaceWithRebuild(ctx, rec, replacement)
 			}
 		}
 		return true, nil
 
 	default:
-		if rec.Snapshot == nil {
-			return false, errors.New("both containers are gone and no snapshot was journalled")
+		return u.rebuildFromJournal(ctx, rec)
+	}
+}
+
+// findReplacement looks up the swap's replacement: by its journalled ID, or,
+// when Sentinel stopped before the ID was journalled, as the container
+// holding the name that carries the swap's token label. Any other container
+// holding the name is not the replacement and is never touched.
+func (u *Updater) findReplacement(ctx context.Context, rec store.SwapRecord) (container.InspectResponse, bool, error) {
+	id := rec.NewID
+	if id == "" {
+		if rec.Token == "" {
+			return container.InspectResponse{}, false, nil
 		}
-		u.log.Warn("startup recovery: both containers are gone, rebuilding from the snapshot", "name", rec.Name)
-		_, err := rollbackContainer(ctx, u.docker, nil, rec.Name, rec.Snapshot, u.log)
+		id = rec.Name
+	}
+	c, err := u.docker.InspectContainer(ctx, id)
+	switch {
+	case docker.IsNotFound(err):
+		return container.InspectResponse{}, false, nil
+	case err != nil:
+		return container.InspectResponse{}, false, fmt.Errorf("inspect the replacement: %w", err)
+	}
+	if rec.NewID == "" && (c.ID == rec.OldID || c.Config == nil || c.Config.Labels[swapLabel] != rec.Token) {
+		return container.InspectResponse{}, false, nil
+	}
+	return c, true, nil
+}
+
+// removeReplacement stops and removes a swap's replacement.
+func (u *Updater) removeReplacement(ctx context.Context, c container.InspectResponse) error {
+	if c.State != nil && c.State.Running {
+		if err := u.docker.StopContainer(ctx, c.ID, 10); err != nil {
+			u.log.Warn("stopping the unfinished replacement failed", "name", containerNameOf(c), "error", err)
+		}
+	}
+	if err := u.docker.RemoveContainer(ctx, c.ID); err != nil && !docker.IsNotFound(err) {
+		return fmt.Errorf("remove the unfinished replacement: %w", err)
+	}
+	return nil
+}
+
+// restoreOldContainer gives a swap's old container its name and restart
+// policy back and starts it if it was running. If the name cannot be given
+// back, the old container is still started under its set-aside name and
+// the error returned, so the service runs while the swap stays pending.
+func (u *Updater) restoreOldContainer(ctx context.Context, rec store.SwapRecord, old container.InspectResponse) (bool, error) {
+	var renameErr error
+	if containerNameOf(old) != rec.Name {
+		if holder, err := u.docker.InspectContainer(ctx, rec.Name); err == nil && holder.ID != rec.OldID {
+			renameErr = fmt.Errorf("%s is held by another container (%s)", rec.Name, truncateID(holder.ID))
+		} else if err := u.docker.RenameContainer(ctx, rec.OldID, rec.Name); err != nil {
+			renameErr = err
+		}
+	}
+	var policyErr error
+	if rec.RestartChanged {
+		if updater, ok := u.docker.(docker.RestartPolicyUpdater); ok {
+			policy := container.RestartPolicy{Name: container.RestartPolicyMode(rec.RestartPolicy), MaximumRetryCount: rec.RestartRetries}
+			policyErr = updater.UpdateRestartPolicy(ctx, rec.OldID, policy)
+		}
+	}
+	changed := false
+	if rec.OldRunning && (old.State == nil || !old.State.Running) {
+		if err := u.docker.StartContainer(ctx, rec.OldID); err != nil {
+			return false, fmt.Errorf("start the restored container: %w", err)
+		}
+		changed = true
+	}
+	if renameErr != nil {
+		return changed, fmt.Errorf("give the old container its name back: %w", renameErr)
+	}
+	if policyErr != nil {
+		return changed, fmt.Errorf("restore the restart policy: %w", policyErr)
+	}
+	return changed, nil
+}
+
+// replaceWithRebuild removes a swap's replacement and rebuilds the old
+// container from the journalled snapshot in its place. The rebuild is
+// prepared first, so the replacement is only removed once the old image is
+// known to be on the host.
+func (u *Updater) replaceWithRebuild(ctx context.Context, rec store.SwapRecord, replacement container.InspectResponse) (bool, error) {
+	r, err := prepareRebuild(ctx, u.docker, rec.Name, rec.Snapshot, rec.Token, u.log, replacement.ID)
+	if err != nil {
+		return false, fmt.Errorf("rebuild the old container: %w", err)
+	}
+	if err := u.removeReplacement(ctx, replacement); err != nil {
+		r.undoTag()
+		return false, err
+	}
+	if _, err := r.run(ctx, u.docker, rec.OldRunning); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// rebuildFromJournal rebuilds a swap's old container from the journalled
+// snapshot, started only if it was running. A container holding the name
+// with this swap's token is an earlier, interrupted rebuild: it is kept and
+// started. When some other container has taken the name meanwhile, nothing
+// is rebuilt and the record is dropped.
+func (u *Updater) rebuildFromJournal(ctx context.Context, rec store.SwapRecord) (bool, error) {
+	if rec.Snapshot == nil {
+		return false, errors.New("the old container is gone and no snapshot was journalled")
+	}
+	u.log.Warn("rebuilding the old container from its snapshot", "name", rec.Name)
+	_, err := rebuildFromSnapshot(ctx, u.docker, rec.Name, rec.Snapshot, rec.OldRunning, rec.Token, u.log)
+	var held *nameHeldError
+	if !errors.As(err, &held) {
 		return err == nil, err
 	}
+	if rec.Token == "" || held.token != rec.Token {
+		u.log.Warn("another container now holds the name, dropping the swap record", "name", rec.Name, "holder", truncateID(held.id))
+		return false, nil
+	}
+	if rec.OldRunning {
+		rebuilt, err := u.docker.InspectContainer(ctx, held.id)
+		if err != nil {
+			return false, fmt.Errorf("inspect the rebuilt container: %w", err)
+		}
+		if rebuilt.State == nil || !rebuilt.State.Running {
+			if err := u.docker.StartContainer(ctx, held.id); err != nil {
+				return false, fmt.Errorf("start the rebuilt container: %w", err)
+			}
+		}
+	}
+	return true, nil
 }
 
 // containerNameOf returns an inspected container's name without the

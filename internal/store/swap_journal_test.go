@@ -3,6 +3,8 @@ package store
 import (
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 func TestSwapJournalRoundTrip(t *testing.T) {
@@ -42,19 +44,50 @@ func TestSwapJournalRoundTrip(t *testing.T) {
 func TestFailedUpdateMarker(t *testing.T) {
 	s := testStore(t)
 
-	if key, err := s.FailedUpdate("web"); err != nil || key != "" {
-		t.Fatalf("no marker = %q, %v", key, err)
+	if _, found, err := s.GetFailedUpdate("web"); err != nil || found {
+		t.Fatalf("no marker: found = %v, err = %v", found, err)
 	}
-	if err := s.SetFailedUpdate("web", "sha256:abc"); err != nil {
+	want := FailedUpdate{Version: "1.2", Digest: "sha256:abc"}
+	if err := s.SetFailedUpdate("web", want); err != nil {
 		t.Fatal(err)
 	}
-	if key, _ := s.FailedUpdate("web"); key != "sha256:abc" {
-		t.Errorf("marker = %q", key)
+	if got, found, _ := s.GetFailedUpdate("web"); !found || got != want {
+		t.Errorf("marker = %+v (found %v), want %+v", got, found, want)
+	}
+	if names, _ := s.ListFailedUpdates(); len(names) != 1 || names[0] != "web" {
+		t.Errorf("ListFailedUpdates = %v", names)
 	}
 	if err := s.ClearFailedUpdate("web"); err != nil {
 		t.Fatal(err)
 	}
-	if key, _ := s.FailedUpdate("web"); key != "" {
-		t.Errorf("marker after clear = %q", key)
+	if _, found, _ := s.GetFailedUpdate("web"); found {
+		t.Error("marker still there after clear")
+	}
+}
+
+// An unreadable record is skipped by ListSwaps but still reported by
+// GetSwap, and DeleteSwap discards it.
+func TestUnreadableSwapRecord(t *testing.T) {
+	s := testStore(t)
+	if err := s.SaveSwap(SwapRecord{Name: "ok", OldID: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSwapJournal).Put([]byte("bad"), []byte("{not json"))
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if recs, err := s.ListSwaps(); err != nil || len(recs) != 1 || recs[0].Name != "ok" {
+		t.Errorf("ListSwaps = %+v, %v", recs, err)
+	}
+	if _, found, err := s.GetSwap("bad"); !found || err == nil {
+		t.Errorf("GetSwap(bad) found = %v err = %v, want found with an error", found, err)
+	}
+	if !s.HasSwap("bad") {
+		t.Error("HasSwap(bad) = false")
+	}
+	if err := s.DeleteSwap("bad"); err != nil || s.HasSwap("bad") {
+		t.Errorf("DeleteSwap(bad) = %v, still there = %v", err, s.HasSwap("bad"))
 	}
 }

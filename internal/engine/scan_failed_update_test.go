@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
 )
@@ -54,6 +55,74 @@ func TestScanSkipsContainerSetAsideBySwap(t *testing.T) {
 
 	if result.AutoCount != 1 {
 		t.Errorf("AutoCount = %d, want only docker-sentinel-old considered", result.AutoCount)
+	}
+}
+
+// The rolled-back marker only stops auto updates: a manual container still
+// gets the update queued for the user to decide.
+func TestRolledBackUpdateStillQueuedForManualContainer(t *testing.T) {
+	mock, u := setupBrokenLatestScan(t)
+	mock.containers[0].Labels = map[string]string{"sentinel.policy": "manual"}
+	if err := u.store.SetFailedUpdate("nginx", store.FailedUpdate{Digest: "sha256:broken"}); err != nil {
+		t.Fatal(err)
+	}
+
+	result := u.Scan(context.Background(), ScanScheduled)
+
+	if result.Queued != 1 {
+		t.Errorf("Queued = %d, want the update queued for the manual container", result.Queued)
+	}
+}
+
+// A container that is removed takes its rolled-back marker with it.
+func TestRolledBackMarkerClearedWhenContainerRemoved(t *testing.T) {
+	_, u := setupBrokenLatestScan(t)
+	if err := u.store.SetFailedUpdate("gone", store.FailedUpdate{Digest: "sha256:x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := u.store.SetFailedUpdate("nginx", store.FailedUpdate{Digest: "sha256:y"}); err != nil {
+		t.Fatal(err)
+	}
+
+	u.pruneFailedUpdates(context.Background())
+
+	if _, found, _ := u.store.GetFailedUpdate("gone"); found {
+		t.Error("marker of a removed container kept")
+	}
+	if _, found, _ := u.store.GetFailedUpdate("nginx"); !found {
+		t.Error("marker of an existing container dropped")
+	}
+}
+
+// The marker matches on the image digest: a fixed build pushed again under
+// the same version (or tag) is tried.
+func TestRolledBackMarkerMatchesOnDigest(t *testing.T) {
+	mock, u := setupBrokenLatestScan(t)
+	ref := "localhost:1/app:1.0"
+	mock.distDigests["localhost:1/app:1.2"] = "sha256:bad"
+	if err := u.store.SetFailedUpdate("app", store.FailedUpdate{Version: "1.2", Digest: "sha256:bad"}); err != nil {
+		t.Fatal(err)
+	}
+	semver := registry.CheckResult{NewerVersions: []string{"1.2"}}
+	if !u.rolledBackBefore(context.Background(), "app", ref, semver) {
+		t.Error("the same 1.2 build is not recognised")
+	}
+	mock.distDigests["localhost:1/app:1.2"] = "sha256:fixed"
+	if u.rolledBackBefore(context.Background(), "app", ref, semver) {
+		t.Error("a fixed 1.2 build pushed again is still hidden")
+	}
+	if u.rolledBackBefore(context.Background(), "app", ref, registry.CheckResult{NewerVersions: []string{"1.3"}}) {
+		t.Error("a newer version is hidden")
+	}
+
+	if err := u.store.SetFailedUpdate("web", store.FailedUpdate{Digest: "sha256:broken"}); err != nil {
+		t.Fatal(err)
+	}
+	if !u.rolledBackBefore(context.Background(), "web", "localhost:1/web:latest", registry.CheckResult{RemoteDigest: "sha256:broken"}) {
+		t.Error("the same latest digest is not recognised")
+	}
+	if u.rolledBackBefore(context.Background(), "web", "localhost:1/web:latest", registry.CheckResult{RemoteDigest: "sha256:fixed"}) {
+		t.Error("a new latest digest is hidden")
 	}
 }
 

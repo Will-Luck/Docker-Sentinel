@@ -305,14 +305,60 @@ func ignoreKey(check registry.CheckResult) string {
 	return check.RemoteDigest
 }
 
-// failedUpdateKey identifies the update a check offers, as recorded when it
-// is rolled back: the target version for a version bump, otherwise the
-// ignoreKey of a mutable tag (resolved version or remote digest).
-func failedUpdateKey(check registry.CheckResult) string {
+// failedUpdate describes the update a check offers, to record when it is
+// rolled back: the target version and its registry digest for a version
+// bump (imageRef is the container's image), otherwise the resolved version
+// and remote digest of a mutable tag.
+func (u *Updater) failedUpdate(ctx context.Context, imageRef string, check registry.CheckResult) store.FailedUpdate {
 	if len(check.NewerVersions) > 0 {
-		return check.NewerVersions[0]
+		digest, _ := u.docker.DistributionDigest(ctx, replaceTag(imageRef, check.NewerVersions[0]))
+		return store.FailedUpdate{Version: check.NewerVersions[0], Digest: digest}
 	}
-	return ignoreKey(check)
+	return store.FailedUpdate{Version: check.ResolvedTargetVersion, Digest: check.RemoteDigest}
+}
+
+// rolledBackBefore reports whether the update a check offers is the one
+// recorded as rolled back. It matches on the image digest, so a fixed build
+// pushed again under the same version is tried. For a version bump whose
+// digest cannot be looked up, the version decides.
+func (u *Updater) rolledBackBefore(ctx context.Context, name, imageRef string, check registry.CheckResult) bool {
+	failed, found, _ := u.store.GetFailedUpdate(name)
+	if !found {
+		return false
+	}
+	if len(check.NewerVersions) == 0 {
+		return failed.Digest != "" && failed.Digest == check.RemoteDigest
+	}
+	if failed.Version != check.NewerVersions[0] {
+		return false
+	}
+	if failed.Digest == "" {
+		return true
+	}
+	digest, err := u.docker.DistributionDigest(ctx, replaceTag(imageRef, check.NewerVersions[0]))
+	return err != nil || digest == "" || digest == failed.Digest
+}
+
+// pruneFailedUpdates forgets the rolled-back update of a container that no
+// longer exists, so a new container of the same name starts afresh.
+func (u *Updater) pruneFailedUpdates(ctx context.Context) {
+	names, err := u.store.ListFailedUpdates()
+	if err != nil || len(names) == 0 {
+		return
+	}
+	all, err := u.docker.ListAllContainers(ctx)
+	if err != nil {
+		return
+	}
+	present := make(map[string]bool, len(all))
+	for _, c := range all {
+		present[containerName(c)] = true
+	}
+	for _, name := range names {
+		if !present[name] {
+			_ = u.store.ClearFailedUpdate(name)
+		}
+	}
 }
 
 // filterIgnored drops ignored versions from check.NewerVersions and reports
@@ -354,6 +400,12 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	if c := u.scanConcurrency(); c > 1 {
 		u.log.Info("scan concurrency enabled (experimental)", "concurrency", c)
 	}
+
+	// Retry the swaps an earlier update could not finish, so a passing
+	// cause clears without a restart, and forget rolled-back updates of
+	// containers that are gone.
+	u.resolvePendingSwaps(ctx)
+	u.pruneFailedUpdates(ctx)
 
 	containers, err := u.docker.ListContainers(ctx)
 	if err != nil {
@@ -490,8 +542,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 
 		name := containerName(c)
 		u.publishEvent(events.EventScanProgress, name, fmt.Sprintf("checked=%d total=%d", i+1, len(containers)))
-		if u.setAside(name) {
-			u.log.Debug("skipping a container set aside by a swap in progress", "name", name)
+		if u.setAside(name) || u.store.HasSwap(name) {
+			u.log.Debug("skipping a container with a swap in progress or unresolved", "name", name)
 			continue
 		}
 		labels := c.Labels
@@ -631,10 +683,11 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			continue
 		}
 
-		// An update that was tried and rolled back is not tried (or
-		// announced) again until a new version or digest appears.
-		if failed, _ := u.store.FailedUpdate(name); failed != "" && failed == failedUpdateKey(check) {
-			u.log.Debug("update was rolled back before, waiting for a newer one", "name", name, "update", failed)
+		// Under auto policy, an update that was tried and rolled back is not
+		// tried (or announced) again until a new version or digest appears.
+		// Manual and pinned containers still see it.
+		if policy == docker.PolicyAuto && u.rolledBackBefore(ctx, name, imageRef, check) {
+			u.log.Debug("update was rolled back before, waiting for a newer one", "name", name)
 			continue
 		}
 
@@ -809,8 +862,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				result.Failed++
 				result.Errors = append(result.Errors, err)
 				if errors.Is(err, ErrRolledBack) {
-					if key := failedUpdateKey(check); key != "" {
-						if err := u.store.SetFailedUpdate(name, key); err != nil {
+					if f := u.failedUpdate(ctx, imageRef, check); f.Digest != "" || f.Version != "" {
+						if err := u.store.SetFailedUpdate(name, f); err != nil {
 							u.log.Warn("failed to record the rolled-back update", "name", name, "error", err)
 						}
 					}

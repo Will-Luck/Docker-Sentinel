@@ -135,32 +135,55 @@ func TestUpdateContainerStoppedOldContainer(t *testing.T) {
 	}
 }
 
-// A stopped <name>-sentinel-old that an earlier swap failed to remove is
-// cleared before the next swap needs the name.
-func TestUpdateContainerRemovesFinishedLeftover(t *testing.T) {
+// A <name>-sentinel-old that no journalled swap set aside is a user's
+// container: it is never removed, and the update fails cleanly at the
+// rename.
+func TestUpdateContainerLeavesUnjournalledLeftoverAlone(t *testing.T) {
 	f, u, _ := setupFakeUpdate(t, true, nil)
-	f.add("stale", "app-sentinel-old", "app:latest", false, nil, nil)
+	f.add("users", "app-sentinel-old", "app:latest", false, nil, nil)
 
-	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err != nil {
-		t.Fatalf("UpdateContainer: %v (containers %v)", err, f.names())
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err == nil {
+		t.Fatal("expected the rename to fail")
 	}
-	assertFakeOps(t, f, "remove stale", "rename old app-sentinel-old")
+	if f.find("users") == nil {
+		t.Errorf("the user's container was removed: %v", f.names())
+	}
+	if c := f.byName("app"); c == nil || c.id != "old" || !c.running {
+		t.Errorf("containers = %v, want app untouched", f.names())
+	}
 }
 
-// An earlier swap whose commit could not remove the old container left its
-// record; the next swap of the same container finishes it first instead of
-// overwriting the record.
-func TestSwapFinishesCommittedLeftoverFirst(t *testing.T) {
+// An earlier swap whose commit could not remove the old container left a
+// committed record. The next scan finishes it, and the update then runs.
+func TestScanFinishesCommittedLeftover(t *testing.T) {
 	f, u, _ := setupFakeUpdate(t, true, nil)
 	f.add("prev", "app-sentinel-old", "app:latest", false, nil, nil)
 	if err := u.store.SaveSwap(store.SwapRecord{Name: "app", OldID: "prev", NewID: "old", Committed: true}); err != nil {
 		t.Fatal(err)
 	}
 
+	u.resolvePendingSwaps(context.Background())
+
+	if f.find("prev") != nil || len(journal(t, u)) != 0 {
+		t.Fatalf("containers = %v journal = %+v, want the leftover removed and the record gone", f.names(), journal(t, u))
+	}
 	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err != nil {
 		t.Fatalf("UpdateContainer: %v (containers %v)", err, f.names())
 	}
-	assertFakeOps(t, f, "remove prev", "rename old app-sentinel-old")
+}
+
+// Within one update, a commit whose removal failed is finished by the
+// finalise swap of the same container.
+func TestFinaliseFinishesAFailedCommit(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, true, nil)
+	f.failRemoveOnce["old"] = errors.New("device busy")
+
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v (containers %v)", err, f.names())
+	}
+	if f.find("old") != nil || f.runningWithName("app") != 1 || len(journal(t, u)) != 0 {
+		t.Errorf("containers = %v journal = %+v, want one running app and an empty journal", f.names(), journal(t, u))
+	}
 }
 
 // An unresolved, uncommitted swap record is the only way back to the old
@@ -238,13 +261,13 @@ func TestRecoverFinishesCommittedSwap(t *testing.T) {
 	}
 }
 
-// A --rm old container is deleted by the daemon when it stops. If Sentinel
-// stopped before starting the replacement, only a created, labelled
-// replacement is left: it is started, then finalised.
+// A --rm old container is deleted by the daemon when it stops. In a
+// finalise swap the replacement runs the validated image: it is kept,
+// started and finalised.
 func TestRecoverKeepsReplacementWhenOldIsGone(t *testing.T) {
 	f, u, _ := setupFakeUpdate(t, false, nil)
 	delete(f.containers, "old")
-	interrupted(t, f, u, store.SwapRecord{Name: "app", Kind: swapUpdate, OldID: "old", NewID: "new", OldRunning: true, AutoRemove: true},
+	interrupted(t, f, u, store.SwapRecord{Name: "app", Kind: swapFinalise, OldID: "old", NewID: "new", OldRunning: true, AutoRemove: true},
 		false, map[string]string{"sentinel.maintenance": "true"})
 
 	u.RecoverInterruptedUpdates(context.Background())
@@ -252,6 +275,65 @@ func TestRecoverKeepsReplacementWhenOldIsGone(t *testing.T) {
 	c := f.byName("app")
 	if c == nil || !c.running || c.cfg.Labels["sentinel.maintenance"] == "true" {
 		t.Fatalf("containers = %v, want app running without the maintenance label", f.names())
+	}
+}
+
+// In an update swap that was never committed, the replacement was never
+// validated: with the --rm old container gone, the old version is rebuilt
+// from its snapshot rather than keeping the replacement.
+func TestRecoverRebuildsUnvalidatedUpdateWhenOldIsGone(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, false, nil)
+	f.imageIDs["sha256:old"] = "sha256:old"
+	delete(f.containers, "old")
+	snap, _ := json.Marshal(container.InspectResponse{
+		ID: "old", Name: "/app", Image: "sha256:old",
+		Config: &container.Config{Image: "app:latest"}, HostConfig: &container.HostConfig{AutoRemove: true},
+	})
+	interrupted(t, f, u, store.SwapRecord{Name: "app", Kind: swapUpdate, OldID: "old", NewID: "new", OldRunning: true, AutoRemove: true, Snapshot: snap},
+		false, map[string]string{"sentinel.maintenance": "true"})
+
+	u.RecoverInterruptedUpdates(context.Background())
+
+	c := f.byName("app")
+	if c == nil || !c.running || c.imageID != "sha256:old" || f.find("new") != nil {
+		t.Fatalf("containers = %v, want app rebuilt and running on the old image", f.names())
+	}
+}
+
+// A rebuild never takes a name another container holds by now: the record
+// is dropped and that container left alone.
+func TestRecoverDoesNotRebuildOverAnotherContainer(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, false, nil)
+	delete(f.containers, "old")
+	f.add("someone", "app", "app:latest", true, nil, nil)
+	snap, _ := json.Marshal(container.InspectResponse{ID: "old", Name: "/app", Config: &container.Config{Image: "app:latest"}, HostConfig: &container.HostConfig{}})
+	if err := u.store.SaveSwap(store.SwapRecord{Name: "app", OldID: "old", OldRunning: true, Snapshot: snap}); err != nil {
+		t.Fatal(err)
+	}
+
+	u.RecoverInterruptedUpdates(context.Background())
+
+	if c := f.byName("app"); c == nil || c.id != "someone" || f.creates != 0 {
+		t.Errorf("containers = %v creates = %d, want the other container untouched", f.names(), f.creates)
+	}
+	if recs := journal(t, u); len(recs) != 0 {
+		t.Errorf("journal = %+v, want the record dropped", recs)
+	}
+}
+
+// A rebuilt container that was not running before is created, not started.
+func TestRecoverRebuildsStoppedContainerStopped(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, false, nil)
+	delete(f.containers, "old")
+	snap, _ := json.Marshal(container.InspectResponse{ID: "old", Name: "/app", Config: &container.Config{Image: "app:latest"}, HostConfig: &container.HostConfig{}})
+	if err := u.store.SaveSwap(store.SwapRecord{Name: "app", OldID: "old", OldRunning: false, Snapshot: snap}); err != nil {
+		t.Fatal(err)
+	}
+
+	u.RecoverInterruptedUpdates(context.Background())
+
+	if c := f.byName("app"); c == nil || c.running {
+		t.Errorf("containers = %v, want app rebuilt and not started", f.names())
 	}
 }
 
