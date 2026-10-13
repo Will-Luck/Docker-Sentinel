@@ -215,6 +215,52 @@ func oldPostgresImage() *container.Config {
 		ExposedPorts: network.PortSet{
 			network.MustParsePort("5432/tcp"): {},
 		},
+		Volumes: map[string]struct{}{"/var/lib/postgresql/data": {}},
+	}
+}
+
+// The old image declares the data VOLUME, so the strip drops it from
+// Config.Volumes; the old volume must still be carried over (and the new
+// image's VOLUME, filled back in by the daemon, is then covered by it).
+func TestUpdateContainerCarriesVolumeTheStripDrops(t *testing.T) {
+	mock, u := setupAnonymousVolumeUpdate(t)
+	mock.imageConfigs["sha256:old111"] = oldPostgresImage()
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "pg", ""); err != nil {
+		t.Fatalf("UpdateContainer: %v", err)
+	}
+	cfg, hc := mock.createHistory[0], mock.createHostHistory[0]
+	if _, kept := cfg.Volumes["/var/lib/postgresql/data"]; kept {
+		t.Errorf("Volumes = %v, want the image-declared path left to the new image", cfg.Volumes)
+	}
+	if !hostConfigUsesVolume(hc, pgDataVolume) {
+		t.Errorf("old data volume not carried over: %+v", hc.Mounts)
+	}
+}
+
+// A rollback takes over the running container's anonymous volume at the
+// same path, so it starts on the current data rather than on the volume
+// the snapshot recorded.
+func TestRollbackUsesLiveContainersVolumes(t *testing.T) {
+	f := newFakeDocker()
+	live := f.add("live", "pg", "postgres:16", true, &container.Config{Volumes: map[string]struct{}{"/var/lib/postgresql/data": {}}}, nil)
+	live.mounts = []container.MountPoint{{Type: mount.TypeVolume, Name: "current-data", Destination: "/var/lib/postgresql/data", RW: true}}
+	snap, _ := json.Marshal(container.InspectResponse{
+		ID: "old", Name: "/pg",
+		Config:     &container.Config{Image: "postgres:16", Volumes: map[string]struct{}{"/var/lib/postgresql/data": {}}},
+		HostConfig: &container.HostConfig{},
+		Mounts:     []container.MountPoint{{Type: mount.TypeVolume, Name: "snapshot-data", Destination: "/var/lib/postgresql/data", RW: true}},
+	})
+
+	if err := runRollback(f, "pg", snap); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	c := f.byName("pg")
+	if c == nil || c.id == "live" {
+		t.Fatalf("containers = %v, want a rollback container", f.names())
+	}
+	if !hostConfigUsesVolume(c.host, "current-data") || hostConfigUsesVolume(c.host, "snapshot-data") {
+		t.Errorf("rollback mounts = %+v, want the live container's volume", c.host.Mounts)
 	}
 }
 
