@@ -638,33 +638,20 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 	s.logEvent(r, "check", name, "Manual registry check triggered")
 
 	// Run the check synchronously so the client spinner stays active.
-	updateAvailable, newerVersions, resolvedCurrent, resolvedTarget, checkErr := s.deps.RegistryChecker.CheckForUpdate(r.Context(), imageRef)
+	var check RemoteCheck
+	var checkErr error
+	check.UpdateAvailable, check.NewerVersions, check.ResolvedCurrentVersion, check.ResolvedTargetVersion, checkErr =
+		s.deps.RegistryChecker.CheckForUpdate(r.Context(), imageRef)
 	if checkErr != nil {
 		s.deps.Log.Warn("registry check failed", "name", name, "error", checkErr)
 		writeError(w, http.StatusBadGateway, "registry check failed: "+checkErr.Error())
 		return
 	}
 
-	if updateAvailable {
-		// Filter out ignored versions before queuing.
-		if len(newerVersions) > 0 && s.deps.IgnoredVersions != nil {
-			ignored, _ := s.deps.IgnoredVersions.GetIgnoredVersions(name)
-			if len(ignored) > 0 {
-				ignoredSet := make(map[string]bool, len(ignored))
-				for _, v := range ignored {
-					ignoredSet[v] = true
-				}
-				var filtered []string
-				for _, v := range newerVersions {
-					if !ignoredSet[v] {
-						filtered = append(filtered, v)
-					}
-				}
-				newerVersions = filtered
-			}
-		}
-
-		if len(newerVersions) == 0 {
+	if check.UpdateAvailable {
+		// Ignored versions are filtered as the scan does. An update with no
+		// newer tag (a new image behind the same tag) is queued as such.
+		if s.ignoredFor(name, &check) {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":  "up_to_date",
 				"name":    name,
@@ -677,16 +664,16 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 			ContainerID:            containerID,
 			ContainerName:          name,
 			CurrentImage:           imageRef,
-			NewerVersions:          newerVersions,
-			ResolvedCurrentVersion: resolvedCurrent,
-			ResolvedTargetVersion:  resolvedTarget,
+			NewerVersions:          check.NewerVersions,
+			ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+			ResolvedTargetVersion:  check.ResolvedTargetVersion,
 		})
 		s.deps.Log.Info("update found via manual check", "name", name)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":         "update_available",
 			"name":           name,
 			"message":        "Update available for " + name,
-			"newer_versions": newerVersions,
+			"newer_versions": check.NewerVersions,
 		})
 		return
 	}

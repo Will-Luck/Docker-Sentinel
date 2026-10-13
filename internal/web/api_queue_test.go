@@ -238,7 +238,10 @@ func TestApiQueueExport_EmptyQueue_JSON(t *testing.T) {
 	}
 }
 
-type recordingIgnores struct{ added map[string][]string }
+type recordingIgnores struct {
+	added map[string][]string
+	get   bool // GetIgnoredVersions returns what was added
+}
 
 func (r *recordingIgnores) AddIgnoredVersion(name, version string) error {
 	if r.added == nil {
@@ -247,8 +250,13 @@ func (r *recordingIgnores) AddIgnoredVersion(name, version string) error {
 	r.added[name] = append(r.added[name], version)
 	return nil
 }
-func (r *recordingIgnores) GetIgnoredVersions(string) ([]string, error) { return nil, nil }
-func (r *recordingIgnores) ClearIgnoredVersions(string) error           { return nil }
+func (r *recordingIgnores) GetIgnoredVersions(name string) ([]string, error) {
+	if r.get {
+		return r.added[name], nil
+	}
+	return nil, nil
+}
+func (r *recordingIgnores) ClearIgnoredVersions(string) error { return nil }
 
 // A :latest update has no version list. Ignore keys it by the version the tag
 // resolves to, else by the remote digest, as the engine's filter does.
