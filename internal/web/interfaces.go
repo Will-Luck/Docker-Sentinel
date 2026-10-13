@@ -250,6 +250,9 @@ type ClusterHost struct {
 	DisconnectErr string    `json:"disconnect_err,omitempty"`
 	DisconnectCat string    `json:"disconnect_cat,omitempty"`
 	EngineID      string    `json:"engine_id,omitempty"` // Docker Engine ID for source dedup
+	// EngineSharedWith names the other hosts that report the same Docker
+	// engine: the same daemon enrolled more than once.
+	EngineSharedWith []string `json:"engine_shared_with,omitempty"`
 }
 
 // SwarmProvider provides Swarm service operations for the dashboard.

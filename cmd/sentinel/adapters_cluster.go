@@ -46,6 +46,8 @@ func (a *clusterAdapter) AllHosts() []web.ClusterHost {
 				DisconnectErr: hs.DisconnectErr,
 				DisconnectCat: hs.DisconnectCat,
 				EngineID:      hs.Info.EngineID,
+
+				EngineSharedWith: a.hostNames(hs.EngineSharedWith),
 			})
 		}
 	}
@@ -71,6 +73,8 @@ func (a *clusterAdapter) GetHost(id string) (web.ClusterHost, bool) {
 		DisconnectErr: hs.DisconnectErr,
 		DisconnectCat: hs.DisconnectCat,
 		EngineID:      hs.Info.EngineID,
+
+		EngineSharedWith: a.hostNames(hs.EngineSharedWith),
 	}, true
 }
 
@@ -375,4 +379,17 @@ func (a *npmAdapter) LastSync() time.Time {
 
 func (a *npmAdapter) LastError() error {
 	return a.resolver.LastError()
+}
+
+// hostNames maps host IDs to display names, falling back to the ID.
+func (a *clusterAdapter) hostNames(ids []string) []string {
+	var names []string
+	for _, id := range ids {
+		if h, ok := a.srv.GetHost(id); ok && h.Info.Name != "" {
+			names = append(names, h.Info.Name)
+		} else {
+			names = append(names, id)
+		}
+	}
+	return names
 }

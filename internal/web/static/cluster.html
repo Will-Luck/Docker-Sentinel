@@ -109,6 +109,9 @@
                     <span>Enrolled {{fmtTimeAgo .EnrolledAt}}</span>
                     {{if not .Connected}}<span class="text-muted">Last seen {{fmtTimeAgo .LastSeen}}</span>{{end}}
                 </div>
+                {{if .EngineSharedWith}}
+                <p class="troubleshoot-time" role="alert"><strong>Warning:</strong> this Docker engine is also enrolled as {{range $i, $n := .EngineSharedWith}}{{if $i}}, {{end}}{{$n}}{{end}}. Containers on it are counted twice and updates may run twice.</p>
+                {{end}}
                 {{if not .Connected}}
                 <details class="host-troubleshoot" open>
                     <summary>
