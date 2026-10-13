@@ -180,6 +180,16 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		return status.Errorf(codes.NotFound, "host %s not registered", hostID)
 	}
 
+	// An agent that connects with its renewed certificate has it on disk
+	// and working: make it current and revoke the one it replaces.
+	if serial, ok := peerCertSerial(stream.Context()); ok {
+		if replaced, promoted, err := s.registry.PromoteCertSerial(hostID, serial); err != nil {
+			s.log.Error("failed to record the agent's renewed certificate", "hostID", hostID, "serial", serial, "error", err)
+		} else if promoted {
+			s.log.Info("agent is using its renewed certificate, old one revoked", "hostID", hostID, "serial", serial, "revoked", replaced)
+		}
+	}
+
 	// Capture the agent's IP from the gRPC peer address so the dashboard
 	// can link port chips to the correct host.
 	if p, ok := peer.FromContext(stream.Context()); ok {
@@ -197,6 +207,7 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		hostID: hostID,
 		send:   make(chan *proto.ServerMessage, sendBufferSize),
 		cancel: cancel,
+		done:   ctx.Done(),
 	}
 
 	// Register the stream. If an old stream exists for this host (stale
@@ -610,11 +621,18 @@ func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 	)
 }
 
+// renewalSendTimeout bounds how long the hub waits for room in an agent's
+// send buffer to deliver a renewed certificate.
+var renewalSendTimeout = 10 * time.Second
+
 // handleCertRenewal processes a certificate renewal CSR from an agent whose
 // cert is approaching expiry. Signs the new CSR and sends back the fresh cert.
 //
-// If the serial number update fails after signing, the newly issued cert is
-// revoked immediately to prevent an untracked certificate from remaining valid.
+// The agent's current certificate stays valid: the new serial is recorded
+// as pending and replaces the old one only when the agent connects with it
+// (Channel). A new certificate that cannot be tracked or delivered is
+// revoked at once, so no untracked certificate stays valid; the agent
+// simply asks again later.
 func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.CertRenewalCSR) {
 	certPEM, serial, err := s.ca.SignCSR(csr.Csr, hostID)
 	if err != nil {
@@ -622,16 +640,12 @@ func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.Ce
 		return
 	}
 
-	if err := s.registry.UpdateCertSerial(hostID, serial); err != nil {
-		s.log.Error("cert renewal: failed to update serial, revoking new cert", "hostID", hostID, "serial", serial, "error", err)
-		// Revoke the newly signed cert so it can't be used without being tracked.
-		if rErr := s.store.AddRevokedCert(serial); rErr != nil {
-			s.log.Error("cert renewal: failed to revoke orphaned cert", "hostID", hostID, "serial", serial, "error", rErr)
-		}
+	if err := s.registry.SetPendingCertSerial(hostID, serial); err != nil {
+		s.log.Error("cert renewal: failed to record the new serial, revoking new cert", "hostID", hostID, "serial", serial, "error", err)
+		s.revokeRenewal(hostID, serial)
 		return
 	}
 
-	// Non-blocking send — matches SendCommand pattern.
 	msg := &proto.ServerMessage{
 		Payload: &proto.ServerMessage_CertRenewalResponse{
 			CertRenewalResponse: &proto.CertRenewalResponse{
@@ -639,12 +653,28 @@ func (s *Server) handleCertRenewal(hostID string, as *agentStream, csr *proto.Ce
 			},
 		},
 	}
+	// Wait for room rather than drop the reply: the agent cannot use a
+	// certificate it never receives.
+	timer := time.NewTimer(renewalSendTimeout)
+	defer timer.Stop()
 	select {
 	case as.send <- msg:
-	default:
-		s.log.Error("cert renewal: send buffer full", "hostID", hostID)
+		s.log.Info("cert renewed, waiting for the agent to use it", "hostID", hostID, "newSerial", serial)
 		return
+	case <-as.done:
+	case <-timer.C:
 	}
+	s.log.Error("cert renewal: could not deliver the new certificate, revoking it", "hostID", hostID, "serial", serial)
+	s.revokeRenewal(hostID, serial)
+}
 
-	s.log.Info("cert renewed", "hostID", hostID, "newSerial", serial)
+// revokeRenewal revokes a renewed certificate that was never delivered and
+// forgets it as the host's pending renewal.
+func (s *Server) revokeRenewal(hostID, serial string) {
+	if err := s.store.AddRevokedCert(serial); err != nil {
+		s.log.Error("cert renewal: failed to revoke undelivered cert", "hostID", hostID, "serial", serial, "error", err)
+	}
+	if err := s.registry.ClearPendingCertSerial(hostID, serial); err != nil {
+		s.log.Warn("cert renewal: failed to clear pending serial", "hostID", hostID, "serial", serial, "error", err)
+	}
 }

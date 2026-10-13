@@ -315,9 +315,17 @@ func (r *Registry) Get(hostID string) (*HostState, bool) {
 	return &cp, true
 }
 
-// UpdateCertSerial atomically updates the stored cert serial for a host,
-// revoking the old serial if one exists.
-func (r *Registry) UpdateCertSerial(hostID, newSerial string) error {
+// A renewed agent certificate goes through two steps. SetPendingCertSerial
+// records it when the hub signs it; the certificate the agent is using
+// stays valid. PromoteCertSerial makes it current when the agent first
+// connects with it, and only then revokes the serial it replaces. If the
+// reply carrying the new certificate is lost, the agent keeps working on
+// the old one and asks again.
+
+// SetPendingCertSerial records serial as the host's renewed certificate,
+// issued but not yet seen in use. A previous pending serial is revoked: a
+// newer renewal has replaced it before the agent ever connected with it.
+func (r *Registry) SetPendingCertSerial(hostID, serial string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -325,14 +333,56 @@ func (r *Registry) UpdateCertSerial(hostID, newSerial string) error {
 	if !ok {
 		return fmt.Errorf("host %s not found", hostID)
 	}
-
-	if hs.Info.CertSerial != "" {
-		if err := r.store.AddRevokedCert(hs.Info.CertSerial); err != nil {
-			return fmt.Errorf("revoke old cert: %w", err)
+	if prev := hs.Info.PendingCertSerial; prev != "" && prev != serial {
+		if err := r.store.AddRevokedCert(prev); err != nil {
+			return fmt.Errorf("revoke superseded renewal: %w", err)
 		}
 	}
+	hs.Info.PendingCertSerial = serial
+	return r.persistLocked(hostID, hs)
+}
 
-	hs.Info.CertSerial = newSerial
+// ClearPendingCertSerial forgets serial if it is still the host's pending
+// renewal (the caller has revoked it).
+func (r *Registry) ClearPendingCertSerial(hostID, serial string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	hs, ok := r.hosts[hostID]
+	if !ok || hs.Info.PendingCertSerial != serial {
+		return nil
+	}
+	hs.Info.PendingCertSerial = ""
+	return r.persistLocked(hostID, hs)
+}
+
+// PromoteCertSerial is called with the serial an agent presented on
+// connect. When that is the host's pending renewal it becomes the current
+// serial, and the serial it replaces is revoked and returned.
+func (r *Registry) PromoteCertSerial(hostID, presented string) (replaced string, promoted bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	hs, ok := r.hosts[hostID]
+	if !ok || presented == "" || hs.Info.PendingCertSerial != presented {
+		return "", false, nil
+	}
+	replaced = hs.Info.CertSerial
+	if replaced != "" && replaced != presented {
+		if err := r.store.AddRevokedCert(replaced); err != nil {
+			return "", false, fmt.Errorf("revoke replaced cert: %w", err)
+		}
+	}
+	hs.Info.CertSerial = presented
+	hs.Info.PendingCertSerial = ""
+	if err := r.persistLocked(hostID, hs); err != nil {
+		return "", false, err
+	}
+	return replaced, true, nil
+}
+
+// persistLocked writes hs to the store. Caller holds r.mu.
+func (r *Registry) persistLocked(hostID string, hs *HostState) error {
 	data, err := json.Marshal(hs.Info)
 	if err != nil {
 		return fmt.Errorf("marshal host info: %w", err)
@@ -346,6 +396,17 @@ func (r *Registry) GetCertSerial(hostID string) string {
 	defer r.mu.RUnlock()
 	if hs, ok := r.hosts[hostID]; ok {
 		return hs.Info.CertSerial
+	}
+	return ""
+}
+
+// GetPendingCertSerial returns the host's renewed certificate serial that
+// the agent has not used yet, or "".
+func (r *Registry) GetPendingCertSerial(hostID string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if hs, ok := r.hosts[hostID]; ok {
+		return hs.Info.PendingCertSerial
 	}
 	return ""
 }

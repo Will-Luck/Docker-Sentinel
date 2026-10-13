@@ -13,16 +13,20 @@ const (
 
 // HostInfo describes a registered remote agent host.
 type HostInfo struct {
-	ID           string    `json:"id"`          // unique host identifier (generated on enrollment)
-	Name         string    `json:"name"`        // human-readable label (from agent config)
-	Address      string    `json:"address"`     // gRPC address (host:port)
-	State        HostState `json:"state"`       // lifecycle state
-	CertSerial   string    `json:"cert_serial"` // agent certificate serial number
-	EnrolledAt   time.Time `json:"enrolled_at"`
-	LastSeen     time.Time `json:"last_seen"`
-	AgentVersion string    `json:"agent_version"`
-	Features     []string  `json:"features,omitempty"`  // supported feature flags
-	EngineID     string    `json:"engine_id,omitempty"` // Docker Engine ID for source dedup
+	ID         string    `json:"id"`          // unique host identifier (generated on enrollment)
+	Name       string    `json:"name"`        // human-readable label (from agent config)
+	Address    string    `json:"address"`     // gRPC address (host:port)
+	State      HostState `json:"state"`       // lifecycle state
+	CertSerial string    `json:"cert_serial"` // agent certificate serial number
+	// PendingCertSerial is a renewed certificate issued to the agent but
+	// not yet seen in use. CertSerial stays valid until the agent connects
+	// with this one.
+	PendingCertSerial string    `json:"pending_cert_serial,omitempty"`
+	EnrolledAt        time.Time `json:"enrolled_at"`
+	LastSeen          time.Time `json:"last_seen"`
+	AgentVersion      string    `json:"agent_version"`
+	Features          []string  `json:"features,omitempty"`  // supported feature flags
+	EngineID          string    `json:"engine_id,omitempty"` // Docker Engine ID for source dedup
 }
 
 // EnrollRequest is sent by an agent to register with the server.

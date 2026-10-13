@@ -1386,7 +1386,7 @@ func TestVerifyCRL_FailsClosed(t *testing.T) {
 // reconnect for the lifetime of a session ticket.
 func TestBuildTLSConfig_ResumptionDisabled(t *testing.T) {
 	s := &Server{log: slog.Default()}
-	cfg := s.buildTLSConfig(tls.Certificate{}, x509.NewCertPool())
+	cfg := s.buildTLSConfig(x509.NewCertPool())
 
 	if !cfg.SessionTicketsDisabled {
 		t.Error("SessionTicketsDisabled must be true: resumed sessions skip the VerifyPeerCertificate CRL check")

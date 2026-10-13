@@ -321,17 +321,25 @@ func (s *Server) verifyCRL(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 // Used by AgentService methods as a second check (belt and braces with the
 // TLS-level verifyCRL).
 func (s *Server) isCertRevoked(ctx context.Context) (bool, error) {
-	p, ok := peer.FromContext(ctx)
+	serial, ok := peerCertSerial(ctx)
 	if !ok {
 		return false, nil
 	}
+	return s.store.IsRevokedCert(serial)
+}
+
+// peerCertSerial returns the serial (lower-case hex, as stored) of the
+// client certificate the peer presented, if any.
+func peerCertSerial(ctx context.Context) (string, bool) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", false
+	}
 	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
 	if !ok || len(tlsInfo.State.PeerCertificates) == 0 {
-		return false, nil
+		return "", false
 	}
-
-	serial := fmt.Sprintf("%x", tlsInfo.State.PeerCertificates[0].SerialNumber)
-	return s.store.IsRevokedCert(serial)
+	return fmt.Sprintf("%x", tlsInfo.State.PeerCertificates[0].SerialNumber), true
 }
 
 // extractHostID extracts the host ID from the peer's TLS client certificate CN.

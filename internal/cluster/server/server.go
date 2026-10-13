@@ -87,6 +87,14 @@ type Server struct {
 	// pending maps "hostID:requestID" to the request waiting for the
 	// agent's response. Multiple concurrent requests per host are supported.
 	pending map[string]*pendingRequest
+
+	// certMu guards the fields below: the server's own TLS certificate.
+	certMu      sync.Mutex
+	serverCert  *tls.Certificate
+	certRenewAt time.Time
+	certSANs    []string
+	// now is the clock for server certificate renewal (time.Now when nil).
+	now func() time.Time
 }
 
 // pendingRequest is a synchronous request waiting for an agent's reply.
@@ -106,6 +114,8 @@ type agentStream struct {
 	// cancel ends the stream's Channel handler, which closes the stream
 	// on the agent. The cause becomes the host's disconnect reason.
 	cancel context.CancelCauseFunc
+	// done is closed when the stream ends.
+	done <-chan struct{}
 
 	// closed is set (under Server.pendingMu) once the stream's cleanup has
 	// failed its pending requests, so no new request is tagged to it.
@@ -193,15 +203,14 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 		return fmt.Errorf("load registry: %w", err)
 	}
 
-	// Issue an ephemeral server certificate from our CA.
-	certPEM, keyPEM, err := s.ca.IssueServerCert(extraSANs...)
+	// Issue an ephemeral server certificate from our CA. It is renewed in
+	// place before it expires (serverCertificate).
+	s.certMu.Lock()
+	s.certSANs = extraSANs
+	err := s.issueServerCertLocked()
+	s.certMu.Unlock()
 	if err != nil {
-		return fmt.Errorf("issue server cert: %w", err)
-	}
-
-	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return fmt.Errorf("parse server keypair: %w", err)
+		return err
 	}
 
 	// Build client CA pool from our CA cert so we can verify agent certs.
@@ -211,7 +220,7 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 		return fmt.Errorf("failed to add CA cert to pool")
 	}
 
-	tlsCfg := s.buildTLSConfig(serverCert, caPool)
+	tlsCfg := s.buildTLSConfig(caPool)
 
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -236,12 +245,59 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 	return nil
 }
 
+// issueServerCertLocked issues a fresh server certificate and schedules its
+// renewal once two thirds of its life have passed. Caller holds certMu.
+func (s *Server) issueServerCertLocked() error {
+	certPEM, keyPEM, err := s.ca.IssueServerCert(s.certSANs...)
+	if err != nil {
+		return fmt.Errorf("issue server cert: %w", err)
+	}
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return fmt.Errorf("parse server keypair: %w", err)
+	}
+	leaf := cert.Leaf
+	if leaf == nil {
+		if leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
+			return fmt.Errorf("parse server cert: %w", err)
+		}
+	}
+	s.serverCert = &cert
+	s.certRenewAt = s.clock().Add(leaf.NotAfter.Sub(leaf.NotBefore) * 2 / 3)
+	s.log.Info("issued cluster server certificate", "expires", leaf.NotAfter.Format(time.RFC3339))
+	return nil
+}
+
+// serverCertificate is the listener's GetCertificate hook. A hub that runs
+// for most of a year renews its certificate here, on the first handshake
+// after the renewal point, so agents never meet an expired one.
+func (s *Server) serverCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	s.certMu.Lock()
+	defer s.certMu.Unlock()
+	if s.serverCert == nil || !s.clock().Before(s.certRenewAt) {
+		if err := s.issueServerCertLocked(); err != nil {
+			if s.serverCert == nil {
+				return nil, err
+			}
+			s.log.Error("could not renew the cluster server certificate, still using the current one", "error", err)
+		}
+	}
+	return s.serverCert, nil
+}
+
+func (s *Server) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
 // buildTLSConfig assembles the mTLS configuration for the gRPC listener.
-func (s *Server) buildTLSConfig(serverCert tls.Certificate, caPool *x509.CertPool) *tls.Config {
+func (s *Server) buildTLSConfig(caPool *x509.CertPool) *tls.Config {
 	return &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientCAs:    caPool,
-		MinVersion:   tls.VersionTLS13,
+		GetCertificate: s.serverCertificate,
+		ClientCAs:      caPool,
+		MinVersion:     tls.VersionTLS13,
 
 		// VerifyClientCertIfGiven allows enrollment without a client cert
 		// while still verifying certs when they are presented. The
@@ -349,8 +405,12 @@ func (s *Server) PauseHost(id string) error {
 // removes it from the registry. The cert serial is added to the CRL so
 // the agent can no longer authenticate.
 func (s *Server) RevokeHost(id string) error {
-	serial := s.registry.GetCertSerial(id)
-	if serial != "" {
+	// Mid-renewal a host has two valid certificates: the one in use and
+	// the renewed one it has not connected with yet.
+	for _, serial := range []string{s.registry.GetCertSerial(id), s.registry.GetPendingCertSerial(id)} {
+		if serial == "" {
+			continue
+		}
 		if err := s.store.AddRevokedCert(serial); err != nil {
 			return fmt.Errorf("revoke cert: %w", err)
 		}
