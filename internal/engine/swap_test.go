@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -122,25 +123,36 @@ func TestUpdateContainerRenameFailureIsPlainFailure(t *testing.T) {
 	}
 }
 
-// When the old container cannot be given its name back (here the rename
-// fails; for a --rm container the daemon has already deleted it), the
-// update falls back to recreating it from the snapshot.
-func TestUpdateContainerFallsBackToSnapshotWhenOldContainerIsGone(t *testing.T) {
+// When the old container still exists but cannot be given its name back,
+// it is not rebuilt from the snapshot (that would leave two copies): the
+// restore is retried once and the failure is reported as a failed
+// rollback. (A --rm container the daemon deleted is rebuilt; see
+// TestUpdateContainerRebuildsWhenOldIsGone.)
+func TestUpdateContainerDoesNotRebuildWhileOldContainerExists(t *testing.T) {
 	mock, u := setupUpdateWithScanVerify(t)
 	mock.mirrorCreate = true
-	mock.imageIDs["sha256:old111"] = "sha256:old111" // the old image is still on the host
+	mock.imageIDs["sha256:old111"] = "sha256:old111" // a rebuild would be possible
 	mock.createErrOnCall[1] = errors.New("No such image")
-	mock.renameErrTo["nginx"] = errors.New("No such container: aaa")
+	mock.renameErrTo["nginx"] = errors.New("daemon busy")
 
 	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err == nil {
 		t.Fatal("expected an error from the failed create")
 	}
-	if len(mock.createCalls) != 2 {
-		t.Errorf("createCalls = %v, want the failed replacement and the snapshot rollback", mock.createCalls)
+	if len(mock.createCalls) != 1 {
+		t.Errorf("createCalls = %v, want only the failed replacement", mock.createCalls)
+	}
+	renames := 0
+	for _, op := range mock.ops {
+		if op == "rename aaa nginx" {
+			renames++
+		}
+	}
+	if renames != 2 {
+		t.Errorf("restore attempts = %d, want 2 (one retry): ops=%v", renames, mock.ops)
 	}
 	history, _ := u.store.ListHistory(10, "")
-	if len(history) == 0 || history[0].Outcome != "rollback" {
-		t.Errorf("history = %+v, want a rollback record", history)
+	if len(history) == 0 || history[0].Outcome != "rollback" || !strings.Contains(history[0].Error, "rollback failed") {
+		t.Errorf("history = %+v, want a rollback record saying the rollback failed", history)
 	}
 }
 

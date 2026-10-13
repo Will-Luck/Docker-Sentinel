@@ -740,17 +740,18 @@ func TestUpdateFinaliseRenameFailureRecordsWarning(t *testing.T) {
 	}
 }
 
-// TestUpdateFinaliseLostContainerTriggersRollback tests the path where the
+// TestUpdateFinaliseStuckContainerIsReported tests the path where the
 // finalise swap fails and the validated container cannot be given its name
-// back, so the service may be missing. Should roll back from the snapshot
-// and record "failed".
-func TestUpdateFinaliseLostContainerTriggersRollback(t *testing.T) {
+// back although it still exists. Rebuilding the old version next to it
+// would leave two copies, so the failure is reported (and the journalled
+// swap left for startup recovery) and recorded as "failed".
+func TestUpdateFinaliseStuckContainerIsReported(t *testing.T) {
 	mock, u := setupUpdateMock(t)
 
 	// The finalise create (the second create) fails, and so does renaming
 	// new-nginx back to "nginx".
 	mock.createErrOnCall[2] = fmt.Errorf("image not found")
-	mock.renameErrTo["nginx"] = fmt.Errorf("daemon gone")
+	mock.renameErrTo["nginx"] = fmt.Errorf("daemon busy")
 
 	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
 	if err == nil {
@@ -761,17 +762,15 @@ func TestUpdateFinaliseLostContainerTriggersRollback(t *testing.T) {
 	if !errors.As(err, &fErr) {
 		t.Fatalf("expected *finaliseError, got %T: %v", err, err)
 	}
-	if fErr.stage != "create" || !fErr.down {
-		t.Errorf("stage = %q down = %v, want create with the container lost", fErr.stage, fErr.down)
+	if fErr.stage != "create" || fErr.down || !fErr.stuck {
+		t.Errorf("stage = %q down = %v stuck = %v, want create with the container stuck", fErr.stage, fErr.down, fErr.stuck)
 	}
 
-	// createCalls: 1 (update) + 1 (failed finalise) + 1 (rollback from snapshot)
-	if len(mock.createCalls) != 3 {
-		t.Errorf("createCalls = %v, want 3 (update, finalise, rollback)", mock.createCalls)
+	// createCalls: 1 (update) + 1 (failed finalise), no rebuild.
+	if len(mock.createCalls) != 2 {
+		t.Errorf("createCalls = %v, want 2 (update, finalise)", mock.createCalls)
 	}
 
-	// History should record "failed", never "success".
-	// doRollback also records a "rollback" entry, so we may have 2 records.
 	history, hErr := u.store.ListHistory(10, "")
 	if hErr != nil {
 		t.Fatalf("ListHistory: %v", hErr)
@@ -779,7 +778,7 @@ func TestUpdateFinaliseLostContainerTriggersRollback(t *testing.T) {
 	foundFailed := false
 	for _, h := range history {
 		if h.Outcome == "success" {
-			t.Error("should never record 'success' when finalise failed at destructive stage")
+			t.Error("should never record 'success' when finalise failed")
 		}
 		if h.Outcome == "failed" {
 			foundFailed = true
@@ -787,6 +786,9 @@ func TestUpdateFinaliseLostContainerTriggersRollback(t *testing.T) {
 	}
 	if !foundFailed {
 		t.Error("expected a 'failed' outcome in history")
+	}
+	if recs, _ := u.store.ListSwaps(); len(recs) != 1 || recs[0].Kind != swapFinalise {
+		t.Errorf("journal = %+v, want the finalise swap kept for recovery", recs)
 	}
 }
 

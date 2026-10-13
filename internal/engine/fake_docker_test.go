@@ -51,6 +51,7 @@ type fakeDocker struct {
 	failStop          map[string]error // by container ID; the container keeps running
 	stopErrStopped    map[string]error // by container ID; the container stops anyway
 	failRename        map[string]error // by target name
+	failRenameOnce    map[string]error // by target name, only the first time
 	restartUpdateErr  error
 	removeVolumeCalls []string
 }
@@ -65,6 +66,7 @@ func newFakeDocker() *fakeDocker {
 		failRename: make(map[string]error),
 
 		stopErrStopped: make(map[string]error),
+		failRenameOnce: make(map[string]error),
 	}
 }
 
@@ -310,6 +312,10 @@ func (f *fakeDocker) RenameContainer(_ context.Context, id, newName string) erro
 	defer f.fmu.Unlock()
 	f.record("rename " + id + " " + newName)
 	if err, ok := f.failRename[newName]; ok {
+		return err
+	}
+	if err, ok := f.failRenameOnce[newName]; ok {
+		delete(f.failRenameOnce, newName)
 		return err
 	}
 	c := f.find(id)

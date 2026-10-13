@@ -38,9 +38,12 @@ type ImageVerifier interface {
 type finaliseError struct {
 	stage string
 	err   error
-	// down is set when the validated container could not be put back after
-	// the swap failed, so the service may be missing.
+	// down is set when the validated container is gone after the swap
+	// failed, so only a rebuild can bring the service back.
 	down bool
+	// stuck is set when the validated container still exists but could not
+	// be put back under its name; it is reported, never rebuilt next to.
+	stuck bool
 }
 
 func (e *finaliseError) Error() string { return fmt.Sprintf("finalise %s: %v", e.stage, e.err) }

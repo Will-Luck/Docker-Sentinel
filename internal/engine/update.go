@@ -321,13 +321,26 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	finaliseNewID, finaliseErr := u.finaliseContainer(ctx, newID, name)
 	if finaliseErr != nil {
 		var fErr *finaliseError
-		if errors.As(finaliseErr, &fErr) && fErr.down {
-			// The validated container could not be put back after the
-			// finalise swap failed, so the service may be missing: recreate
-			// the old version from the snapshot.
-			u.log.Error("finalise failed and the updated container could not be restored, rolling back",
-				"name", name, "stage", fErr.stage, "error", fErr.err)
-			_, rbErr := rollbackContainer(ctx, u.docker, u.store, name, snapshotData, u.log)
+		if errors.As(finaliseErr, &fErr) && (fErr.down || fErr.stuck) {
+			var rbErr error
+			if fErr.down {
+				// The validated container is gone, so the service is
+				// missing: recreate the old version from the snapshot.
+				u.log.Error("finalise failed and the updated container is gone, rolling back",
+					"name", name, "stage", fErr.stage, "error", fErr.err)
+				if _, rbErr = rollbackContainer(ctx, u.docker, u.store, name, snapshotData, u.log); rbErr == nil {
+					if err := u.store.DeleteSwap(name); err != nil {
+						u.log.Warn("could not clear the swap journal", "name", name, "error", err)
+					}
+				}
+			} else {
+				// It still exists under its set-aside name: rebuilding the
+				// old version next to it would leave two copies. Report it;
+				// startup recovery finishes the journalled swap.
+				u.log.Error("finalise failed and the updated container could not be put back",
+					"name", name, "stage", fErr.stage, "error", fErr.err)
+				rbErr = errors.New("the updated container could not be put back under its name")
+			}
 			u.reportRollback(ctx, name, rbErr, start, finaliseErr)
 
 			// Record as failed — never as success.
@@ -346,7 +359,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 				u.log.Warn("failed to persist finalise failure record", "name", name, "error", recErr)
 			}
 
-			u.publishEvent(events.EventContainerUpdate, name, "finalise failed — rollback attempted")
+			u.publishEvent(events.EventContainerUpdate, name, "finalise failed, rollback attempted")
 			u.notifier.Notify(ctx, notify.Event{
 				Type:          notify.EventUpdateFailed,
 				ContainerName: name,
@@ -579,15 +592,23 @@ func (u *Updater) abandonUpdate(ctx context.Context, sw *swap, snapshotData []by
 	}
 }
 
-// restoreOld undoes an update swap. When the old container cannot be
-// brought back it is recreated from the snapshot; the error is that of the
-// last attempt.
+// restoreOld undoes an update swap. Only when the old container no longer
+// exists (a --rm container) is it rebuilt from the snapshot; when it exists
+// but cannot be restored, the error is returned rather than rebuilding a
+// second copy next to it.
 func (u *Updater) restoreOld(ctx context.Context, sw *swap, snapshotData []byte) error {
 	ctx = context.WithoutCancel(ctx)
-	if err := sw.undo(ctx); err != nil {
-		u.log.Warn("could not restore the old container, recreating it from the snapshot", "name", sw.name, "error", err)
-		_, err := rollbackContainer(ctx, u.docker, u.store, sw.name, snapshotData, u.log)
-		return err
+	gone, err := sw.undoOrRetry(ctx)
+	switch {
+	case gone:
+		u.log.Warn("the old container is gone, rebuilding it from the snapshot", "name", sw.name, "error", err)
+		if _, err := rollbackContainer(ctx, u.docker, u.store, sw.name, snapshotData, u.log); err != nil {
+			return err
+		}
+		sw.forget()
+		return nil
+	case err != nil:
+		return fmt.Errorf("the old container could not be restored: %w", err)
 	}
 	u.log.Info("old container restored", "name", sw.name)
 	// A :latest pull moved the tag to the new image. Point it back at the
@@ -799,9 +820,10 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 			fErr.stage, fErr.err = se.stage, se.err
 		}
 		if sw.changed() {
-			if undoErr := sw.undo(ctx); undoErr != nil {
+			if gone, undoErr := sw.undoOrRetry(ctx); undoErr != nil {
 				fErr.err = fmt.Errorf("%w; putting the updated container back failed: %v", fErr.err, undoErr)
-				fErr.down = true
+				fErr.down = gone
+				fErr.stuck = !gone
 			}
 		}
 		return id, fErr
