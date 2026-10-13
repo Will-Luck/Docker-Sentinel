@@ -11,11 +11,13 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 )
 
@@ -215,5 +217,22 @@ func TestEnroll_RetryWithTheSameKey(t *testing.T) {
 	}
 	if _, err := srv.Enroll(context.Background(), &proto.EnrollRequest{Token: token, HostName: "a", Csr: csrFor(t, key)}); err == nil {
 		t.Error("the same key enrolled again more than 10 minutes later")
+	}
+}
+
+// The hub tells agents it takes a "skipped" update outcome as no change.
+func TestReportState_AdvertisesSkippedOutcomes(t *testing.T) {
+	srv, addr, _, _ := testServer(t)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ack, err := proto.NewAgentServiceClient(conn).ReportState(ctx, &proto.StateReport{HostId: hostID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(ack.GetServerFeatures(), cluster.FeatureUpdateSkipped) {
+		t.Errorf("server features = %v, want %s", ack.GetServerFeatures(), cluster.FeatureUpdateSkipped)
 	}
 }

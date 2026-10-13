@@ -229,8 +229,14 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 
 	switch {
 	case errors.Is(err, errSkippedByHook):
+		// A hub before v3.0.0 counts anything but "success" as a failure:
+		// it is told success, with the skip in the error text.
 		result.Outcome = "skipped"
 		result.Error = err.Error()
+		if !a.hubSkips.Load() {
+			result.Outcome = "success"
+			result.Error = "skipped: " + err.Error()
+		}
 		a.log.Info("update skipped", "name", name, "reason", err)
 	case err != nil:
 		result.Outcome = "failed"

@@ -86,6 +86,7 @@ func TestRemoteUpdate_HubHooksWinOverLabels(t *testing.T) {
 // changed, and the hub hears it was skipped, not failed.
 func TestRemoteUpdate_PreHookExit75Skips(t *testing.T) {
 	h, a := hookHost(t)
+	a.hubSkips.Store(true)
 	h.execExit["hub-pre"] = 75
 	ur := updateWith(t, a, hubHooks("pre", "post"))
 	if ur.GetOutcome() != "skipped" {
@@ -143,6 +144,30 @@ func TestRemoteUpdate_NoHooksWhenOffOrSkipped(t *testing.T) {
 			if len(h.execs) != 0 {
 				t.Errorf("hooks run = %s, want none", fmt.Sprint(h.execs))
 			}
+		})
+	}
+}
+
+// review (minor): a hub before v3.0.0 counts any outcome but "success" as a
+// failed update, so a pre-update hook's deliberate skip (exit 75) showed as
+// a failure there. Such a hub (it does not advertise "update-skipped") is
+// told "success", with the skip in the error text; a v3 hub is told
+// "skipped".
+func TestRemoteUpdate_SkipReportedAsTheHubUnderstands(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		hubSkips bool
+		want     string
+	}{{"v3 hub", true, "skipped"}, {"older hub", false, "success"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, a := hookHost(t)
+			a.hubSkips.Store(tc.hubSkips)
+			h.execExit["hub-pre"] = 75
+			ur := updateWith(t, a, hubHooks("pre", "post"))
+			if ur.GetOutcome() != tc.want || !strings.Contains(ur.GetError(), "skip") {
+				t.Errorf("outcome %q (%s), want %s with the skip named", ur.GetOutcome(), ur.GetError(), tc.want)
+			}
+			h.requireOnly(t, "web", "nginx:1", true)
 		})
 	}
 }

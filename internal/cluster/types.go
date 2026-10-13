@@ -42,6 +42,11 @@ var ErrUpdateSkipped = errors.New("a pre-update hook asked to skip the update")
 // valid until the agent connects with the new one.
 const FeatureCertRenewal = "cert-renewal"
 
+// FeatureUpdateSkipped is the server feature that says the server takes an
+// update outcome of "skipped" (a pre-update hook exited 75) as no change.
+// Servers before v3.0.0 count any outcome but "success" as a failure.
+const FeatureUpdateSkipped = "update-skipped"
+
 // FeatureKeepalive is the server feature that says the server accepts
 // keepalive pings every 30 seconds. gRPC's default, which servers before
 // v2.17.0 run, cuts off a client that pings more often than every five

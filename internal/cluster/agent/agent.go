@@ -160,6 +160,10 @@ type Agent struct {
 	// certificates safely. Hubs before v2.17.0 do not.
 	hubRenews atomic.Bool
 
+	// hubSkips is whether the hub said it takes a "skipped" update outcome
+	// (FeatureUpdateSkipped); an older hub is told "success" instead.
+	hubSkips atomic.Bool
+
 	// hubKeepalive is whether the last hub said it accepts frequent
 	// keepalive pings; the next connection is dialled to match.
 	hubKeepalive atomic.Bool
@@ -459,6 +463,7 @@ func (a *Agent) runSession(ctx context.Context) error {
 	}
 	a.log.Info("state report accepted", "message", ack.Message)
 	a.hubRenews.Store(slices.Contains(ack.GetServerFeatures(), cluster.FeatureCertRenewal))
+	a.hubSkips.Store(slices.Contains(ack.GetServerFeatures(), cluster.FeatureUpdateSkipped))
 
 	// Match the keepalive interval to what this server accepts: a server
 	// before v2.17.0 cuts off a client that pings every 30 seconds. If the
