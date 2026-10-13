@@ -145,57 +145,12 @@ func TestApiApprove_RemoteHistoryNewDigest(t *testing.T) {
 	}
 }
 
-type listingHistory struct {
-	recordingHistory
-	existing []UpdateRecord
-}
-
-func (h *listingHistory) ListHistoryByContainer(string, int) ([]UpdateRecord, error) {
-	return h.existing, nil
-}
-
 type failingUpdater struct{ err error }
 
 func (f failingUpdater) UpdateContainer(context.Context, string, string, string) error { return f.err }
 func (failingUpdater) IsUpdating(string) bool                                          { return false }
 func (failingUpdater) IsIdle() bool                                                    { return true }
 func (failingUpdater) SelfUpdateQueued() bool                                          { return false }
-
-// A local update the engine refused (signature check, pre-update hook) is
-// already in the history. Approve must not add a second failed row.
-func TestApiApprove_LocalFailureNotRecordedTwice(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		engineLogged bool
-		wantRows     int
-	}{{"engine already recorded it", true, 0}, {"engine recorded nothing", false, 1}} {
-		t.Run(tc.name, func(t *testing.T) {
-			hist := &listingHistory{}
-			if tc.engineLogged {
-				hist.existing = []UpdateRecord{{ContainerName: "web", Outcome: "failed", Timestamp: time.Now().Add(time.Hour)}}
-			}
-			srv := &Server{deps: Dependencies{
-				Queue:    &approvingQueue{items: []PendingUpdate{{ContainerID: "id", ContainerName: "web", CurrentImage: "nginx:1"}}},
-				Store:    hist,
-				Updater:  failingUpdater{err: errors.New("signature verification failed")},
-				Docker:   &mockContainerLister{},
-				EventBus: events.New(),
-				Log:      slog.Default(),
-			}}
-			r := httptest.NewRequest(http.MethodPost, "/api/approve/web", nil)
-			r.SetPathValue("key", "web")
-			w := httptest.NewRecorder()
-			srv.apiApprove(w, r)
-			time.Sleep(300 * time.Millisecond)
-			hist.mu.Lock()
-			n := len(hist.recs)
-			hist.mu.Unlock()
-			if n != tc.wantRows {
-				t.Errorf("web added %d failed rows, want %d", n, tc.wantRows)
-			}
-		})
-	}
-}
 
 type fixedGHCR struct{}
 
@@ -248,6 +203,67 @@ func TestRemoteVersionUpdateAndGHCRSwitchWriteHistory(t *testing.T) {
 				}
 				if rec.ContainerName != "h1::whoami" || rec.HostID != "h1" || rec.HostName != "Agent One" || rec.Outcome != want || rec.NewImage != op.img {
 					t.Errorf("row = %+v, want h1::whoami on Agent One, outcome %s, new image %s", rec, want, op.img)
+				}
+			})
+		}
+	}
+}
+
+// Local updates record their own history inside the engine, for every failure
+// (validation, start, verify refusal, hook abort, pull). The web layer records
+// only remote updates, so a failed local update never gets a second row from
+// any entry point, whatever the error.
+func TestLocalUpdateEntryPoints_NeverAddAFailedRow(t *testing.T) {
+	errs := []error{
+		errors.New("new container failed validation"),
+		errors.New("start failed"),
+		errors.New("signature verification failed"),
+		errors.New("pre-update hook failed"),
+		errors.New("pull failed"),
+	}
+	local := &mockContainerLister{containers: []ContainerSummary{{ID: "c1", Names: []string{"/web"}, Image: "nginx:1", Labels: map[string]string{}}}}
+	entries := []struct {
+		name string
+		run  func(srv *Server)
+	}{
+		{"approve", func(srv *Server) {
+			srv.deps.Queue = &approvingQueue{items: []PendingUpdate{{ContainerID: "c1", ContainerName: "web", CurrentImage: "nginx:1"}}}
+			r := httptest.NewRequest(http.MethodPost, "/api/approve/web", nil)
+			r.SetPathValue("key", "web")
+			srv.apiApprove(httptest.NewRecorder(), r)
+		}},
+		{"update now", func(srv *Server) {
+			r := httptest.NewRequest(http.MethodPost, "/api/update/web", nil)
+			r.SetPathValue("name", "web")
+			srv.apiUpdate(httptest.NewRecorder(), r)
+		}},
+		{"update to version", func(srv *Server) {
+			r := httptest.NewRequest(http.MethodPost, "/api/containers/web/update-to-version", strings.NewReader(`{"tag":"2"}`))
+			r.SetPathValue("name", "web")
+			srv.apiUpdateToVersion(httptest.NewRecorder(), r)
+		}},
+		{"ghcr switch", func(srv *Server) {
+			srv.deps.GHCRCache = fixedGHCR{}
+			r := httptest.NewRequest(http.MethodPost, "/api/containers/web/switch-ghcr", nil)
+			r.SetPathValue("name", "web")
+			srv.apiSwitchToGHCR(httptest.NewRecorder(), r)
+		}},
+	}
+	for _, e := range entries {
+		for _, upErr := range errs {
+			t.Run(e.name+"/"+upErr.Error(), func(t *testing.T) {
+				hist := &recordingHistory{}
+				srv := &Server{deps: Dependencies{
+					Store: hist, Updater: failingUpdater{err: upErr}, Docker: local,
+					Queue: &mockQueue{}, EventBus: events.New(), Log: nopLogger(),
+				}}
+				e.run(srv)
+				time.Sleep(150 * time.Millisecond)
+				hist.mu.Lock()
+				n := len(hist.recs)
+				hist.mu.Unlock()
+				if n != 0 {
+					t.Errorf("the web layer added %d history rows for a failed local update", n)
 				}
 			})
 		}
