@@ -113,6 +113,7 @@ type swap struct {
 	restartChanged bool // the old container's restart policy was set to "no"
 	newID          string
 	newStarted     bool
+	kept           bool // undo left the record for recovery on purpose
 }
 
 // swapSpec describes the container a swap replaces.
@@ -343,9 +344,17 @@ func (s *swap) changed() bool {
 // so the swap is retried later. A failed rename back or policy restore does
 // not stop it starting the old container (under its set-aside name if need
 // be), so the service runs meanwhile. It can be called again.
-func (s *swap) undo(ctx context.Context) error {
+func (s *swap) undo(ctx context.Context) (err error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapBudget(s.stopTimeout))
 	defer cancel()
+	// A record undo leaves behind is not an interruption: say so, so
+	// recovery reports it as unfinished (see recordRecovery).
+	defer func() {
+		if (err != nil || s.journal != nil && s.kept) && !s.rec.Unresolved {
+			s.rec.Unresolved = true
+			_ = s.save()
+		}
+	}()
 
 	if s.newID != "" {
 		if s.newStarted {
@@ -409,6 +418,7 @@ func (s *swap) undo(ctx context.Context) error {
 		// The daemon may still stop the old container: keep the record, with
 		// the stop in flight, so recovery watches it (see resolvePendingSwap).
 		s.log.Warn("the old container is back, but its stop did not return; recovery watches it", "name", s.name)
+		s.kept = true
 		return nil
 	}
 	if s.rec.FailedName != "" {
@@ -416,6 +426,7 @@ func (s *swap) undo(ctx context.Context) error {
 		// the set-aside replacement.
 		s.log.Warn("the failed replacement could not be removed; it is set aside and removed by the next recovery",
 			"name", s.name, "set_aside_as", s.rec.FailedName)
+		s.kept = true
 		return nil
 	}
 	s.forget()
@@ -512,10 +523,9 @@ func (s *swap) commit(ctx context.Context) {
 		s.log.Warn("could not remove the replaced container", "name", s.name+replacedSuffix, "error", err)
 		// The record must say committed, or recovery would put the replaced
 		// container back over the validated one.
-		if saveErr != nil {
-			if err := s.save(); err != nil {
-				s.log.Error("could not journal the commit; recovery may restore the replaced container", "name", s.name, "error", err)
-			}
+		s.rec.Unresolved = true
+		if err := s.save(); err != nil {
+			s.log.Error("could not journal the commit; recovery may restore the replaced container", "name", s.name, "error", err)
 		}
 	}
 	s.renamed = false
@@ -738,23 +748,30 @@ func (u *Updater) recordRecovery(rec store.SwapRecord, action string, now time.T
 		what = "a container swap"
 	}
 	outcome, done := "rollback", ""
-	switch action {
-	case actionFinished:
+	switch {
+	case action == actionFinished:
 		outcome, done = "success", "it had finished, so recovery removed the replaced container"
-	case actionKept:
+	case action == actionKept:
 		outcome, done = "success", "the old container was gone, so recovery kept its replacement"
-	case actionRestored:
+	case action == actionRestored && rec.Kind == swapFinalise:
+		// The old container of a finalise is the validated update.
+		outcome, done = "success", "recovery kept the updated container and removes its maintenance label"
+	case action == actionRestored:
 		done = "recovery put the old container back"
-	case actionRebuilt:
+	case action == actionRebuilt:
 		done = "recovery rebuilt the old container from its snapshot"
-	case actionDropped:
+	case action == actionDropped:
 		outcome, done = "failed", "both containers were gone and another container now has the name"
+	}
+	cause := "Sentinel was interrupted during " + what
+	if rec.Unresolved {
+		cause = "Sentinel could not finish " + what + " at the time"
 	}
 	entry := store.UpdateRecord{
 		Timestamp:     now,
 		ContainerName: rec.Name,
 		Outcome:       outcome,
-		Error:         "Sentinel was interrupted during " + what + "; " + done,
+		Error:         cause + "; " + done,
 	}
 	var old container.InspectResponse
 	if rec.Snapshot != nil && json.Unmarshal(rec.Snapshot, &old) == nil && old.Config != nil {

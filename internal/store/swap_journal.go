@@ -49,6 +49,9 @@ type SwapRecord struct {
 	// was renamed to, so the old container could have its name back; the
 	// record stays until recovery removes it.
 	FailedName string `json:"failed_name,omitempty"`
+	// Unresolved is set when Sentinel itself left the record (an undo or a
+	// commit it could not finish), rather than being interrupted.
+	Unresolved bool `json:"unresolved,omitempty"`
 	// Committed is set once the replacement is accepted; only the removal
 	// of the old container is then left to do.
 	Committed     bool `json:"committed,omitempty"`

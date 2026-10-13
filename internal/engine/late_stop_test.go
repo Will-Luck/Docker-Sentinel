@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -230,5 +231,45 @@ func TestRecoveryRecordsAFinishedSwap(t *testing.T) {
 	history, _ := u.store.ListHistoryByContainer("app", 10)
 	if len(history) != 1 || history[0].Outcome != "success" || !strings.Contains(history[0].Error, "interrupted") {
 		t.Errorf("history = %+v, want one success row noting the interruption", history)
+	}
+}
+
+// An interrupted finalise is resolved by keeping the validated new
+// container: that is a successful update, not a rollback.
+func TestRecoveryRecordsAnInterruptedFinaliseAsSuccess(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, true, nil)
+	delete(f.containers, "old")
+	v := f.add("v", "app"+replacedSuffix, "app:latest", true, &container.Config{Labels: map[string]string{"sentinel.maintenance": "true"}}, nil)
+	f.add("n", "app", "app:latest", false, nil, nil)
+	snap, _ := json.Marshal(container.InspectResponse{ID: "v", Name: "/app", Config: v.cfg})
+	if err := u.store.SaveSwap(store.SwapRecord{Name: "app", Kind: swapFinalise, OldID: "v", NewID: "n", OldRunning: true, Snapshot: snap}); err != nil {
+		t.Fatal(err)
+	}
+
+	u.RecoverInterruptedUpdates(context.Background())
+
+	history, _ := u.store.ListHistoryByContainer("app", 10)
+	if len(history) != 1 || history[0].Outcome != "success" {
+		t.Errorf("history = %+v, want one success row: the updated container was kept", history)
+	}
+}
+
+// A record the update itself left (its undo failed, already recorded as
+// failed) is not reported again as an interruption when a scan resolves it.
+func TestRecoveryDoesNotCallAFailedUndoAnInterruption(t *testing.T) {
+	f, u, _ := setupFakeUpdate(t, true, nil)
+	f.failStart["app-1"] = errors.New("OCI error")
+	f.failStart["old"] = errors.New("port is already allocated")
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err == nil {
+		t.Fatal("expected the update to fail")
+	}
+	delete(f.failStart, "old")
+	u.clock.(*mockClock).Advance(time.Minute) // history rows are keyed by time
+
+	u.resolvePendingSwaps(context.Background())
+
+	history, _ := u.store.ListHistoryByContainer("app", 10)
+	if len(history) != 2 || strings.Contains(history[0].Error, "interrupted") || !strings.Contains(history[0].Error, "could not finish") {
+		t.Errorf("history = %+v, want the failed update and a row saying recovery finished it, without blaming an interruption", history)
 	}
 }
