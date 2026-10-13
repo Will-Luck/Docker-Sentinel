@@ -35,12 +35,8 @@ func (s *Server) CheckAgentVersions(ctx context.Context, serverVersion string) {
 		agentVer := as.version
 		as.mu.RUnlock()
 
-		baseAgent := baseVersion(agentVer)
-		if baseAgent == "" || baseAgent == "dev" {
-			continue // agent hasn't reported version yet, or is a dev build
-		}
-		if baseAgent == baseServer {
-			continue // already on the right version
+		if !agentNeedsUpdate(agentVer, serverVersion) {
+			continue
 		}
 
 		s.log.Info("agent version mismatch",
@@ -49,13 +45,20 @@ func (s *Server) CheckAgentVersions(ctx context.Context, serverVersion string) {
 			"server_version", serverVersion,
 		)
 
-		s.updateAgentContainer(ctx, hostID, baseServer)
+		s.updateAgentContainer(ctx, hostID, imageTagForVersion(baseServer))
 	}
+}
+
+// imageTagForVersion maps a release version ("v2.16.1") to the image tag
+// the release workflow publishes for it ("2.16.1"). Git tags carry the
+// "v"; the semver image tags do not.
+func imageTagForVersion(v string) string {
+	return strings.TrimPrefix(v, "v")
 }
 
 // updateAgentContainer finds the sentinel container on the given host and
 // sends an UpdateContainerRequest to bring it to the target version.
-func (s *Server) updateAgentContainer(ctx context.Context, hostID, targetVersion string) {
+func (s *Server) updateAgentContainer(ctx context.Context, hostID, targetTag string) {
 	hs, ok := s.registry.Get(hostID)
 	if !ok {
 		s.log.Warn("auto-update: host not in registry", "hostID", hostID)
@@ -83,7 +86,7 @@ func (s *Server) updateAgentContainer(ctx context.Context, hostID, targetVersion
 		return
 	}
 
-	newImage := replaceImageTag(sentinelImage, targetVersion)
+	newImage := replaceImageTag(sentinelImage, targetTag)
 	if newImage == sentinelImage {
 		s.log.Debug("auto-update: image already matches target",
 			"hostID", hostID,
@@ -129,6 +132,18 @@ func (s *Server) updateAgentContainer(ctx context.Context, hostID, targetVersion
 		"container", sentinelName,
 		"new_image", newImage,
 	)
+}
+
+// agentNeedsUpdate reports whether an agent on agentVer should be moved to
+// the hub's serverVersion. Dev builds and agents that have not reported a
+// version yet are left alone.
+func agentNeedsUpdate(agentVer, serverVersion string) bool {
+	baseAgent := baseVersion(agentVer)
+	baseServer := baseVersion(serverVersion)
+	if baseAgent == "" || baseAgent == "dev" || baseServer == "" || baseServer == "dev" {
+		return false
+	}
+	return imageTagForVersion(baseAgent) != imageTagForVersion(baseServer)
 }
 
 // baseVersion strips the commit hash suffix from a version string.
