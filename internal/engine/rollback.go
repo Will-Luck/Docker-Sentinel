@@ -9,6 +9,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
@@ -386,7 +387,12 @@ func (u *Updater) RollbackContainer(ctx context.Context, name string) error {
 	ctx, stop := u.withShutdown(ctx)
 	defer stop()
 
+	start := u.clock.Now()
 	liveID, _ := findContainerID(ctx, u.docker, name)
+	var live container.InspectResponse
+	if liveID != "" {
+		live, _ = u.docker.InspectContainer(ctx, liveID)
+	}
 	newID, err := u.rollbackFromStore(ctx, name)
 	if err != nil {
 		u.publishEvent(events.EventContainerUpdate, name, "rollback failed: "+err.Error())
@@ -399,8 +405,39 @@ func (u *Updater) RollbackContainer(ctx context.Context, name string) error {
 		return err
 	}
 	u.afterProviderChange(ctx, name, newID, liveID)
+	u.recordManualRollback(ctx, name, live, newID, start)
 	u.publishEvent(events.EventContainerUpdate, name, "rollback succeeded")
 	return nil
+}
+
+// recordManualRollback records and notifies a rollback asked for from the
+// dashboard or the API: from the image live ran to the one the rollback
+// container runs.
+func (u *Updater) recordManualRollback(ctx context.Context, name string, live container.InspectResponse, newID string, start time.Time) {
+	ctx = context.WithoutCancel(ctx)
+	entry := store.UpdateRecord{
+		Timestamp:     u.clock.Now(),
+		ContainerName: name,
+		Outcome:       "rollback",
+		Duration:      u.clock.Since(start),
+		Error:         "rolled back on request",
+	}
+	if live.Config != nil {
+		entry.OldImage, entry.OldDigest = live.Config.Image, live.Image
+	}
+	if rolled, err := u.docker.InspectContainer(ctx, newID); err == nil && rolled.Config != nil {
+		entry.NewImage, entry.NewDigest = rolled.Config.Image, rolled.Image
+	}
+	if err := u.store.RecordUpdate(entry); err != nil {
+		u.log.Warn("failed to persist rollback record", "name", name, "error", err)
+	}
+	u.notifier.Notify(ctx, notify.Event{
+		Type:          notify.EventRollbackOK,
+		ContainerName: name,
+		OldImage:      entry.OldImage,
+		NewImage:      entry.NewImage,
+		Timestamp:     u.clock.Now(),
+	})
 }
 
 // rollbackFromStore rolls name back to its latest snapshot and returns the
