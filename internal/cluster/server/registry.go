@@ -89,18 +89,22 @@ func (r *Registry) LoadFromStore() error {
 }
 
 // Register adds a newly enrolled host to the registry and persists it.
+//
+// Every write of a host to the store happens under r.mu, and only for a
+// host still in the map, so a save that races with Remove can never write
+// a removed host back.
 func (r *Registry) Register(info cluster.HostInfo) error {
 	data, err := json.Marshal(info)
 	if err != nil {
 		return fmt.Errorf("marshal host info: %w", err)
 	}
-	if err := r.store.SaveClusterHost(info.ID, data); err != nil {
-		return fmt.Errorf("persist host %s: %w", info.ID, err)
-	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if err := r.store.SaveClusterHost(info.ID, data); err != nil {
+		return fmt.Errorf("persist host %s: %w", info.ID, err)
+	}
 	r.hosts[info.ID] = &HostState{
 		Info:      info,
 		Connected: false,
@@ -114,20 +118,13 @@ func (r *Registry) Register(info cluster.HostInfo) error {
 // to the correct host. Called on each Channel() connection.
 func (r *Registry) UpdateAddress(hostID, addr string) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
-		r.mu.Unlock()
 		return
 	}
 	hs.Info.Address = addr
-	data, err := json.Marshal(hs.Info)
-	r.mu.Unlock()
-
-	if err != nil {
-		r.log.Warn("marshal host info for address update", "error", err)
-		return
-	}
-	if err := r.store.SaveClusterHost(hostID, data); err != nil {
+	if err := r.persistLocked(hostID, hs); err != nil {
 		r.log.Warn("persist host address", "error", err)
 	}
 }
@@ -137,45 +134,31 @@ func (r *Registry) UpdateAddress(hostID, addr string) {
 // since the last write. Use PersistLastSeen for forced writes (e.g. on disconnect).
 func (r *Registry) UpdateLastSeen(hostID string, t time.Time) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
-		r.mu.Unlock()
 		return fmt.Errorf("host %s not found", hostID)
 	}
 	hs.Info.LastSeen = t
 
 	if time.Since(hs.lastPersist) < persistInterval {
-		r.mu.Unlock()
 		return nil
 	}
-
 	hs.lastPersist = t
-	data, err := json.Marshal(hs.Info)
-	r.mu.Unlock()
-
-	if err != nil {
-		return fmt.Errorf("marshal host info: %w", err)
-	}
-	return r.store.SaveClusterHost(hostID, data)
+	return r.persistLocked(hostID, hs)
 }
 
 // PersistLastSeen forces a BoltDB write of the host's current LastSeen.
 // Called on disconnect so the timestamp survives a server restart.
 func (r *Registry) PersistLastSeen(hostID string) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
-		r.mu.Unlock()
 		return fmt.Errorf("host %s not found", hostID)
 	}
 	hs.lastPersist = hs.Info.LastSeen
-	data, err := json.Marshal(hs.Info)
-	r.mu.Unlock()
-
-	if err != nil {
-		return fmt.Errorf("marshal host info: %w", err)
-	}
-	return r.store.SaveClusterHost(hostID, data)
+	return r.persistLocked(hostID, hs)
 }
 
 // SetConnected marks a host as connected or disconnected.
@@ -243,23 +226,16 @@ func (r *Registry) SetDisconnected(hostID string, err error) {
 // Persisted to BoltDB so the cluster page can show it.
 func (r *Registry) UpdateEngineID(hostID, engineID string) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
-		r.mu.Unlock()
 		return fmt.Errorf("host %s not found", hostID)
 	}
 	if hs.Info.EngineID == engineID {
-		r.mu.Unlock()
 		return nil // no change
 	}
 	hs.Info.EngineID = engineID
-	data, err := json.Marshal(hs.Info)
-	r.mu.Unlock()
-
-	if err != nil {
-		return fmt.Errorf("marshal host info: %w", err)
-	}
-	if err := r.store.SaveClusterHost(hostID, data); err != nil {
+	if err := r.persistLocked(hostID, hs); err != nil {
 		return fmt.Errorf("persist engine ID: %w", err)
 	}
 	r.log.Info("stored engine ID", "hostID", hostID, "engine_id", engineID)
@@ -511,21 +487,15 @@ func (r *Registry) AllHosts() []cluster.HostInfo {
 // Valid transitions: active -> paused -> decommissioned.
 func (r *Registry) SetState(hostID string, state cluster.HostState) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
-		r.mu.Unlock()
 		return fmt.Errorf("host %s not found", hostID)
 	}
 
 	old := hs.Info.State
 	hs.Info.State = state
-	data, err := json.Marshal(hs.Info)
-	r.mu.Unlock()
-
-	if err != nil {
-		return fmt.Errorf("marshal host info: %w", err)
-	}
-	if err := r.store.SaveClusterHost(hostID, data); err != nil {
+	if err := r.persistLocked(hostID, hs); err != nil {
 		return fmt.Errorf("persist host state: %w", err)
 	}
 
@@ -537,9 +507,8 @@ func (r *Registry) SetState(hostID string, state cluster.HostState) error {
 // Typically called after decommissioning (certs revoked, data cleaned up).
 func (r *Registry) Remove(hostID string) error {
 	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.hosts, hostID)
-	r.mu.Unlock()
-
 	if err := r.store.DeleteClusterHost(hostID); err != nil {
 		return fmt.Errorf("delete host %s from store: %w", hostID, err)
 	}

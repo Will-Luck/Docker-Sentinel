@@ -111,3 +111,62 @@ func TestChannel_RejectsCertificateNotIssuedToHost(t *testing.T) {
 		t.Errorf("Channel with an unrecorded certificate: %v, want PermissionDenied", err)
 	}
 }
+
+// slowSaveStore pauses the first host save it sees until release is
+// closed, and says when it has started.
+type slowSaveStore struct {
+	*store.Store
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *slowSaveStore) SaveClusterHost(id string, data []byte) error {
+	s.once.Do(func() {
+		close(s.started)
+		<-s.release
+	})
+	return s.Store.SaveClusterHost(id, data)
+}
+
+// A save that was already under way when the host was removed (a late
+// last-seen write from its disconnect) must not bring the host back.
+func TestRegistry_LateSaveDoesNotResurrectRemovedHost(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/hub.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	reg := NewRegistry(db, slog.Default())
+	if err := reg.Register(cluster.HostInfo{ID: "h1", Name: "one"}); err != nil {
+		t.Fatal(err)
+	}
+
+	st := &slowSaveStore{Store: db, started: make(chan struct{}), release: make(chan struct{})}
+	reg.store = st
+
+	saved := make(chan struct{})
+	go func() {
+		_ = reg.PersistLastSeen("h1")
+		close(saved)
+	}()
+	<-st.started
+
+	removed := make(chan struct{})
+	go func() {
+		_ = reg.Remove("h1")
+		close(removed)
+	}()
+	// Give Remove the chance to run while the save is paused.
+	select {
+	case <-removed:
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(st.release)
+	<-saved
+	<-removed
+
+	if data, _ := db.GetClusterHost("h1"); data != nil {
+		t.Error("removed host was written back to the store by a late save")
+	}
+}
