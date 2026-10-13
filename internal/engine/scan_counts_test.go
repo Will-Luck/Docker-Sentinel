@@ -152,3 +152,67 @@ func TestScanSummaryCountsAddUpForIgnoredAndDryRun(t *testing.T) {
 		t.Errorf("dry run: checked = %d, counts add up to %d (%+v)", checked, sum, result)
 	}
 }
+
+// Over a mixed scan (local and remote containers, Swarm task containers,
+// a failed registry check, an ignored update and dry runs) every container
+// the scan looks at lands in exactly one count: Total is the number of
+// containers checked or skipped (Swarm tasks are left to their service and
+// are in none), and "checked" is the sum of the other counts.
+func TestScanCountsAddUpOverAMixedScan(t *testing.T) {
+	mock := newMockDocker()
+	add := func(id, name string, labels map[string]string, upToDate bool) {
+		ref := "localhost:1/" + name + ":latest"
+		mock.containers = append(mock.containers, container.Summary{ID: id, Names: []string{"/" + name}, Image: ref, Labels: labels})
+		mock.imageDigests[ref] = "localhost:1/" + name + "@sha256:old"
+		mock.distDigests[ref] = "sha256:new"
+		if upToDate {
+			mock.distDigests[ref] = "sha256:old"
+		}
+		mock.inspectResults[id] = container.InspectResponse{
+			ID: id, Name: "/" + name, Config: &container.Config{Image: ref, Labels: labels},
+			HostConfig: &container.HostConfig{}, NetworkSettings: &container.NetworkSettings{},
+		}
+	}
+	manual := map[string]string{"sentinel.policy": "manual"}
+	add("l1", "uptodate", manual, true)
+	add("l2", "queued", manual, false)
+	add("l3", "ignored", manual, false)
+	add("l4", "task", map[string]string{"com.docker.swarm.task": "", "sentinel.policy": "manual"}, false)
+	add("l5", "dry", map[string]string{"sentinel.policy": "auto"}, false)
+
+	u, _ := newTestUpdater(t, mock)
+	u.SetSettingsReader(u.store)
+	if err := u.store.SaveSetting("dry_run", "true"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ignored", store.ScopedKey("h1", "rign")} {
+		if err := u.store.AddIgnoredVersion(name, "sha256:new"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mock.distDigests["localhost:1/rup:latest"] = "sha256:old"
+	mock.distDigests["localhost:1/rign:latest"] = "sha256:new"
+	mock.distDigests["localhost:1/rdry:latest"] = "sha256:new"
+	mock.distErr["localhost:1/rerr:latest"] = io.ErrUnexpectedEOF
+	remote := func(name string, labels map[string]string) RemoteContainer {
+		return RemoteContainer{Name: name, Image: "localhost:1/" + name + ":latest", ImageDigest: "localhost:1/" + name + "@sha256:old", State: "running", Labels: labels}
+	}
+	u.SetClusterScanner(&fakeCluster{connected: []string{"h1"}, lists: map[string][]RemoteContainer{"h1": {
+		remote("rerr", manual), remote("rup", manual), remote("rign", manual),
+		remote("rdry", map[string]string{"sentinel.policy": "auto"}),
+		remote("rtask", map[string]string{"com.docker.swarm.task": "", "sentinel.policy": "manual"}),
+	}}})
+
+	result := u.Scan(context.Background(), ScanScheduled)
+
+	sum := result.UpToDate + result.Updated + result.Queued + result.RateLimited + result.Failed + result.CheckFailed
+	if checked := result.Total - result.Skipped; checked != sum {
+		t.Errorf("checked = %d, but the counts add up to %d (%+v)", checked, sum, result)
+	}
+	if result.Total != 8 {
+		t.Errorf("total = %d, want 8 (4 local and 4 remote containers, no Swarm tasks): %+v", result.Total, result)
+	}
+	if result.CheckFailed != 1 || result.Skipped != 2 || result.Queued != 1 || result.UpToDate != 4 {
+		t.Errorf("counts = %+v, want 1 check failed, 2 dry runs skipped, 1 queued, 4 up to date (2 ignored)", result)
+	}
+}

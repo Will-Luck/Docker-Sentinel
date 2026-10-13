@@ -66,17 +66,20 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		}
 	}
 
+	tally := scanTally{r: result}
+	defer tally.done()
 	for _, c := range containers {
 		if ctx.Err() != nil {
 			return
 		}
 
-		// Skip Swarm task containers — managed by the orchestrator.
+		// Skip Swarm task containers: the orchestrator manages them. They
+		// are in no count, as on the hub.
 		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
 			continue
 		}
 
-		result.Total++
+		tally.next()
 		scopedName := store.ScopedKey(hostID, c.Name)
 
 		// An update of it is running: leave it to that update, which would
@@ -138,6 +141,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		if check.Error != nil {
 			u.log.Warn("registry check failed for remote container",
 				"host", host.HostName, "name", c.Name, "error", check.Error)
+			result.CheckFailed++
 			continue
 		}
 		if !check.IsLocal {
@@ -160,6 +164,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		if u.filterIgnored(scopedName, &check) {
 			u.log.Debug("all newer versions ignored", "host", host.HostName, "name", c.Name)
 			u.dropQueued(scopedName, "version ignored")
+			result.UpToDate++ // as for a local container
 			continue
 		}
 

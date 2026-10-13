@@ -112,8 +112,10 @@ func TestScanMixedContainersAndServices(t *testing.T) {
 	u, _ := newSwarmTestUpdater(t, mock)
 	result := u.Scan(context.Background(), ScanScheduled)
 
-	if result.Total != 1 {
-		t.Errorf("Total containers = %d, want 1", result.Total)
+	// Total counts what the scan looked at, services included, so that
+	// "checked" adds up with the counts (which include the service).
+	if result.Total != 2 {
+		t.Errorf("Total = %d, want 2 (1 container and 1 service)", result.Total)
 	}
 	if result.Services != 1 {
 		t.Errorf("Services = %d, want 1", result.Services)

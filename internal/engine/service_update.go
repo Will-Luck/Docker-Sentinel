@@ -22,10 +22,13 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 	u.log.Debug("scanning swarm services", "count", len(services))
 	result.Services = len(services)
 
+	tally := scanTally{r: result}
+	defer tally.done()
 	for _, svc := range services {
 		if ctx.Err() != nil {
 			return
 		}
+		tally.next()
 
 		name := svc.Spec.Name
 		u.log.Debug("checking swarm service", "name", name, "image", svc.Spec.TaskTemplate.ContainerSpec.Image)
@@ -105,6 +108,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				if rdErr != nil {
 					u.log.Debug("service image not resolvable locally or remotely",
 						"name", name, "image", imageRef, "error", rdErr)
+					result.CheckFailed++
 					continue
 				}
 				localDigest = remoteDigest
@@ -114,6 +118,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		if check.Error != nil {
 			u.log.Warn("service registry check failed", "name", name, "image", imageRef, "error", check.Error)
 			result.Errors = append(result.Errors, fmt.Errorf("service %s: %w", name, check.Error))
+			result.CheckFailed++
 			continue
 		}
 
@@ -128,12 +133,14 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				if st, _ := u.store.GetNotifyState(name); st != nil {
 					_ = u.store.ClearNotifyState(name)
 				}
+				result.UpToDate++
 			}
-			continue
+			continue // a local image is counted as skipped (scanTally)
 		}
 
 		// Filter ignored versions.
 		if u.filterIgnored(name, &check) {
+			result.UpToDate++ // as for a container
 			continue
 		}
 

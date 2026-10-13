@@ -145,10 +145,10 @@ func TestScanContextCancelled(t *testing.T) {
 	u, _ := newTestUpdater(t, mock)
 	res := u.Scan(ctx, ScanScheduled)
 
-	// With a pre-cancelled context the loop body should bail early.
-	// Total is set before the loop, so it reflects the container count.
-	if res.Total != 2 {
-		t.Errorf("Total = %d, want 2", res.Total)
+	// With a pre-cancelled context the loop body should bail early. Total
+	// is what the scan counted, so it is 0: nothing was looked at.
+	if res.Total != 0 {
+		t.Errorf("Total = %d, want 0", res.Total)
 	}
 	// No containers should have been processed.
 	if res.Queued+res.AutoCount+res.Updated > 0 {

@@ -48,6 +48,34 @@ type ScanResult struct {
 	ServiceUpdates int
 }
 
+// counted is the number of containers and services the scan has put in a
+// count. Each lands in exactly one, so Total is this sum by construction
+// and "checked" (Total less Skipped) is the sum of the other counts.
+func (r *ScanResult) counted() int {
+	return r.Skipped + r.UpToDate + r.Updated + r.Queued + r.RateLimited + r.Failed + r.CheckFailed
+}
+
+// scanTally keeps a scan loop to one count per container (or service):
+// next marks the start of an iteration, done closes the last one. An
+// iteration that reached no count is counted as skipped.
+type scanTally struct {
+	r    *ScanResult
+	mark int
+	open bool
+}
+
+func (t *scanTally) next() {
+	t.done()
+	t.mark, t.open = t.r.counted(), true
+}
+
+func (t *scanTally) done() {
+	if t.open && t.r.counted() == t.mark {
+		t.r.Skipped++
+	}
+	t.open = false
+}
+
 // ClusterScanner provides access to remote host containers for multi-host scanning.
 // Nil when clustering is disabled — single-host mode has zero overhead.
 type ClusterScanner interface {
@@ -499,9 +527,10 @@ func (u *Updater) filterIgnoredVersions(name string, check *registry.CheckResult
 
 // Scan lists running containers, checks for updates, and processes them
 // according to each container's policy. The mode controls rate limit headroom.
-func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
+func (u *Updater) Scan(ctx context.Context, mode ScanMode) (result ScanResult) {
+	// Total is what the scan counted, on every return.
+	defer func() { result.Total = result.counted() }()
 	scanStart := time.Now()
-	result := ScanResult{}
 	u.selfUpdateQueued.Store(false)
 
 	if c := u.scanConcurrency(); c > 1 {
@@ -520,7 +549,6 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		result.Errors = append(result.Errors, err)
 		return result
 	}
-	result.Total = len(containers)
 	containers = u.resolveImageRefs(ctx, containers)
 
 	// Discover registries and probe for fresh rate limit data.
@@ -651,10 +679,12 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	// Updates refused for want of cosign are notified once, together.
 	defer func() { u.notifyUnverifiable(context.WithoutCancel(ctx), result.Errors) }()
 
+	tally := scanTally{r: &result}
 	for i, c := range containers {
 		if ctx.Err() != nil {
 			return result
 		}
+		tally.next()
 
 		name := containerName(c)
 		u.publishEvent(events.EventScanProgress, name, fmt.Sprintf("checked=%d total=%d", i+1, len(containers)))
@@ -1011,6 +1041,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 
 	// Scan Swarm services using the pre-fetched list.
+	tally.done()
+
 	u.pruneNotifyStates(ctx, isSwarm, swarmServices, svcListed)
 
 	if isSwarm && len(swarmServices) > 0 {
@@ -1022,6 +1054,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.scanRemoteHosts(ctx, mode, &result, filters, reserve)
 	}
 
+	result.Total = result.counted()
 	u.publishEvent(events.EventScanComplete, "", fmt.Sprintf(
 		"total=%d updated=%d queued=%d skipped=%d rate_limited=%d failed=%d services=%d",
 		result.Total, result.Updated, result.Queued, result.Skipped, result.RateLimited, result.Failed, result.ServiceUpdates))
