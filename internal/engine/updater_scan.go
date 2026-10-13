@@ -556,6 +556,15 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			u.log.Info("container runs an older image than its tag", "name", name, "image", imageRef)
 		}
 
+		// A pull-only container whose tag is already pulled has nothing left
+		// for Sentinel to do. Skip it before anything is announced or counted.
+		if behindTag && !selfContainer && policy == docker.PolicyAuto &&
+			(docker.ContainerPullOnly(labels) || u.isPullOnly()) {
+			u.log.Debug("pull-only: tag already pulled, nothing to fetch", "name", name, "image", imageRef)
+			result.Skipped++
+			continue
+		}
+
 		if !check.UpdateAvailable {
 			// Prune stale queue entries: if this container is in the queue
 			// but the registry now reports it as up-to-date, remove it.
@@ -702,10 +711,6 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				continue
 			}
 			pullOnly := docker.ContainerPullOnly(labels) || u.isPullOnly()
-			if pullOnly && behindTag {
-				u.log.Debug("pull-only: tag already pulled, nothing to fetch", "name", name, "image", imageRef)
-				continue
-			}
 			if pullOnly {
 				target := scanTarget
 				if target == "" {

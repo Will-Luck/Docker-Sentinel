@@ -92,9 +92,12 @@ func TestScanPullOnlyStaysTrackedAndDoesNotRepull(t *testing.T) {
 	mock.imageDigests["fake.local/app:latest"] = "fake.local/app@sha256:newdigest"
 	mock.imageIDs["fake.local/app:latest"] = "sha256:new222"
 	mock.pullCalls = nil
-	u.Scan(context.Background(), ScanScheduled)
+	res := u.Scan(context.Background(), ScanScheduled)
 	if len(mock.pullCalls) != 0 {
 		t.Errorf("second scan pulled again: %v", mock.pullCalls)
+	}
+	if res.AutoCount != 0 || res.Updated != 0 || res.Skipped != 1 {
+		t.Errorf("already-pulled pull-only container was counted: %+v", res)
 	}
 }
 
