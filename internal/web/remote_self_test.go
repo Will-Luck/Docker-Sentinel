@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -155,13 +156,13 @@ func (nopHistory) ListHistoryByContainer(string, int) ([]UpdateRecord, error) { 
 func (nopHistory) GetMaintenance(string) (bool, error)                        { return false, nil }
 func (nopHistory) RecordUpdate(UpdateRecord) error                            { return nil }
 
-// Restart, stop, start and GHCR switch protect only the hub's own
-// container. The same name on a remote host (here a Sentinel agent) is an
-// ordinary remote container, addressed with ?host=.
+// Restart, start and GHCR switch protect only the hub's own container. The
+// same name on a remote host (here a Sentinel agent) is an ordinary remote
+// container, addressed with ?host=. (Stop is stricter for a remote agent:
+// TestApiStop_RefusesARemoteSentinelAgent.)
 func TestProtectedHandlers_OnlyTheHubsOwnContainer(t *testing.T) {
 	handlers := map[string]func(*Server, http.ResponseWriter, *http.Request){
 		"restart": (*Server).apiRestart,
-		"stop":    (*Server).apiStop,
 		"start":   (*Server).apiStart,
 		"ghcr":    (*Server).apiSwitchToGHCR,
 	}
@@ -185,5 +186,40 @@ func TestProtectedHandlers_OnlyTheHubsOwnContainer(t *testing.T) {
 				t.Errorf("%s on the hub's own container: status %d, want 403", op, w.Code)
 			}
 		})
+	}
+}
+
+// Stopping a Sentinel agent's own container from the hub leaves that host
+// with nothing to start it again: the hub refuses. An ordinary container
+// on the same host can still be stopped, and the hub's own container stays
+// protected.
+func TestApiStop_RefusesARemoteSentinelAgent(t *testing.T) {
+	srv := newPolicyTestServer(
+		&mockContainerLister{containers: []ContainerSummary{
+			{Names: []string{"/sentinel"}, Labels: map[string]string{"sentinel.self": "true"}},
+		}},
+		&mockPolicyStore{}, nil,
+		[]RemoteContainer{
+			{Name: "sentinel-agent", HostID: "h1", HostName: "remote-host", Labels: map[string]string{"sentinel.self": "true"}},
+			{Name: "web", HostID: "h1", HostName: "remote-host"},
+		},
+	)
+	stop := func(path, name string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, path, nil)
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		srv.apiStop(w, r)
+		return w
+	}
+
+	w := stop("/api/stop/sentinel-agent?host=h1", "sentinel-agent")
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "would leave that host unmanaged") {
+		t.Errorf("stopping the remote agent: %d %s, want 403 saying it would leave the host unmanaged", w.Code, w.Body.String())
+	}
+	if w := stop("/api/stop/web?host=h1", "web"); w.Code == http.StatusForbidden {
+		t.Errorf("stopping an ordinary remote container: 403 %s", w.Body.String())
+	}
+	if w := stop("/api/stop/sentinel", "sentinel"); w.Code != http.StatusForbidden {
+		t.Errorf("stopping the hub's own container: status %d, want 403", w.Code)
 	}
 }

@@ -104,6 +104,20 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiStop stops a container by name.
+// isRemoteSentinelAgent reports whether name on hostID is that host's
+// Sentinel agent container.
+func (s *Server) isRemoteSentinelAgent(hostID, name string) bool {
+	if s.deps.Cluster == nil || !s.deps.Cluster.Enabled() {
+		return false
+	}
+	for _, rc := range s.deps.Cluster.AllHostContainers() {
+		if rc.HostID == hostID && rc.Name == name {
+			return rc.Labels["sentinel.self"] == "true"
+		}
+	}
+	return false
+}
+
 func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !isValidContainerName(name) {
@@ -113,6 +127,12 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 
 	if s.isProtectedTarget(r, name) {
 		writeError(w, http.StatusForbidden, "cannot stop sentinel itself via the dashboard")
+		return
+	}
+	// An agent that stops its own container cannot start it again, and
+	// nothing else on that host would.
+	if hostID := r.URL.Query().Get("host"); hostID != "" && s.isRemoteSentinelAgent(hostID, name) {
+		writeError(w, http.StatusForbidden, "stopping a Sentinel agent from the hub would leave that host unmanaged; stop it on the host itself")
 		return
 	}
 
