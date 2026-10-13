@@ -230,7 +230,12 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 	}
 
 	creds := credentials.NewTLS(tlsCfg)
-	s.grpcSrv = grpc.NewServer(grpc.Creds(creds))
+	s.grpcSrv = grpc.NewServer(
+		grpc.Creds(creds),
+		grpc.MaxRecvMsgSize(maxMessageSize),
+		grpc.MaxSendMsgSize(maxMessageSize),
+		grpc.StatsHandler(&oversizeLogger{log: s.log}),
+	)
 
 	proto.RegisterEnrollmentServiceServer(s.grpcSrv, s)
 	proto.RegisterAgentServiceServer(s.grpcSrv, s)
@@ -460,3 +465,7 @@ func (s *Server) disconnectAgent(id string) {
 	}
 	s.mu.Unlock()
 }
+
+// maxMessageSize is the largest gRPC message the cluster server sends or
+// accepts. A variable so tests can lower it.
+var maxMessageSize = cluster.MaxMessageSize

@@ -51,6 +51,7 @@ type fakeContainer struct {
 	running    bool
 	autoRemove bool
 	env        []string
+	labels     map[string]string
 }
 
 func newFakeHost() *fakeHost {
@@ -138,7 +139,7 @@ func (h *fakeHost) summaries(onlyRunning bool) []container.Summary {
 		if c.running {
 			state = container.StateRunning
 		}
-		out = append(out, container.Summary{ID: c.id, Names: []string{"/" + c.name}, Image: c.image, State: state})
+		out = append(out, container.Summary{ID: c.id, Names: []string{"/" + c.name}, Image: c.image, State: state, Labels: c.labels})
 	}
 	return out
 }

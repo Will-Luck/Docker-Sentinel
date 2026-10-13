@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +48,7 @@ func (h *fakeHub) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 }
 
 // startFakeHub serves h with mTLS from the CA in caDir.
-func startFakeHub(t *testing.T, caDir string, h *fakeHub) string {
+func startFakeHub(t *testing.T, caDir string, h *fakeHub, opts ...grpc.ServerOption) string {
 	t.Helper()
 	ca, err := cluster.EnsureCA(caDir)
 	if err != nil {
@@ -62,12 +64,12 @@ func startFakeHub(t *testing.T, caDir string, h *fakeHub) string {
 	}
 	pool := x509.NewCertPool()
 	pool.AppendCertsFromPEM(ca.CACertPEM())
-	srv := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
+	srv := grpc.NewServer(append([]grpc.ServerOption{grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientCAs:    pool,
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		MinVersion:   tls.VersionTLS13,
-	})))
+	}))}, opts...)...)
 	proto.RegisterAgentServiceServer(srv, h)
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -131,5 +133,30 @@ func TestCertRenewal_NotRequestedFromOldHub(t *testing.T) {
 func TestCertRenewal_RequestedFromHubThatAdvertisesIt(t *testing.T) {
 	if n := renewalRequests(t, []string{cluster.FeatureCertRenewal}); n != 1 {
 		t.Errorf("agent sent %d renewal requests to a hub that advertises cert-renewal, want 1", n)
+	}
+}
+
+// When a host's container list is over the server's message limit, the
+// agent's error must say so, not leave a bare gRPC code.
+func TestRunSession_ExplainsOversizeContainerList(t *testing.T) {
+	caDir, dataDir := t.TempDir(), t.TempDir()
+	h := &fakeHub{channel: make(chan struct{}, 1), got: make(chan *proto.AgentMessage, 1)}
+	addr := startFakeHub(t, caDir, h, grpc.MaxRecvMsgSize(1<<20))
+	provisionAgent(t, caDir, dataDir, "host-big", time.Now())
+
+	host := newFakeHost()
+	big := strings.Repeat("x", 100<<10)
+	for i := 0; i < 20; i++ {
+		c := host.addContainer(fmt.Sprintf("app%d", i), "nginx:1", true)
+		c.labels = map[string]string{"com.example.big": big}
+	}
+	a := New(Config{ServerAddr: addr, HostName: "big", DataDir: dataDir}, host, noopLogger())
+	a.hostID = "host-big"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := a.runSession(ctx)
+	if err == nil || !strings.Contains(err.Error(), "larger than the server accepts") {
+		t.Fatalf("runSession error = %v, want one saying the container list is too large", err)
 	}
 }

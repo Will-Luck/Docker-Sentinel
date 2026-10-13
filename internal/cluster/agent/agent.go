@@ -29,7 +29,9 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
@@ -312,6 +314,9 @@ func (a *Agent) runSession(ctx context.Context) error {
 		EngineId:          a.engineID,
 	})
 	if err != nil {
+		if status.Code(err) == codes.ResourceExhausted {
+			return fmt.Errorf("report state: the container list is larger than the server accepts (%d MB): %w", cluster.MaxMessageSize>>20, err)
+		}
 		return fmt.Errorf("report state: %w", err)
 	}
 	if !ack.Accepted {
@@ -474,6 +479,10 @@ func (a *Agent) connect(ctx context.Context) error {
 	conn, err := grpc.NewClient(
 		a.cfg.ServerAddr,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(cluster.MaxMessageSize),
+			grpc.MaxCallSendMsgSize(cluster.MaxMessageSize),
+		),
 	)
 	if err != nil {
 		return fmt.Errorf("dial server: %w", err)

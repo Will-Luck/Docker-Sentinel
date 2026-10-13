@@ -7,6 +7,11 @@ import "time"
 // valid until the agent connects with the new one.
 const FeatureCertRenewal = "cert-renewal"
 
+// MaxMessageSize is the largest gRPC message the cluster server and agents
+// exchange. A host with many containers and large labels sends a container
+// list well over gRPC's 4 MB default.
+const MaxMessageSize = 64 << 20
+
 // HostState represents the lifecycle state of a registered agent host.
 type HostState string
 
