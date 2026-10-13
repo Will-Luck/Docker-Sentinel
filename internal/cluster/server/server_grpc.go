@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -51,14 +53,13 @@ func (s *Server) Enroll(ctx context.Context, req *proto.EnrollRequest) (*proto.E
 		return nil, status.Error(codes.InvalidArgument, "token too short")
 	}
 	tokenID := secret[:8]
-	if err := s.consumeEnrollToken(ctx, tokenID, secret, req); err != nil {
-		return nil, err
-	}
-
-	// Generate a unique host ID.
-	hostID, err := generateHostID()
+	keyHash, err := csrKeyHash(req.Csr)
 	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to generate host ID")
+		return nil, status.Error(codes.InvalidArgument, "invalid CSR")
+	}
+	hostID, retry, err := s.consumeEnrollToken(ctx, tokenID, secret, keyHash, req)
+	if err != nil {
+		return nil, err
 	}
 
 	// Sign the CSR. The CN is set to hostID by the CA (overrides whatever
@@ -67,6 +68,16 @@ func (s *Server) Enroll(ctx context.Context, req *proto.EnrollRequest) (*proto.E
 	if err != nil {
 		s.log.Error("failed to sign CSR", "hostID", hostID, "error", err)
 		return nil, status.Error(codes.Internal, "failed to sign certificate")
+	}
+
+	// A retry of an enrolment whose answer was lost: the host is already
+	// registered, and takes the newly signed certificate.
+	if retry {
+		if err := s.registry.ReissueCert(hostID, serial); err != nil {
+			s.log.Error("failed to re-sign a retried enrolment", "hostID", hostID, "error", err)
+			return nil, status.Error(codes.PermissionDenied, "the host this token enrolled has been removed; generate a new token")
+		}
+		return &proto.EnrollResponse{HostId: hostID, CaCert: s.ca.CACertPEM(), AgentCert: certPEM}, nil
 	}
 
 	// Persist the new host record.
@@ -101,11 +112,31 @@ func (s *Server) Enroll(ctx context.Context, req *proto.EnrollRequest) (*proto.E
 	}, nil
 }
 
+// enrollRetryWindow is how long after a token's use the same key may enrol
+// with it again: the first answer may never have reached the agent.
+const enrollRetryWindow = 10 * time.Minute
+
+// csrKeyHash is the SHA-256 (hex) of a CSR's public key.
+func csrKeyHash(csrDER []byte) (string, error) {
+	csr, err := x509.ParseCertificateRequest(csrDER)
+	if err != nil {
+		return "", err
+	}
+	der, err := x509.MarshalPKIXPublicKey(csr.PublicKey)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:]), nil
+}
+
 // consumeEnrollToken checks the one-time enrolment token and marks it used,
 // in one step: concurrent enrolments with the same token cannot both pass
-// the check before either marks it. A refused token is logged with the
-// host that presented it.
-func (s *Server) consumeEnrollToken(ctx context.Context, tokenID, secret string, req *proto.EnrollRequest) error {
+// the check before either marks it. It returns the host ID to issue: a new
+// one, or, for a retry with the same key (keyHash) within enrollRetryWindow
+// of the token's use, the one issued then (retry is set). A refused token
+// is logged with the host that presented it.
+func (s *Server) consumeEnrollToken(ctx context.Context, tokenID, secret, keyHash string, req *proto.EnrollRequest) (hostID string, retry bool, err error) {
 	s.enrollMu.Lock()
 	defer s.enrollMu.Unlock()
 
@@ -121,26 +152,39 @@ func (s *Server) consumeEnrollToken(ctx context.Context, tokenID, secret string,
 	tok, err := s.loadEnrollToken(tokenID)
 	if err != nil {
 		s.log.Warn("enrollment failed: token lookup", "tokenID", tokenID, "host_name", req.HostName, "from", from, "error", err)
-		return status.Error(codes.PermissionDenied, "invalid enrollment token")
+		return "", false, status.Error(codes.PermissionDenied, "invalid enrollment token")
 	}
 	// Verify HMAC: hash the provided plaintext and compare with stored hash.
 	if !hmac.Equal(s.hmacToken(secret), tok.Hash) {
-		return refuse("the token does not match", "invalid enrollment token")
+		return "", false, refuse("the token does not match", "invalid enrollment token")
 	}
+	now := time.Now()
 	if tok.Used {
-		return refuse("the token was already used; generate a new one for each agent", "token already used")
+		if tok.HostID == "" || tok.KeyHash != keyHash {
+			return "", false, refuse("the token was already used; generate a new one for each agent", "token already used")
+		}
+		if now.Sub(tok.UsedAt) > enrollRetryWindow {
+			return "", false, refuse("the token was used more than 10 minutes ago", "token already used")
+		}
+		s.log.Info("enrolment retried with the same key and token, signing again for the same host",
+			"tokenID", tokenID, "hostID", tok.HostID, "host_name", req.HostName, "from", from)
+		return tok.HostID, true, nil
 	}
-	if time.Now().After(tok.ExpiresAt) {
-		return refuse("the token has expired", "token expired")
+	if now.After(tok.ExpiresAt) {
+		return "", false, refuse("the token has expired", "token expired")
 	}
 
+	hostID, err = generateHostID()
+	if err != nil {
+		return "", false, status.Error(codes.Internal, "failed to generate host ID")
+	}
 	// Mark token as used before issuing certs (prevent replay on error).
-	tok.Used = true
+	tok.Used, tok.UsedAt, tok.KeyHash, tok.HostID = true, now, keyHash, hostID
 	if err := s.saveEnrollToken(tok); err != nil {
 		s.log.Error("failed to mark token used", "tokenID", tokenID, "error", err)
-		return status.Error(codes.Internal, "failed to consume token")
+		return "", false, status.Error(codes.Internal, "failed to consume token")
 	}
-	return nil
+	return hostID, false, nil
 }
 
 // GenerateEnrollToken creates a one-time enrollment token.

@@ -2,13 +2,19 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 )
@@ -86,5 +92,47 @@ func TestEnroll_TokenWithoutFingerprintStillWorks(t *testing.T) {
 	defer cancel()
 	if err := a.enroll(ctx); err != nil {
 		t.Fatalf("enrolling with the bare token: %v", err)
+	}
+}
+
+// cluster-agent-10: an agent whose first enrolment answer was lost (the
+// connection dropped, the agent restarted) could not enrol again with the
+// same token. It keeps the key of an attempt that did not finish and uses
+// it again, so the hub accepts the retry and gives it the same host ID.
+func TestEnroll_RetryAfterALostAnswer(t *testing.T) {
+	hub, addr := startHub(t)
+	token, _, err := hub.GenerateEnrollToken(time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+
+	// The first attempt reaches the hub, but its answer is lost: the agent
+	// has only the key it made for it.
+	key, err := loadOrCreatePendingKey(filepath.Join(dir, pendingKeyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "a"}}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _, _ := strings.Cut(token, ".")
+	first, err := hub.Enroll(context.Background(), &proto.EnrollRequest{Token: secret, HostName: "a", Csr: csr})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := New(Config{ServerAddr: addr, EnrollToken: token, HostName: "a", DataDir: dir}, newMockDocker(), noopLogger())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.enroll(ctx); err != nil {
+		t.Fatalf("retried enrolment: %v", err)
+	}
+	if a.hostID != first.GetHostId() {
+		t.Errorf("host ID %s, want the first attempt's %s", a.hostID, first.GetHostId())
+	}
+	if _, err := os.Stat(filepath.Join(dir, pendingKeyFile)); !os.IsNotExist(err) {
+		t.Error("the pending key file is still there after enrolling")
 	}
 }

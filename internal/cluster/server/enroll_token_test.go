@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -143,5 +145,75 @@ func TestReportState_TakesTheAgentsNewName(t *testing.T) {
 	}
 	if hs, _ := srv.Registry().Get(hostID); hs.Info.Name != "renamed" {
 		t.Errorf("host name = %q after a report without one, want it kept", hs.Info.Name)
+	}
+}
+
+// csrFor makes a CSR for key.
+func csrFor(t *testing.T, key *ecdsa.PrivateKey) []byte {
+	t.Helper()
+	csr, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "agent"}}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return csr
+}
+
+// cluster-agent-10: a token was used up by the first enrolment attempt,
+// even when its answer never reached the agent. For 10 minutes the agent
+// may try again with the same token and the same key: the hub signs again
+// and returns the same host ID. Any other key is refused, as is the same
+// key after 10 minutes.
+func TestEnroll_RetryWithTheSameKey(t *testing.T) {
+	srv, _, _, _ := testServer(t)
+	var buf bytes.Buffer
+	var bmu sync.Mutex
+	srv.log = slog.New(slog.NewTextHandler(&lockedWriter{w: &buf, mu: &bmu}, nil))
+	token, id, err := srv.GenerateEnrollToken(5 * time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	first, err := srv.Enroll(context.Background(), &proto.EnrollRequest{Token: token, HostName: "a", Csr: csrFor(t, key)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := srv.Enroll(context.Background(), &proto.EnrollRequest{Token: token, HostName: "a", Csr: csrFor(t, key)})
+	if err != nil {
+		t.Fatalf("retry with the same key: %v", err)
+	}
+	if again.GetHostId() != first.GetHostId() {
+		t.Errorf("retry got host %s, want the first attempt's %s", again.GetHostId(), first.GetHostId())
+	}
+	if n := len(srv.AllHosts()); n != 1 {
+		t.Errorf("%d hosts after a retry, want 1", n)
+	}
+	block, _ := pem.Decode(again.GetAgentCert())
+	cert, _ := x509.ParseCertificate(block.Bytes)
+	if hs, _ := srv.Registry().Get(first.GetHostId()); hs.Info.CertSerial != fmt.Sprintf("%x", cert.SerialNumber) {
+		t.Errorf("host's certificate serial %s, want the re-signed one %x", hs.Info.CertSerial, cert.SerialNumber)
+	}
+	bmu.Lock()
+	logged := strings.Contains(buf.String(), "retried")
+	bmu.Unlock()
+	if !logged {
+		t.Errorf("the retry was not logged: %s", buf.String())
+	}
+
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if _, err := srv.Enroll(context.Background(), &proto.EnrollRequest{Token: token, HostName: "b", Csr: csrFor(t, other)}); err == nil {
+		t.Error("the used token enrolled another key")
+	}
+
+	tok, err := srv.loadEnrollToken(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok.UsedAt = tok.UsedAt.Add(-11 * time.Minute)
+	if err := srv.saveEnrollToken(tok); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.Enroll(context.Background(), &proto.EnrollRequest{Token: token, HostName: "a", Csr: csrFor(t, key)}); err == nil {
+		t.Error("the same key enrolled again more than 10 minutes later")
 	}
 }

@@ -124,6 +124,13 @@ type EnrollToken struct {
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Used      bool      `json:"used"`
+	// UsedAt, KeyHash and HostID record the enrolment that used the token:
+	// when, the SHA-256 of the CSR's public key, and the host ID issued. For
+	// a while after, the same key may enrol again with the token (its first
+	// answer may never have reached the agent) and gets the same host ID.
+	UsedAt  time.Time `json:"used_at,omitzero"`
+	KeyHash string    `json:"key_hash,omitempty"`
+	HostID  string    `json:"host_id,omitempty"`
 }
 
 // PortMapping represents a single host-bound port on a container.

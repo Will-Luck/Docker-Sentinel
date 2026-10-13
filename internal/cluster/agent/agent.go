@@ -520,10 +520,13 @@ func (a *Agent) isEnrolled() bool {
 // to the server WITHOUT mTLS, and exchanges the enrollment token for
 // signed certificates.
 func (a *Agent) enroll(ctx context.Context) error {
-	// Generate agent key pair.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	// The agent's key pair. It is kept until enrolment finishes, so an
+	// attempt whose answer was lost can be retried with the same key: the
+	// hub then signs again (for 10 minutes after the token's first use).
+	pendingPath := filepath.Join(a.cfg.DataDir, pendingKeyFile)
+	key, err := loadOrCreatePendingKey(pendingPath)
 	if err != nil {
-		return fmt.Errorf("generate key: %w", err)
+		return err
 	}
 
 	// Create CSR with CN = HostName.
@@ -613,7 +616,37 @@ func (a *Agent) enroll(ctx context.Context) error {
 	if err := os.WriteFile(a.keyPath, keyPEM, 0600); err != nil {
 		return fmt.Errorf("write agent key: %w", err)
 	}
+	if err := os.Remove(pendingPath); err != nil && !os.IsNotExist(err) {
+		a.log.Warn("could not remove the enrolment key file", "error", err)
+	}
 	return nil
+}
+
+// pendingKeyFile holds the key of an enrolment that has not finished.
+const pendingKeyFile = "enroll-key.pem"
+
+// loadOrCreatePendingKey returns the key of an unfinished enrolment kept at
+// path, or makes a new one and keeps it there.
+func loadOrCreatePendingKey(path string) (*ecdsa.PrivateKey, error) {
+	if b, err := os.ReadFile(path); err == nil {
+		if block, _ := pem.Decode(b); block != nil {
+			if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+				return key, nil
+			}
+		}
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate key: %w", err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("marshal key: %w", err)
+	}
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}), 0600); err != nil {
+		return nil, fmt.Errorf("keep the enrolment key: %w", err)
+	}
+	return key, nil
 }
 
 // errNotTheHub refuses enrolment with a server the token does not name.

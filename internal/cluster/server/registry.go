@@ -254,6 +254,21 @@ func (r *Registry) UpdateEngineID(hostID, engineID string) error {
 	return nil
 }
 
+// ReissueCert makes serial the host's certificate, for an enrolment retried
+// after its first answer was lost (the first certificate was never used).
+func (r *Registry) ReissueCert(hostID, serial string) error {
+	r.mu.Lock()
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("host %s not found", hostID)
+	}
+	hs.Info.CertSerial = serial
+	hs.Info.PendingCertSerial = ""
+	r.mu.Unlock()
+	return r.persist(hostID)
+}
+
 // UpdateAgentInfo stores the version and features an agent reports and,
 // when name is not empty, the host name it now runs with
 // (SENTINEL_HOST_NAME, which may have changed since it enrolled). Persisted
