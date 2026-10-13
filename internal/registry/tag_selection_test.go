@@ -218,3 +218,30 @@ func TestListTags_ReadsMoreThanTenThousandTags(t *testing.T) {
 		t.Errorf("ListTags returned %d tags, want %d", len(res.Tags), pages*perPage)
 	}
 }
+
+// A container on a floating tag keeps floating: it is offered the newest tag of
+// the same precision (1.29 for 1.27), not the most specific one (1.29.2), which
+// would pin it and narrow what it is offered afterwards.
+func TestNewerVersionsScoped_FloatingCurrentTargetsFloatingTag(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		tags    []string
+		scope   docker.SemverScope
+		want    []string
+	}{
+		{"two-part", "1.27", []string{"1.29", "1.29.2", "1.28"}, docker.ScopeDefault, []string{"1.29", "1.28", "1.29.2"}},
+		{"one-part", "1", []string{"2", "2.1", "2.1.3"}, docker.ScopeMajor, []string{"2", "2.1.3", "2.1"}},
+		{"a newer line without a floating tag keeps its place", "3.21", []string{"3.22", "3.23.1"}, docker.ScopeDefault, []string{"3.23.1", "3.22"}},
+		{"no floating form published", "1.27", []string{"1.29.0", "1.29.2"}, docker.ScopeDefault, []string{"1.29.2", "1.29.0"}},
+		{"pinned current still gets the newest patch", "1.27.1", []string{"1.27.2", "1.27"}, docker.ScopeDefault, []string{"1.27.2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rawVersions(NewerVersionsScoped(tt.current, tt.tags, tt.scope, docker.ScopeDefault))
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -357,10 +357,11 @@ func TestNewerVersionsScoped_FloatingTagAndDedup(t *testing.T) {
 			expected: nil,
 		},
 		{
-			name:     "NEW-2_dedup_calver_2_and_3_part",
-			current:  "2026.3",
-			tags:     []string{"2026.4", "2026.4.0", "2026.5.0", "2026.5"},
-			expected: []string{"2026.5.0", "2026.4.0"},
+			name:    "NEW-2_dedup_calver_2_and_3_part",
+			current: "2026.3",
+			tags:    []string{"2026.4", "2026.4.0", "2026.5.0", "2026.5"},
+			// Current 2026.3 floats: the two-part spelling of each version is kept.
+			expected: []string{"2026.5", "2026.4"},
 		},
 		{
 			// Current is itself a pre-release: a stable current never sees them.

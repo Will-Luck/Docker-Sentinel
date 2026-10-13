@@ -464,12 +464,17 @@ func NewerVersionsScoped(current string, tags []string, scope, defaultScope dock
 			Major, Minor, Patch int
 			Pre                 string
 		}
+		floating := cur.Parts < 3
 		out := newer[:0]
 		seen := make(map[dedupKey]int)
 		for _, sv := range newer {
 			key := dedupKey{sv.Major, sv.Minor, sv.Patch, sv.Pre}
 			if idx, ok := seen[key]; ok {
-				if sv.Parts > out[idx].Parts {
+				// A floating current tag keeps floating: of two spellings of
+				// one version (1.29, 1.29.0) it takes the one with the
+				// current tag's precision. Otherwise the more specific wins.
+				if floating && sv.Parts == cur.Parts && out[idx].Parts != cur.Parts ||
+					!floating && sv.Parts > out[idx].Parts {
 					out[idx] = sv
 				}
 				continue
@@ -478,6 +483,31 @@ func NewerVersionsScoped(current string, tags []string, scope, defaultScope dock
 			out = append(out, sv)
 		}
 		newer = out
+	}
+
+	// A floating current tag (1.27, or 1) is offered the tag of its own
+	// precision for a version line (1.29) before the more specific tags of
+	// that line (1.29.2): updating to the pinned tag would stop it floating
+	// and narrow what it is offered afterwards. A newer line that has no
+	// floating tag keeps its place, and the order is otherwise newest first.
+	if cur.Parts < 3 {
+		sameLine := func(a, b SemVer) bool {
+			return a.Major == b.Major && (cur.Parts < 2 || a.Minor == b.Minor)
+		}
+		covered := func(x SemVer) bool {
+			if x.Parts <= cur.Parts {
+				return false
+			}
+			for _, f := range newer {
+				if f.Parts == cur.Parts && sameLine(f, x) {
+					return true
+				}
+			}
+			return false
+		}
+		sort.SliceStable(newer, func(i, j int) bool {
+			return !covered(newer[i]) && covered(newer[j])
+		})
 	}
 
 	return newer
