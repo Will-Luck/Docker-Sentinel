@@ -295,6 +295,35 @@ func (u *Updater) containerBehindTag(ctx context.Context, c container.Summary, i
 	return strings.TrimPrefix(tagID, "sha256:") != strings.TrimPrefix(c.ImageID, "sha256:")
 }
 
+// resolveBehindTag fills in the versions of an update found because a
+// container on a mutable tag runs an older image than the tag: the
+// registry check matched the tag, so it resolved none. They are resolved
+// from the container's own image digest, as for a remote container.
+func (u *Updater) resolveBehindTag(ctx context.Context, c container.Summary, imageRef string, check *registry.CheckResult, scope docker.SemverScope, include, exclude string) {
+	if u.resolveVersions == nil {
+		return
+	}
+	if _, semver := registry.ParseSemVer(registry.ExtractTag(imageRef)); semver {
+		return // a versioned tag already has its newer versions
+	}
+	r, ok := u.docker.(docker.RepoDigestReader)
+	if !ok {
+		return
+	}
+	digests, err := r.ImageRepoDigests(ctx, c.ImageID)
+	if err != nil {
+		return
+	}
+	repo := repoKey(imageRef)
+	for _, d := range digests {
+		if name, _, ok := strings.Cut(d, "@"); ok && repoKey(name) == repo {
+			res := u.resolveVersions(ctx, imageRef, d, scope, include, exclude)
+			check.ResolvedCurrentVersion, check.ResolvedTargetVersion = res.ResolvedCurrentVersion, res.ResolvedTargetVersion
+			return
+		}
+	}
+}
+
 // ignoreKey returns the key under which an update with no version list (a
 // container on a mutable tag such as latest) is ignored: the version the tag
 // resolves to when known, otherwise the remote digest ("sha256:..."). A new
@@ -716,6 +745,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			check.UpdateAvailable = true
 			behindTag = true
 			u.log.Info("container runs an older image than its tag", "name", name, "image", imageRef)
+			u.resolveBehindTag(ctx, c, imageRef, &check, semverScope, includeRE, excludeRE)
 		}
 
 		// A pull-only container whose tag is already pulled has nothing left
