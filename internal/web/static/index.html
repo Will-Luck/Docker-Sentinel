@@ -442,8 +442,10 @@
                                     {{else if .IsSelf}}
                                         {{if and .HasUpdate (eq .HostID "")}}
                                         <span class="badge badge-info badge-action" onclick="event.stopPropagation(); triggerSelfUpdate(event)" role="button" tabindex="0">Update Sentinel</span>
-                                        {{else}}
+                                        {{else if eq .State "running"}}
                                         <span class="badge badge-success">Running</span>
+                                        {{else}}
+                                        <span class="badge badge-error">{{.State}}</span>
                                         {{end}}
                                     {{else if eq .State "running"}}
                                         <span class="status-badge-wrap" data-name="{{.Name}}" data-action="stop" data-host-id="{{.HostID}}">
