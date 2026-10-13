@@ -559,6 +559,17 @@
                             </div>
                             <div class="setting-row">
                                 <div class="setting-info">
+                                    <div class="setting-label">History retention</div>
+                                    <div class="setting-desc">Days of update history and activity log to keep. Successful updates and rollbacks are kept for good. 0 keeps everything.</div>
+                                    <div class="setting-desc" id="history-retention-source"></div>
+                                </div>
+                                <div style="display:flex;align-items:center;gap:var(--sp-2)">
+                                    <input type="number" id="history-retention-input" class="setting-input" min="0" max="3650" value="90" style="width:5rem">
+                                    <button class="btn btn-sm btn-secondary" onclick="setHistoryRetention()">Save</button>
+                                </div>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
                                     <div class="setting-label">Grafana dashboard</div>
                                     <div class="setting-desc">Pre-built dashboard for Prometheus metrics. Import into Grafana to visualise Sentinel metrics.</div>
                                 </div>

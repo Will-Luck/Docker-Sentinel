@@ -247,6 +247,13 @@ function initSettingsPage() {
                 showSettingSource("remove-volumes-source", settings["remove_volumes_source"], "SENTINEL_REMOVE_VOLUMES");
             }
 
+            // History retention.
+            var retentionInput = document.getElementById("history-retention-input");
+            if (retentionInput && settings["history_retention_days"] !== undefined) {
+                retentionInput.value = settings["history_retention_days"];
+                showSettingSource("history-retention-source", settings["history_retention_days_source"], "SENTINEL_HISTORY_RETENTION_DAYS");
+            }
+
             // Scan concurrency input.
             var scanConcInput = document.getElementById("scan-concurrency-input");
             if (scanConcInput && settings["scan_concurrency"]) {
@@ -866,6 +873,23 @@ function setScanConcurrency() {
         .catch(function() { showToast("Network error -- could not update setting", "error"); });
 }
 
+function setHistoryRetention() {
+    var input = document.getElementById("history-retention-input");
+    var n = parseInt(input ? input.value : "", 10);
+    if (isNaN(n) || n < 0 || n > 3650) {
+        showToast("Days must be between 0 and 3650", "error");
+        return;
+    }
+    fetch("/api/settings/history-retention", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: n }) })
+        .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
+        .then(function(result) {
+            if (!result.ok) { showToast(result.data.error || "Failed to update setting", "error"); return; }
+            showToast(result.data.message || "Setting updated", "success");
+            showSettingSource("history-retention-source", "saved", "SENTINEL_HISTORY_RETENTION_DAYS");
+        })
+        .catch(function() { showToast("Network error -- could not update setting", "error"); });
+}
+
 function setHADiscovery(enabled) {
     updateToggleText("ha-discovery-text", enabled);
     var prefix = (document.getElementById("ha-discovery-prefix") || {}).value || "";
@@ -1444,6 +1468,7 @@ export {
     setShowStopped,
     setRemoveVolumes,
     setScanConcurrency,
+    setHistoryRetention,
     setHADiscovery,
     saveHADiscoveryPrefix,
     updateToggleText,

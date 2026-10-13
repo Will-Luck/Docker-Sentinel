@@ -131,6 +131,7 @@ import {
     setShowStopped,
     setRemoveVolumes,
     setScanConcurrency,
+    setHistoryRetention,
     setHADiscovery,
     saveHADiscoveryPrefix,
     updateToggleText,
@@ -327,6 +328,7 @@ window.setImageBackup = setImageBackup;
 window.setShowStopped = setShowStopped;
 window.setRemoveVolumes = setRemoveVolumes;
 window.setScanConcurrency = setScanConcurrency;
+window.setHistoryRetention = setHistoryRetention;
 window.setHADiscovery = setHADiscovery;
 window.saveHADiscoveryPrefix = saveHADiscoveryPrefix;
 window.updateToggleText = updateToggleText;

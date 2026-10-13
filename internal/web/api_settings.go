@@ -69,6 +69,19 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 	values["remove_volumes"] = strconv.FormatBool(s.deps.Config.RemoveVolumes())
 	values["rollback_policy"] = s.deps.Config.RollbackPolicy()
 
+	// History retention: a saved value replaces SENTINEL_HISTORY_RETENTION_DAYS.
+	retention, retentionSource := "90", "env"
+	if v := s.deps.Config.Values()["SENTINEL_HISTORY_RETENTION_DAYS"]; v != "" {
+		retention = v
+	}
+	if v, ok := dbValues["history_retention_days"]; ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			retention, retentionSource = strconv.Itoa(n), "saved"
+		}
+	}
+	values["history_retention_days"] = retention
+	values["history_retention_days_source"] = retentionSource
+
 	// These toggles are only stored once saved in the UI, so the stored key
 	// alone cannot show an env-var value. Report what the engine uses.
 	cfg := s.deps.Config
@@ -725,4 +738,36 @@ func sanitiseEnvValue(key, v string) string {
 		u.RawPath = ""
 	}
 	return u.String()
+}
+
+// apiSetHistoryRetention sets how many days of history and activity log are
+// kept. 0 keeps everything. The daily prune reads the saved value each time,
+// so no restart is needed.
+func (s *Server) apiSetHistoryRetention(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Days int `json:"days"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.Days < 0 || body.Days > 3650 {
+		writeError(w, http.StatusBadRequest, "days must be between 0 (keep everything) and 3650")
+		return
+	}
+	if s.deps.SettingsStore == nil {
+		writeError(w, http.StatusNotImplemented, "settings store not available")
+		return
+	}
+	if err := s.deps.SettingsStore.SaveSetting("history_retention_days", strconv.Itoa(body.Days)); err != nil {
+		s.deps.Log.Error("failed to save history retention", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save setting")
+		return
+	}
+	msg := "History kept for " + strconv.Itoa(body.Days) + " days"
+	if body.Days == 0 {
+		msg = "History kept forever"
+	}
+	s.logEvent(r, "settings", "", msg)
+	writeJSON(w, http.StatusOK, map[string]string{"message": msg})
 }

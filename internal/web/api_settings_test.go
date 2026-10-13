@@ -1139,3 +1139,50 @@ func TestApiVerifierSettings_ReportsCosignAvailability(t *testing.T) {
 		t.Errorf("cosign_available = %q, want true when the binary is found", got["cosign_available"])
 	}
 }
+
+func TestApiSettings_ReportsHistoryRetention(t *testing.T) {
+	ss := newMockSettingsStore()
+	cfg := &mockConfigReader{values: map[string]string{"SENTINEL_HISTORY_RETENTION_DAYS": "30"}}
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: cfg, Log: slog.Default()}}
+
+	got := getSettings(t, srv)
+	if got["history_retention_days"] != "30" || got["history_retention_days_source"] != "env" {
+		t.Errorf("from env: %q (%s), want 30 (env)", got["history_retention_days"], got["history_retention_days_source"])
+	}
+
+	ss.data["history_retention_days"] = "0"
+	got = getSettings(t, srv)
+	if got["history_retention_days"] != "0" || got["history_retention_days_source"] != "saved" {
+		t.Errorf("saved 0: %q (%s), want 0 (saved)", got["history_retention_days"], got["history_retention_days_source"])
+	}
+
+	srv = &Server{deps: Dependencies{SettingsStore: newMockSettingsStore(), Config: &mockConfigReader{values: map[string]string{}}, Log: slog.Default()}}
+	if got := getSettings(t, srv); got["history_retention_days"] != "90" {
+		t.Errorf("default = %q, want 90", got["history_retention_days"])
+	}
+}
+
+func TestApiSetHistoryRetention(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		code int
+		want string
+	}{
+		{`{"days":30}`, http.StatusOK, "30"},
+		{`{"days":0}`, http.StatusOK, "0"},
+		{`{"days":-1}`, http.StatusBadRequest, ""},
+		{`{"days":100000}`, http.StatusBadRequest, ""},
+		{`not json`, http.StatusBadRequest, ""},
+	} {
+		ss := newMockSettingsStore()
+		srv := newTestServer(ss)
+		w := httptest.NewRecorder()
+		srv.apiSetHistoryRetention(w, httptest.NewRequest(http.MethodPost, "/api/settings/history-retention", strings.NewReader(tc.body)))
+		if w.Code != tc.code {
+			t.Errorf("%s: status = %d, want %d", tc.body, w.Code, tc.code)
+		}
+		if got := ss.data["history_retention_days"]; got != tc.want {
+			t.Errorf("%s: saved %q, want %q", tc.body, got, tc.want)
+		}
+	}
+}

@@ -3201,6 +3201,11 @@
         updateToggleText("remove-volumes-text", removeVolumes);
         showSettingSource("remove-volumes-source", settings["remove_volumes_source"], "SENTINEL_REMOVE_VOLUMES");
       }
+      var retentionInput = document.getElementById("history-retention-input");
+      if (retentionInput && settings["history_retention_days"] !== void 0) {
+        retentionInput.value = settings["history_retention_days"];
+        showSettingSource("history-retention-source", settings["history_retention_days_source"], "SENTINEL_HISTORY_RETENTION_DAYS");
+      }
       var scanConcInput = document.getElementById("scan-concurrency-input");
       if (scanConcInput && settings["scan_concurrency"]) {
         var sc = parseInt(settings["scan_concurrency"], 10);
@@ -3756,6 +3761,28 @@
       return r.json();
     }).then(function(data) {
       showToast(data.message || "Setting updated", "success");
+    }).catch(function() {
+      showToast("Network error -- could not update setting", "error");
+    });
+  }
+  function setHistoryRetention() {
+    var input = document.getElementById("history-retention-input");
+    var n = parseInt(input ? input.value : "", 10);
+    if (isNaN(n) || n < 0 || n > 3650) {
+      showToast("Days must be between 0 and 3650", "error");
+      return;
+    }
+    fetch("/api/settings/history-retention", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: n }) }).then(function(r) {
+      return r.json().then(function(data) {
+        return { ok: r.ok, data };
+      });
+    }).then(function(result) {
+      if (!result.ok) {
+        showToast(result.data.error || "Failed to update setting", "error");
+        return;
+      }
+      showToast(result.data.message || "Setting updated", "success");
+      showSettingSource("history-retention-source", "saved", "SENTINEL_HISTORY_RETENTION_DAYS");
     }).catch(function() {
       showToast("Network error -- could not update setting", "error");
     });
@@ -6460,6 +6487,7 @@
   window.setShowStopped = setShowStopped;
   window.setRemoveVolumes = setRemoveVolumes;
   window.setScanConcurrency = setScanConcurrency;
+  window.setHistoryRetention = setHistoryRetention;
   window.setHADiscovery = setHADiscovery;
   window.saveHADiscoveryPrefix = saveHADiscoveryPrefix;
   window.updateToggleText = updateToggleText;

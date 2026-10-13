@@ -461,6 +461,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("POST /api/settings/image-backup", perm(auth.PermSettingsModify, s.apiSetImageBackup))
 	s.mux.Handle("POST /api/settings/show-stopped", perm(auth.PermSettingsModify, s.apiSetShowStopped))
 	s.mux.Handle("POST /api/settings/remove-volumes", perm(auth.PermSettingsModify, s.apiSetRemoveVolumes))
+	s.mux.Handle("POST /api/settings/history-retention", perm(auth.PermSettingsModify, s.apiSetHistoryRetention))
 	s.mux.Handle("POST /api/settings/scan-concurrency", perm(auth.PermSettingsModify, s.apiSetScanConcurrency))
 	s.mux.Handle("POST /api/settings/notify-batch-window", perm(auth.PermSettingsModify, s.apiSetNotifyBatchWindow))
 	s.mux.Handle("POST /api/settings/maintenance-window", perm(auth.PermSettingsModify, s.apiSetMaintenanceWindow))
