@@ -64,11 +64,11 @@
         display: none;
     }
 
-    /* Hide low-priority table columns on tablet (Image + Ports) */
-    #container-table th:nth-child(3),
-    #container-table td:nth-child(3),
-    #container-table .th-ports,
-    #container-table .cell-ports {
+    /* Hide low-priority table columns on tablet (Image + Ports). By class,
+       and the <col> elements too: the table is fixed-layout, so a hidden
+       cell whose <col> stays squeezes the Name column to nothing. */
+    #container-table .col-image,
+    #container-table .col-ports {
         display: none;
     }
 
@@ -212,10 +212,18 @@
         gap: var(--sp-2);
     }
 
-    /* Also hide Policy column on small phones */
-    #container-table th:nth-child(4),
-    #container-table td:nth-child(4) {
+    /* Also hide Policy column on small phones, and give Status only what
+       its badge needs so the container name always has room. */
+    #container-table .col-policy {
         display: none;
+    }
+    #container-table col.col-status,
+    #container-table th.col-status,
+    #container-table td.col-status {
+        width: 104px !important; /* the <col> has an inline width */
+    }
+    #container-table td:nth-child(2) {
+        overflow-wrap: anywhere;
     }
 
     /* Accordion preview text hidden on small phones */

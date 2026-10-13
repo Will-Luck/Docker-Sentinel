@@ -96,3 +96,19 @@ func TestDashboardRow_CheckboxNamesTheHost(t *testing.T) {
 		t.Errorf("without a name the label falls back to the host ID")
 	}
 }
+
+// On a phone the dashboard hides the secondary columns by class, <col> included
+// (the table is fixed-layout, so a hidden cell with a live <col> squeezes the
+// Name column away), and never by cell position.
+func TestResponsiveCSS_DashboardColumnsCollapseByClass(t *testing.T) {
+	b, _ := staticFS.ReadFile("static/style.css")
+	css := string(b)
+	if strings.Contains(css, "#container-table th:nth-child(3)") || strings.Contains(css, "#container-table td:nth-child(4)") {
+		t.Error("dashboard columns are still hidden by cell position")
+	}
+	for _, want := range []string{"#container-table .col-image", "#container-table .col-policy", "#container-table col.col-status"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("stylesheet lacks %q", want)
+		}
+	}
+}

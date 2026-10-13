@@ -4056,10 +4056,8 @@ body.settings-simple [data-advanced] {
   .filter-divider {
     display: none;
   }
-  #container-table th:nth-child(3),
-  #container-table td:nth-child(3),
-  #container-table .th-ports,
-  #container-table .cell-ports {
+  #container-table .col-image,
+  #container-table .col-ports {
     display: none;
   }
   .queue-table th:nth-child(4),
@@ -4170,9 +4168,16 @@ body.settings-simple [data-advanced] {
     align-items: flex-start;
     gap: var(--sp-2);
   }
-  #container-table th:nth-child(4),
-  #container-table td:nth-child(4) {
+  #container-table .col-policy {
     display: none;
+  }
+  #container-table col.col-status,
+  #container-table th.col-status,
+  #container-table td.col-status {
+    width: 104px !important;
+  }
+  #container-table td:nth-child(2) {
+    overflow-wrap: anywhere;
   }
   .accordion-preview {
     display: none;
