@@ -102,6 +102,10 @@ func (s *Server) apiTestNotification(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		ID string `json:"id"`
+		// Channel is the channel as it is on screen. When present it is tested
+		// instead of the saved copy, so a new or edited channel is tested as
+		// shown. Masked secrets in it are filled in from the saved channel.
+		Channel *notify.Channel `json:"channel"`
 	}
 	// Try to decode body -- if empty, test entire chain (backward compat).
 	_ = json.NewDecoder(r.Body).Decode(&body)
@@ -111,6 +115,33 @@ func (s *Server) apiTestNotification(w http.ResponseWriter, r *http.Request) {
 		ContainerName: "sentinel-test",
 		OldImage:      "test:latest",
 		Timestamp:     time.Now(),
+	}
+
+	if body.Channel != nil {
+		ch := *body.Channel
+		if s.deps.NotifyConfig != nil {
+			if saved, err := s.deps.NotifyConfig.GetNotificationChannels(); err == nil {
+				for _, old := range saved {
+					if old.ID == ch.ID {
+						ch.Settings = restoreSecrets(ch, old)
+					}
+				}
+			}
+		}
+		n, err := notify.BuildNotifier(ch)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "failed to build notifier: "+err.Error())
+			return
+		}
+		if err := n.Send(r.Context(), testEvent); err != nil {
+			writeError(w, http.StatusBadGateway, "test failed: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "ok",
+			"message": "test notification sent to " + ch.Name,
+		})
+		return
 	}
 
 	if body.ID != "" && s.deps.NotifyConfig != nil {
