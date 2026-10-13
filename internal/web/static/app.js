@@ -135,7 +135,7 @@
   function escapeHTML(str) {
     var div = document.createElement("div");
     div.appendChild(document.createTextNode(str));
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
   function showConfirm(title, bodyHTML, opts) {
     if (!opts) opts = {};
@@ -5906,6 +5906,14 @@
     }
     renderImagesTable();
   }
+  async function deleteImage(id) {
+    try {
+      var resp = await fetch("/api/images/" + encodeURIComponent(id), { method: "DELETE" });
+      return resp.ok;
+    } catch (_) {
+      return false;
+    }
+  }
   function getFilteredAndSorted() {
     var filtered = _allImages;
     if (_currentFilter === "in-use") {
@@ -6011,12 +6019,9 @@
       var removed = 0;
       var failed = 0;
       for (var i = 0; i < ids.length; i++) {
-        try {
-          await apiFetch("/api/images/" + encodeURIComponent(ids[i]), {
-            method: "DELETE"
-          });
+        if (await deleteImage(ids[i])) {
           removed++;
-        } catch (_) {
+        } else {
           failed++;
         }
       }

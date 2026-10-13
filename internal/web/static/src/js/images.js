@@ -44,6 +44,17 @@ export function sortImages(sort) {
     renderImagesTable();
 }
 
+// deleteImage removes one image and reports whether the server did it. A
+// refusal (an image in use, a server error) is a failure, not a removal.
+async function deleteImage(id) {
+    try {
+        var resp = await fetch('/api/images/' + encodeURIComponent(id), { method: 'DELETE' });
+        return resp.ok;
+    } catch (_) {
+        return false;
+    }
+}
+
 function getFilteredAndSorted() {
     // Filter.
     var filtered = _allImages;
@@ -153,12 +164,7 @@ export function removeSelectedImages() {
         var removed = 0;
         var failed = 0;
         for (var i = 0; i < ids.length; i++) {
-            try {
-                await apiFetch('/api/images/' + encodeURIComponent(ids[i]), {
-                    method: 'DELETE'
-                });
-                removed++;
-            } catch (_) { failed++; }
+            if (await deleteImage(ids[i])) { removed++; } else { failed++; }
         }
 
         _deleting = false;

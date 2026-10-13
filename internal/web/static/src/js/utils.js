@@ -80,7 +80,8 @@ function _flushBatchToasts() {
 function escapeHTML(str) {
     var div = document.createElement("div");
     div.appendChild(document.createTextNode(str));
-    return div.innerHTML;
+    // Also safe inside a quoted attribute.
+    return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 /* ------------------------------------------------------------
