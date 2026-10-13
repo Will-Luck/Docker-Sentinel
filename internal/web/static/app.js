@@ -3544,19 +3544,36 @@
       text.textContent = enabled ? "On" : "Off";
     }
   }
-  function setLatestAutoUpdate(enabled) {
-    updateLatestAutoText(enabled);
-    fetch("/api/settings/latest-auto-update", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled })
-    }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
+  function postToggle(path, enabled, textId, checkboxId, onOk) {
+    updateToggleText(textId, enabled);
+    var revert = function() {
+      var box = document.getElementById(checkboxId);
+      if (box) {
+        box.checked = !enabled;
+      }
+      updateToggleText(textId, !enabled);
+    };
+    return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
+      return r.json().then(function(data) {
+        return { ok: r.ok, data };
+      });
+    }).then(function(result) {
+      if (!result.ok) {
+        revert();
+        showToast(result.data.error || "Failed to update setting", "error");
+        return;
+      }
+      showToast(result.data.message || "Setting updated", "success");
+      if (onOk) {
+        onOk();
+      }
     }).catch(function() {
+      revert();
       showToast("Network error -- could not update setting", "error");
     });
+  }
+  function setLatestAutoUpdate(enabled) {
+    postToggle("/api/settings/latest-auto-update", enabled, "latest-auto-text", "latest-auto-toggle");
   }
   function saveFilters() {
     var textarea = document.getElementById("container-filters");
@@ -3594,14 +3611,7 @@
     }
   }
   function setImageCleanup(enabled) {
-    updateToggleText("image-cleanup-text", enabled);
-    fetch("/api/settings/image-cleanup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
-    }).catch(function() {
-      showToast("Network error -- could not update setting", "error");
-    });
+    postToggle("/api/settings/image-cleanup", enabled, "image-cleanup-text", "image-cleanup-toggle");
   }
   function saveCronSchedule() {
     var input = document.getElementById("cron-schedule");
@@ -3622,64 +3632,22 @@
     });
   }
   function setDependencyAware(enabled) {
-    updateToggleText("dep-aware-text", enabled);
-    fetch("/api/settings/dependency-aware", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
-    }).catch(function() {
-      showToast("Network error -- could not update setting", "error");
-    });
+    postToggle("/api/settings/dependency-aware", enabled, "dep-aware-text", "dep-aware-toggle");
   }
   function setHooksEnabled(enabled) {
-    updateToggleText("hooks-toggle-text", enabled);
-    fetch("/api/settings/hooks-enabled", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
-    }).catch(function() {
-      showToast("Network error -- could not update setting", "error");
-    });
+    postToggle("/api/settings/hooks-enabled", enabled, "hooks-toggle-text", "hooks-toggle");
   }
   function setHooksWriteLabels(enabled) {
-    updateToggleText("hooks-labels-text", enabled);
-    fetch("/api/settings/hooks-write-labels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
-    }).catch(function() {
-      showToast("Network error -- could not update setting", "error");
-    });
+    postToggle("/api/settings/hooks-write-labels", enabled, "hooks-labels-text", "hooks-labels-toggle");
   }
   function setDryRun(enabled) {
-    updateToggleText("dry-run-text", enabled);
-    fetch("/api/settings/dry-run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
-    }).catch(function() {
-      showToast("Network error -- could not update setting", "error");
-    });
+    postToggle("/api/settings/dry-run", enabled, "dry-run-text", "dry-run-toggle");
   }
   function setPullOnly(enabled) {
-    updateToggleText("pull-only-text", enabled);
-    fetch("/api/settings/pull-only", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
-    }).catch(function() {
-      showToast("Network error -- could not update setting", "error");
-    });
+    postToggle("/api/settings/pull-only", enabled, "pull-only-text", "pull-only-toggle");
   }
   function setComposeSync(enabled) {
-    updateToggleText("compose-sync-text", enabled);
-    fetch("/api/settings/compose-sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
-    }).catch(function() {
-      showToast("Network error -- could not update setting", "error");
-    });
+    postToggle("/api/settings/compose-sync", enabled, "compose-sync-text", "compose-sync-toggle");
   }
   function showSettingSource(id, source, envName) {
     var el = document.getElementById(id);
@@ -3689,65 +3657,16 @@
     el.textContent = source === "saved" ? "In effect: the value saved here (overrides " + envName + ")" : "In effect: " + envName + " or the built-in default. Saving here overrides it.";
   }
   function setImageBackup(enabled) {
-    updateToggleText("image-backup-text", enabled);
-    var revert = function() {
-      var box = document.getElementById("image-backup-toggle");
-      if (box) {
-        box.checked = !enabled;
-      }
-      updateToggleText("image-backup-text", !enabled);
-    };
-    fetch("/api/settings/image-backup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json().then(function(data) {
-        return { ok: r.ok, data };
-      });
-    }).then(function(result) {
-      if (!result.ok) {
-        revert();
-        showToast(result.data.error || "Failed to update setting", "error");
-        return;
-      }
-      showToast(result.data.message || "Setting updated", "success");
+    postToggle("/api/settings/image-backup", enabled, "image-backup-text", "image-backup-toggle", function() {
       showSettingSource("image-backup-source", "saved", "SENTINEL_IMAGE_BACKUP");
-    }).catch(function() {
-      revert();
-      showToast("Network error -- could not update setting", "error");
     });
   }
   function setShowStopped(enabled) {
-    updateToggleText("show-stopped-text", enabled);
-    fetch("/api/settings/show-stopped", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
-    }).catch(function() {
-      showToast("Network error -- could not update setting", "error");
-    });
+    postToggle("/api/settings/show-stopped", enabled, "show-stopped-text", "show-stopped-toggle");
   }
   function setRemoveVolumes(enabled) {
-    updateToggleText("remove-volumes-text", enabled);
-    var revert = function() {
-      var box = document.getElementById("remove-volumes-toggle");
-      if (box) {
-        box.checked = !enabled;
-      }
-      updateToggleText("remove-volumes-text", !enabled);
-    };
-    fetch("/api/settings/remove-volumes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json().then(function(data) {
-        return { ok: r.ok, data };
-      });
-    }).then(function(result) {
-      if (!result.ok) {
-        revert();
-        showToast(result.data.error || "Failed to update setting", "error");
-        return;
-      }
-      showToast(result.data.message || "Setting updated", "success");
+    postToggle("/api/settings/remove-volumes", enabled, "remove-volumes-text", "remove-volumes-toggle", function() {
       showSettingSource("remove-volumes-source", "saved", "SENTINEL_REMOVE_VOLUMES");
-    }).catch(function() {
-      revert();
-      showToast("Network error -- could not update setting", "error");
     });
   }
   function setScanConcurrency() {
@@ -3758,9 +3677,15 @@
       return;
     }
     fetch("/api/settings/scan-concurrency", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ concurrency: n }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
+      return r.json().then(function(data) {
+        return { ok: r.ok, data };
+      });
+    }).then(function(result) {
+      if (!result.ok) {
+        showToast(result.data.error || "Failed to update setting", "error");
+        return;
+      }
+      showToast(result.data.message || "Setting updated", "success");
     }).catch(function() {
       showToast("Network error -- could not update setting", "error");
     });
