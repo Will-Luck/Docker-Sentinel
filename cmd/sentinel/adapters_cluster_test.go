@@ -28,6 +28,9 @@ func (idleDocker) InspectContainer(context.Context, string) (container.InspectRe
 }
 func (idleDocker) StopContainer(context.Context, string, int) error { return nil }
 func (idleDocker) RemoveContainer(context.Context, string) error    { return nil }
+func (idleDocker) RemoveContainerWithVolumes(context.Context, string) error {
+	return nil
+}
 func (idleDocker) CreateContainer(context.Context, string, *container.Config, *container.HostConfig, *network.NetworkingConfig) (string, error) {
 	return "", nil
 }

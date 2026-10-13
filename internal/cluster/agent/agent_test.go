@@ -141,6 +141,10 @@ func (m *mockDocker) RemoveContainer(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *mockDocker) RemoveContainerWithVolumes(ctx context.Context, id string) error {
+	return m.RemoveContainer(ctx, id)
+}
+
 func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *container.Config, _ *container.HostConfig, netCfg *network.NetworkingConfig) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -829,99 +833,6 @@ func TestContainerInfoSkipsUnpublishedPorts(t *testing.T) {
 // ---------------------------------------------------------------------------
 // configFromInspect
 // ---------------------------------------------------------------------------
-
-func TestConfigFromInspect(t *testing.T) {
-	inspect := &container.InspectResponse{
-		Config: &container.Config{
-			Image: "old:1.0",
-			Env:   []string{"FOO=bar"},
-		},
-		HostConfig: &container.HostConfig{
-			RestartPolicy: container.RestartPolicy{Name: "always"},
-		},
-	}
-
-	cfg, hostCfg := configFromInspect(inspect, "new:2.0")
-
-	if cfg.Image != "new:2.0" {
-		t.Errorf("Image = %q, want %q", cfg.Image, "new:2.0")
-	}
-	if len(cfg.Env) != 1 || cfg.Env[0] != "FOO=bar" {
-		t.Errorf("Env = %v, want [FOO=bar]", cfg.Env)
-	}
-	if hostCfg.RestartPolicy.Name != "always" {
-		t.Errorf("RestartPolicy = %q, want %q", hostCfg.RestartPolicy.Name, "always")
-	}
-	// Original inspect should not be mutated.
-	if inspect.Config.Image != "old:1.0" {
-		t.Errorf("original inspect mutated: Image = %q", inspect.Config.Image)
-	}
-}
-
-func inspectOn(mode string, nets map[string]*network.EndpointSettings) *container.InspectResponse {
-	return &container.InspectResponse{
-		ID:              "0123456789abcdef",
-		HostConfig:      &container.HostConfig{NetworkMode: container.NetworkMode(mode)},
-		NetworkSettings: &container.NetworkSettings{Networks: nets},
-	}
-}
-
-func TestRecreateEndpointsEveryNetwork(t *testing.T) {
-	cfg := recreateEndpoints(inspectOn("app_net", map[string]*network.EndpointSettings{
-		"app_net":     {NetworkID: "net-1", Aliases: []string{"app"}},
-		"monitor_net": {NetworkID: "net-2"},
-	}))
-	if cfg == nil || len(cfg.EndpointsConfig) != 2 {
-		t.Fatalf("endpoints = %+v, want both networks", cfg)
-	}
-	if got := cfg.EndpointsConfig["app_net"].Aliases; len(got) != 1 || got[0] != "app" {
-		t.Errorf("app_net aliases = %v, want [app]", got)
-	}
-}
-
-func TestRecreateEndpointsSkipsDefaultBridge(t *testing.T) {
-	cfg := recreateEndpoints(inspectOn("bridge", map[string]*network.EndpointSettings{
-		"bridge":  {NetworkID: "net-0"},
-		"app_net": {NetworkID: "net-1"},
-	}))
-	if _, ok := cfg.EndpointsConfig["bridge"]; ok {
-		t.Error("default bridge given an endpoint although it is the network mode")
-	}
-	if _, ok := cfg.EndpointsConfig["app_net"]; !ok {
-		t.Error("app_net missing")
-	}
-}
-
-// A container whose primary network is a user network but that was also
-// attached to the default bridge keeps the bridge, without aliases (the
-// default bridge refuses them).
-func TestRecreateEndpointsKeepsBridgeWhenNotTheMode(t *testing.T) {
-	cfg := recreateEndpoints(inspectOn("app_net", map[string]*network.EndpointSettings{
-		"bridge":  {NetworkID: "net-0", Aliases: []string{"x"}},
-		"app_net": {NetworkID: "net-1"},
-	}))
-	br, ok := cfg.EndpointsConfig["bridge"]
-	if !ok {
-		t.Fatal("default bridge dropped")
-	}
-	if len(br.Aliases) != 0 {
-		t.Errorf("bridge aliases = %v, want none", br.Aliases)
-	}
-}
-
-func TestRecreateEndpointsNone(t *testing.T) {
-	if cfg := recreateEndpoints(&container.InspectResponse{}); cfg != nil {
-		t.Errorf("no network settings: got %+v, want nil", cfg)
-	}
-	if cfg := recreateEndpoints(inspectOn("bridge", map[string]*network.EndpointSettings{"bridge": {}})); cfg != nil {
-		t.Errorf("bridge only: got %+v, want nil", cfg)
-	}
-	for _, mode := range []string{"host", "none", "container:abc"} {
-		if cfg := recreateEndpoints(inspectOn(mode, map[string]*network.EndpointSettings{mode: {}})); cfg != nil {
-			t.Errorf("network mode %s: got %+v, want nil", mode, cfg)
-		}
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Self-update (rename-before-replace)

@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 )
 
 // sendMsg serialises a message send on the bidirectional stream.
@@ -128,7 +129,11 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	// Get the new image's digest.
 	r.newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
 
-	spec := buildRecreateSpec(&inspect, targetImage)
+	spec := buildRecreateSpec(&inspect, docker.RecreateOptions{
+		Image:                 targetImage,
+		OldImage:              a.imageDefaults(ctx, inspect.Image, name),
+		FreshAnonymousVolumes: a.removeVolumes(&inspect),
+	})
 
 	parked := parkedName(name)
 	if id, err := a.findContainerID(ctx, parked); err == nil {
@@ -139,7 +144,7 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	if err := a.docker.RenameContainer(ctx, cID, parked); err != nil {
 		return r, fmt.Errorf("rename %s to %s: %w", name, parked, err)
 	}
-	old := parkedContainer{id: cID, name: name, inspect: &inspect, targetImage: targetImage}
+	old := parkedContainer{id: cID, name: name, inspect: &inspect, targetImage: targetImage, freshVolumes: spec.freshVolumes}
 
 	// Take the running state now that the container is parked: it may have
 	// been started or stopped since the first inspect, and from here on
@@ -176,7 +181,9 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	}
 
 	// A --rm container was already deleted by the daemon when it stopped.
-	if err := a.docker.RemoveContainer(ctx, cID); err != nil && !autoRemoves(&inspect) {
+	// The old container's anonymous volumes go with it only if the
+	// replacement started on fresh ones; otherwise the replacement uses them.
+	if err := a.removeContainer(ctx, cID, spec.freshVolumes); err != nil && !autoRemoves(&inspect) {
 		a.log.Warn("container updated, but the old one could not be removed",
 			"container", name, "old_container", parked, "error", err)
 		r.warning = fmt.Sprintf("updated, but the old container %s could not be removed: %v", parked, err)
@@ -203,22 +210,27 @@ func (a *Agent) clearLeftover(ctx context.Context, name, parked, id string, curr
 		parked, truncateID(id), name, name)
 }
 
-// recreateSpec is everything needed to create a container like an existing
-// one: its config and its networks.
-//
-// buildRecreateSpec is the one place the agent turns an inspected container
-// into create parameters. The local engine's config helpers (sanitising for
-// network_mode "container:", carrying anonymous volumes) belong here when
-// they land, so remote and local recreates build containers the same way.
+// recreateSpec is everything needed to create a container that replaces
+// an existing one. It comes from docker.RecreateConfig, which is also what
+// the local engine uses, so a recreated container looks the same whether
+// the hub or an agent made it: the new image's defaults rather than the old
+// one's, the old container's anonymous volumes, every network's settings,
+// no hostname or alias taken from the old container's ID, and the fields a
+// container:X network mode refuses left out. The agent adds only its own
+// park, start and restore steps around it.
 type recreateSpec struct {
 	cfg     *container.Config
 	hostCfg *container.HostConfig
 	netCfg  *network.NetworkingConfig
+	// freshVolumes: the replacement starts on new anonymous volumes, so
+	// the old container's go with the old container (and a rolled-back
+	// replacement's go with it).
+	freshVolumes bool
 }
 
-func buildRecreateSpec(inspect *container.InspectResponse, image string) recreateSpec {
-	cfg, hostCfg := configFromInspect(inspect, image)
-	return recreateSpec{cfg: cfg, hostCfg: hostCfg, netCfg: recreateEndpoints(inspect)}
+func buildRecreateSpec(inspect *container.InspectResponse, opts docker.RecreateOptions) recreateSpec {
+	rc := docker.RecreateConfig(*inspect, opts)
+	return recreateSpec{cfg: rc.Config, hostCfg: rc.HostConfig, netCfg: rc.NetworkingConfig, freshVolumes: opts.FreshAnonymousVolumes}
 }
 
 // createFromSpec creates a container named name from spec, attached to all
@@ -227,13 +239,49 @@ func (a *Agent) createFromSpec(ctx context.Context, name string, spec recreateSp
 	return a.docker.CreateContainer(ctx, name, spec.cfg, spec.hostCfg, spec.netCfg)
 }
 
+// imageDefaults returns the config of the image a container was created
+// from (by image ID), so the recreate can leave out what came from it. It
+// returns nil, which keeps the old config whole, when the image cannot be
+// read.
+func (a *Agent) imageDefaults(ctx context.Context, imageID, name string) *container.Config {
+	reader, ok := a.docker.(docker.ImageConfigReader)
+	if !ok || imageID == "" {
+		return nil
+	}
+	cfg, err := reader.ImageConfig(ctx, imageID)
+	if err != nil {
+		a.log.Warn("could not read the old image's defaults, keeping the old config as it is",
+			"container", name, "image", imageID, "error", err)
+		return nil
+	}
+	return cfg
+}
+
+// removeVolumes reports whether a container is updated onto fresh anonymous
+// volumes, as `docker compose up -V` does: its sentinel.remove-volumes
+// label, or this agent's own remove_volumes setting. Otherwise the
+// replacement keeps the old ones.
+func (a *Agent) removeVolumes(inspect *container.InspectResponse) bool {
+	return (inspect.Config != nil && docker.ContainerRemoveVolumes(inspect.Config.Labels)) || a.cfg.RemoveVolumes
+}
+
+// removeContainer force-removes a container, with its anonymous volumes
+// only when withVolumes is set.
+func (a *Agent) removeContainer(ctx context.Context, id string, withVolumes bool) error {
+	if withVolumes {
+		return a.docker.RemoveContainerWithVolumes(ctx, id)
+	}
+	return a.docker.RemoveContainer(ctx, id)
+}
+
 // parkedContainer is an old container moved aside during a recreate.
 type parkedContainer struct {
-	id, name    string
-	inspect     *container.InspectResponse
-	targetImage string // image the failed replacement was built from
-	wasRunning  bool   // running when it was parked
-	stopped     bool   // the agent has stopped it
+	id, name     string
+	inspect      *container.InspectResponse
+	targetImage  string // image the failed replacement was built from
+	wasRunning   bool   // running when it was parked
+	stopped      bool   // the agent has stopped it
+	freshVolumes bool   // the replacement was given new anonymous volumes
 }
 
 func isRunning(inspect *container.InspectResponse) bool {
@@ -258,14 +306,16 @@ func autoRemoves(inspect *container.InspectResponse) bool {
 // it again if it was running. A --rm container the agent stopped is being
 // deleted by the daemon, so it is created again from its inspected config
 // on its old image instead. A replacement that cannot be removed is
-// renamed aside so the old container can take its name back. Errors are logged: the caller is already returning
-// the failure that got us here. The rollback runs to the end even if ctx
-// has been cancelled.
+// renamed aside so the old container can take its name back. Errors are
+// logged: the caller is already returning the failure that got us here.
+// The rollback runs to the end even if ctx has been cancelled.
 func (a *Agent) restoreParked(ctx context.Context, old parkedContainer, newID string) {
 	ctx = context.WithoutCancel(ctx)
 
 	if newID != "" {
-		if err := a.docker.RemoveContainer(ctx, newID); err != nil {
+		// Its anonymous volumes are the old container's unless it was given
+		// fresh ones: keep those for the restore.
+		if err := a.removeContainer(ctx, newID, old.freshVolumes); err != nil {
 			// It still holds the real name: move it aside so the old
 			// container can have the name back.
 			a.log.Error("rollback: failed to remove the replacement container, moving it aside", "container", old.name, "id", truncateID(newID), "error", err)
@@ -309,14 +359,15 @@ func (a *Agent) restoreParked(ctx context.Context, old parkedContainer, newID st
 }
 
 // recreateRemoved brings back a --rm container that the daemon deleted when
-// it was stopped. For a same-tag update the tag now names the new image, so
-// the old image is used by ID.
+// it was stopped, as it was: nothing is left out as an image default, and
+// it gets its own anonymous volumes back. For a same-tag update the tag now
+// names the new image, so the old image is used by ID.
 func (a *Agent) recreateRemoved(ctx context.Context, old parkedContainer) {
 	image := old.inspect.Config.Image
 	if image == old.targetImage && old.inspect.Image != "" {
 		image = old.inspect.Image
 	}
-	id, err := a.createFromSpec(ctx, old.name, buildRecreateSpec(old.inspect, image))
+	id, err := a.createFromSpec(ctx, old.name, buildRecreateSpec(old.inspect, docker.RecreateOptions{Image: image}))
 	if err != nil {
 		a.log.Error("rollback: failed to recreate the removed --rm container", "container", old.name, "image", image, "error", err)
 		return
@@ -327,74 +378,6 @@ func (a *Agent) recreateRemoved(ctx context.Context, old parkedContainer) {
 	if err := a.docker.StartContainer(ctx, id); err != nil {
 		a.log.Error("rollback: failed to start the recreated --rm container", "container", old.name, "error", err)
 	}
-}
-
-// recreateEndpoints gives every network a container is on, with the
-// endpoint settings the user chose (static IP, aliases, MAC address, driver
-// options, links), so the recreated container rejoins each network the
-// same way. Sentinel needs Docker API 1.44 or later, which takes several
-// endpoints at create; attaching networks afterwards would drop their
-// settings. The container's primary network stays HostConfig.NetworkMode.
-// Runtime fields (Gateway, IPAddress, DNSNames) are left out, and so is the
-// alias Docker gives a container from its own short ID, which would point
-// at the old container's ID. The default bridge needs no endpoint when it
-// is the network mode, and a container that shares another network stack
-// (host, none, container:X) has none.
-func recreateEndpoints(inspect *container.InspectResponse) *network.NetworkingConfig {
-	ns := inspect.NetworkSettings
-	if ns == nil || len(ns.Networks) == 0 {
-		return nil
-	}
-	var mode string
-	if inspect.HostConfig != nil {
-		mode = string(inspect.HostConfig.NetworkMode)
-	}
-	if mode == "host" || mode == "none" || strings.HasPrefix(mode, "container:") {
-		return nil
-	}
-	defaultBridge := mode == "" || mode == "default" || mode == "bridge"
-	oldShortID := truncateID(inspect.ID)
-
-	eps := make(map[string]*network.EndpointSettings, len(ns.Networks))
-	for netName, ep := range ns.Networks {
-		if netName == "bridge" && defaultBridge {
-			continue
-		}
-		if ep == nil {
-			ep = &network.EndpointSettings{}
-		}
-		settings := &network.EndpointSettings{
-			IPAMConfig: ep.IPAMConfig,
-			Links:      ep.Links,
-			DriverOpts: ep.DriverOpts,
-			NetworkID:  ep.NetworkID,
-			MacAddress: ep.MacAddress,
-		}
-		// The default bridge takes no aliases.
-		if netName != "bridge" {
-			for _, alias := range ep.Aliases {
-				if alias != oldShortID {
-					settings.Aliases = append(settings.Aliases, alias)
-				}
-			}
-		}
-		eps[netName] = settings
-	}
-	if len(eps) == 0 {
-		return nil
-	}
-	return &network.NetworkingConfig{EndpointsConfig: eps}
-}
-
-// configFromInspect extracts container creation parameters from an
-// InspectResponse, replacing the image with targetImage. This preserves
-// env vars, volumes, ports, and all other configuration from the original
-// container. Network config is handled separately by recreateEndpoints.
-func configFromInspect(inspect *container.InspectResponse, targetImage string) (*container.Config, *container.HostConfig) {
-	cfgCopy := *inspect.Config
-	cfgCopy.Image = targetImage
-	hostCfgCopy := *inspect.HostConfig
-	return &cfgCopy, &hostCfgCopy
 }
 
 // selfUpdateContainer uses the rename-before-replace pattern to update the
@@ -454,7 +437,12 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 
 	// Create new container with the original name.
 	a.log.Info("self-update: creating replacement", "name", name, "image", targetImage)
-	newID, err := a.createFromSpec(ctx, name, buildRecreateSpec(&inspect, targetImage))
+	// The agent's own data directory may be an anonymous volume: it is
+	// always carried, never replaced by a fresh one.
+	newID, err := a.createFromSpec(ctx, name, buildRecreateSpec(&inspect, docker.RecreateOptions{
+		Image:    targetImage,
+		OldImage: a.imageDefaults(ctx, inspect.Image, name),
+	}))
 	if err != nil {
 		a.log.Error("self-update: create failed, rolling back rename", "error", err)
 		_ = a.docker.RenameContainer(ctx, cID, name)

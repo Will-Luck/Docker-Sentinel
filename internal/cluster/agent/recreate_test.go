@@ -505,7 +505,7 @@ func TestRecreateContainer_StoppedAutoRemoveRecreatedNotRenamedBack(t *testing.T
 func TestRecreateContainer_UnremovableReplacementMovedAside(t *testing.T) {
 	h, old, a := recreateFixture(t)
 	h.startErr["nginx:2"] = errors.New("port is already allocated")
-	h.removeErr["c2"] = errors.New("device or resource busy") // the replacement
+	h.removeErr[fakeID(2)] = errors.New("device or resource busy") // the replacement
 
 	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err == nil {
 		t.Fatal("recreateContainer returned no error although start failed")

@@ -3,12 +3,16 @@ package agent
 import (
 	"context"
 	"fmt"
+	"maps"
+	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 )
 
@@ -17,6 +21,12 @@ import (
 // exist, which image each runs, and whether it is running. It follows the
 // daemon rules that matter here: names are unique, stopping an auto-remove
 // (--rm) container deletes it, and an empty image reference cannot be pulled.
+//
+// Create behaves like the daemon's: the image's defaults (ENV, CMD, LABEL,
+// VOLUME, EXPOSE) fill what the request leaves empty, a container with no
+// hostname gets its short ID, each anonymous volume gets a new volume, a
+// user network gets the short-ID alias, and network_mode container:X
+// refuses a hostname, ports or endpoints.
 type fakeHost struct {
 	mu         sync.Mutex
 	containers map[string]*fakeContainer // by ID
@@ -47,6 +57,13 @@ type fakeHost struct {
 	// removedRunning lists containers removed while running: a forced
 	// remove that kills a live container.
 	removedRunning []string
+	// removedWithVolumes lists containers removed together with their
+	// anonymous volumes.
+	removedWithVolumes []string
+
+	// imageConfigs holds each image's defaults, by image ID.
+	imageConfigs map[string]*container.Config
+	volumeSeq    int
 }
 
 type fakeContainer struct {
@@ -59,6 +76,27 @@ type fakeContainer struct {
 	labels     map[string]string
 	removing   bool // stopped --rm container the daemon is deleting
 	started    bool // has been started at some point
+
+	// Set for containers made by the daemon-like create path; nil for the
+	// plain ones addContainer makes.
+	cfg      *container.Config
+	hostCfg  *container.HostConfig
+	mounts   []container.MountPoint
+	networks map[string]*network.EndpointSettings
+	// request is what the agent sent to create this container.
+	request *createRequest
+}
+
+// createRequest is a create call as the agent made it.
+type createRequest struct {
+	cfg     container.Config
+	hostCfg container.HostConfig
+	netCfg  *network.NetworkingConfig
+}
+
+// fakeID makes the n-th container ID, full length so short-ID rules apply.
+func fakeID(n int) string {
+	return fmt.Sprintf("%012x%052d", n, 0)
 }
 
 func newFakeHost() *fakeHost {
@@ -72,6 +110,91 @@ func newFakeHost() *fakeHost {
 		stopErr:    map[string]error{},
 		renameErr:  map[string]error{},
 		removeErr:  map[string]error{},
+
+		imageConfigs: map[string]*container.Config{},
+	}
+}
+
+// addImage makes image present locally with the given defaults.
+func (h *fakeHost) addImage(ref, id string, defaults *container.Config) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.images[ref] = id
+	h.imageIDs[id] = true
+	h.imageConfigs[id] = defaults
+}
+
+// addFromImage creates a container from a local image through the
+// daemon-like create path, as `docker create` with the user's settings
+// would, and starts it if running.
+func (h *fakeHost) addFromImage(t *testing.T, name, image string, user *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig, running bool) *fakeContainer {
+	t.Helper()
+	if user == nil {
+		user = &container.Config{}
+	}
+	cfg := *user
+	cfg.Image = image
+	if hostCfg == nil {
+		hostCfg = &container.HostConfig{}
+	}
+	id, err := h.CreateContainer(context.Background(), name, &cfg, hostCfg, netCfg)
+	if err != nil {
+		t.Fatalf("create %s: %v", name, err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c := h.containers[id]
+	c.running, c.started = running, running
+	return c
+}
+
+// volumeAt returns the name of the volume mounted at dest, or "".
+func (c *fakeContainer) volumeAt(dest string) string {
+	for _, m := range c.mounts {
+		if m.Type == mount.TypeVolume && path.Clean(m.Destination) == path.Clean(dest) {
+			return m.Name
+		}
+	}
+	return ""
+}
+
+// mergeImageDefaults fills what cfg leaves empty from the image, as the
+// daemon does on create.
+func mergeImageDefaults(cfg *container.Config, img *container.Config) {
+	if img == nil {
+		return
+	}
+	for _, e := range img.Env {
+		key, _, _ := strings.Cut(e, "=")
+		if !slices.ContainsFunc(cfg.Env, func(c string) bool { return strings.HasPrefix(c, key+"=") }) {
+			cfg.Env = append(cfg.Env, e)
+		}
+	}
+	for k, v := range img.Labels {
+		if cfg.Labels == nil {
+			cfg.Labels = map[string]string{}
+		}
+		if _, ok := cfg.Labels[k]; !ok {
+			cfg.Labels[k] = v
+		}
+	}
+	if len(cfg.Entrypoint) == 0 {
+		cfg.Entrypoint = slices.Clone(img.Entrypoint)
+		if len(cfg.Cmd) == 0 {
+			cfg.Cmd = slices.Clone(img.Cmd)
+		}
+	}
+	for v := range img.Volumes {
+		if cfg.Volumes == nil {
+			cfg.Volumes = map[string]struct{}{}
+		}
+		cfg.Volumes[v] = struct{}{}
+	}
+	for p := range img.ExposedPorts {
+		if cfg.ExposedPorts == nil {
+			cfg.ExposedPorts = network.PortSet{}
+		}
+		cfg.ExposedPorts[p] = struct{}{}
 	}
 }
 
@@ -85,7 +208,7 @@ func (h *fakeHost) addContainer(name, image string, running bool) *fakeContainer
 	}
 	h.nextID++
 	c := &fakeContainer{
-		id:      fmt.Sprintf("c%d", h.nextID),
+		id:      fakeID(h.nextID),
 		name:    name,
 		image:   image,
 		imageID: h.images[image],
@@ -171,13 +294,27 @@ func (h *fakeHost) InspectContainer(_ context.Context, id string) (container.Ins
 	if !ok {
 		return container.InspectResponse{}, fmt.Errorf("No such container: %s", id)
 	}
+	cfg := &container.Config{Image: c.image, Env: slices.Clone(c.env), Labels: maps.Clone(c.labels)}
+	if c.cfg != nil {
+		cp := *c.cfg
+		cp.Image = c.image
+		cfg = &cp
+	}
+	hostCfg := &container.HostConfig{}
+	if c.hostCfg != nil {
+		cp := *c.hostCfg
+		hostCfg = &cp
+	}
+	hostCfg.AutoRemove = c.autoRemove
 	return container.InspectResponse{
-		ID:         c.id,
-		Name:       "/" + c.name,
-		Image:      c.imageID,
-		State:      &container.State{Running: c.running, StartedAt: startedAt(c.started)},
-		Config:     &container.Config{Image: c.image, Env: append([]string(nil), c.env...)},
-		HostConfig: &container.HostConfig{AutoRemove: c.autoRemove},
+		ID:              c.id,
+		Name:            "/" + c.name,
+		Image:           c.imageID,
+		State:           &container.State{Running: c.running, StartedAt: startedAt(c.started)},
+		Config:          cfg,
+		HostConfig:      hostCfg,
+		Mounts:          slices.Clone(c.mounts),
+		NetworkSettings: &container.NetworkSettings{Networks: c.networks},
 	}, nil
 }
 
@@ -205,6 +342,39 @@ func (h *fakeHost) StopContainer(_ context.Context, id string, _ int) error {
 	return nil
 }
 
+func (h *fakeHost) RemoveContainerWithVolumes(ctx context.Context, id string) error {
+	h.mu.Lock()
+	c, ok := h.containers[id]
+	name := ""
+	if ok {
+		name = c.name
+	}
+	h.mu.Unlock()
+	if err := h.RemoveContainer(ctx, id); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.removedWithVolumes = append(h.removedWithVolumes, name)
+	h.mu.Unlock()
+	return nil
+}
+
+// ImageConfig returns an image's defaults, by reference or ID.
+func (h *fakeHost) ImageConfig(_ context.Context, ref string) (*container.Config, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	id := ref
+	if byRef, ok := h.images[ref]; ok {
+		id = byRef
+	}
+	cfg, ok := h.imageConfigs[id]
+	if !ok {
+		return nil, fmt.Errorf("No such image: %s", ref)
+	}
+	cp := *cfg
+	return &cp, nil
+}
+
 func (h *fakeHost) RemoveContainer(_ context.Context, id string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -222,7 +392,7 @@ func (h *fakeHost) RemoveContainer(_ context.Context, id string) error {
 	return nil
 }
 
-func (h *fakeHost) CreateContainer(_ context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
+func (h *fakeHost) CreateContainer(_ context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.byName(name) != nil {
@@ -230,6 +400,10 @@ func (h *fakeHost) CreateContainer(_ context.Context, name string, cfg *containe
 	}
 	if err := h.createErr[cfg.Image]; err != nil {
 		return "", err
+	}
+	if hostCfg != nil && hostCfg.NetworkMode.IsContainer() &&
+		(cfg.Hostname != "" || len(cfg.ExposedPorts) > 0 || (netCfg != nil && len(netCfg.EndpointsConfig) > 0)) {
+		return "", fmt.Errorf("conflicting options: hostname, ports and endpoints cannot be used with network mode %s", hostCfg.NetworkMode)
 	}
 	imageID, ok := h.images[cfg.Image]
 	if !ok && h.imageIDs[cfg.Image] {
@@ -241,15 +415,107 @@ func (h *fakeHost) CreateContainer(_ context.Context, name string, cfg *containe
 	}
 	h.nextID++
 	c := &fakeContainer{
-		id:         fmt.Sprintf("c%d", h.nextID),
+		id:         fakeID(h.nextID),
 		name:       name,
 		image:      cfg.Image,
 		imageID:    imageID,
 		autoRemove: hostCfg != nil && hostCfg.AutoRemove,
 		env:        append([]string(nil), cfg.Env...),
 	}
+	if img, known := h.imageConfigs[imageID]; known {
+		h.materialise(c, cfg, hostCfg, netCfg, img)
+	}
 	h.containers[c.id] = c
 	return c.id, nil
+}
+
+// materialise fills in a created container as the daemon would.
+func (h *fakeHost) materialise(c *fakeContainer, req *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig, img *container.Config) {
+	rec := &createRequest{cfg: *req, netCfg: netCfg}
+	if hostCfg != nil {
+		rec.hostCfg = *hostCfg
+	}
+	c.request = rec
+
+	cfg := *req
+	cfg.Env = slices.Clone(req.Env)
+	cfg.Labels = maps.Clone(req.Labels)
+	cfg.Volumes = maps.Clone(req.Volumes)
+	cfg.ExposedPorts = maps.Clone(req.ExposedPorts)
+	mergeImageDefaults(&cfg, img)
+	containerMode := hostCfg != nil && hostCfg.NetworkMode.IsContainer()
+	if cfg.Hostname == "" && !containerMode {
+		cfg.Hostname = c.id[:12]
+	}
+	c.cfg = &cfg
+	c.env = cfg.Env
+	c.labels = cfg.Labels
+	hc := container.HostConfig{}
+	if hostCfg != nil {
+		hc = *hostCfg
+	}
+	c.hostCfg = &hc
+
+	covered := map[string]bool{}
+	for _, m := range hc.Mounts {
+		dest := path.Clean(m.Target)
+		covered[dest] = true
+		if m.Type == mount.TypeVolume {
+			name := m.Source
+			if name == "" {
+				name = h.newVolume()
+			}
+			c.mounts = append(c.mounts, container.MountPoint{Type: mount.TypeVolume, Name: name, Destination: m.Target, RW: !m.ReadOnly})
+		}
+	}
+	anonymous := map[string]bool{}
+	for _, b := range hc.Binds {
+		parts := strings.Split(b, ":")
+		if len(parts) == 1 {
+			anonymous[path.Clean(parts[0])] = true
+			continue
+		}
+		covered[path.Clean(parts[1])] = true
+	}
+	for v := range cfg.Volumes {
+		anonymous[path.Clean(v)] = true
+	}
+	for _, dest := range slices.Sorted(maps.Keys(anonymous)) {
+		if !covered[dest] {
+			c.mounts = append(c.mounts, container.MountPoint{Type: mount.TypeVolume, Name: h.newVolume(), Destination: dest, RW: true})
+		}
+	}
+
+	if containerMode {
+		return
+	}
+	c.networks = map[string]*network.EndpointSettings{}
+	if netCfg != nil {
+		for name, ep := range netCfg.EndpointsConfig {
+			cp := network.EndpointSettings{}
+			if ep != nil {
+				cp = *ep
+				cp.Aliases = slices.Clone(ep.Aliases)
+			}
+			c.networks[name] = &cp
+		}
+	}
+	mode := string(hc.NetworkMode)
+	if mode == "" || mode == "default" || mode == "bridge" {
+		if _, ok := c.networks["bridge"]; !ok {
+			c.networks["bridge"] = &network.EndpointSettings{}
+		}
+	}
+	for name, ep := range c.networks {
+		if name != "bridge" {
+			ep.Aliases = append(ep.Aliases, c.id[:12])
+		}
+	}
+}
+
+func (h *fakeHost) newVolume() string {
+	h.volumeSeq++
+	return fmt.Sprintf("anon-%d", h.volumeSeq)
 }
 
 func (h *fakeHost) StartContainer(_ context.Context, id string) error {

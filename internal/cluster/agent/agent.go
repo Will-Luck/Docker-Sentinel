@@ -57,6 +57,7 @@ type DockerAPI interface {
 	InspectContainer(ctx context.Context, id string) (container.InspectResponse, error)
 	StopContainer(ctx context.Context, id string, timeout int) error
 	RemoveContainer(ctx context.Context, id string) error
+	RemoveContainerWithVolumes(ctx context.Context, id string) error
 	CreateContainer(ctx context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig) (string, error)
 	StartContainer(ctx context.Context, id string) error
 	RestartContainer(ctx context.Context, id string) error
@@ -78,6 +79,9 @@ type Config struct {
 	GracePeriodOffline time.Duration // time before autonomous mode activates
 	DockerSock         string        // Docker socket path (informational)
 	Version            string        // agent binary version
+	// RemoveVolumes starts updated containers on fresh anonymous volumes
+	// and removes the old ones (the agent host's SENTINEL_REMOVE_VOLUMES).
+	RemoveVolumes bool
 }
 
 // Agent connects to a Sentinel server and executes commands on the local
