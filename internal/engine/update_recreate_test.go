@@ -131,10 +131,42 @@ func TestUpdateContainerCarriesAnonymousVolumes(t *testing.T) {
 	}
 }
 
-// remove_volumes must never delete a volume the replacement now uses.
-func TestUpdateContainerRemoveVolumesKeepsCarriedVolumes(t *testing.T) {
+// remove_volumes (or the sentinel.remove-volumes label) starts the new
+// container on fresh anonymous volumes, like `docker compose up -V`: the old
+// ones are not carried over and are removed with the old container.
+func TestUpdateContainerRemoveVolumesStartsOnFreshVolumes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*mockDocker, *Updater)
+	}{
+		{"setting", func(_ *mockDocker, u *Updater) { u.cfg.SetRemoveVolumes(true) }},
+		{"label", func(m *mockDocker, _ *Updater) {
+			old := m.inspectResults["aaa"]
+			old.Config.Labels["sentinel.remove-volumes"] = "true"
+			m.inspectResults["aaa"] = old
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, u := setupAnonymousVolumeUpdate(t)
+			tc.setup(mock, u)
+
+			if err := u.UpdateContainer(context.Background(), "aaa", "pg", ""); err != nil {
+				t.Fatalf("UpdateContainer: %v", err)
+			}
+			if hostConfigUsesVolume(mock.createHostHistory[0], pgDataVolume) {
+				t.Errorf("the old anonymous volume was carried over with remove_volumes on: %+v", mock.createHostHistory[0].Mounts)
+			}
+			if !slices.Equal(mock.removeWithVolumesCalls, []string{"aaa"}) {
+				t.Errorf("removeWithVolumesCalls = %v, want the old container removed with its volumes", mock.removeWithVolumesCalls)
+			}
+		})
+	}
+}
+
+// With remove_volumes off (the default) the old container is removed
+// without its volumes, which the new container now uses.
+func TestUpdateContainerKeepsCarriedVolumesByDefault(t *testing.T) {
 	mock, u := setupAnonymousVolumeUpdate(t)
-	u.cfg.SetRemoveVolumes(true)
 
 	if err := u.UpdateContainer(context.Background(), "aaa", "pg", ""); err != nil {
 		t.Fatalf("UpdateContainer: %v", err)

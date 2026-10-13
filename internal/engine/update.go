@@ -230,21 +230,19 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 	}
 
-	// 4. Build the replacement. It mounts the old container's anonymous
-	// volumes and leaves out the old image's defaults.
+	// 4. Build the replacement. It leaves out the old image's defaults and
+	// mounts the old container's anonymous volumes, unless remove_volumes
+	// asks for fresh ones (the old ones are then removed with the old
+	// container, like `docker compose up -V`).
+	removeVolumes := docker.ContainerRemoveVolumes(inspect.Config.Labels) || u.isRemoveVolumes()
 	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{
-		Image:    targetImage,
-		OldImage: u.imageDefaults(ctx, oldImageID, name),
+		Image:                 targetImage,
+		OldImage:              u.imageDefaults(ctx, oldImageID, name),
+		FreshAnonymousVolumes: removeVolumes,
 	})
 	newConfig := rc.Config
 	u.writeBackHookLabels(name, newConfig)
 	addMaintenanceLabel(newConfig)
-	// remove_volumes must not delete the volumes the new container took over.
-	removeVolumes := docker.ContainerRemoveVolumes(inspect.Config.Labels) || u.isRemoveVolumes()
-	if removeVolumes && len(rc.CarriedVolumes) > 0 {
-		u.log.Info("keeping the anonymous volumes the new container takes over", "name", name, "volumes", len(rc.CarriedVolumes))
-		removeVolumes = false
-	}
 
 	// 5. Swap the new container in: rename the old one aside, create the new
 	// one, stop the old one, start the new one. The old container is removed

@@ -33,18 +33,26 @@ type RecreateOptions struct {
 	// daemon fills them from the new image. Leave it nil to recreate the
 	// container as it was, as a rollback does.
 	OldImage *container.Config
+	// FreshAnonymousVolumes starts the replacement on new, empty anonymous
+	// volumes instead of the old container's, like `docker compose up -V`
+	// (Sentinel's remove_volumes setting). The caller then removes the old
+	// volumes with the old container.
+	FreshAnonymousVolumes bool
 }
 
 // RecreateConfig builds the create request for a container that replaces
 // the one described by inspect, from what the daemon reports about it. The
 // replacement mounts the old container's anonymous volumes (see
-// CarryAnonymousVolumes), and fields the daemon fills in itself, and would
-// reject on create, are removed (see SanitiseForNetworkMode). The inspect
-// value is not modified.
+// CarryAnonymousVolumes) unless opts.FreshAnonymousVolumes is set, and
+// fields the daemon fills in itself, and would reject on create, are
+// removed (see SanitiseForNetworkMode). The inspect value is not modified.
 func RecreateConfig(inspect container.InspectResponse, opts RecreateOptions) Recreate {
 	cfg := cloneConfig(inspect.Config)
 	hostCfg := cloneHostConfig(inspect.HostConfig)
-	carried := CarryAnonymousVolumes(cfg, hostCfg, inspect.Mounts)
+	var carried []string
+	if !opts.FreshAnonymousVolumes {
+		carried = CarryAnonymousVolumes(cfg, hostCfg, inspect.Mounts)
+	}
 	if opts.Image != "" {
 		cfg.Image = opts.Image
 	}

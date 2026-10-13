@@ -354,7 +354,7 @@
                             <div class="setting-row">
                                 <div class="setting-info">
                                     <div class="setting-label">Remove volumes on update</div>
-                                    <div class="setting-desc">Remove anonymous volumes when replacing a container. Can also be set per-container with <code>sentinel.remove-volumes=true</code>.</div>
+                                    <div class="setting-desc">When on, an updated container starts on fresh, empty anonymous volumes and the old ones are deleted with the old container (like <code>docker compose up -V</code>). When off, the new container keeps the old anonymous volumes and their data. Named volumes and bind mounts are never touched. Can also be set per-container with <code>sentinel.remove-volumes=true</code>.</div>
                                     <div class="setting-desc" id="remove-volumes-source"></div>
                                 </div>
                                 <label class="toggle-switch-label">

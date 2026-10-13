@@ -201,6 +201,20 @@ func TestCarryAnonymousVolumesNothingToCarry(t *testing.T) {
 	}
 }
 
+func TestRecreateConfigFreshAnonymousVolumes(t *testing.T) {
+	inspect := container.InspectResponse{
+		Config:     &container.Config{Volumes: map[string]struct{}{"/data": {}}},
+		HostConfig: &container.HostConfig{},
+		Mounts:     []container.MountPoint{volumeMount("anon1", "/data", true)},
+	}
+
+	rc := RecreateConfig(inspect, RecreateOptions{FreshAnonymousVolumes: true})
+
+	if rc.CarriedVolumes != nil || len(rc.HostConfig.Mounts) != 0 {
+		t.Errorf("recreate = %+v, want no volume carried over", rc)
+	}
+}
+
 func TestRecreateConfigReportsCarriedVolumes(t *testing.T) {
 	inspect := container.InspectResponse{
 		Config:     &container.Config{Volumes: map[string]struct{}{"/data": {}}},
