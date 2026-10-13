@@ -30,6 +30,7 @@ type clusterAdapter struct {
 	// updater sends the notifications of the remote updates the dashboard
 	// and the API start (nil: none).
 	updater *engine.Updater
+	log     *slog.Logger // nil: none
 }
 
 func (a *clusterAdapter) AllHosts() []web.ClusterHost {
@@ -215,12 +216,69 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 		return fmt.Errorf("no successful update history found for %s, cannot determine rollback image", containerName)
 	}
 
-	// Use the existing update mechanism to switch back to the old image.
-	ur, err := a.srv.RollbackContainerSync(ctx, hostID, containerName, oldImage)
-	if err != nil {
-		return err
+	hostName := hostID
+	rec := store.UpdateRecord{
+		ContainerName: store.ScopedKey(hostID, containerName),
+		NewImage:      oldImage,
+		HostID:        hostID,
+		Type:          "rollback",
 	}
-	return remoteResultErr(ur, "rollback")
+	if hs, ok := a.srv.GetHost(hostID); ok {
+		hostName, rec.HostName = hs.Info.Name, hs.Info.Name
+		for _, c := range hs.Containers {
+			if c.Name == containerName {
+				rec.OldImage, rec.OldDigest = c.Image, c.ImageDigest
+			}
+		}
+	}
+
+	// Use the existing update mechanism to switch back to the old image.
+	// This records and notifies the rollback, so the hub does not record it.
+	start := time.Now()
+	ur, err := a.srv.RollbackContainerSync(clusterserver.WithCallerRecords(ctx), hostID, containerName, oldImage)
+	if err == nil {
+		err = remoteResultErr(ur, "rollback")
+	}
+	if ur.GetOutcome() != "skipped" {
+		a.recordRemoteRollback(context.WithoutCancel(ctx), containerName, hostName, rec, ur, err, start)
+	}
+	return err
+}
+
+// recordRemoteRollback records the rollback of a remote container asked for
+// from the dashboard or the API, and notifies it. rec holds what was known
+// before it was sent: the container, the image it ran and the one it goes
+// back to. A failure the agent did not answer is recorded at the time its
+// late result would be, and only if that result is not in yet.
+func (a *clusterAdapter) recordRemoteRollback(ctx context.Context, name, hostName string, rec store.UpdateRecord, ur *proto.UpdateResult, err error, start time.Time) {
+	rec.Timestamp, rec.Duration = time.Now(), time.Since(start)
+	if ur != nil {
+		if ur.GetOldImage() != "" {
+			rec.OldImage, rec.OldDigest = ur.GetOldImage(), ur.GetOldDigest()
+		}
+		if ur.GetNewImage() != "" {
+			rec.NewImage = ur.GetNewImage()
+		}
+		rec.NewDigest, rec.Outcome, rec.Error = ur.GetNewDigest(), ur.GetOutcome(), ur.GetError()
+		if d := ur.GetDuration(); d != nil {
+			rec.Duration = d.AsDuration()
+		}
+	} else {
+		rec.Outcome, rec.Error = "failed", err.Error()
+		rec.Timestamp = cluster.HistoryTime(err, rec.Timestamp)
+	}
+	var recErr error
+	if cluster.Unanswered(err) {
+		_, recErr = a.store.RecordUpdateIfAbsent(rec)
+	} else {
+		recErr = a.store.RecordUpdate(rec)
+	}
+	if recErr != nil && a.log != nil {
+		a.log.Warn("failed to record a remote rollback", "hostID", rec.HostID, "container", name, "error", recErr)
+	}
+	if a.updater != nil {
+		a.updater.NotifyRemoteRollback(ctx, hostName, name, rec.OldImage, rec.NewImage, err)
+	}
 }
 
 // lastRemoteOldImage returns the old image of the most recent successful
@@ -496,7 +554,7 @@ func (m *clusterManager) Start() error {
 	m.updater.SetClusterScanner(&clusterScannerAdapter{srv: m.srv})
 
 	// Swap provider in controller — handlers see it immediately.
-	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv, store: m.db, updater: m.updater})
+	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv, store: m.db, updater: m.updater, log: m.log})
 
 	m.log.Info("cluster gRPC server started", "addr", addr)
 	return nil

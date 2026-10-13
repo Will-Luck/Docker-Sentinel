@@ -460,6 +460,23 @@ func (u *Updater) NotifyRemote(ctx context.Context, hostName, name, oldImage str
 	u.notifyRemoteResult(ctx, label, r)
 }
 
+// NotifyRemoteRollback notifies a rollback of name on hostName asked for
+// from the dashboard or the API, from oldImage back to newImage: as done,
+// or as failed with err.
+func (u *Updater) NotifyRemoteRollback(ctx context.Context, hostName, name, oldImage, newImage string, err error) {
+	if u.notifier == nil || u.clock == nil {
+		return
+	}
+	ev := notify.Event{
+		Type: notify.EventRollbackOK, ContainerName: name + " on " + hostName,
+		OldImage: oldImage, NewImage: newImage, Timestamp: u.clock.Now(),
+	}
+	if err != nil {
+		ev.Type, ev.Error = notify.EventRollbackFailed, err.Error()
+	}
+	u.notifier.Notify(ctx, ev)
+}
+
 // notifyRemoteResult notifies the outcome of a remote update.
 func (u *Updater) notifyRemoteResult(ctx context.Context, label string, ur RemoteUpdateResult) {
 	ev := notify.Event{ContainerName: label, OldImage: ur.OldImage, NewImage: ur.NewImage, NewDigest: ur.NewDigest, Timestamp: u.clock.Now()}
