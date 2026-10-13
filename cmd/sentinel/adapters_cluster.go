@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
@@ -194,6 +195,49 @@ func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, 
 	return "", nil
 }
 
+// remoteUpdatePrep checks and completes every update request the hub sends
+// to an agent (clusterserver.UpdatePrep), whatever started it: a scan, the
+// dashboard or the API.
+type remoteUpdatePrep struct {
+	db      *store.Store
+	updater *engine.Updater
+	// container returns what the hub last heard about a remote container.
+	container func(hostID, name string) (cluster.ContainerInfo, bool)
+}
+
+func (p *remoteUpdatePrep) prepare(ctx context.Context, hostID string, req *proto.UpdateContainerRequest, rollback bool) error {
+	name := req.GetContainerName()
+	c, _ := p.container(hostID, name)
+	if !rollback {
+		// The signature gate of a local update, before the agent is asked
+		// to do anything. A rollback restores an image that ran before.
+		image := req.GetTargetImage()
+		if image == "" {
+			image = c.Image
+		}
+		if err := p.updater.VerifyRemoteImage(ctx, name, c.Labels, image); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// knownContainer returns what srv last heard about a remote container.
+func knownContainer(srv *clusterserver.Server) func(hostID, name string) (cluster.ContainerInfo, bool) {
+	return func(hostID, name string) (cluster.ContainerInfo, bool) {
+		hs, ok := srv.GetHost(hostID)
+		if !ok {
+			return cluster.ContainerInfo{}, false
+		}
+		for _, c := range hs.Containers {
+			if c.Name == name {
+				return c, true
+			}
+		}
+		return cluster.ContainerInfo{}, false
+	}
+}
+
 // migrateRemoteHistory moves remote history rows written before v2.17.0
 // (plain container name with the host ID set) to the "hostID::name" key.
 // It is cheap and safe to run on every cluster start.
@@ -262,6 +306,8 @@ func (m *clusterManager) Start() error {
 		}
 		return registry.EncodedAuthFor(creds, ref)
 	})
+	prep := &remoteUpdatePrep{db: m.db, updater: m.updater, container: knownContainer(m.srv)}
+	m.srv.SetUpdatePrep(prep.prepare)
 
 	// Read advertise addresses for TLS cert SANs. Inside Docker, the container
 	// only sees its bridge network IPs, but agents connect via the host's

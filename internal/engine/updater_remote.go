@@ -9,6 +9,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -258,6 +259,40 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			result.Queued++
 		}
 	}
+}
+
+// VerifyRemoteImage applies the signature gate of a local update (the
+// container's sentinel.verify label, else the global mode) to image, which
+// an agent is about to update the remote container name to. The hub checks
+// it before the agent is asked to do anything. It returns an error when the
+// update must not go ahead: the image is not signed and the mode is
+// enforce, or the mode is enforce and cosign is not available.
+func (u *Updater) VerifyRemoteImage(ctx context.Context, name string, labels map[string]string, image string) error {
+	mode := u.verifyModeFor(labels)
+	switch {
+	case mode == verify.ModeDisabled:
+		return nil
+	case u.imgVerifier == nil:
+		if mode == verify.ModeEnforce {
+			u.log.Warn("signature verification is set to enforce but cosign is not available, refusing the remote update",
+				"name", name, "image", image)
+			return fmt.Errorf("update %s: %w", name, ErrVerifierUnavailable)
+		}
+		u.log.Warn("signature verification is set to warn but cosign is not available, updating without a signature check",
+			"name", name, "image", image)
+		return nil
+	}
+	result := u.imgVerifier.Verify(ctx, image)
+	switch {
+	case result.Verified:
+		u.log.Info("signature verified", "name", name, "image", image)
+	case mode == verify.ModeEnforce:
+		u.log.Warn("signature verification failed, blocking the remote update", "name", name, "image", image, "error", result.Error)
+		return fmt.Errorf("signature verification failed for %s: %s", name, result.Error)
+	default:
+		u.log.Warn("signature verification failed, proceeding (warn mode)", "name", name, "image", image, "error", result.Error)
+	}
+	return nil
 }
 
 // checkGHCRAlternatives probes GHCR for alternatives to Docker Hub images.

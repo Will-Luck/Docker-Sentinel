@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
@@ -80,6 +81,7 @@ type Server struct {
 	registry     *Registry
 	store        ClusterStore
 	history      HistoryRecorder
+	prep         atomic.Pointer[UpdatePrep]
 	bus          *events.Bus
 	log          *slog.Logger
 	hmacKey      []byte // 32-byte random key for HMAC-SHA256 token signing
@@ -212,6 +214,21 @@ func (s *Server) SetHistoryRecorder(h HistoryRecorder) {
 // the request, so the agent's daemon can pull from a private registry.
 func (s *Server) SetRegistryAuth(fn func(imageRef string) string) {
 	s.registryAuth = fn
+}
+
+// UpdatePrep checks and completes an update request before it is sent to
+// an agent. An error refuses the update: it is returned to the caller and
+// nothing is sent. rollback is set when the update moves the container back
+// to an earlier image.
+type UpdatePrep func(ctx context.Context, hostID string, req *proto.UpdateContainerRequest, rollback bool) error
+
+// SetUpdatePrep sets what prepares every update request (nil for none).
+func (s *Server) SetUpdatePrep(p UpdatePrep) {
+	if p == nil {
+		s.prep.Store(nil)
+		return
+	}
+	s.prep.Store(&p)
 }
 
 // Start starts the gRPC server with mTLS on the given address.

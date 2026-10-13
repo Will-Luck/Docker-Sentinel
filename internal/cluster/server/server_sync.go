@@ -256,15 +256,19 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 	if s.registryAuth != nil && targetImage != "" {
 		registryAuth = s.registryAuth(targetImage)
 	}
+	req := &proto.UpdateContainerRequest{
+		ContainerName: containerName,
+		TargetImage:   targetImage,
+		TargetDigest:  targetDigest,
+		RegistryAuth:  registryAuth,
+	}
+	if prep := s.prep.Load(); prep != nil {
+		if err := (*prep)(ctx, hostID, req, purpose == "rollback"); err != nil {
+			return nil, err
+		}
+	}
 	resp, err := s.request(ctx, hostID, "update result", purpose, updateTimeout, &proto.ServerMessage{
-		Payload: &proto.ServerMessage_UpdateContainer{
-			UpdateContainer: &proto.UpdateContainerRequest{
-				ContainerName: containerName,
-				TargetImage:   targetImage,
-				TargetDigest:  targetDigest,
-				RegistryAuth:  registryAuth,
-			},
-		},
+		Payload: &proto.ServerMessage_UpdateContainer{UpdateContainer: req},
 	})
 	if err != nil {
 		return nil, err
