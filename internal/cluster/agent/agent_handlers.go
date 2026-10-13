@@ -260,6 +260,13 @@ func (a *Agent) beginUpdate(name string) bool {
 	return true
 }
 
+// isUpdating reports whether an update of name is running.
+func (a *Agent) isUpdating(name string) bool {
+	a.updatingMu.Lock()
+	defer a.updatingMu.Unlock()
+	return a.updating[name]
+}
+
 func (a *Agent) endUpdate(name string) {
 	a.updatingMu.Lock()
 	defer a.updatingMu.Unlock()

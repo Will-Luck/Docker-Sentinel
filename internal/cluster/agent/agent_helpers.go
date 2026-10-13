@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -135,32 +136,55 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 		FreshAnonymousVolumes: a.removeVolumes(&inspect),
 	})
 
+	newID, started, warning, err := a.swapIn(ctx, name, cID, &inspect, spec, targetImage, true)
+	r.warning = warning
+	if err != nil {
+		return r, err
+	}
+
+	// Containers sharing this container's network namespace follow it to
+	// the replacement (they cannot join one that is not running).
+	if started {
+		a.afterProviderChange(ctx, name, newID, cID)
+	}
+	return r, nil
+}
+
+// swapIn replaces the container cID, named name and described by inspect,
+// with one created from spec, so that the host is never without it: steps
+// 2 to 5 of recreateContainer. On failure the old container is restored;
+// repairConsumers makes a restore that stopped or replaced it also repair
+// the containers in its network namespace. It returns the replacement's ID,
+// whether it was started (it is only if the old one was running), and a
+// warning when the update worked but left something behind.
+func (a *Agent) swapIn(ctx context.Context, name, cID string, inspect *container.InspectResponse, spec recreateSpec, targetImage string, repairConsumers bool) (newID string, started bool, warning string, err error) {
 	parked := parkedName(name)
 	if id, err := a.findContainerID(ctx, parked); err == nil {
-		if err := a.clearLeftover(ctx, name, parked, id, &inspect); err != nil {
-			return r, err
+		if err := a.clearLeftover(ctx, name, parked, id, inspect); err != nil {
+			return "", false, "", err
 		}
 	}
 	if err := a.docker.RenameContainer(ctx, cID, parked); err != nil {
-		return r, fmt.Errorf("rename %s to %s: %w", name, parked, err)
+		return "", false, "", fmt.Errorf("rename %s to %s: %w", name, parked, err)
 	}
-	old := parkedContainer{id: cID, name: name, inspect: &inspect, targetImage: targetImage, freshVolumes: spec.freshVolumes}
+	old := parkedContainer{id: cID, name: name, inspect: inspect, targetImage: targetImage,
+		freshVolumes: spec.freshVolumes, repairConsumers: repairConsumers}
 
 	// Take the running state now that the container is parked: it may have
 	// been started or stopped since the first inspect, and from here on
 	// anything acting on it by name reaches the replacement instead.
 	parkedInspect, err := a.docker.InspectContainer(ctx, cID)
 	if err != nil {
-		old.wasRunning = isRunning(&inspect)
+		old.wasRunning = isRunning(inspect)
 		a.restoreParked(ctx, old, "")
-		return r, fmt.Errorf("inspect %s after parking it: %w", name, err)
+		return "", false, "", fmt.Errorf("inspect %s after parking it: %w", name, err)
 	}
 	old.wasRunning = isRunning(&parkedInspect)
 
-	newID, err := a.createFromSpec(ctx, name, spec)
+	newID, err = a.createFromSpec(ctx, name, spec)
 	if err != nil {
 		a.restoreParked(ctx, old, "")
-		return r, fmt.Errorf("create %s: %w", name, err)
+		return "", false, "", fmt.Errorf("create %s: %w", name, err)
 	}
 
 	// Stop the old container whatever its state, so the remove below only
@@ -169,27 +193,115 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	// timeout is generous but safe.
 	if err := a.docker.StopContainer(ctx, cID, 30); err != nil {
 		a.restoreParked(ctx, old, newID)
-		return r, fmt.Errorf("stop %s: %w", name, err)
+		return "", false, "", fmt.Errorf("stop %s: %w", name, err)
 	}
 	old.stopped = true
 
 	if old.wasRunning {
 		if err := a.docker.StartContainer(ctx, newID); err != nil {
 			a.restoreParked(ctx, old, newID)
-			return r, fmt.Errorf("start %s: %w", name, err)
+			return "", false, "", fmt.Errorf("start %s: %w", name, err)
 		}
+		started = true
 	}
 
 	// A --rm container was already deleted by the daemon when it stopped.
 	// The old container's anonymous volumes go with it only if the
 	// replacement started on fresh ones; otherwise the replacement uses them.
-	if err := a.removeContainer(ctx, cID, spec.freshVolumes); err != nil && !autoRemoves(&inspect) {
+	if err := a.removeContainer(ctx, cID, spec.freshVolumes); err != nil && !autoRemoves(inspect) {
 		a.log.Warn("container updated, but the old one could not be removed",
 			"container", name, "old_container", parked, "error", err)
-		r.warning = fmt.Sprintf("updated, but the old container %s could not be removed: %v", parked, err)
+		warning = fmt.Sprintf("updated, but the old container %s could not be removed: %v", parked, err)
+	}
+	return newID, started, warning, nil
+}
+
+// afterProviderChange repairs the running containers that share the
+// network namespace (network_mode container:X) of the container now
+// running as name (currentID), which replaced or restarted previousIDs.
+// The rules are the local engine's (Updater.repairNetworkNamespace): a
+// consumer that refers to the provider by name or by its current ID is
+// restarted, which rejoins it; one that refers to a previous ID is left
+// with only loopback and cannot even restart, so it is recreated with
+// container:<currentID>. Containers parked by an update are skipped, and
+// so is a consumer whose own update is running.
+func (a *Agent) afterProviderChange(ctx context.Context, name, currentID string, previousIDs ...string) {
+	ctx = context.WithoutCancel(ctx)
+	var previous []string
+	for _, id := range previousIDs {
+		if id != "" && id != currentID {
+			previous = append(previous, id)
+		}
 	}
 
-	return r, nil
+	running, err := a.docker.ListContainers(ctx)
+	if err != nil {
+		a.log.Warn("namespace check: list failed", "provider", name, "error", err)
+		return
+	}
+	for i := range running {
+		c := &running[i]
+		cName := containerInfoFromSummary(c).GetName()
+		if cName == name || strings.HasSuffix(cName, parkedSuffix) {
+			continue
+		}
+		dep, err := a.docker.InspectContainer(ctx, c.ID)
+		if err != nil || dep.HostConfig == nil || !dep.HostConfig.NetworkMode.IsContainer() {
+			continue
+		}
+		ref := dep.HostConfig.NetworkMode.ConnectedContainer()
+		switch {
+		case ref == name || sameContainerID(ref, currentID):
+			if a.isUpdating(cName) {
+				a.log.Info("network dependent is being updated, not restarting it", "dependent", cName, "provider", name)
+				continue
+			}
+			a.log.Info("restarting network dependent", "dependent", cName, "provider", name)
+			if err := a.docker.RestartContainer(ctx, c.ID); err != nil {
+				a.log.Warn("failed to restart network dependent", "dependent", cName, "error", err)
+			}
+		case slices.ContainsFunc(previous, func(old string) bool { return sameContainerID(ref, old) }):
+			a.recreateNamespaceConsumer(ctx, c.ID, cName, dep, currentID, name)
+		}
+	}
+}
+
+// recreateNamespaceConsumer recreates a container that shared the network
+// namespace of a provider that has since been replaced, so that it joins
+// the provider's new container. It goes through the same swap as an
+// update, so a failure leaves the consumer as it was.
+func (a *Agent) recreateNamespaceConsumer(ctx context.Context, consumerID, consumerName string, consumer container.InspectResponse, providerID, providerName string) {
+	if !a.beginUpdate(consumerName) {
+		a.log.Warn("network dependent is being updated, not recreating it", "dependent", consumerName, "provider", providerName)
+		return
+	}
+	defer a.endUpdate(consumerName)
+
+	spec := buildRecreateSpec(&consumer, docker.RecreateOptions{})
+	spec.hostCfg.NetworkMode = container.NetworkMode("container:" + providerID)
+	a.log.Info("recreating network dependent on the updated provider", "dependent", consumerName, "provider", providerName)
+	var image string
+	if consumer.Config != nil {
+		image = consumer.Config.Image
+	}
+	if _, _, _, err := a.swapIn(ctx, consumerName, consumerID, &consumer, spec, image, false); err != nil {
+		a.log.Error("failed to recreate network dependent", "dependent", consumerName, "error", err)
+	}
+}
+
+// sameContainerID reports whether two container IDs name the same
+// container, allowing for one of them to be a short (12+ digit) prefix.
+func sameContainerID(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	if len(a) < 12 || len(b) < 12 {
+		return false
+	}
+	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
 }
 
 // clearLeftover deals with a container already under the parked name when
@@ -282,6 +394,9 @@ type parkedContainer struct {
 	wasRunning   bool   // running when it was parked
 	stopped      bool   // the agent has stopped it
 	freshVolumes bool   // the replacement was given new anonymous volumes
+	// repairConsumers: once restored, repair the containers in its
+	// network namespace (afterProviderChange).
+	repairConsumers bool
 }
 
 func isRunning(inspect *container.InspectResponse) bool {
@@ -355,6 +470,11 @@ func (a *Agent) restoreParked(ctx context.Context, old parkedContainer, newID st
 	}
 	if err := a.docker.StartContainer(ctx, old.id); err != nil {
 		a.log.Error("rollback: failed to start the old container", "container", old.name, "error", err)
+		return
+	}
+	// Stopping it cut off the containers in its network namespace.
+	if old.repairConsumers && old.stopped {
+		a.afterProviderChange(ctx, old.name, old.id)
 	}
 }
 
@@ -377,6 +497,10 @@ func (a *Agent) recreateRemoved(ctx context.Context, old parkedContainer) {
 	}
 	if err := a.docker.StartContainer(ctx, id); err != nil {
 		a.log.Error("rollback: failed to start the recreated --rm container", "container", old.name, "error", err)
+		return
+	}
+	if old.repairConsumers {
+		a.afterProviderChange(ctx, old.name, id, old.id)
 	}
 }
 

@@ -143,6 +143,7 @@ func TestRecreateContainer_FreshAnonymousVolumesWhenAsked(t *testing.T) {
 func TestRecreateContainer_ContainerNetworkMode(t *testing.T) {
 	h := fidelityHost(t)
 	h.imageConfigs["sha256:app-1"].ExposedPorts = network.PortSet{network.MustParsePort("8080/tcp"): {}}
+	h.addFromImage(t, "vpn", "app:1", nil, &container.HostConfig{}, nil, true)
 	old := h.addFromImage(t, "web", "app:1", nil, &container.HostConfig{NetworkMode: "container:vpn"}, nil, true)
 	old.cfg.Hostname = "vpn-host" // copied from the provider on start
 	a := newTestAgent(t.TempDir(), h)
@@ -150,7 +151,9 @@ func TestRecreateContainer_ContainerNetworkMode(t *testing.T) {
 	if _, err := a.recreateContainer(context.Background(), "web", "app:2"); err != nil {
 		t.Fatalf("recreateContainer of a container:vpn container: %v", err)
 	}
-	h.requireOnly(t, "web", "app:2", true)
+	if c := h.byName("web"); c.image != "app:2" || !c.running {
+		t.Errorf("web image %s running %v, want app:2 running", c.image, c.running)
+	}
 	if mode := h.byName("web").hostCfg.NetworkMode; mode != "container:vpn" {
 		t.Errorf("network mode = %q, want container:vpn", mode)
 	}

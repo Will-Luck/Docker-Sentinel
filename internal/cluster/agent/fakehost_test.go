@@ -46,6 +46,7 @@ type fakeHost struct {
 	lazyAutoRemove bool
 	pullCalls      []string
 	startCalls     []string
+	restartCalls   []string
 
 	// afterInspect, if set, runs after every inspect (outside the lock),
 	// so a test can change the host between the agent's steps.
@@ -85,6 +86,9 @@ type fakeContainer struct {
 	networks map[string]*network.EndpointSettings
 	// request is what the agent sent to create this container.
 	request *createRequest
+	// joined is the ID of the container whose network namespace this one
+	// (network_mode container:X) joined when it last started.
+	joined string
 }
 
 // createRequest is a create call as the agent made it.
@@ -534,8 +538,34 @@ func (h *fakeHost) StartContainer(_ context.Context, id string) error {
 	if err := h.startErr[c.image]; err != nil {
 		return err
 	}
+	if c.hostCfg != nil && c.hostCfg.NetworkMode.IsContainer() {
+		// The daemon resolves the provider by name or ID prefix on every
+		// start and joins its namespace; a removed one cannot be joined.
+		ref := c.hostCfg.NetworkMode.ConnectedContainer()
+		p := h.resolve(ref)
+		if p == nil {
+			return fmt.Errorf("No such container: %s", ref)
+		}
+		if !p.running {
+			return fmt.Errorf("cannot join network namespace of a non running container %s", ref)
+		}
+		c.joined = p.id
+	}
 	c.running = true
 	c.started = true
+	return nil
+}
+
+// resolve finds a container by name or ID prefix (12 or more digits).
+func (h *fakeHost) resolve(ref string) *fakeContainer {
+	if c := h.byName(ref); c != nil {
+		return c
+	}
+	for _, c := range h.containers {
+		if c.id == ref || (len(ref) >= 12 && strings.HasPrefix(c.id, ref)) {
+			return c
+		}
+	}
 	return nil
 }
 
@@ -549,6 +579,12 @@ func startedAt(started bool) string {
 }
 
 func (h *fakeHost) RestartContainer(ctx context.Context, id string) error {
+	h.mu.Lock()
+	if c, ok := h.containers[id]; ok {
+		c.running = false
+	}
+	h.restartCalls = append(h.restartCalls, id)
+	h.mu.Unlock()
 	return h.StartContainer(ctx, id)
 }
 
