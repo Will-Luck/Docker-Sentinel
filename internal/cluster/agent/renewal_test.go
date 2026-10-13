@@ -484,3 +484,46 @@ func TestRecoverStagedRenewal_DiscardsBrokenStaging(t *testing.T) {
 		t.Error("broken staged file not discarded")
 	}
 }
+
+// A renewed pair staged on disk is waiting to be installed on the next
+// connect. Asking again would only make a second certificate.
+func TestRequestRenewalIfDue_NotWhileARenewedPairIsStaged(t *testing.T) {
+	a, _ := renewalAgent(t)
+	a.now = func() time.Time { return time.Now().Add(300 * 24 * time.Hour) }
+	if err := os.WriteFile(a.renewalPath(), []byte("staged"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	st := &recStream{}
+	if err := a.requestRenewalIfDue(st); err != nil {
+		t.Fatal(err)
+	}
+	if n := renewalCSRs(st); n != 0 {
+		t.Errorf("sent %d renewal requests with a renewed pair already staged", n)
+	}
+}
+
+// Temp files from a credential write the agent did not finish are cleared
+// on the next connect; other files in the data directory are not touched.
+func TestRecoverStagedRenewal_RemovesInterruptedTempFiles(t *testing.T) {
+	a, _ := renewalAgent(t)
+	dir := a.cfg.DataDir
+	temps := []string{".agent.pem.tmp-123", ".agent-key.pem.tmp-456", ".agent-renewal.pem.tmp-789"}
+	for _, name := range append(temps, "notes.txt") {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	a.recoverStagedRenewal()
+
+	for _, name := range temps {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("temp file %s left behind", name)
+		}
+	}
+	for _, name := range []string{"notes.txt", "agent.pem", "agent-key.pem", "ca.pem"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s was removed: %v", name, err)
+		}
+	}
+}

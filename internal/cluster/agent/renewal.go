@@ -40,7 +40,9 @@ var (
 	renewalRetryAfter = 10 * time.Minute
 	// renewalIdleWait bounds how long a renewed certificate waits for
 	// in-flight commands to finish before the agent reconnects with it.
-	renewalIdleWait = 10 * time.Minute
+	// At least the hub's 15-minute limit on an update, so a reconnect does
+	// not cut off an update the hub is still waiting for.
+	renewalIdleWait = 16 * time.Minute
 )
 
 // errCertRenewed ends a session so the next one uses the renewed
@@ -101,6 +103,10 @@ func (a *Agent) requestRenewalIfDue(stream proto.AgentService_ChannelClient) err
 	}
 	now := a.clock()
 	if !renewalDue(leaf, now) {
+		return nil
+	}
+	if _, err := os.Stat(a.renewalPath()); err == nil {
+		// A renewed pair is staged and is installed on the next connect.
 		return nil
 	}
 	if !a.hubRenews.Load() {
@@ -264,6 +270,21 @@ func (a *Agent) installPairLocked(certPEM, keyPEM []byte) error {
 func (a *Agent) recoverStagedRenewal() {
 	a.credMu.Lock()
 	defer a.credMu.Unlock()
+
+	// Temp files of a credential write that was interrupted (writeFileAtomic
+	// names them ".<file>.tmp-*"). credMu is held, so none is in use.
+	for _, path := range []string{a.certPath, a.keyPath, a.renewalPath()} {
+		pattern := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		for _, m := range matches {
+			if err := os.Remove(m); err != nil {
+				a.log.Warn("could not remove an interrupted credential temp file", "path", m, "error", err)
+			}
+		}
+	}
 
 	data, err := os.ReadFile(a.renewalPath())
 	if errors.Is(err, os.ErrNotExist) {
