@@ -222,14 +222,22 @@ func (d *DigestScheduler) timeUntilNext() time.Duration {
 	now := d.clock.Now()
 	hour, min := d.digestTime()
 
-	// Slots fall every interval from the digest time; start from yesterday's
-	// so a slot after midnight of a shorter interval is found too, and step
-	// until the next slot is ahead (it was added once only, so after the
-	// day's last slot of a 12h interval the delay went negative and the
-	// digest fired every minute until midnight).
 	interval := d.digestInterval()
-	next := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, now.Location()).AddDate(0, 0, -1)
-	for !now.Before(next) {
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, now.Location())
+	if interval < 24*time.Hour {
+		// Slots fall every interval from the digest time: start from
+		// yesterday's, so a slot after midnight is found too, and step until
+		// one is ahead (adding the interval once left the delay negative
+		// after the day's last slot, so the digest fired every minute).
+		next = next.AddDate(0, 0, -1)
+		for !now.Before(next) {
+			next = next.Add(interval)
+		}
+		return next.Sub(now)
+	}
+	// A day or longer: today's slot, or one interval after it once it has
+	// passed, so a 48h or weekly digest keeps its day.
+	if !now.Before(next) {
 		next = next.Add(interval)
 	}
 	return next.Sub(now)

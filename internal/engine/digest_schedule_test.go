@@ -20,6 +20,10 @@ func TestDigestNextSlotIsAlwaysAhead(t *testing.T) {
 		{"10:00", "6h", 5 * time.Hour}, // 09:00, 15:00, 21:00, 03:00
 		{"23:00", "6h", 4 * time.Hour},
 		{"09:00", "24h", 24 * time.Hour},
+		{"09:00", "48h", 48 * time.Hour},   // just fired: two days on
+		{"09:00", "168h", 168 * time.Hour}, // weekly: the same weekday next week
+		{"10:00", "168h", 167 * time.Hour},
+		{"08:00", "48h", time.Hour},
 	} {
 		now, _ := time.Parse("15:04", tc.now)
 		clk := newMockClock(time.Date(2026, 3, 10, now.Hour(), now.Minute(), 0, 0, time.UTC))
