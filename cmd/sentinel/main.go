@@ -555,6 +555,8 @@ func main() {
 	// Resolve containers an update left half-replaced when Sentinel last
 	// stopped, before the scheduler or the dashboard can start another one.
 	updater.RecoverInterruptedUpdates(ctx)
+	// End (and undo) in-flight updates on shutdown, dashboard ones included.
+	updater.SetShutdownContext(ctx)
 
 	selfUpdater := engine.NewSelfUpdater(client, log)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
@@ -894,6 +896,14 @@ func main() {
 		log.Error("sentinel exited with error", "error", err)
 		os.Exit(1)
 	}
+
+	// Give in-flight updates time to finish or to put the old container
+	// back. Whatever is still running is recovered at the next start.
+	idleCtx, idleCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	if !updater.WaitIdle(idleCtx) {
+		log.Warn("shutting down with an update still in progress; it is recovered at the next start")
+	}
+	idleCancel()
 
 	// Flush any buffered notifications before exit.
 	notifier.Stop()

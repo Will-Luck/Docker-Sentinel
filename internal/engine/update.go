@@ -39,6 +39,8 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		return ErrUpdateInProgress
 	}
 	defer u.unlock(name)
+	ctx, stop := u.withShutdown(ctx)
+	defer stop()
 
 	start := u.clock.Now()
 

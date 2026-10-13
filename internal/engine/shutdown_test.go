@@ -122,6 +122,44 @@ func TestUpdateContainerRefusesSetAsideContainer(t *testing.T) {
 	}
 }
 
+// An update started from the dashboard runs on a detached context, so it
+// must still notice the shutdown: the updater's shutdown context ends it,
+// and the old container comes back.
+func TestUpdateContainerStopsOnShutdownContext(t *testing.T) {
+	mock, u := setupUpdateWithScanVerify(t)
+	u.clock = neverClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	shutdown, stop := context.WithCancel(context.Background())
+	u.SetShutdownContext(shutdown)
+	stop()
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err == nil {
+		t.Fatal("expected the shutdown to end the update")
+	}
+	assertOps(t, mock, []string{"start new-nginx", "remove new-nginx", "rename aaa nginx", "start aaa"})
+}
+
+func TestWaitIdle(t *testing.T) {
+	u, _ := newTestUpdater(t, newMockDocker())
+	if !u.WaitIdle(context.Background()) {
+		t.Fatal("WaitIdle = false with nothing running")
+	}
+	if !u.tryLock("app") {
+		t.Fatal("tryLock")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if u.WaitIdle(ctx) {
+		t.Error("WaitIdle = true while an update holds its lock")
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		u.unlock("app")
+	}()
+	if !u.WaitIdle(context.Background()) {
+		t.Error("WaitIdle = false after the update finished")
+	}
+}
+
 // A shutdown during the grace period must not leave the old container
 // stopped under its replaced name and an unvalidated replacement running:
 // the old container comes back, quietly, as for a cancelled hook.

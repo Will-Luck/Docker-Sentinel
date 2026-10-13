@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
@@ -87,6 +88,7 @@ type Updater struct {
 	ghcrCancel       context.CancelFunc         // cancels the running GHCR check on shutdown
 	selfUpdateQueued atomic.Bool                // set when a self-update is queued during scan
 	selfUpdateKey    atomic.Value               // stores queue key (string) of the self-update entry
+	shutdownCtx      context.Context            // optional: ends every update and rollback on shutdown
 }
 
 // NewUpdater creates an Updater with all dependencies.
@@ -168,6 +170,42 @@ func (u *Updater) SetVerifyMode(m verify.Mode) {
 // SetSeverityThreshold sets the minimum severity that blocks a pre-update scan.
 func (u *Updater) SetSeverityThreshold(s scanner.Severity) {
 	u.severityThresh = s
+}
+
+// SetShutdownContext makes every update and rollback end when ctx ends, as
+// a shutdown does, even when it was started with a context of its own (the
+// dashboard starts them detached from the request). An update ended part
+// way puts the old container back. Call it before any update can start.
+func (u *Updater) SetShutdownContext(ctx context.Context) {
+	u.shutdownCtx = ctx
+}
+
+// withShutdown returns ctx, also cancelled when the shutdown context ends.
+func (u *Updater) withShutdown(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	if u.shutdownCtx == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(u.shutdownCtx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// WaitIdle waits until no update or rollback is in progress, or ctx ends,
+// and reports whether they all finished.
+func (u *Updater) WaitIdle(ctx context.Context) bool {
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for !u.IsIdle() {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+		}
+	}
+	return true
 }
 
 // Close cancels any running background work and waits for goroutines to finish.

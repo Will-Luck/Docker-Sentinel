@@ -285,6 +285,8 @@ func (u *Updater) RollbackContainer(ctx context.Context, name string) error {
 		return ErrUpdateInProgress
 	}
 	defer u.unlock(name)
+	ctx, stop := u.withShutdown(ctx)
+	defer stop()
 
 	liveID, _ := findContainerID(ctx, u.docker, name)
 	newID, err := u.rollbackFromStore(ctx, name)
