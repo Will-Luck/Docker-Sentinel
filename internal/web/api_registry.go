@@ -418,7 +418,10 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 
 		s.markRemoteUpdating(hostID, name)
 		go func() {
-			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, ghcrImage, ""); err != nil {
+			start := time.Now()
+			err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, ghcrImage, "")
+			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, ghcrImage, err)
+			if err != nil {
 				s.deps.Log.Error("remote GHCR switch failed", "name", name, "host", hostID, "ghcr_image", ghcrImage, "error", err)
 				s.deps.EventBus.Publish(events.SSEEvent{
 					Type:          events.EventContainerUpdate,

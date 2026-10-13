@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -193,5 +194,62 @@ func TestApiApprove_LocalFailureNotRecordedTwice(t *testing.T) {
 				t.Errorf("web added %d failed rows, want %d", n, tc.wantRows)
 			}
 		})
+	}
+}
+
+type fixedGHCR struct{}
+
+func (fixedGHCR) Get(string, string) (*GHCRAlternative, bool) {
+	return &GHCRAlternative{GHCRImage: "ghcr.io/acme/whoami", Tag: "v1", Available: true}, true
+}
+func (fixedGHCR) All() []GHCRAlternative { return nil }
+
+// An update to a chosen version, and a switch to GHCR, on a remote container
+// leave a history row like "Update now" does.
+func TestRemoteVersionUpdateAndGHCRSwitchWriteHistory(t *testing.T) {
+	remotes := []RemoteContainer{{Name: "whoami", Image: "traefik/whoami:v1", HostID: "h1", HostName: "Agent One"}}
+	for _, op := range []struct {
+		name string
+		call func(*Server, http.ResponseWriter, *http.Request)
+		body string
+		path string
+		img  string
+	}{
+		{"update-to-version", (*Server).apiUpdateToVersion, `{"tag":"v2"}`, "/api/containers/whoami/update-to-version?host=h1", "traefik/whoami:v2"},
+		{"ghcr", (*Server).apiSwitchToGHCR, ``, "/api/containers/whoami/switch-ghcr?host=h1", "ghcr.io/acme/whoami:v1"},
+	} {
+		for _, fail := range []bool{false, true} {
+			name := op.name + "/success"
+			var upErr error
+			if fail {
+				name, upErr = op.name+"/failure", errors.New("pull failed")
+			}
+			t.Run(name, func(t *testing.T) {
+				hist := &recordingHistory{}
+				cp := &failingUpdateCluster{
+					mockClusterProviderWithContainers: mockClusterProviderWithContainers{
+						hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"}, containers: remotes,
+					},
+					err: upErr,
+				}
+				srv := remoteUpdateServer(cp, hist)
+				srv.deps.GHCRCache = fixedGHCR{}
+				r := httptest.NewRequest(http.MethodPost, op.path, strings.NewReader(op.body))
+				r.SetPathValue("name", "whoami")
+				w := httptest.NewRecorder()
+				op.call(srv, w, r)
+				if w.Code != http.StatusOK {
+					t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+				}
+				rec := hist.wait(t)
+				want := "success"
+				if fail {
+					want = "failed"
+				}
+				if rec.ContainerName != "h1::whoami" || rec.HostID != "h1" || rec.HostName != "Agent One" || rec.Outcome != want || rec.NewImage != op.img {
+					t.Errorf("row = %+v, want h1::whoami on Agent One, outcome %s, new image %s", rec, want, op.img)
+				}
+			})
+		}
 	}
 }

@@ -788,7 +788,10 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 					s.deps.Log.Error("panic in remote version-update goroutine", "name", name, "host", hostID, "tag", body.Tag, "panic", rec)
 				}
 			}()
-			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, ""); err != nil {
+			start := time.Now()
+			err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, "")
+			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, targetImage, err)
+			if err != nil {
 				s.deps.Log.Error("remote version update failed", "name", name, "host", hostID, "tag", body.Tag, "error", err)
 				s.deps.EventBus.Publish(events.SSEEvent{
 					Type:          events.EventContainerUpdate,
