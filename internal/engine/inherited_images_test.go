@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
@@ -84,5 +85,27 @@ func TestUpdateIgnoresHistoryOfAnotherRepository(t *testing.T) {
 	}
 	if c := f.byName("app"); c == nil || !slices.Contains(c.cfg.Env, "TOKEN=x") {
 		t.Errorf("containers = %v, want the user's TOKEN kept", f.names())
+	}
+}
+
+// Only rows of updates that changed the image count towards the last 10:
+// failed attempts and refusals since then do not push the image the
+// container ran first out of the window.
+func TestInheritedImagesSkipRowsThatChangedNothing(t *testing.T) {
+	f, u := setupInheritedUpdate(t)
+	for i := range 12 {
+		if err := u.store.RecordUpdate(store.UpdateRecord{
+			Timestamp: time.Unix(int64(1000+i), 0), ContainerName: "app",
+			OldImage: "app:edge", OldDigest: "sha256:v101", Outcome: "failed", Error: "pull failed",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if c := f.byName("app"); c == nil || !slices.Equal(c.cfg.Env, []string{"TOKEN=x"}) {
+		t.Errorf("containers = %v env = %v, want 1.0.0's values stripped despite the failed attempts", f.names(), c.cfg.Env)
 	}
 }
