@@ -164,7 +164,9 @@ func (u *Updater) SetScanMode(m scanner.ScanMode) {
 	u.scanMode = m
 }
 
-// SetVerifyMode sets the signature verification behaviour.
+// SetVerifyMode sets the signature verification behaviour used when there
+// are no settings to read; with a settings reader, the saved mode applies
+// (see verifyModeFor).
 func (u *Updater) SetVerifyMode(m verify.Mode) {
 	u.verifyMode = m
 }

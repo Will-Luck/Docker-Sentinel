@@ -73,6 +73,15 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	if targetImage != "" {
 		pullImage = targetImage
 	}
+
+	// An update that must have its signature checked is refused, before
+	// anything changes, when there is no verifier to check it.
+	verifyMode := u.verifyModeFor(inspect.Config.Labels)
+	if verifyMode == verify.ModeEnforce && u.imgVerifier == nil {
+		u.refuseUnverifiable(name, oldImage, pullImage, extractDigestForRecord(inspect), start)
+		return fmt.Errorf("update %s: %w", name, ErrVerifierUnavailable)
+	}
+
 	u.log.Info("starting update", "name", name, "image", oldImage)
 	u.publishEvent(events.EventContainerUpdate, name, "update started")
 
@@ -193,26 +202,27 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		return nil
 	}
 
-	// 3.6 Signature verification gate.
-	if u.imgVerifier != nil && u.verifyMode != verify.ModeDisabled {
-		effectiveMode := verify.ResolveMode(
-			inspect.Config.Labels[verify.ContainerLabel], "", u.verifyMode,
-		)
-		if effectiveMode != verify.ModeDisabled {
-			result := u.imgVerifier.Verify(ctx, pullImage)
-			if !result.Verified {
-				if effectiveMode == verify.ModeEnforce {
-					u.log.Warn("signature verification failed, blocking update",
-						"name", name, "image", pullImage, "error", result.Error)
-					_ = u.store.SetMaintenance(name, false)
-					return fmt.Errorf("signature verification failed for %s: %s", name, result.Error)
-				}
-				// Warn mode: log and proceed.
-				u.log.Warn("signature verification failed, proceeding (warn mode)",
+	// 3.6 Signature verification gate. The mode was resolved above, where
+	// an enforced check without a verifier was refused.
+	switch {
+	case verifyMode == verify.ModeDisabled:
+	case u.imgVerifier == nil:
+		u.log.Warn("signature verification is set to warn but cosign is not available, updating without a signature check",
+			"name", name, "image", pullImage)
+	default:
+		result := u.imgVerifier.Verify(ctx, pullImage)
+		if !result.Verified {
+			if verifyMode == verify.ModeEnforce {
+				u.log.Warn("signature verification failed, blocking update",
 					"name", name, "image", pullImage, "error", result.Error)
-			} else {
-				u.log.Info("signature verified", "name", name, "image", pullImage)
+				_ = u.store.SetMaintenance(name, false)
+				return fmt.Errorf("signature verification failed for %s: %s", name, result.Error)
 			}
+			// Warn mode: log and proceed.
+			u.log.Warn("signature verification failed, proceeding (warn mode)",
+				"name", name, "image", pullImage, "error", result.Error)
+		} else {
+			u.log.Info("signature verified", "name", name, "image", pullImage)
 		}
 	}
 

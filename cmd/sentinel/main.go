@@ -493,13 +493,19 @@ func main() {
 			verifyOpts = append(verifyOpts, verify.WithKeyPath(kp))
 		}
 		imgVerifier := verify.New(log, verifyOpts...)
-		if imgVerifier.Available() {
+		verifyMode := verify.ParseMode(loadSettingStr(db, store.SettingVerifyMode))
+		switch {
+		case imgVerifier.Available():
 			updater.SetVerifier(imgVerifier)
 			log.Info("signature verifier available", "path", cosignPath)
-		} else {
-			log.Info("cosign not found, signature verification disabled")
+		case verifyMode == verify.ModeEnforce:
+			log.Warn("signature verification is set to enforce but cosign is not available: updates that need a signature check are refused", "path", cosignPath)
+		case verifyMode == verify.ModeWarn:
+			log.Warn("signature verification is set to warn but cosign is not available: updates go ahead without a signature check", "path", cosignPath)
+		default:
+			log.Info("cosign not found, signature verification is unavailable", "path", cosignPath)
 		}
-		verifyMode := verify.ParseMode(loadSettingStr(db, store.SettingVerifyMode))
+		// The engine reads the saved mode at each update; this is the fallback.
 		updater.SetVerifyMode(verifyMode)
 	}
 
