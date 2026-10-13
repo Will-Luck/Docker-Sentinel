@@ -20,6 +20,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // clusterAdapter bridges cluster/server.Server to web.ClusterProvider.
@@ -279,6 +280,21 @@ func previousImages(db *store.Store, hostID, name, current string) []*proto.Prev
 	return out
 }
 
+// settingsSyncFrom is the SettingsSync message of the hub's settings.
+func settingsSyncFrom(st engine.AgentSettings) *proto.SettingsSync {
+	return &proto.SettingsSync{
+		PollInterval:     durationpb.New(st.PollInterval),
+		GracePeriod:      durationpb.New(st.GracePeriod),
+		LatestAutoUpdate: st.LatestAutoUpdate,
+		ImageCleanup:     st.ImageCleanup,
+		HooksEnabled:     st.HooksEnabled,
+		DependencyAware:  st.DependencyAware,
+		RollbackPolicy:   st.RollbackPolicy,
+		RemoveVolumes:    st.RemoveVolumes,
+		ImageBackup:      st.ImageBackup,
+	}
+}
+
 // knownContainer returns what srv last heard about a remote container.
 func knownContainer(srv *clusterserver.Server) func(hostID, name string) (cluster.ContainerInfo, bool) {
 	return func(hostID, name string) (cluster.ContainerInfo, bool) {
@@ -365,6 +381,9 @@ func (m *clusterManager) Start() error {
 	})
 	prep := &remoteUpdatePrep{db: m.db, updater: m.updater, container: knownContainer(m.srv)}
 	m.srv.SetUpdatePrep(prep.prepare)
+	// Agents follow the hub's update settings (their own environment wins).
+	updater := m.updater
+	m.srv.SetSettingsSource(func() *proto.SettingsSync { return settingsSyncFrom(updater.AgentSettings()) })
 
 	// Read advertise addresses for TLS cert SANs. Inside Docker, the container
 	// only sees its bridge network IPs, but agents connect via the host's

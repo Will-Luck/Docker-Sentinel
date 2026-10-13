@@ -1403,6 +1403,7 @@
                 </div>
                 <div class="card-body" style="padding: var(--sp-4) var(--sp-5)">
                     <p class="accordion-intro">Monitor containers across multiple Docker hosts using lightweight agents that report back over encrypted gRPC (mTLS).</p>
+                    <p class="accordion-intro">Agents follow this server's update settings: remove volumes, image cleanup, image backup, lifecycle hooks and dependency awareness. A setting given in an agent's own environment (<code>SENTINEL_REMOVE_VOLUMES</code>, <code>SENTINEL_IMAGE_CLEANUP</code>, <code>SENTINEL_IMAGE_BACKUP</code>, <code>SENTINEL_HOOKS</code> or <code>SENTINEL_DEPS</code>) wins on that agent's host.</p>
                     <div class="settings-rows">
                         <div class="setting-row">
                             <div class="setting-info">

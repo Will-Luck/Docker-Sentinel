@@ -188,3 +188,25 @@ func TestRemoteResultErr(t *testing.T) {
 		t.Errorf("failed without detail: %v", err)
 	}
 }
+
+// The hub sends the settings its own updates use.
+func TestSettingsSyncFrom(t *testing.T) {
+	ss := settingsSyncFrom(engine.AgentSettings{
+		PollInterval: time.Hour, GracePeriod: time.Minute, LatestAutoUpdate: true, ImageCleanup: true,
+		ImageBackup: true, RemoveVolumes: true, HooksEnabled: true, DependencyAware: true, RollbackPolicy: "manual",
+	})
+	if ss.GetPollInterval().AsDuration() != time.Hour || ss.GetGracePeriod().AsDuration() != time.Minute ||
+		!ss.GetLatestAutoUpdate() || !ss.GetImageCleanup() || !ss.GetImageBackup() || !ss.GetRemoveVolumes() ||
+		!ss.GetHooksEnabled() || !ss.GetDependencyAware() || ss.GetRollbackPolicy() != "manual" {
+		t.Errorf("SettingsSync = %v, want every setting carried", ss)
+	}
+}
+
+// The settings an agent's own environment sets win over the hub's.
+func TestAgentEnvSettings(t *testing.T) {
+	env := map[string]string{"SENTINEL_IMAGE_CLEANUP": "false", "SENTINEL_HOOKS": "true", "SENTINEL_POLL_INTERVAL": "1h"}
+	got := agentEnvSettings(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	if !got["image_cleanup"] || !got["hooks_enabled"] || got["remove_volumes"] || got["image_backup"] || got["dependency_aware"] {
+		t.Errorf("env settings = %v, want image_cleanup and hooks_enabled only", got)
+	}
+}

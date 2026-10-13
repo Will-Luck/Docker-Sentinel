@@ -104,6 +104,7 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		Version:            versionString(),
 		Store:              db,
 		Settings:           cfg,
+		EnvSettings:        agentEnvSettings(os.LookupEnv),
 	}
 
 	a := agent.New(agentCfg, client, log.Logger)
@@ -115,6 +116,25 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		os.Exit(1)
 	}
 	log.Info("agent shutdown complete")
+}
+
+// agentEnvSettings names the update settings the agent's environment sets
+// (by their hub setting key). On the agent's host they win over the
+// settings the hub sends.
+func agentEnvSettings(lookup func(string) (string, bool)) map[string]bool {
+	out := map[string]bool{}
+	for env, key := range map[string]string{
+		"SENTINEL_REMOVE_VOLUMES": "remove_volumes",
+		"SENTINEL_IMAGE_CLEANUP":  "image_cleanup",
+		"SENTINEL_IMAGE_BACKUP":   "image_backup",
+		"SENTINEL_HOOKS":          "hooks_enabled",
+		"SENTINEL_DEPS":           "dependency_aware",
+	} {
+		if _, ok := lookup(env); ok {
+			out[key] = true
+		}
+	}
+	return out
 }
 
 func generateRandomPassword() string {

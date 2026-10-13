@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
+	gproto "google.golang.org/protobuf/proto"
 )
 
 // HistoryRecorder is the subset of store.Store needed for persisting update
@@ -82,6 +83,7 @@ type Server struct {
 	store        ClusterStore
 	history      HistoryRecorder
 	prep         atomic.Pointer[UpdatePrep]
+	settings     atomic.Pointer[func() *proto.SettingsSync]
 	bus          *events.Bus
 	log          *slog.Logger
 	hmacKey      []byte // 32-byte random key for HMAC-SHA256 token signing
@@ -141,9 +143,11 @@ type agentStream struct {
 	// failed its pending requests, so no new request is tagged to it.
 	closed bool
 
-	mu       sync.RWMutex // protects version and features
+	mu       sync.RWMutex // protects version, features and settings
 	features []string
 	version  string
+	// settings is the last SettingsSync sent on the stream.
+	settings *proto.SettingsSync
 }
 
 // New creates a cluster server. Call Start() to begin listening.
@@ -221,6 +225,45 @@ func (s *Server) SetRegistryAuth(fn func(imageRef string) string) {
 // nothing is sent. rollback is set when the update moves the container back
 // to an earlier image.
 type UpdatePrep func(ctx context.Context, hostID string, req *proto.UpdateContainerRequest, rollback bool) error
+
+// SetSettingsSource sets where the settings the hub sends its agents come
+// from (nil for none). They are sent when an agent connects and again,
+// at its next heartbeat, whenever they have changed.
+func (s *Server) SetSettingsSource(fn func() *proto.SettingsSync) {
+	if fn == nil {
+		s.settings.Store(nil)
+		return
+	}
+	s.settings.Store(&fn)
+}
+
+// syncSettings sends the agent on as the hub's settings when they differ
+// from what was last sent on that stream.
+func (s *Server) syncSettings(as *agentStream) {
+	src := s.settings.Load()
+	if src == nil {
+		return
+	}
+	cur := (*src)()
+	if cur == nil {
+		return
+	}
+	as.mu.Lock()
+	if as.settings != nil && gproto.Equal(as.settings, cur) {
+		as.mu.Unlock()
+		return
+	}
+	as.mu.Unlock()
+	select {
+	case as.send <- &proto.ServerMessage{Payload: &proto.ServerMessage_SettingsSync{SettingsSync: cur}}:
+		as.mu.Lock()
+		as.settings = cur
+		as.mu.Unlock()
+	default:
+		// The send buffer is full: try again at the next heartbeat.
+		s.log.Warn("could not queue the settings for an agent, retrying at its next heartbeat", "hostID", as.hostID)
+	}
+}
 
 // SetUpdatePrep sets what prepares every update request (nil for none).
 func (s *Server) SetUpdatePrep(p UpdatePrep) {

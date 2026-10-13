@@ -45,6 +45,11 @@ type policyCache struct {
 	hooksEnabled    bool
 	dependencyAware bool
 	rollbackPolicy  string
+	removeVolumes   bool
+	imageBackup     bool
+	// settingsReceived is set once the server has sent its settings
+	// (servers before v3.0.0 never do).
+	settingsReceived bool
 }
 
 // policyCacheFile is the JSON-serialisable representation persisted to disk.
@@ -59,6 +64,11 @@ type policyCacheFile struct {
 	HooksEnabled    bool              `json:"hooks_enabled"`
 	DependencyAware bool              `json:"dependency_aware"`
 	RollbackPolicy  string            `json:"rollback_policy"`
+	RemoveVolumes   bool              `json:"remove_volumes"`
+	ImageBackup     bool              `json:"image_backup"`
+	// SettingsReceived says the settings above came from the server; a
+	// cache written before any SettingsSync holds zero values only.
+	SettingsReceived bool `json:"settings_received"`
 }
 
 func newPolicyCache() *policyCache {
@@ -101,6 +111,9 @@ func (pc *policyCache) applySettingsSync(sync *proto.SettingsSync) {
 	pc.imageCleanup = sync.GetImageCleanup()
 	pc.hooksEnabled = sync.GetHooksEnabled()
 	pc.dependencyAware = sync.GetDependencyAware()
+	pc.removeVolumes = sync.GetRemoveVolumes()
+	pc.imageBackup = sync.GetImageBackup()
+	pc.settingsReceived = true
 
 	if rp := sync.GetRollbackPolicy(); rp != "" {
 		pc.rollbackPolicy = rp
@@ -250,9 +263,11 @@ func (a *Agent) handlePolicySync(sync *proto.PolicySync) {
 }
 
 // handleSettingsSync processes a SettingsSync message from the server.
-// Updates the in-memory cache and persists to disk for restart survival.
+// Updates the in-memory cache and persists to disk for restart survival,
+// and the agent follows the settings at once (applyServerSettings).
 func (a *Agent) handleSettingsSync(sync *proto.SettingsSync) {
 	a.policies.applySettingsSync(sync)
+	a.applyServerSettings()
 
 	a.log.Info("settings sync applied",
 		"poll_interval", a.policies.pollInterval,
@@ -263,6 +278,40 @@ func (a *Agent) handleSettingsSync(sync *proto.SettingsSync) {
 
 	if err := a.savePolicyCache(); err != nil {
 		a.log.Error("failed to persist settings cache", "error", err)
+	}
+}
+
+// Keys of the settings the agent takes from the server, as named in the
+// server's settings and in Config.EnvSettings.
+const (
+	settingRemoveVolumes   = "remove_volumes"
+	settingImageCleanup    = "image_cleanup"
+	settingImageBackup     = "image_backup"
+	settingHooksEnabled    = "hooks_enabled"
+	settingDependencyAware = "dependency_aware"
+)
+
+// applyServerSettings makes the agent's updates follow the settings the
+// server sent, except those the agent's own environment sets: on its host,
+// SENTINEL_REMOVE_VOLUMES, SENTINEL_IMAGE_CLEANUP, SENTINEL_IMAGE_BACKUP,
+// SENTINEL_HOOKS and SENTINEL_DEPS win over the server.
+func (a *Agent) applyServerSettings() {
+	pc := a.policies
+	pc.mu.RLock()
+	defer pc.mu.RUnlock()
+	if !pc.settingsReceived {
+		return
+	}
+	for key, apply := range map[string]func(){
+		settingRemoveVolumes:   func() { a.settings.SetRemoveVolumes(pc.removeVolumes) },
+		settingImageCleanup:    func() { a.settings.SetImageCleanup(pc.imageCleanup) },
+		settingImageBackup:     func() { a.settings.SetImageBackup(pc.imageBackup) },
+		settingHooksEnabled:    func() { a.settings.SetHooksEnabled(pc.hooksEnabled) },
+		settingDependencyAware: func() { a.settings.SetDependencyAware(pc.dependencyAware) },
+	} {
+		if !a.cfg.EnvSettings[key] {
+			apply()
+		}
 	}
 }
 
@@ -285,6 +334,10 @@ func (a *Agent) savePolicyCache() error {
 		HooksEnabled:    a.policies.hooksEnabled,
 		DependencyAware: a.policies.dependencyAware,
 		RollbackPolicy:  a.policies.rollbackPolicy,
+		RemoveVolumes:   a.policies.removeVolumes,
+		ImageBackup:     a.policies.imageBackup,
+
+		SettingsReceived: a.policies.settingsReceived,
 	}
 	a.policies.mu.RUnlock()
 
@@ -322,6 +375,7 @@ func (a *Agent) loadPolicyCache() error {
 	}
 
 	a.policies.mu.Lock()
+	defer a.applyServerSettings()
 	defer a.policies.mu.Unlock()
 
 	if file.Policies != nil {
@@ -336,6 +390,9 @@ func (a *Agent) loadPolicyCache() error {
 	a.policies.hooksEnabled = file.HooksEnabled
 	a.policies.dependencyAware = file.DependencyAware
 	a.policies.rollbackPolicy = file.RollbackPolicy
+	a.policies.removeVolumes = file.RemoveVolumes
+	a.policies.imageBackup = file.ImageBackup
+	a.policies.settingsReceived = file.SettingsReceived
 
 	a.log.Info("loaded cached policies",
 		"policies", len(a.policies.policies),

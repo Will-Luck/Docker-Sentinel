@@ -301,6 +301,40 @@ func (u *Updater) VerifyRemoteImage(ctx context.Context, name string, labels map
 	return nil
 }
 
+// AgentSettings are the update settings the hub sends its agents
+// (SettingsSync).
+type AgentSettings struct {
+	PollInterval     time.Duration
+	GracePeriod      time.Duration
+	LatestAutoUpdate bool
+	ImageCleanup     bool
+	ImageBackup      bool
+	RemoveVolumes    bool
+	HooksEnabled     bool
+	DependencyAware  bool
+	RollbackPolicy   string
+}
+
+// AgentSettings returns the settings the hub's agents follow, resolved as
+// the hub resolves them for its own updates (a value saved in the dashboard
+// wins where it does locally).
+func (u *Updater) AgentSettings() AgentSettings {
+	if u.cfg == nil {
+		return AgentSettings{}
+	}
+	return AgentSettings{
+		PollInterval:     u.cfg.PollInterval(),
+		GracePeriod:      u.cfg.GracePeriod(),
+		LatestAutoUpdate: u.cfg.LatestAutoUpdate(),
+		ImageCleanup:     u.cfg.ImageCleanup(),
+		ImageBackup:      u.isImageBackup(),
+		RemoveVolumes:    u.isRemoveVolumes(),
+		HooksEnabled:     u.cfg.HooksEnabled(),
+		DependencyAware:  u.cfg.DependencyAware(),
+		RollbackPolicy:   u.rollbackPolicy(),
+	}
+}
+
 // checkGHCRAlternatives probes GHCR for alternatives to Docker Hub images.
 // Runs as a background goroutine after each scan. Skips images that already
 // have a valid (non-expired) cache entry.

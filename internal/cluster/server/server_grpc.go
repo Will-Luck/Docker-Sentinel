@@ -293,6 +293,9 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		}
 	}()
 
+	// The settings the agent follows go first.
+	s.syncSettings(as)
+
 	// Receive loop: reads messages from the agent and dispatches them. It
 	// runs in its own goroutine because Recv returns only when the agent
 	// sends something or hangs up, and cancelling ctx (stream replaced,
@@ -437,6 +440,9 @@ func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heart
 	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
 		s.log.Warn("failed to update last seen on heartbeat", "hostID", hostID, "error", err)
 	}
+
+	// Settings changed since they were last sent reach the agent now.
+	s.syncSettings(as)
 }
 
 func (s *Server) handleContainerList(hostID string, msg *proto.AgentMessage, cl *proto.ContainerList) {
