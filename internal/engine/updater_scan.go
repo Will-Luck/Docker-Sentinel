@@ -390,6 +390,35 @@ func (u *Updater) pruneNotifyStates(ctx context.Context, isSwarm bool, services 
 	}
 }
 
+// pruneRemoteNotifyStates forgets the "update available" state of remote
+// containers that are gone, so the digest stops listing them. Like the queue
+// it judges a host only when the host listed its containers this scan; a
+// host that is merely offline keeps its states, one that left the cluster
+// loses them.
+func (u *Updater) pruneRemoteNotifyStates(liveNames, listedHosts map[string]bool) {
+	states, err := u.store.AllNotifyStates()
+	if err != nil {
+		return
+	}
+	for key := range states {
+		hostID, _, remote := strings.Cut(key, "::")
+		if !remote {
+			continue
+		}
+		switch {
+		case listedHosts[hostID]:
+			if liveNames[key] {
+				continue
+			}
+		case u.cluster != nil:
+			if _, ok := u.cluster.HostInfo(hostID); ok {
+				continue
+			}
+		}
+		_ = u.store.ClearNotifyState(key)
+	}
+}
+
 // filterIgnored drops ignored versions from check.NewerVersions and reports
 // whether nothing is left to act on. Updates without a version list are
 // checked against ignoreKey instead.
@@ -553,6 +582,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	if pruned := u.queue.Prune(liveNames); pruned > 0 {
 		u.log.Info("pruned stale queue entries", "count", pruned)
 	}
+	u.pruneRemoteNotifyStates(liveNames, listedHosts)
 
 	// Publish scan start event so the UI can show a progress bar.
 	u.publishEvent(events.EventScanStart, "", fmt.Sprintf("total=%d", len(containers)))

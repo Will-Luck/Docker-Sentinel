@@ -148,6 +148,8 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			// An update queued earlier no longer applies.
 			u.dropQueued(scopedName, "now up to date")
 			if !check.IsLocal {
+				// Updated outside Sentinel: it no longer belongs in the digest.
+				_ = u.store.ClearNotifyState(scopedName)
 				result.UpToDate++
 			}
 			continue

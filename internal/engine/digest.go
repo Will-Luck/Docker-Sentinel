@@ -123,18 +123,26 @@ func (d *DigestScheduler) fire(ctx context.Context) {
 		return
 	}
 
-	// Collect containers with pending updates, excluding muted ones.
-	seen := make(map[string]bool)
-	for name := range states {
-		if inScheduledDigest(d.effectiveMode(name, prefs)) {
-			seen[name] = true
+	// Collect containers with pending updates, excluding muted ones. A remote
+	// container is keyed hostID::name everywhere (its notify state and its
+	// queue entry alike), so it is listed once, as "name on <host name>".
+	queued := d.queue.List()
+	hostNames := make(map[string]string)
+	for _, item := range queued {
+		if item.HostID != "" && item.HostName != "" {
+			hostNames[item.HostID] = item.HostName
 		}
 	}
-
-	// Also include manual queue entries.
-	for _, item := range d.queue.List() {
-		if inScheduledDigest(d.effectiveMode(item.ContainerName, prefs)) {
-			seen[item.ContainerName] = true
+	seen := make(map[string]string) // key -> label
+	for key := range states {
+		if inScheduledDigest(d.effectiveMode(key, prefs)) {
+			seen[key] = digestLabel(key, hostNames)
+		}
+	}
+	for _, item := range queued {
+		key := store.ScopedKey(item.HostID, item.ContainerName)
+		if inScheduledDigest(d.effectiveMode(key, prefs)) {
+			seen[key] = digestLabel(key, hostNames)
 		}
 	}
 
@@ -149,8 +157,8 @@ func (d *DigestScheduler) fire(ctx context.Context) {
 
 	// Sort for deterministic output.
 	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
+	for _, label := range seen {
+		names = append(names, label)
 	}
 	sort.Strings(names)
 
@@ -263,4 +271,19 @@ func (d *DigestScheduler) effectiveMode(name string, prefs map[string]*store.Not
 // every_scan containers are alerted on every scan instead of being summarised.
 func inScheduledDigest(mode string) bool {
 	return mode != "muted" && mode != "every_scan"
+}
+
+// digestLabel is how a pending update is named in the digest: the container's
+// name, or "name on <host name>" for a remote one (the host's ID when its
+// name is not known).
+func digestLabel(key string, hostNames map[string]string) string {
+	hostID, name, remote := strings.Cut(key, "::")
+	if !remote {
+		return key
+	}
+	host := hostNames[hostID]
+	if host == "" {
+		host = hostID
+	}
+	return name + " on " + host
 }
