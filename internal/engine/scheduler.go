@@ -71,6 +71,11 @@ func (s *Scheduler) SetReadyGate(ch <-chan struct{}) {
 // Run starts the scan loop. It performs an initial scan immediately,
 // then scans at every poll interval. Exits when ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) error {
+	// Remove containers left behind by earlier self-updates before anything else.
+	if s.selfUpdater != nil {
+		s.selfUpdater.CleanupOldInstances(ctx)
+	}
+
 	if s.readyGate != nil {
 		s.log.Info("deferring initial scan until dashboard is loaded")
 		select {

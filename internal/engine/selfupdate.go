@@ -3,17 +3,20 @@ package engine
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 )
 
 // SelfUpdater manages self-update operations using the rename-before-replace
 // pattern. It renames the running container, creates a new one with the
-// original name, and starts it. The old container (this process) exits
-// naturally after the new one is running.
+// original name, starts it, and then stops the old container (this process) so
+// the new instance can take over the BoltDB file lock.
 type SelfUpdater struct {
 	docker docker.API
 	log    *logging.Logger
@@ -68,9 +71,14 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	su.log.Info("self-update initiated", "name", selfName, "image", imageRef)
 
 	// 3. Pull the new image before making any changes.
+	// If the pull fails but the image is already on the host, carry on
+	// (supports local builds and registry outages).
 	su.log.Info("pulling target image", "image", imageRef)
 	if err := su.docker.PullImage(ctx, imageRef); err != nil {
-		return fmt.Errorf("pull image: %w", err)
+		if _, localErr := su.docker.ImageDigest(ctx, imageRef); localErr != nil {
+			return fmt.Errorf("pull image: %w", err)
+		}
+		su.log.Warn("pull failed but image available locally", "image", imageRef, "pull_error", err)
 	}
 
 	// 4. Rename self out of the way.
@@ -128,19 +136,70 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 		}
 	}
 
-	// 8. Start the new container.
+	// 8. Start the new container while the old one is still serving. If the
+	// start fails, remove the replacement and give the old container its name
+	// back; nothing has been stopped yet.
 	su.log.Info("starting replacement container", "id", newID[:12])
 	if err := su.docker.StartContainer(ctx, newID); err != nil {
-		// Rollback: remove new container, rename old back.
 		su.log.Error("start failed, rolling back", "error", err)
 		_ = su.docker.RemoveContainer(ctx, newID)
 		_ = su.docker.RenameContainer(ctx, selfID, selfName)
+		if isPortConflict(err) {
+			return fmt.Errorf("start replacement: %w (the running instance still holds the published ports; update it from the host with docker pull and a recreate, or publish no ports and use a reverse proxy or host networking)", err)
+		}
 		return fmt.Errorf("start replacement: %w", err)
 	}
 
-	// 9. Success. The old container (this process) will exit naturally.
-	// The web handler returns 200 before this goroutine completes,
-	// and the SSE reconnect logic in the frontend handles the transition.
-	su.log.Info("self-update complete — new container running, old process will exit")
+	// 9. Stop the old container, which is this process. Without this it keeps
+	// the BoltDB file lock and the replacement exits at startup. A background
+	// context is used because the caller's context may be cancelled by the
+	// request that triggered the update.
+	su.log.Info("self-update: new container running, stopping old container to release the database lock", "id", selfID)
+	if err := su.docker.StopContainer(context.Background(), selfID, 10); err != nil {
+		su.log.Error("self-update: failed to stop old container", "error", err)
+		return fmt.Errorf("replacement started but old container %s could not be stopped: %w", oldName, err)
+	}
 	return nil
+}
+
+// isPortConflict reports whether a container start error is a host port
+// collision, which happens when the running instance still publishes the port.
+func isPortConflict(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "port is already allocated") || strings.Contains(msg, "address already in use")
+}
+
+// oldInstanceRE matches the name a superseded instance is renamed to.
+var oldInstanceRE = regexp.MustCompile(`^(.+)-old-\d+$`)
+
+// CleanupOldInstances removes "<name>-old-<unix>" containers left behind by
+// earlier self-updates. A container is only removed when it carries the
+// sentinel.self label, is not running, and the instance it was replaced by
+// (the same name without the suffix) is running. Anonymous volumes are kept.
+func (su *SelfUpdater) CleanupOldInstances(ctx context.Context) {
+	containers, err := su.docker.ListAllContainers(ctx)
+	if err != nil {
+		su.log.Debug("old instance cleanup: list containers failed", "error", err)
+		return
+	}
+	running := make(map[string]bool)
+	for _, c := range containers {
+		if c.State == container.StateRunning && len(c.Names) > 0 {
+			running[strings.TrimPrefix(c.Names[0], "/")] = true
+		}
+	}
+	for _, c := range containers {
+		if c.Labels["sentinel.self"] != "true" || c.State == container.StateRunning || len(c.Names) == 0 {
+			continue
+		}
+		m := oldInstanceRE.FindStringSubmatch(strings.TrimPrefix(c.Names[0], "/"))
+		if m == nil || !running[m[1]] {
+			continue
+		}
+		if err := su.docker.RemoveContainer(ctx, c.ID); err != nil {
+			su.log.Warn("old instance cleanup: remove failed", "name", c.Names[0], "error", err)
+			continue
+		}
+		su.log.Info("removed leftover container from an earlier self-update", "name", strings.TrimPrefix(c.Names[0], "/"))
+	}
 }
