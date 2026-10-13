@@ -421,6 +421,10 @@ func (s *Server) applyImportedSettings(settings map[string]string) {
 		}
 	}
 
+	if v, ok := settings["image_backup"]; ok && v != redactedPlaceholder {
+		s.deps.ConfigWriter.SetImageBackup(v == "true")
+	}
+
 	if v, ok := settings["remove_volumes"]; ok && v != redactedPlaceholder {
 		s.deps.ConfigWriter.SetRemoveVolumes(v == "true")
 	}

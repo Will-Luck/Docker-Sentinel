@@ -201,6 +201,7 @@
                                 <div class="setting-info">
                                     <div class="setting-label">On Rollback</div>
                                     <div class="setting-desc">Automatically change update policy when a service or container rolls back, preventing the same broken update from being retried</div>
+                                    <div class="setting-desc" id="rollback-policy-source"></div>
                                 </div>
                                 <select id="rollback-policy" class="setting-select" onchange="setRollbackPolicy(this.value)">
                                     <option value="">No change</option>
@@ -343,6 +344,7 @@
                                 <div class="setting-info">
                                     <div class="setting-label">Image backup before update</div>
                                     <div class="setting-desc">Retag the current image as <code>:sentinel-backup-YYYYMMDD-HHmmss</code> before pulling a new one</div>
+                                    <div class="setting-desc" id="image-backup-source"></div>
                                 </div>
                                 <label class="toggle-switch-label">
                                     <input type="checkbox" id="image-backup-toggle" class="channel-toggle" onchange="setImageBackup(this.checked)">
@@ -353,6 +355,7 @@
                                 <div class="setting-info">
                                     <div class="setting-label">Remove volumes on update</div>
                                     <div class="setting-desc">Remove anonymous volumes when replacing a container. Can also be set per-container with <code>sentinel.remove-volumes=true</code>.</div>
+                                    <div class="setting-desc" id="remove-volumes-source"></div>
                                 </div>
                                 <label class="toggle-switch-label">
                                     <input type="checkbox" id="remove-volumes-toggle" class="channel-toggle" onchange="setRemoveVolumes(this.checked)">

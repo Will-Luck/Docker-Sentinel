@@ -347,6 +347,10 @@ func main() {
 		log.Info("loaded persisted dependency-aware setting", "enabled", saved == "true")
 	}
 
+	if saved, err := db.GetAllSettings(); err == nil {
+		applySavedOverrides(cfg, saved)
+	}
+
 	// Build notification chain from persisted channels, with env var fallback.
 	var notifiers []notify.Notifier
 	notifiers = append(notifiers, notify.NewLogNotifier(log))

@@ -176,10 +176,8 @@ func (s *Server) apiServiceRollback(w http.ResponseWriter, r *http.Request) {
 
 		// Apply rollback policy setting — change the service's policy to prevent
 		// the next scan from immediately retrying the same broken update.
-		if outcome == "success" && s.deps.SettingsStore != nil && s.deps.Policy != nil {
-			if rp, err := s.deps.SettingsStore.LoadSetting("rollback_policy"); err != nil {
-				s.deps.Log.Warn("failed to load rollback policy", "name", name, "error", err)
-			} else if rp == "manual" || rp == "pinned" {
+		if outcome == "success" && s.deps.Policy != nil {
+			if rp := s.effectiveRollbackPolicy(); rp == "manual" || rp == "pinned" {
 				if err := s.deps.Policy.SetPolicyOverride(name, rp); err != nil {
 					s.deps.Log.Warn("failed to set policy after rollback", "name", name, "error", err)
 				} else {

@@ -63,6 +63,9 @@ func (s *Server) apiSetImageBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save setting")
 		return
 	}
+	if s.deps.ConfigWriter != nil {
+		s.deps.ConfigWriter.SetImageBackup(body.Enabled)
+	}
 	label := "disabled"
 	if body.Enabled {
 		label = "enabled"

@@ -455,9 +455,9 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			// Apply rollback policy if configured.
-			if s.deps.SettingsStore != nil && s.deps.Policy != nil {
+			if s.deps.Policy != nil {
 				policyKey := hostID + "::" + name
-				if rp, err := s.deps.SettingsStore.LoadSetting("rollback_policy"); err == nil && (rp == "manual" || rp == "pinned") {
+				if rp := s.effectiveRollbackPolicy(); rp == "manual" || rp == "pinned" {
 					_ = s.deps.Policy.SetPolicyOverride(policyKey, rp)
 				}
 			}
@@ -477,10 +477,8 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 		}
 		// Apply rollback policy setting — change the container's policy to prevent
 		// the next scan from immediately retrying the same broken update.
-		if s.deps.SettingsStore != nil && s.deps.Policy != nil {
-			if rp, err := s.deps.SettingsStore.LoadSetting("rollback_policy"); err != nil {
-				s.deps.Log.Error("failed to load rollback policy", "name", name, "error", err)
-			} else if rp == "manual" || rp == "pinned" {
+		if s.deps.Policy != nil {
+			if rp := s.effectiveRollbackPolicy(); rp == "manual" || rp == "pinned" {
 				if err := s.deps.Policy.SetPolicyOverride(name, rp); err != nil {
 					s.deps.Log.Error("failed to set policy after rollback", "name", name, "policy", rp, "error", err)
 				} else {

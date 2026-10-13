@@ -25,6 +25,7 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 	values := s.deps.Config.Values()
 
 	// Overlay runtime settings from BoltDB (these take precedence over env config).
+	dbValues := map[string]string{}
 	if s.deps.SettingsStore != nil {
 		dbSettings, err := s.deps.SettingsStore.GetAllSettings()
 		if err != nil {
@@ -33,6 +34,7 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 			for k, v := range dbSettings {
 				values[k] = v
 			}
+			dbValues = dbSettings
 		}
 	}
 
@@ -46,6 +48,20 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// These three are read by the engine from the runtime config. A value
+	// saved in the UI replaces the environment default, so the config holds
+	// the effective value; the source says which one is in effect.
+	for _, k := range []string{"image_backup", "remove_volumes", "rollback_policy"} {
+		source := "env"
+		if _, saved := dbValues[k]; saved {
+			source = "saved"
+		}
+		values[k+"_source"] = source
+	}
+	values["image_backup"] = strconv.FormatBool(s.deps.Config.ImageBackup())
+	values["remove_volumes"] = strconv.FormatBool(s.deps.Config.RemoveVolumes())
+	values["rollback_policy"] = s.deps.Config.RollbackPolicy()
 
 	// These toggles are only stored once saved in the UI, so the stored key
 	// alone cannot show an env-var value. Report what the engine uses.

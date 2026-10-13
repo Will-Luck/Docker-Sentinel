@@ -629,6 +629,9 @@ type mockConfigReader struct {
 	dependencyAware  bool
 	hooksEnabled     bool
 	hooksWriteLabels bool
+	imageBackup      bool
+	removeVolumes    bool
+	rollbackPolicy   string
 }
 
 func (m *mockConfigReader) Values() map[string]string { return m.values }
@@ -638,6 +641,9 @@ func (m *mockConfigReader) ImageCleanup() bool        { return m.imageCleanup }
 func (m *mockConfigReader) DependencyAware() bool     { return m.dependencyAware }
 func (m *mockConfigReader) HooksEnabled() bool        { return m.hooksEnabled }
 func (m *mockConfigReader) HooksWriteLabels() bool    { return m.hooksWriteLabels }
+func (m *mockConfigReader) ImageBackup() bool         { return m.imageBackup }
+func (m *mockConfigReader) RemoveVolumes() bool       { return m.removeVolumes }
+func (m *mockConfigReader) RollbackPolicy() string    { return m.rollbackPolicy }
 
 // ---------------------------------------------------------------------------
 // containerPolicy tests (unit)

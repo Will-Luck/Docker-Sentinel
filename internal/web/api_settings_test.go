@@ -1040,3 +1040,76 @@ func TestApiSettings_TogglesFollowRuntimeConfig(t *testing.T) {
 		}
 	}
 }
+
+// Image backup, remove volumes and the rollback policy are read by the engine
+// from the runtime config, so the page must show that value, and say whether
+// it came from the environment or from a value saved in the UI.
+func TestApiSettings_ReportsEffectiveBackupVolumesRollback(t *testing.T) {
+	ss := newMockSettingsStore()
+	cfg := &mockConfigReader{
+		values:         map[string]string{},
+		imageBackup:    true,
+		removeVolumes:  true,
+		rollbackPolicy: "manual",
+	}
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: cfg, Log: slog.Default()}}
+
+	got := getSettings(t, srv)
+	want := map[string]string{
+		"image_backup":           "true",
+		"remove_volumes":         "true",
+		"rollback_policy":        "manual",
+		"image_backup_source":    "env",
+		"remove_volumes_source":  "env",
+		"rollback_policy_source": "env",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+
+	// A value saved in the UI is reported as the source once it exists.
+	ss.data["image_backup"] = "false"
+	cfg.imageBackup = false
+	got = getSettings(t, srv)
+	if got["image_backup"] != "false" || got["image_backup_source"] != "saved" {
+		t.Errorf("image_backup = %q (%s), want false (saved)", got["image_backup"], got["image_backup_source"])
+	}
+}
+
+type recordingConfigWriter struct {
+	ConfigWriter
+	imageBackup *bool
+}
+
+func (r *recordingConfigWriter) SetImageBackup(b bool) { r.imageBackup = &b }
+
+func TestApiSetImageBackup_UpdatesRuntimeConfig(t *testing.T) {
+	ss := newMockSettingsStore()
+	cw := &recordingConfigWriter{}
+	srv := &Server{deps: Dependencies{SettingsStore: ss, ConfigWriter: cw, Log: slog.Default()}}
+	w := httptest.NewRecorder()
+	srv.apiSetImageBackup(w, httptest.NewRequest(http.MethodPost, "/api/settings/image-backup", strings.NewReader(`{"enabled":false}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if cw.imageBackup == nil || *cw.imageBackup {
+		t.Errorf("runtime image backup not set to false after the toggle was saved")
+	}
+}
+
+// The UI rollback and the engine must agree on the policy, so both use the
+// runtime config (env default, replaced by a value saved in the UI).
+func TestEffectiveRollbackPolicy_UsesRuntimeConfig(t *testing.T) {
+	ss := newMockSettingsStore()
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: &mockConfigReader{rollbackPolicy: "pinned"}}}
+	if got := srv.effectiveRollbackPolicy(); got != "pinned" {
+		t.Errorf("effectiveRollbackPolicy = %q, want pinned from the env-backed config", got)
+	}
+	srv = &Server{deps: Dependencies{SettingsStore: ss}}
+	ss.data["rollback_policy"] = "manual"
+	if got := srv.effectiveRollbackPolicy(); got != "manual" {
+		t.Errorf("effectiveRollbackPolicy without config = %q, want the saved manual", got)
+	}
+}

@@ -109,6 +109,7 @@ function initSettingsPage() {
             if (rbSelect) {
                 var rbPolicy = settings["rollback_policy"] || settings["SENTINEL_ROLLBACK_POLICY"] || "";
                 selectOptionByValue(rbSelect, rbPolicy);
+                showSettingSource("rollback-policy-source", settings["rollback_policy_source"], "SENTINEL_ROLLBACK_POLICY");
             }
 
             // Grace period.
@@ -226,6 +227,7 @@ function initSettingsPage() {
                 var imageBackup = settings["image_backup"] === "true";
                 imageBackupToggle.checked = imageBackup;
                 updateToggleText("image-backup-text", imageBackup);
+                showSettingSource("image-backup-source", settings["image_backup_source"], "SENTINEL_IMAGE_BACKUP");
             }
 
             // Show stopped toggle.
@@ -242,6 +244,7 @@ function initSettingsPage() {
                 var removeVolumes = settings["remove_volumes"] === "true";
                 removeVolumesToggle.checked = removeVolumes;
                 updateToggleText("remove-volumes-text", removeVolumes);
+                showSettingSource("remove-volumes-source", settings["remove_volumes_source"], "SENTINEL_REMOVE_VOLUMES");
             }
 
             // Scan concurrency input.
@@ -574,6 +577,7 @@ function setRollbackPolicy(value) {
         .then(function(result) {
             if (result.ok) {
                 showToast(result.data.message || "Rollback policy updated", "success");
+                showSettingSource("rollback-policy-source", "saved", "SENTINEL_ROLLBACK_POLICY");
             } else {
                 showToast(result.data.error || "Failed to update rollback policy", "error");
             }
@@ -785,11 +789,21 @@ function setComposeSync(enabled) {
         .catch(function() { showToast("Network error -- could not update setting", "error"); });
 }
 
+// showSettingSource says whether a setting's value comes from a value saved
+// on this page or from the environment (or its built-in default).
+function showSettingSource(id, source, envName) {
+    var el = document.getElementById(id);
+    if (!el) { return; }
+    el.textContent = source === "saved"
+        ? "In effect: the value saved here (overrides " + envName + ")"
+        : "In effect: " + envName + " or the built-in default. Saving here overrides it.";
+}
+
 function setImageBackup(enabled) {
     updateToggleText("image-backup-text", enabled);
     fetch("/api/settings/image-backup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enabled }) })
         .then(function(r) { return r.json(); })
-        .then(function(data) { showToast(data.message || "Setting updated", "success"); })
+        .then(function(data) { showToast(data.message || "Setting updated", "success"); showSettingSource("image-backup-source", "saved", "SENTINEL_IMAGE_BACKUP"); })
         .catch(function() { showToast("Network error -- could not update setting", "error"); });
 }
 
@@ -805,7 +819,7 @@ function setRemoveVolumes(enabled) {
     updateToggleText("remove-volumes-text", enabled);
     fetch("/api/settings/remove-volumes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enabled }) })
         .then(function(r) { return r.json(); })
-        .then(function(data) { showToast(data.message || "Setting updated", "success"); })
+        .then(function(data) { showToast(data.message || "Setting updated", "success"); showSettingSource("remove-volumes-source", "saved", "SENTINEL_REMOVE_VOLUMES"); })
         .catch(function() { showToast("Network error -- could not update setting", "error"); });
 }
 

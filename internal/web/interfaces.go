@@ -571,6 +571,9 @@ type ConfigReader interface {
 	DependencyAware() bool
 	HooksEnabled() bool
 	HooksWriteLabels() bool
+	ImageBackup() bool
+	RemoveVolumes() bool
+	RollbackPolicy() string
 }
 
 // ConfigWriter updates mutable runtime settings in memory.
@@ -579,6 +582,7 @@ type ConfigWriter interface {
 	SetGracePeriod(d time.Duration)
 	SetLatestAutoUpdate(b bool)
 	SetImageCleanup(b bool)
+	SetImageBackup(b bool)
 	SetHooksEnabled(b bool)
 	SetHooksWriteLabels(b bool)
 	SetDependencyAware(b bool)
