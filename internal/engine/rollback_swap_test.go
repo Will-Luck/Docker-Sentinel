@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -39,7 +38,7 @@ func TestRollbackKeepsLiveContainerWhenCreateFails(t *testing.T) {
 	mock.containers = []container.Summary{{ID: "live-1.1", Names: []string{"/app"}}}
 	mock.createErr["app"] = errors.New("No such image: app:1.0")
 
-	err := rollback(context.Background(), mock, "app", snapshotJSON(t, appSnapshot("")), logging.New(false))
+	err := runRollback(mock, "app", snapshotJSON(t, appSnapshot("")))
 	if err == nil {
 		t.Fatal("expected create error")
 	}
@@ -59,7 +58,7 @@ func TestRollbackChecksImageBeforeTouchingLiveContainer(t *testing.T) {
 	mock.containers = []container.Summary{{ID: "live-1.1", Names: []string{"/app"}}}
 	mock.pullErr["app:1.0"] = errors.New("manifest unknown")
 
-	err := rollback(context.Background(), mock, "app", snapshotJSON(t, appSnapshot("sha256:old111")), logging.New(false))
+	err := runRollback(mock, "app", snapshotJSON(t, appSnapshot("sha256:old111")))
 	if err == nil {
 		t.Fatal("expected an error when the snapshot image is gone and cannot be pulled")
 	}
@@ -77,7 +76,7 @@ func TestRollbackPullsMissingImageWithSameID(t *testing.T) {
 	mock.mirrorCreate = true
 	mock.pullResolves["app:1.0"] = "sha256:old111"
 
-	if err := rollback(context.Background(), mock, "app", snapshotJSON(t, appSnapshot("sha256:old111")), logging.New(false)); err != nil {
+	if err := runRollback(mock, "app", snapshotJSON(t, appSnapshot("sha256:old111"))); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	if !slices.Equal(mock.pullCalls, []string{"app:1.0"}) || len(mock.createCalls) != 1 {
@@ -91,7 +90,7 @@ func TestRollbackRefusesPulledImageWithOtherID(t *testing.T) {
 	mock := newMockDocker()
 	mock.pullResolves["app:1.0"] = "sha256:rebuilt"
 
-	err := rollback(context.Background(), mock, "app", snapshotJSON(t, appSnapshot("sha256:old111")), logging.New(false))
+	err := runRollback(mock, "app", snapshotJSON(t, appSnapshot("sha256:old111")))
 	if err == nil {
 		t.Fatal("expected an error when the pulled tag is a different image")
 	}
@@ -116,7 +115,7 @@ func TestRollbackRestoresSnapshotImageNotMovedTag(t *testing.T) {
 		NetworkSettings: &container.NetworkSettings{},
 	}
 
-	if err := rollback(context.Background(), mock, "nginx", snapshotJSON(t, snap), logging.New(false)); err != nil {
+	if err := runRollback(mock, "nginx", snapshotJSON(t, snap)); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	tag, create := opIndex(mock, "tag sha256:old111 nginx:latest"), opIndex(mock, "create nginx")
@@ -144,7 +143,7 @@ func TestRollbackVerifiesCreatedImage(t *testing.T) {
 		NetworkSettings: &container.NetworkSettings{},
 	}
 
-	if err := rollback(context.Background(), mock, "nginx", snapshotJSON(t, snap), logging.New(false)); err == nil {
+	if err := runRollback(mock, "nginx", snapshotJSON(t, snap)); err == nil {
 		t.Fatal("expected an error when the rollback container runs another image")
 	}
 	if slices.Contains(mock.removeCalls, "live") || opIndex(mock, "stop live") >= 0 {

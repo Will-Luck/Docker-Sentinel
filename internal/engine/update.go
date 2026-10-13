@@ -248,7 +248,10 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	// one, stop the old one, start the new one. The old container is removed
 	// only after the new one passes validation, so a failure can bring it back.
 	u.log.Info("replacing container", "name", name, "image", pullImage)
-	sw := newSwap(u.docker, u.log, name, id, inspect, 30)
+	sw := newSwap(u.docker, u.log, u.store, swapSpec{
+		kind: swapUpdate, name: name, oldID: id, old: inspect, stopTimeout: 30,
+		snapshot: snapshotData, removeVolumes: removeVolumes,
+	})
 	if err := sw.replace(ctx, rc, true, nil); err != nil {
 		if !sw.changed() {
 			u.log.Error("could not set the old container aside, nothing was changed", "name", name, "error", err)
@@ -298,12 +301,14 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		return fmt.Errorf("new container %s failed validation", name)
 	}
 
-	// The new container is good: remove the old one and keep its snapshot
-	// for a later rollback.
-	sw.commit(ctx, removeVolumes)
+	// The new container is good: keep the old one's snapshot for a later
+	// rollback, then remove it.
+	snapshotSaved := true
 	if err := u.store.SaveSnapshot(name, snapshotData); err != nil {
+		snapshotSaved = false
 		u.log.Warn("failed to save the rollback snapshot", "name", name, "error", err)
 	}
+	sw.commit(ctx)
 
 	// 6.5. Run post-update hooks (store entries, else the new container's labels).
 	if u.hooks != nil && u.cfg.HooksEnabled() {
@@ -322,7 +327,8 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			// the old version from the snapshot.
 			u.log.Error("finalise failed and the updated container could not be restored, rolling back",
 				"name", name, "stage", fErr.stage, "error", fErr.err)
-			u.reportRollback(ctx, name, rollback(ctx, u.docker, name, snapshotData, u.log), start, finaliseErr)
+			_, rbErr := rollbackContainer(ctx, u.docker, u.store, name, snapshotData, u.log)
+			u.reportRollback(ctx, name, rbErr, start, finaliseErr)
 
 			// Record as failed — never as success.
 			duration := u.clock.Since(start)
@@ -465,9 +471,12 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		u.log.Warn("failed to clear ignored versions after update", "name", name, "error", err)
 	}
 
-	// 9. Clean old snapshots — keep only the most recent one.
-	if err := u.store.DeleteOldSnapshots(name, 1); err != nil {
-		u.log.Warn("failed to clean old snapshots", "name", name, "error", err)
+	// 9. Clean old snapshots, keeping only the most recent one. If this
+	// update's snapshot could not be saved, keep the older ones instead.
+	if snapshotSaved {
+		if err := u.store.DeleteOldSnapshots(name, 1); err != nil {
+			u.log.Warn("failed to clean old snapshots", "name", name, "error", err)
+		}
 	}
 
 	// 10. Handle shared network namespaces. Consumers reference the provider
@@ -577,7 +586,8 @@ func (u *Updater) restoreOld(ctx context.Context, sw *swap, snapshotData []byte)
 	ctx = context.WithoutCancel(ctx)
 	if err := sw.undo(ctx); err != nil {
 		u.log.Warn("could not restore the old container, recreating it from the snapshot", "name", sw.name, "error", err)
-		return rollback(ctx, u.docker, sw.name, snapshotData, u.log)
+		_, err := rollbackContainer(ctx, u.docker, u.store, sw.name, snapshotData, u.log)
+		return err
 	}
 	u.log.Info("old container restored", "name", sw.name)
 	// A :latest pull moved the tag to the new image. Point it back at the
@@ -778,21 +788,26 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 
 	u.log.Info("finalising container (removing maintenance label)", "name", name)
 
-	sw := newSwap(u.docker, u.log, name, id, inspect, 10)
+	snapshot, _ := json.Marshal(inspect)
+	sw := newSwap(u.docker, u.log, u.store, swapSpec{
+		kind: swapFinalise, name: name, oldID: id, old: inspect, stopTimeout: 10, snapshot: snapshot,
+	})
 	if err := sw.replace(ctx, rc, true, nil); err != nil {
 		fErr := &finaliseError{stage: "swap", err: err}
 		var se *swapError
 		if errors.As(err, &se) {
 			fErr.stage, fErr.err = se.stage, se.err
 		}
-		if undoErr := sw.undo(ctx); undoErr != nil {
-			fErr.err = fmt.Errorf("%w; putting the updated container back failed: %v", fErr.err, undoErr)
-			fErr.down = true
+		if sw.changed() {
+			if undoErr := sw.undo(ctx); undoErr != nil {
+				fErr.err = fmt.Errorf("%w; putting the updated container back failed: %v", fErr.err, undoErr)
+				fErr.down = true
+			}
 		}
 		return id, fErr
 	}
 	// The finalised container mounts the same volumes, so keep them.
-	sw.commit(ctx, false)
+	sw.commit(ctx)
 
 	u.log.Info("finalised container", "name", name, "new_id", truncateID(sw.newID))
 	return sw.newID, nil
@@ -939,15 +954,20 @@ func (u *Updater) recreateNamespaceConsumer(ctx context.Context, consumerID, con
 	rc.HostConfig.NetworkMode = container.NetworkMode("container:" + providerID)
 	u.log.Info("recreating network dependent on the updated provider", "dependent", consumerName, "provider", providerName)
 
-	sw := newSwap(u.docker, u.log, consumerName, consumerID, consumer, 10)
+	snapshot, _ := json.Marshal(consumer)
+	sw := newSwap(u.docker, u.log, u.store, swapSpec{
+		kind: swapConsumer, name: consumerName, oldID: consumerID, old: consumer, stopTimeout: 10, snapshot: snapshot,
+	})
 	if err := sw.replace(ctx, rc, sw.oldRunning, nil); err != nil {
 		u.log.Error("failed to recreate network dependent", "dependent", consumerName, "error", err)
-		if undoErr := sw.undo(ctx); undoErr != nil {
-			u.log.Error("failed to restore network dependent", "dependent", consumerName, "error", undoErr)
+		if sw.changed() {
+			if _, undoErr := sw.undoOrRetry(ctx); undoErr != nil {
+				u.log.Error("failed to restore network dependent", "dependent", consumerName, "error", undoErr)
+			}
 		}
 		return
 	}
-	sw.commit(ctx, false)
+	sw.commit(ctx)
 }
 
 // sameContainerID reports whether two container IDs name the same

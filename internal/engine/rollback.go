@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
+	"slices"
 	"strings"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
@@ -12,98 +14,140 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 )
 
-// rollback recreates a container from its snapshot.
+// rollbackContainer recreates a container from its snapshot and returns the
+// ID of the container that then runs under name.
 //
 // Everything that can fail is checked before the running container is
 // touched: the snapshot's image must be on this host (pulled back if its
 // tag still resolves to the same image ID) and its tag is pointed at it.
-// The container holding the name is then swapped out, and removed only once
-// the rollback container exists, runs the snapshot's image and has started.
-// On any failure the running container is kept.
-func rollback(ctx context.Context, d docker.API, name string, snapshotData []byte, log *logging.Logger) error {
+// The container holding the name is then swapped out (journalled in j when
+// it is set), and removed only once the rollback container exists, runs the
+// snapshot's image and has started. On any failure the running container is
+// kept. The rollback container takes over the running container's anonymous
+// volumes where the destinations match, so it starts on the current data.
+func rollbackContainer(ctx context.Context, d docker.API, j swapJournal, name string, snapshotData []byte, log *logging.Logger) (string, error) {
 	var inspect container.InspectResponse
 	if err := json.Unmarshal(snapshotData, &inspect); err != nil {
-		return fmt.Errorf("unmarshal snapshot: %w", err)
+		return "", fmt.Errorf("unmarshal snapshot: %w", err)
 	}
 
 	if inspect.Config == nil {
-		return fmt.Errorf("inspect %s: container config is nil", name)
+		return "", fmt.Errorf("inspect %s: container config is nil", name)
 	}
 
 	log.Info("rolling back container", "name", name, "image", inspect.Config.Image)
 
+	liveID, err := findContainerID(ctx, d, name)
+	if err != nil {
+		return "", fmt.Errorf("list containers for rollback: %w", err)
+	}
+	var live container.InspectResponse
+	if liveID != "" {
+		if live, err = d.InspectContainer(ctx, liveID); err != nil {
+			log.Warn("could not inspect the running container before rollback", "name", name, "error", err)
+		}
+	}
+
 	undoTag, err := ensureImage(ctx, d, inspect.Config.Image, inspect.Image, log)
 	if err != nil {
-		return fmt.Errorf("rollback image for %s: %w", name, err)
+		return "", fmt.Errorf("rollback image for %s: %w", name, err)
 	}
-	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{})
-	verify := func(ctx context.Context, id string) error {
-		if inspect.Image == "" {
-			return nil // snapshot from an older version: no image ID recorded
+	from := inspect
+	from.Mounts = preferLiveVolumes(inspect.Mounts, live.Mounts)
+	rc := docker.RecreateConfig(from, docker.RecreateOptions{})
+	verify := verifyImage(d, inspect.Image)
+
+	if liveID == "" {
+		newID, err := createAndStart(ctx, d, name, rc, verify)
+		if err != nil {
+			undoTag()
+			return "", err
+		}
+		log.Info("rollback complete", "name", name)
+		return newID, nil
+	}
+
+	sw := newSwap(d, log, j, swapSpec{kind: swapRollback, name: name, oldID: liveID, old: live, stopTimeout: 30})
+	if err := sw.replace(ctx, rc, true, verify); err != nil {
+		undoTag()
+		if !sw.changed() {
+			return "", fmt.Errorf("rollback %s, running container kept: %w", name, err)
+		}
+		if _, undoErr := sw.undoOrRetry(ctx); undoErr != nil {
+			return "", fmt.Errorf("rollback %s: %w (and the running container could not be restored: %v)", name, err, undoErr)
+		}
+		return "", fmt.Errorf("rollback %s, running container kept: %w", name, err)
+	}
+	sw.commit(ctx)
+
+	log.Info("rollback complete", "name", name, "container_id", truncateID(sw.newID))
+	return sw.newID, nil
+}
+
+// preferLiveVolumes returns the snapshot's mounts with the volume at each
+// destination replaced by the one the running container uses there, so a
+// rollback keeps the current data rather than the data of the snapshot time.
+func preferLiveVolumes(snapshot, live []container.MountPoint) []container.MountPoint {
+	if len(live) == 0 {
+		return snapshot
+	}
+	byDest := make(map[string]container.MountPoint, len(live))
+	for _, m := range live {
+		if m.Type == mount.TypeVolume && m.Name != "" {
+			byDest[path.Clean(m.Destination)] = m
+		}
+	}
+	out := slices.Clone(snapshot)
+	for i, m := range out {
+		if l, ok := byDest[path.Clean(m.Destination)]; ok && m.Type == mount.TypeVolume {
+			out[i].Name = l.Name
+		}
+	}
+	return out
+}
+
+// verifyImage returns a check that a created container runs image want, so
+// a tag that moved between the decision and the create cannot slip a
+// different image in. An empty want (a snapshot from an older version, with
+// no image ID recorded) checks nothing.
+func verifyImage(d docker.API, want string) func(ctx context.Context, id string) error {
+	return func(ctx context.Context, id string) error {
+		if want == "" {
+			return nil
 		}
 		created, err := d.InspectContainer(ctx, id)
 		if err != nil {
-			return fmt.Errorf("inspect rollback container: %w", err)
+			return fmt.Errorf("inspect the new container: %w", err)
 		}
-		if created.Image != inspect.Image {
-			return fmt.Errorf("rollback container runs image %s, want %s", shortImageID(created.Image), shortImageID(inspect.Image))
+		if created.Image != want {
+			return fmt.Errorf("new container runs image %s, want %s", shortImageID(created.Image), shortImageID(want))
 		}
 		return nil
 	}
-
-	liveID, err := findContainerID(ctx, d, name)
-	if err != nil {
-		undoTag()
-		return fmt.Errorf("list containers for rollback: %w", err)
-	}
-	if liveID == "" {
-		if err := createAndStart(ctx, d, name, rc, verify); err != nil {
-			undoTag()
-			return err
-		}
-		log.Info("rollback complete", "name", name)
-		return nil
-	}
-
-	live, err := d.InspectContainer(ctx, liveID)
-	if err != nil {
-		log.Warn("could not inspect the running container before rollback", "name", name, "error", err)
-	}
-	sw := newSwap(d, log, name, liveID, live, 30)
-	if err := sw.replace(ctx, rc, true, verify); err != nil {
-		undoTag()
-		if undoErr := sw.undo(ctx); undoErr != nil {
-			return fmt.Errorf("rollback %s: %w (and the running container could not be restored: %v)", name, err, undoErr)
-		}
-		return fmt.Errorf("rollback %s, running container kept: %w", name, err)
-	}
-	sw.commit(ctx, false)
-
-	log.Info("rollback complete", "name", name, "container_id", truncateID(sw.newID))
-	return nil
 }
 
 // createAndStart creates and starts a rollback container when no container
-// holds the name. A container that is created but fails to start is kept,
-// so there is something to inspect and start by hand.
-func createAndStart(ctx context.Context, d docker.API, name string, rc docker.Recreate, verify func(context.Context, string) error) error {
+// holds the name, and returns its ID. A container that is created but fails
+// to start is kept, so there is something to inspect and start by hand.
+func createAndStart(ctx context.Context, d docker.API, name string, rc docker.Recreate, verify func(context.Context, string) error) (string, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
 	defer cancel()
 
 	newID, err := d.CreateContainer(ctx, name, rc.Config, rc.HostConfig, rc.NetworkingConfig)
 	if err != nil {
-		return fmt.Errorf("create rollback container: %w", err)
+		return "", fmt.Errorf("create rollback container: %w", err)
 	}
 	if err := verify(ctx, newID); err != nil {
 		_ = d.RemoveContainer(ctx, newID)
-		return err
+		return "", err
 	}
 	if err := d.StartContainer(ctx, newID); err != nil {
-		return fmt.Errorf("start rollback container: %w", err)
+		return newID, fmt.Errorf("start rollback container: %w", err)
 	}
-	return nil
+	return newID, nil
 }
 
 // findContainerID returns the ID of the container named name, or "" when
@@ -188,7 +232,8 @@ func RollbackFromStore(ctx context.Context, d docker.API, s *store.Store, name s
 	if data == nil {
 		return fmt.Errorf("no snapshot found for %s", name)
 	}
-	return rollback(ctx, d, name, data, log)
+	_, err = rollbackContainer(ctx, d, s, name, data, log)
+	return err
 }
 
 // RollbackContainer rolls a container back to its latest snapshot, as the

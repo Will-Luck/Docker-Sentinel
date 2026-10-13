@@ -90,6 +90,12 @@ func (c *Client) RenameContainer(ctx context.Context, id string, newName string)
 	return err
 }
 
+// UpdateRestartPolicy changes a container's restart policy in place.
+func (c *Client) UpdateRestartPolicy(ctx context.Context, id string, policy container.RestartPolicy) error {
+	_, err := c.api.ContainerUpdate(ctx, id, client.ContainerUpdateOptions{RestartPolicy: &policy})
+	return err
+}
+
 // NetworkConnect connects a container to a network.
 func (c *Client) NetworkConnect(ctx context.Context, networkID string, containerID string) error {
 	_, err := c.api.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{

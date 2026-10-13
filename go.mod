@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.27.2
 
 require (
+	github.com/containerd/errdefs v1.0.0
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/go-webauthn/webauthn v0.15.0
@@ -27,7 +28,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.8.2 // indirect

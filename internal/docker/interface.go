@@ -56,6 +56,12 @@ type ImageConfigReader interface {
 	ImageConfig(ctx context.Context, ref string) (*container.Config, error)
 }
 
+// RestartPolicyUpdater changes the restart policy of an existing container.
+// Client implements it; like ImageConfigReader it is kept out of API.
+type RestartPolicyUpdater interface {
+	UpdateRestartPolicy(ctx context.Context, id string, policy container.RestartPolicy) error
+}
+
 // ImageSummary represents a Docker image for listing.
 type ImageSummary struct {
 	ID       string
@@ -71,8 +77,9 @@ type ImagePruneResult struct {
 	SpaceReclaimed int64
 }
 
-// Verify Client implements API and ImageConfigReader at compile time.
+// Verify Client implements API and the optional interfaces at compile time.
 var (
-	_ API               = (*Client)(nil)
-	_ ImageConfigReader = (*Client)(nil)
+	_ API                  = (*Client)(nil)
+	_ ImageConfigReader    = (*Client)(nil)
+	_ RestartPolicyUpdater = (*Client)(nil)
 )

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
@@ -193,7 +192,7 @@ func TestRollbackCarriesAnonymousVolumes(t *testing.T) {
 	}
 	data, _ := json.Marshal(snap)
 
-	if err := rollback(context.Background(), mock, "pg", data, logging.New(false)); err != nil {
+	if err := runRollback(mock, "pg", data); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	if !hostConfigUsesVolume(mock.createHostHistory[0], pgDataVolume) {
@@ -287,7 +286,7 @@ func TestRollbackKeepsSnapshotConfig(t *testing.T) {
 	}
 	data, _ := json.Marshal(snap)
 
-	if err := rollback(context.Background(), mock, "pg", data, logging.New(false)); err != nil {
+	if err := runRollback(mock, "pg", data); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	cfg := mock.createHistory[0]
@@ -311,7 +310,7 @@ func TestRollbackNetNamespaceConsumerDropsConflictingFields(t *testing.T) {
 	}
 	data, _ := json.Marshal(snap)
 
-	if err := rollback(context.Background(), mock, "qbittorrent", data, logging.New(false)); err != nil {
+	if err := runRollback(mock, "qbittorrent", data); err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
 	assertNoNetNamespaceConflicts(t, mock)

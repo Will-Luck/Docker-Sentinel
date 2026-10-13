@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -200,9 +201,7 @@ func TestUpdateContainerStopFailure(t *testing.T) {
 		HostConfig:      &container.HostConfig{},
 		NetworkSettings: &container.NetworkSettings{},
 	}
-	// Stop fails but the code logs a warning and proceeds to remove.
-	// If remove also fails, it returns an error. Set remove to succeed
-	// so the flow continues through create/start/validate.
+	// The stop fails and the mock reports the old container as running.
 	mock.stopErr["aaa"] = fmt.Errorf("timeout")
 
 	// New container passes validation.
@@ -224,12 +223,19 @@ func TestUpdateContainerStopFailure(t *testing.T) {
 	u, _ := newTestUpdater(t, mock)
 	err := u.UpdateContainer(context.Background(), "aaa", "nginx", "")
 
-	// Stop failure is non-fatal — update proceeds via force remove.
-	if err != nil {
-		t.Fatalf("unexpected error: %v (stop failure should be non-fatal)", err)
+	// The old container still runs after the failed stop, so the new one is
+	// never started next to it: the update fails and the old one is kept.
+	if err == nil {
+		t.Fatal("expected an error when the old container cannot be stopped")
 	}
-	if len(mock.stopCalls) < 1 {
-		t.Errorf("stopCalls = %d, want >= 1", len(mock.stopCalls))
+	if slices.Contains(mock.startCalls, "new-nginx") {
+		t.Errorf("new container started while the old one still runs: startCalls=%v", mock.startCalls)
+	}
+	if slices.Contains(mock.removeCalls, "aaa") {
+		t.Errorf("old container removed: removeCalls=%v", mock.removeCalls)
+	}
+	if opIndex(mock, "rename aaa nginx") < 0 {
+		t.Errorf("old container not given its name back: ops=%v", mock.ops)
 	}
 }
 

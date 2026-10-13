@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -607,10 +608,9 @@ func TestFinaliseContainerReturnsStageErrors(t *testing.T) {
 	}
 }
 
-// A stop or remove failure during finalise no longer fails it: the
-// replacement starts while the old container is renamed aside, and the old
-// one is force-removed at the end.
-func TestFinaliseContainerToleratesStopAndRemoveFailures(t *testing.T) {
+// A failure to remove the old container at the end of finalise does not
+// fail it: the old one is left under its replaced name for the next start.
+func TestFinaliseContainerToleratesRemoveFailure(t *testing.T) {
 	mock := newMockDocker()
 	mock.inspectResults["cid"] = container.InspectResponse{
 		ID:              "cid",
@@ -619,7 +619,6 @@ func TestFinaliseContainerToleratesStopAndRemoveFailures(t *testing.T) {
 		HostConfig:      &container.HostConfig{},
 		NetworkSettings: &container.NetworkSettings{},
 	}
-	mock.stopErr["cid"] = fmt.Errorf("timeout")
 	mock.removeErr["cid"] = fmt.Errorf("device busy")
 
 	u, _ := newTestUpdater(t, mock)
@@ -629,6 +628,31 @@ func TestFinaliseContainerToleratesStopAndRemoveFailures(t *testing.T) {
 	}
 	if newID != "new-myapp" {
 		t.Errorf("newID = %q, want new-myapp", newID)
+	}
+}
+
+// A stop failure in finalise while the validated container still runs
+// fails the finalise and puts that container back, never starting a second
+// copy next to it.
+func TestFinaliseContainerStopFailureKeepsValidatedContainer(t *testing.T) {
+	mock := newMockDocker()
+	mock.inspectResults["cid"] = container.InspectResponse{
+		ID:              "cid",
+		State:           &container.State{Running: true},
+		Config:          &container.Config{Image: "img:latest", Labels: map[string]string{"sentinel.maintenance": "true"}},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+	mock.stopErr["cid"] = fmt.Errorf("timeout")
+
+	u, _ := newTestUpdater(t, mock)
+	_, err := u.finaliseContainer(context.Background(), "cid", "myapp")
+	var fErr *finaliseError
+	if !errors.As(err, &fErr) || fErr.stage != "stop" || fErr.down {
+		t.Fatalf("err = %v, want a stop-stage finalise error with the container in place", err)
+	}
+	if slices.Contains(mock.startCalls, "new-myapp") {
+		t.Errorf("second copy started: startCalls=%v", mock.startCalls)
 	}
 }
 

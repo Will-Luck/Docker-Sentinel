@@ -11,7 +11,6 @@ import (
 
 func TestRollbackCreatesContainerFromSnapshot(t *testing.T) {
 	mock := newMockDocker()
-	log := logging.New(false)
 
 	snapshot := container.InspectResponse{
 		ID:   "old-id",
@@ -28,7 +27,7 @@ func TestRollbackCreatesContainerFromSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = rollback(context.Background(), mock, "nginx", data, log)
+	err = runRollback(mock, "nginx", data)
 	if err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
@@ -43,9 +42,8 @@ func TestRollbackCreatesContainerFromSnapshot(t *testing.T) {
 
 func TestRollbackInvalidSnapshot(t *testing.T) {
 	mock := newMockDocker()
-	log := logging.New(false)
 
-	err := rollback(context.Background(), mock, "nginx", []byte("not json"), log)
+	err := runRollback(mock, "nginx", []byte("not json"))
 	if err == nil {
 		t.Fatal("expected error for invalid snapshot data")
 	}
