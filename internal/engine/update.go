@@ -813,7 +813,8 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 	sw := newSwap(u.docker, u.log, u.store, swapSpec{
 		kind: swapFinalise, name: name, oldID: id, old: inspect, stopTimeout: 10, snapshot: snapshot,
 	})
-	if err := sw.replace(ctx, rc, true, nil); err != nil {
+	// The recreate goes by tag: make sure it runs the image that was validated.
+	if err := sw.replace(ctx, rc, true, verifyImage(u.docker, inspect.Image)); err != nil {
 		fErr := &finaliseError{stage: "swap", err: err}
 		var se *swapError
 		if errors.As(err, &se) {
@@ -980,7 +981,7 @@ func (u *Updater) recreateNamespaceConsumer(ctx context.Context, consumerID, con
 	sw := newSwap(u.docker, u.log, u.store, swapSpec{
 		kind: swapConsumer, name: consumerName, oldID: consumerID, old: consumer, stopTimeout: 10, snapshot: snapshot,
 	})
-	if err := sw.replace(ctx, rc, sw.oldRunning, nil); err != nil {
+	if err := sw.replace(ctx, rc, sw.oldRunning, verifyImage(u.docker, consumer.Image)); err != nil {
 		u.log.Error("failed to recreate network dependent", "dependent", consumerName, "error", err)
 		if sw.changed() {
 			if _, undoErr := sw.undoOrRetry(ctx); undoErr != nil {
