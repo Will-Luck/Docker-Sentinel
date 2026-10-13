@@ -72,6 +72,10 @@ type Config struct {
 	// are pruned (update and rollback records are kept). 0 keeps everything.
 	// SENTINEL_HISTORY_RETENTION_DAYS, default 90; a saved setting overrides it.
 	HistoryRetentionDays int
+	// TrustedProxies lists reverse proxies (IPs or CIDR ranges, comma
+	// separated) whose X-Forwarded-For is believed when working out the
+	// client address for login rate limiting. Empty trusts none.
+	TrustedProxies string
 
 	// envProblems holds environment values that were set but could not be
 	// parsed; the default was used instead. See EnvProblems.
@@ -168,6 +172,7 @@ func Load() *Config {
 		NPMPassword: envStr("SENTINEL_NPM_PASSWORD", ""),
 
 		HistoryRetentionDays: r.int("SENTINEL_HISTORY_RETENTION_DAYS", 90),
+		TrustedProxies:       envStr("SENTINEL_TRUSTED_PROXIES", ""),
 	}
 	c.envProblems = r.problems
 	return c

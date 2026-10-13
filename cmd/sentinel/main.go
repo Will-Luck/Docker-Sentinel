@@ -865,6 +865,9 @@ func main() {
 			log.Info("OIDC SSO enabled", "issuer", oidcCfg.IssuerURL)
 		}
 
+		// Behind a reverse proxy, take the client address from the proxies listed.
+		web.SetTrustedProxies(web.ParseTrustedProxies(cfg.TrustedProxies))
+
 		// Configure TLS if enabled.
 		if cfg.TLSCert != "" && cfg.TLSKey != "" {
 			srv.SetTLS(cfg.TLSCert, cfg.TLSKey)
