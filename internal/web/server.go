@@ -255,6 +255,7 @@ func (s *Server) parseTemplates() {
 		"imageTag":     ImageTag,
 		"classifySev":  classifySeverity,
 		"sub":          func(a, b int) int { return a - b },
+		"plainName":    plainName,
 		"serviceOrContainer": func(kind, name string, hostID ...string) string {
 			base := "/container/" + name
 			if kind == "service" {
@@ -808,4 +809,14 @@ func marshalJSON(v any) template.JS {
 		return "null"
 	}
 	return template.JS(data) //nolint:gosec // data is server-controlled JSON, not user input
+}
+
+// plainName strips the "hostID::" prefix that history and queue records use
+// for a remote container, so pages show the container's own name. Names
+// without the prefix (local rows, rows written before it) are unchanged.
+func plainName(name, hostID string) string {
+	if hostID == "" {
+		return name
+	}
+	return strings.TrimPrefix(name, hostID+"::")
 }
