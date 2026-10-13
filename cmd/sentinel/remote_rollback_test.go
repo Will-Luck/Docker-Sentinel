@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -165,11 +166,12 @@ func hubWithAgent(t *testing.T, answer func(*proto.UpdateContainerRequest) *prot
 // one it went back to, and notified, as a local one is.
 func TestRollbackRemoteContainer_RecordsAndNotifies(t *testing.T) {
 	for _, tc := range []struct {
-		outcome string
-		want    notify.EventType
+		outcome    string
+		want       notify.EventType
+		rowOutcome string // as a local rollback row
 	}{
-		{"success", notify.EventRollbackOK},
-		{"failed", notify.EventRollbackFailed},
+		{"success", notify.EventRollbackOK, "rollback"},
+		{"failed", notify.EventRollbackFailed, "failed"},
 	} {
 		t.Run(tc.outcome, func(t *testing.T) {
 			a, hostID, db, sent := hubWithAgent(t, func(req *proto.UpdateContainerRequest) *proto.UpdateResult {
@@ -194,20 +196,17 @@ func TestRollbackRemoteContainer_RecordsAndNotifies(t *testing.T) {
 				t.Fatalf("rollback error = %v, want an error only when the agent failed", err)
 			}
 
-			recs, _ := db.ListHistoryByContainer(key, 10)
-			var rollbacks []store.UpdateRecord
-			for _, r := range recs {
-				if r.Type == "rollback" {
-					rollbacks = append(rollbacks, r)
-				}
+			recs, _ := db.ListHistoryByContainer(key, 10) // newest first
+			if len(recs) != 2 {
+				t.Fatalf("history = %+v, want the update and one rollback row", recs)
 			}
-			if len(rollbacks) != 1 {
-				t.Fatalf("rollback rows = %+v, want exactly one", rollbacks)
-			}
-			r := rollbacks[0]
-			if r.Outcome != tc.outcome || r.OldImage != "nginx:1.26" || r.NewImage != "nginx:1.25" ||
+			r := recs[0]
+			if r.Outcome != tc.rowOutcome || r.Type != "" || r.OldImage != "nginx:1.26" || r.NewImage != "nginx:1.25" ||
 				r.HostID != hostID || r.HostName != "edge" {
-				t.Errorf("rollback row = %+v, want %s from nginx:1.26 to nginx:1.25 on edge", r, tc.outcome)
+				t.Errorf("rollback row = %+v, want outcome %s from nginx:1.26 to nginx:1.25 on edge", r, tc.rowOutcome)
+			}
+			if tc.outcome == "failed" && !strings.Contains(r.Error, "rollback failed: pull failed") {
+				t.Errorf("failed rollback row error = %q, want it to say the rollback failed and why", r.Error)
 			}
 
 			var got []notify.Event
@@ -233,18 +232,18 @@ func TestRecordRemoteRollback_LateResultFirstStays(t *testing.T) {
 	at := time.Now().UTC().Add(-time.Second)
 	if err := db.RecordUpdate(store.UpdateRecord{
 		Timestamp: at, ContainerName: key, OldImage: "nginx:1.26", NewImage: "nginx:1.25",
-		Outcome: "success", HostID: "host-1", Type: "rollback",
+		Outcome: "rollback", HostID: "host-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	unanswered := &cluster.UnansweredError{HostID: "host-1", RequestID: "r1", RecordAt: at, Err: errors.New("stream closed")}
 	a.recordRemoteRollback(context.Background(), "nginx", "edge",
-		store.UpdateRecord{ContainerName: key, HostID: "host-1", OldImage: "nginx:1.26", NewImage: "nginx:1.25", Type: "rollback"},
+		store.UpdateRecord{ContainerName: key, HostID: "host-1", OldImage: "nginx:1.26", NewImage: "nginx:1.25"},
 		nil, unanswered, time.Now())
 
 	recs, _ := db.ListHistoryByContainer(key, 10)
-	if len(recs) != 1 || recs[0].Outcome != "success" {
+	if len(recs) != 1 || recs[0].Outcome != "rollback" {
 		t.Errorf("history = %+v, want only the late result", recs)
 	}
 }

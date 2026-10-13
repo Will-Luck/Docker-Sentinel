@@ -225,7 +225,6 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 		ContainerName: store.ScopedKey(hostID, containerName),
 		NewImage:      oldImage,
 		HostID:        hostID,
-		Type:          "rollback",
 	}
 	if hs, ok := a.srv.GetHost(hostID); ok {
 		hostName, rec.HostName = hs.Info.Name, hs.Info.Name
@@ -250,10 +249,11 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 }
 
 // recordRemoteRollback records the rollback of a remote container asked for
-// from the dashboard or the API, and notifies it. rec holds what was known
-// before it was sent: the container, the image it ran and the one it goes
-// back to. A failure the agent did not answer is recorded at the time its
-// late result would be, and only if that result is not in yet.
+// from the dashboard or the API, as a local rollback row
+// (cluster.RollbackRow), and notifies it. rec holds what was known before
+// it was sent: the container, the image it ran and the one it goes back
+// to. A failure the agent did not answer is recorded at the time its late
+// result would be, and only if that result is not in yet.
 func (a *clusterAdapter) recordRemoteRollback(ctx context.Context, name, hostName string, rec store.UpdateRecord, ur *proto.UpdateResult, err error, start time.Time) {
 	rec.Timestamp, rec.Duration = time.Now(), time.Since(start)
 	if ur != nil {
@@ -263,12 +263,13 @@ func (a *clusterAdapter) recordRemoteRollback(ctx context.Context, name, hostNam
 		if ur.GetNewImage() != "" {
 			rec.NewImage = ur.GetNewImage()
 		}
-		rec.NewDigest, rec.Outcome, rec.Error = ur.GetNewDigest(), ur.GetOutcome(), ur.GetError()
+		rec.NewDigest = ur.GetNewDigest()
+		rec.Outcome, rec.Error = cluster.RollbackRow(ur.GetOutcome(), ur.GetError())
 		if d := ur.GetDuration(); d != nil {
 			rec.Duration = d.AsDuration()
 		}
 	} else {
-		rec.Outcome, rec.Error = "failed", err.Error()
+		rec.Outcome, rec.Error = cluster.RollbackRow("failed", err.Error())
 		rec.Timestamp = cluster.HistoryTime(err, rec.Timestamp)
 	}
 	var recErr error
@@ -289,7 +290,9 @@ func (a *clusterAdapter) recordRemoteRollback(ctx context.Context, name, hostNam
 // update of containerName on hostID, or "" if there is none. Remote history
 // rows are keyed "hostID::name" (rows from before v3.0.0 are moved to that
 // key when the cluster starts, migrateRemoteHistory). Rollback rows are not
-// updates to undo and are skipped.
+// updates to undo and are skipped: outcome "rollback", as local rollback
+// rows are, or, from before v3.0.0, outcome "success" with type
+// "rollback".
 func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, error) {
 	recs, err := st.ListHistoryByContainer(store.ScopedKey(hostID, containerName), 50)
 	if err != nil {

@@ -121,7 +121,10 @@ func TestLastRemoteOldImage_SkipsRollbackRows(t *testing.T) {
 	now := time.Now()
 	for _, rec := range []store.UpdateRecord{
 		{Timestamp: now, ContainerName: key, OldImage: "nginx:1.25", NewImage: "nginx:1.26", Outcome: "success", HostID: "host-1"},
+		// A rollback row from before v3.0.0, then one as a local rollback
+		// row is: both are skipped.
 		{Timestamp: now.Add(time.Minute), ContainerName: key, OldImage: "nginx:1.26", NewImage: "nginx:1.25", Outcome: "success", HostID: "host-1", Type: "rollback"},
+		{Timestamp: now.Add(2 * time.Minute), ContainerName: key, OldImage: "nginx:1.26", NewImage: "nginx:1.25", Outcome: "rollback", HostID: "host-1"},
 	} {
 		if err := db.RecordUpdate(rec); err != nil {
 			t.Fatal(err)

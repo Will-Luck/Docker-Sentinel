@@ -38,6 +38,24 @@ func HistoryTime(err error, fallback time.Time) time.Time {
 	return fallback
 }
 
+// RolledBackOnRequest is the error text of the history row of a rollback
+// asked for from the dashboard or the API, locally and remotely.
+const RolledBackOnRequest = "rolled back on request"
+
+// RollbackRow returns the outcome and error of the history row of a remote
+// rollback that ended with the agent's outcome and errText, in the shape
+// of a local rollback row: outcome "rollback" when it worked, so History
+// shows the container rolled back, else "failed" with why.
+func RollbackRow(outcome, errText string) (string, string) {
+	if outcome == "success" {
+		return "rollback", RolledBackOnRequest
+	}
+	if errText == "" {
+		return "failed", "rollback failed"
+	}
+	return "failed", "rollback failed: " + errText
+}
+
 // ErrUpdateSkipped is returned for a remote update that a pre-update hook
 // asked to skip (exit 75): nothing was changed. Like a local skip, it is
 // neither a success nor a failure.

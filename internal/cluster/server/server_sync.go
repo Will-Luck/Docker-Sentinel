@@ -350,11 +350,11 @@ func (s *Server) recordForCaller(hostID, name, target, purpose string, ur *proto
 			}
 		}
 	}
-	if purpose == "rollback" {
-		rec.Type = "rollback"
-	}
 	if err != nil {
 		rec.Outcome, rec.Error = "failed", err.Error()
+		if purpose == "rollback" {
+			rec.Outcome, rec.Error = cluster.RollbackRow("failed", err.Error())
+		}
 		rec.Timestamp = cluster.HistoryTime(err, rec.Timestamp)
 		if ins, ok := s.history.(interface {
 			RecordUpdateIfAbsent(store.UpdateRecord) (bool, error)
@@ -372,6 +372,9 @@ func (s *Server) recordForCaller(hostID, name, target, purpose string, ur *proto
 			rec.NewImage = ur.GetNewImage()
 		}
 		rec.NewDigest, rec.Outcome, rec.Error = ur.GetNewDigest(), ur.GetOutcome(), ur.GetError()
+		if purpose == "rollback" {
+			rec.Outcome, rec.Error = cluster.RollbackRow(ur.GetOutcome(), ur.GetError())
+		}
 		if d := ur.GetDuration(); d != nil {
 			rec.Duration = d.AsDuration()
 		}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
@@ -420,7 +421,7 @@ func (u *Updater) recordManualRollback(ctx context.Context, name string, live co
 		ContainerName: name,
 		Outcome:       "rollback",
 		Duration:      u.clock.Since(start),
-		Error:         "rolled back on request",
+		Error:         cluster.RolledBackOnRequest,
 	}
 	if live.Config != nil {
 		entry.OldImage, entry.OldDigest = live.Config.Image, live.Image

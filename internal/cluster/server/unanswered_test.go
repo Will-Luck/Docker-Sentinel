@@ -121,7 +121,7 @@ func TestUnansweredRollback_ReplayedAsARollback(t *testing.T) {
 	}
 	waitFor(t, 3*time.Second, func() bool {
 		recs, _ := st.ListHistoryByContainer(key, 10)
-		return len(recs) == 1 && recs[0].Outcome == "success" && recs[0].Type == "rollback"
+		return len(recs) == 1 && recs[0].Outcome == "rollback" && recs[0].Type == ""
 	}, "the replayed rollback should replace the failure row, as a rollback")
 }
 
@@ -205,5 +205,38 @@ func TestUpdateContainerSync_RecordsTheContainerThatChanged(t *testing.T) {
 	recs, _ := st.ListHistoryByContainer(store.ScopedKey(hostID, "sentinel-agent"), 10)
 	if len(recs) != 1 || recs[0].OldImage != "sentinel:3.0.0" || recs[0].NewImage != "sentinel:3.0.1" {
 		t.Errorf("history of the agent's own container = %+v, want its update", recs)
+	}
+}
+
+// A rollback no caller records is recorded by the hub as a local rollback
+// row is: outcome rollback, so History shows it rolled back.
+func TestRollbackContainerSync_RecordedAsALocalRollback(t *testing.T) {
+	srv, addr, st, _ := testServer(t)
+	srv.SetHistoryRecorder(st)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	t.Cleanup(closeConn)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if req := msg.GetUpdateContainer(); req != nil {
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{UpdateResult: &proto.UpdateResult{
+					RequestId: msg.GetRequestId(), ContainerName: "web", Outcome: "success", OldImage: "nginx:2", NewImage: req.GetTargetImage(),
+				}}})
+			}
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := srv.RollbackContainerSync(ctx, hostID, "web", "nginx:1"); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := st.ListHistoryByContainer(store.ScopedKey(hostID, "web"), 10)
+	if len(recs) != 1 || recs[0].Outcome != "rollback" || recs[0].Type != "" || recs[0].OldImage != "nginx:2" || recs[0].NewImage != "nginx:1" {
+		t.Errorf("history = %+v, want one rollback row from nginx:2 to nginx:1", recs)
 	}
 }

@@ -604,11 +604,12 @@ func (s *Server) recordLateUpdate(hostID string, ur *proto.UpdateResult) {
 		HostID:        hostID,
 		HostName:      hostName,
 	}
-	// A rollback that finished late is a rollback, not an update to undo;
-	// the result replaces the failure the caller recorded.
+	// A rollback that finished late is a rollback, not an update to undo
+	// (recorded as a local rollback is); the result replaces the failure
+	// the caller recorded.
 	if lr := s.takeLate(hostID, ur.RequestId); lr.purpose != "" {
 		if lr.purpose == "rollback" {
-			rec.Type = "rollback"
+			rec.Outcome, rec.Error = cluster.RollbackRow(ur.Outcome, ur.Error)
 		}
 		if !lr.recordAt.IsZero() {
 			rec.Timestamp = lr.recordAt
@@ -726,10 +727,10 @@ func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 
 		// An update the hub stopped waiting for (the stream dropped): its
 		// result replaces the failure the caller recorded.
-		var recType string
+		outcome, errText := e.Outcome, e.Error
 		if lr := s.takeLate(hostID, e.GetId()); lr.purpose != "" {
 			if lr.purpose == "rollback" {
-				recType = "rollback"
+				outcome, errText = cluster.RollbackRow(e.Outcome, e.Error)
 			}
 			if !lr.recordAt.IsZero() {
 				ts = lr.recordAt
@@ -737,15 +738,14 @@ func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 		}
 
 		rec := store.UpdateRecord{
-			Type:          recType,
 			Timestamp:     ts,
 			ContainerName: store.ScopedKey(hostID, e.Container),
 			OldImage:      e.OldImage,
 			NewImage:      e.NewImage,
 			OldDigest:     e.OldDigest,
 			NewDigest:     e.NewDigest,
-			Outcome:       e.Outcome,
-			Error:         e.Error,
+			Outcome:       outcome,
+			Error:         errText,
 			Duration:      dur,
 			HostID:        hostID,
 			HostName:      hostName,

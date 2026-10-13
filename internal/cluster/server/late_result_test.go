@@ -81,7 +81,8 @@ func TestLateRollbackResult_RecordedAsRollback(t *testing.T) {
 		}
 	}()
 
-	if _, err := srv.RollbackContainerSync(context.Background(), hostID, "web", "nginx:1"); err == nil {
+	// The caller records its failure; the hub records the late result.
+	if _, err := srv.RollbackContainerSync(WithCallerRecords(context.Background()), hostID, "web", "nginx:1"); err == nil {
 		t.Fatal("rollback returned no error although the agent never answered in time")
 	}
 	req := <-reqs
@@ -91,7 +92,9 @@ func TestLateRollbackResult_RecordedAsRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, 3*time.Second, func() bool { return hist.count() == 1 }, "late rollback result not recorded")
-	if r := hist.all()[0]; r.Type != "rollback" {
-		t.Errorf("late rollback recorded with type %q, want rollback", r.Type)
+	// As a local rollback row: outcome rollback (History shows it as rolled
+	// back, and its Rollback filter finds it).
+	if r := hist.all()[0]; r.Outcome != "rollback" || r.Error != "rolled back on request" || r.Type != "" {
+		t.Errorf("late rollback recorded as %+v, want outcome rollback, as locally", r)
 	}
 }
