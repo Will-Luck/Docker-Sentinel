@@ -31,6 +31,15 @@ type fakeHost struct {
 	renameErr  map[string]error // by requested new name
 	pullCalls  []string
 	startCalls []string
+
+	// afterInspect, if set, runs after every inspect (outside the lock),
+	// so a test can change the host between the agent's steps.
+	afterInspect func(id string)
+	// pullGate, if set, blocks every pull until it is closed.
+	pullGate chan struct{}
+	// removedRunning lists containers removed while running: a forced
+	// remove that kills a live container.
+	removedRunning []string
 }
 
 type fakeContainer struct {
@@ -141,6 +150,9 @@ func (h *fakeHost) ListAllContainers(context.Context) ([]container.Summary, erro
 }
 
 func (h *fakeHost) InspectContainer(_ context.Context, id string) (container.InspectResponse, error) {
+	if h.afterInspect != nil {
+		defer h.afterInspect(id)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	c, ok := h.containers[id]
@@ -167,6 +179,9 @@ func (h *fakeHost) StopContainer(_ context.Context, id string, _ int) error {
 	if err := h.stopErr[id]; err != nil {
 		return err
 	}
+	if !c.running {
+		return nil // the daemon answers 304 and changes nothing
+	}
 	c.running = false
 	if c.autoRemove {
 		delete(h.containers, id)
@@ -177,8 +192,12 @@ func (h *fakeHost) StopContainer(_ context.Context, id string, _ int) error {
 func (h *fakeHost) RemoveContainer(_ context.Context, id string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, ok := h.containers[id]; !ok {
+	c, ok := h.containers[id]
+	if !ok {
 		return fmt.Errorf("No such container: %s", id)
+	}
+	if c.running {
+		h.removedRunning = append(h.removedRunning, c.name)
 	}
 	delete(h.containers, id)
 	return nil
@@ -253,6 +272,9 @@ func (h *fakeHost) RenameContainer(_ context.Context, id, newName string) error 
 func (h *fakeHost) NetworkConnect(context.Context, string, string) error { return nil }
 
 func (h *fakeHost) PullImage(_ context.Context, ref string) error {
+	if h.pullGate != nil {
+		<-h.pullGate
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.pullCalls = append(h.pullCalls, ref)
@@ -284,3 +306,12 @@ func (h *fakeHost) ExecContainer(context.Context, string, []string, int) (int, s
 func (h *fakeHost) ContainerLogs(context.Context, string, int) (string, error) { return "", nil }
 
 func (h *fakeHost) EngineID(context.Context) (string, error) { return "fake-engine", nil }
+
+// startByID marks a container running, as `docker start <id>` would.
+func (h *fakeHost) startByID(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if c, ok := h.containers[id]; ok {
+		c.running = true
+	}
+}

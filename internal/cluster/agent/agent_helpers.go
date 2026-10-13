@@ -87,9 +87,10 @@ func parkedName(name string) string {
 //  5. remove the old container
 //
 // If step 3 or 4 fails, the replacement is removed, the old container gets
-// its name back and is started again. A container that was not running is
-// neither stopped nor started: it comes back stopped, updated or not. An
-// empty targetImage re-pulls the container's current image.
+// its name back and is started again. The running state is the one the
+// container had once parked: a container that was not running then comes
+// back stopped, updated or not. An empty targetImage re-pulls the
+// container's current image.
 func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string) (recreateResult, error) {
 	var r recreateResult
 
@@ -133,7 +134,18 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	if err := a.docker.RenameContainer(ctx, cID, parked); err != nil {
 		return r, fmt.Errorf("rename %s to %s: %w", name, parked, err)
 	}
-	old := parkedContainer{id: cID, name: name, inspect: &inspect, targetImage: targetImage, wasRunning: isRunning(&inspect)}
+	old := parkedContainer{id: cID, name: name, inspect: &inspect, targetImage: targetImage}
+
+	// Take the running state now that the container is parked: it may have
+	// been started or stopped since the first inspect, and from here on
+	// anything acting on it by name reaches the replacement instead.
+	parkedInspect, err := a.docker.InspectContainer(ctx, cID)
+	if err != nil {
+		old.wasRunning = isRunning(&inspect)
+		a.restoreParked(ctx, old, "")
+		return r, fmt.Errorf("inspect %s after parking it: %w", name, err)
+	}
+	old.wasRunning = isRunning(&parkedInspect)
 
 	newID, err := a.createFromSpec(ctx, name, spec)
 	if err != nil {
@@ -141,14 +153,17 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 		return r, fmt.Errorf("create %s: %w", name, err)
 	}
 
-	if old.wasRunning {
-		// Stop before start: the replacement needs the old container's
-		// ports. 30s timeout is generous but safe.
-		if err := a.docker.StopContainer(ctx, cID, 30); err != nil {
-			a.restoreParked(ctx, old, newID)
-			return r, fmt.Errorf("stop %s: %w", name, err)
-		}
+	// Stop the old container whatever its state, so the remove below only
+	// ever removes a container the agent stopped (for one that is already
+	// stopped this changes nothing). The replacement needs its ports. 30s
+	// timeout is generous but safe.
+	if err := a.docker.StopContainer(ctx, cID, 30); err != nil {
+		a.restoreParked(ctx, old, newID)
+		return r, fmt.Errorf("stop %s: %w", name, err)
+	}
+	old.stopped = true
 
+	if old.wasRunning {
 		if err := a.docker.StartContainer(ctx, newID); err != nil {
 			a.restoreParked(ctx, old, newID)
 			return r, fmt.Errorf("start %s: %w", name, err)
@@ -203,7 +218,8 @@ type parkedContainer struct {
 	id, name    string
 	inspect     *container.InspectResponse
 	targetImage string // image the failed replacement was built from
-	wasRunning  bool
+	wasRunning  bool   // running when it was parked
+	stopped     bool   // the agent has stopped it
 }
 
 func isRunning(inspect *container.InspectResponse) bool {

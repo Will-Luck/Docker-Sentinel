@@ -257,3 +257,29 @@ func TestHandleUpdateContainer_StoppedContainerStaysStopped(t *testing.T) {
 	}
 	h.requireOnly(t, "maintenance", "nginx:2", false)
 }
+
+// The container was stopped when the update began but was started (by a
+// user or a restart policy) before the agent parked it. The agent must
+// treat it as running: stop it itself, start the replacement, and never
+// force-remove a container it did not stop.
+func TestRecreateContainer_StartedDuringUpdateIsStoppedNotForceRemoved(t *testing.T) {
+	h := newFakeHost()
+	old := h.addContainer("web", "nginx:1", false)
+	h.registry["nginx:2"] = "sha256:nginx-2"
+	first := true
+	h.afterInspect = func(id string) {
+		if first && id == old.id {
+			first = false
+			h.startByID(id)
+		}
+	}
+	a := newTestAgent(t.TempDir(), h)
+
+	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err != nil {
+		t.Fatalf("recreateContainer: %v", err)
+	}
+	if len(h.removedRunning) != 0 {
+		t.Errorf("force-removed running containers %v", h.removedRunning)
+	}
+	h.requireOnly(t, "web", "nginx:2", true)
+}
