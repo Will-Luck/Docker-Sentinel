@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Built with Go 1.26.9. Go 1.25 left support when Go 1.27.0 shipped on
+  2026-08-19, so v2.16.0 (built with go1.25.14) lacks the 2026-10-08
+  standard library fixes in `net/http`, `html/template`, `net/textproto` and
+  `crypto/tls`. Among them are HTTP/2 server bugs, including a crash, that a
+  client can reach on the dashboard port before logging in when TLS is on
+  (`SENTINEL_TLS_CERT`/`SENTINEL_TLS_KEY` or `SENTINEL_TLS_AUTO`). Go 1.26.9
+  carries the same fixes as Go 1.27.2 without 1.27's platform changes, so
+  macOS 12 binaries and existing `GODEBUG` settings keep working.
+- Bumped `google.golang.org/grpc` v1.79.3 to v1.84.0. Two of the four
+  advisories it clears (GHSA-vp52-pcj8-j9qc, heap exhaustion, and
+  GHSA-hrxh-6v49-42gf, HTTP/2 rapid reset bypass) are reachable on the
+  cluster gRPC port before a client certificate is checked, when cluster
+  mode is on. The other two (GHSA-2v4p-qf9q-27wj, GHSA-qc2q-p7wx-3px3) affect
+  only xDS servers, which Sentinel does not run. A v2.16.0 agent still
+  connects to a v2.16.1 server, and the other way round.
+- Bumped `golang.org/x/net` to v0.61.0, `golang.org/x/text` to v0.43.0 and
+  `golang.org/x/crypto` to v0.58.0. None of their advisories is called from
+  Sentinel's code; the bumps clear module-level scanner findings.
+- The image now uses `alpine:3.24` (3.21 reaches end of support on
+  2026-11-01) and runs `apk upgrade` at build time, so OpenSSL and zlib carry
+  their latest security revisions. The binary is static (`CGO_ENABLED=0`) and
+  links neither.
+
+### Fixed
+
+- A pull that failed after the daemon started streaming progress (a layer
+  download or extract error, a dropped connection, a full disk) was treated
+  as a success, because Docker client v0.2.2 ignored errors reported inside
+  the stream. An unchanged tag was then recorded as identical and its digest
+  cached, hiding the update until the remote digest changed again. Updated
+  the Docker client to v0.6.2, which returns the error.
+
+### Changed
+
+- Sentinel now checks the Docker Engine API version at startup and exits
+  with a clear message below API 1.44 (Docker Engine 25.0). Older engines
+  never worked: the previous client sent every request at a newer API
+  version, which they rejected. The new client would talk to them, but they
+  refuse to create a container on several networks at once, which would
+  leave such a container removed after a failed update.
+- Building from source needs Go 1.26 or later (`go.mod` asks for toolchain
+  go1.26.9, which `GOTOOLCHAIN=auto` downloads).
+- CI: golangci-lint v2.14.0, GitHub Actions moved off the removed Node 20
+  runtime, every Go build pinned to the toolchain in `go.mod`, and a
+  govulncheck job on every push plus a weekly scheduled run on GitHub.
+
 ## [2.16.0] - 2026-10-12
 
 ### Changed
