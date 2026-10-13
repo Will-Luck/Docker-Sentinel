@@ -857,3 +857,69 @@ func TestRecoverLeavesARunningReplacementAloneWithoutAnUncommittedMarker(t *test
 		}
 	}
 }
+
+func TestWatchOutcomeReportsOnceWhenTheMarkerTurnsFinal(t *testing.T) {
+	dir := t.TempDir()
+	setMarker(t, dir, Outcome{Result: ResultInProgress})
+	got := make(chan *Outcome, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	WatchOutcome(ctx, dir, nopLog{}, 5*time.Second, 5*time.Millisecond, func(o *Outcome) { got <- o })
+
+	select {
+	case <-got:
+		t.Fatal("reported while the swap was still in progress")
+	case <-time.After(30 * time.Millisecond):
+	}
+	setMarker(t, dir, Outcome{Result: ResultRolledBack, Error: "boom", ContainerName: "sentinel"})
+
+	select {
+	case o := <-got:
+		if o.Result != ResultRolledBack || o.Error != "boom" {
+			t.Errorf("outcome = %+v", o)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the final outcome was never reported")
+	}
+	select {
+	case o := <-got:
+		t.Errorf("reported twice: %+v", o)
+	case <-time.After(60 * time.Millisecond):
+	}
+	if _, err := os.Stat(filepath.Join(dir, OutcomeFile)); err == nil {
+		t.Error("the outcome file was left behind")
+	}
+}
+
+func TestWatchOutcomeGivesUpAfterTheBound(t *testing.T) {
+	dir := t.TempDir()
+	setMarker(t, dir, Outcome{Result: ResultInProgress})
+	got := make(chan *Outcome, 1)
+	WatchOutcome(context.Background(), dir, nopLog{}, 40*time.Millisecond, 5*time.Millisecond, func(o *Outcome) { got <- o })
+	time.Sleep(120 * time.Millisecond)
+	setMarker(t, dir, Outcome{Result: ResultSuccess})
+	select {
+	case o := <-got:
+		t.Errorf("reported after the bound: %+v", o)
+	case <-time.After(60 * time.Millisecond):
+	}
+}
+
+func TestWatchOutcomeStopsOnShutdownAndIgnoresAMissingMarker(t *testing.T) {
+	dir := t.TempDir()
+	got := make(chan *Outcome, 1)
+	WatchOutcome(context.Background(), dir, nopLog{}, time.Second, time.Millisecond, func(o *Outcome) { got <- o }) // no marker: nothing to watch
+
+	setMarker(t, dir, Outcome{Result: ResultInProgress})
+	ctx, cancel := context.WithCancel(context.Background())
+	WatchOutcome(ctx, dir, nopLog{}, time.Minute, 5*time.Millisecond, func(o *Outcome) { got <- o })
+	cancel()
+	time.Sleep(30 * time.Millisecond)
+	setMarker(t, dir, Outcome{Result: ResultSuccess})
+	select {
+	case o := <-got:
+		t.Errorf("reported after shutdown: %+v", o)
+	case <-time.After(60 * time.Millisecond):
+	}
+}

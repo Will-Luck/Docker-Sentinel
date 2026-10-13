@@ -110,10 +110,13 @@ type Config struct {
 // Docker host. It is the client-side counterpart to the server's gRPC
 // services (EnrollmentService + AgentService).
 type Agent struct {
-	cfg    Config
-	docker DockerAPI
-	hostID string // assigned by server during enrollment
-	log    *slog.Logger
+	syncMu   sync.Mutex // serialises journal syncs
+	streamMu sync.Mutex
+	stream   proto.AgentService_ChannelClient // the open session, if any
+	cfg      Config
+	docker   DockerAPI
+	hostID   string // assigned by server during enrollment
+	log      *slog.Logger
 
 	conn       *grpc.ClientConn
 	enrollment proto.EnrollmentServiceClient
@@ -264,6 +267,12 @@ func (a *Agent) Run(ctx context.Context) error {
 	if selfOutcome == nil {
 		selfOutcome = selfupdate.ReportOutcome(a.cfg.DataDir, a.log)
 	}
+	// The helper writes the final outcome about 20 seconds after this agent
+	// started; report it, to the hub too, once it is there.
+	selfupdate.WatchOutcome(ctx, a.cfg.DataDir, a.log, 2*time.Minute, 2*time.Second, func(o *selfupdate.Outcome) {
+		a.reportSelfUpdateOutcome(o)
+		a.flushJournal()
+	})
 	selfupdate.CleanupLeftovers(ctx, a.docker, selfID, a.cfg.DataDir, a.log)
 	// An in-process upgrade leaves the old container until it exits.
 	go func() {
@@ -498,6 +507,8 @@ func (a *Agent) runSession(ctx context.Context) error {
 	}
 
 	a.setConnected()
+	a.setStream(stream)
+	defer a.setStream(nil)
 	a.log.Info("channel established")
 
 	// Sync any offline journal entries from autonomous mode.

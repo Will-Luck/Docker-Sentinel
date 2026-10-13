@@ -273,3 +273,42 @@ func InProgress(dir string) bool {
 	}
 	return time.Since(out.FinishedAt) < inProgressStale
 }
+
+// WatchOutcome reports the outcome of a self-update that was still in progress
+// when this instance started. The helper writes the final outcome about a
+// settle period after the new instance came up, so the first look at startup
+// sees "in progress". It polls, for at most bound, until the marker turns
+// final, then logs it (ReportOutcome) and calls onOutcome once with it. It
+// returns at once when there is no in-progress marker, and the goroutine stops
+// when ctx ends.
+func WatchOutcome(ctx context.Context, dir string, log Logger, bound, poll time.Duration, onOutcome func(*Outcome)) {
+	if readMarker(dir) == nil {
+		return
+	}
+	go func() {
+		deadline := time.NewTimer(bound)
+		defer deadline.Stop()
+		tick := time.NewTicker(poll)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-deadline.C:
+				log.Warn("a self-update was still marked in progress after waiting; its outcome is not reported")
+				return
+			case <-tick.C:
+				if _, err := os.Stat(filepath.Join(dir, OutcomeFile)); err != nil {
+					return // somebody else reported it
+				}
+				if readMarker(dir) != nil {
+					continue
+				}
+				if out := ReportOutcome(dir, log); out != nil && onOutcome != nil {
+					onOutcome(out)
+				}
+				return
+			}
+		}
+	}()
+}

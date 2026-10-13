@@ -134,6 +134,9 @@ func main() {
 	}
 	// Report how a self-update that just replaced the previous instance ended.
 	selfupdate.ReportOutcome(filepath.Dir(cfg.DBPath), log)
+	// The helper writes the final outcome about 20 seconds after this instance
+	// started; log it once it is there.
+	selfupdate.WatchOutcome(ctx, filepath.Dir(cfg.DBPath), log, 2*time.Minute, 2*time.Second, nil)
 	var dbClosed sync.Once
 	defer dbClosed.Do(func() { db.Close() })
 

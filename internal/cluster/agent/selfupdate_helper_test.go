@@ -91,3 +91,37 @@ func TestAgentJournalsARolledBackSelfUpdateForTheHub(t *testing.T) {
 		t.Errorf("journal entries = %d after a success and nil, want 1", n)
 	}
 }
+
+// F2: the helper's final outcome arrives after the agent started. When it does,
+// the failure is journalled and sent to the hub at once, not at the next
+// reconnect.
+func TestAgentFlushesTheJournalToTheOpenSession(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestAgent(dir, newMockDocker())
+	j, err := newJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.journal = j
+	stream := &recStream{}
+	a.setStream(stream)
+
+	a.reportSelfUpdateOutcome(&selfupdate.Outcome{Result: selfupdate.ResultRolledBack, Error: "boom", ContainerName: "agent", FinishedAt: time.Now()})
+	a.flushJournal()
+
+	sent := stream.messages()
+	if len(sent) != 1 || sent[0].GetOfflineJournal() == nil || len(sent[0].GetOfflineJournal().Entries) != 1 {
+		t.Fatalf("sent = %+v, want one offline journal with one entry", sent)
+	}
+	if j.Len() != 0 {
+		t.Errorf("journal still holds %d entries after the flush", j.Len())
+	}
+
+	// With no session the entry waits for the next one.
+	a.setStream(nil)
+	a.reportSelfUpdateOutcome(&selfupdate.Outcome{Result: selfupdate.ResultFailed, Error: "x", ContainerName: "agent", FinishedAt: time.Now().Add(time.Second)})
+	a.flushJournal()
+	if j.Len() != 1 {
+		t.Errorf("journal entries = %d, want the entry kept for the next session", j.Len())
+	}
+}

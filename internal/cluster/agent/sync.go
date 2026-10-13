@@ -139,6 +139,8 @@ func (j *journal) save() error {
 // and will ACK implicitly. If the send fails, the journal stays on disk for
 // the next reconnection attempt.
 func (a *Agent) syncJournal(stream proto.AgentService_ChannelClient) error {
+	a.syncMu.Lock()
+	defer a.syncMu.Unlock()
 	entries := a.journal.Entries()
 	if len(entries) == 0 {
 		return nil
@@ -189,4 +191,25 @@ func (a *Agent) syncJournal(stream proto.AgentService_ChannelClient) error {
 
 	a.log.Info("offline journal synced and cleared", "entries", len(entries))
 	return nil
+}
+
+// setStream records the stream of the current session, for flushJournal.
+func (a *Agent) setStream(stream proto.AgentService_ChannelClient) {
+	a.streamMu.Lock()
+	a.stream = stream
+	a.streamMu.Unlock()
+}
+
+// flushJournal sends the offline journal to the hub now, when a session is
+// open; otherwise it goes out when the next session starts.
+func (a *Agent) flushJournal() {
+	a.streamMu.Lock()
+	stream := a.stream
+	a.streamMu.Unlock()
+	if stream == nil || a.journal == nil {
+		return
+	}
+	if err := a.syncJournal(stream); err != nil {
+		a.log.Warn("could not send the journal to the hub now; it goes out when the agent reconnects", "error", err)
+	}
 }
