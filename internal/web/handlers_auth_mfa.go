@@ -239,11 +239,15 @@ func (s *Server) apiOIDCAllowLink(w http.ResponseWriter, r *http.Request) {
 // apiOIDCUnlink removes a user's single sign-on binding (admin only).
 func (s *Server) apiOIDCUnlink(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	who := id
+	if u, _ := s.deps.Auth.Users.GetUser(id); u != nil {
+		who = u.Username
+	}
 	if err := s.deps.Auth.UnlinkOIDC(id); err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	s.logEvent(r, "auth", "", "Single sign-on link removed for user "+id)
+	s.logEvent(r, "auth", "", "Single sign-on link removed for user "+who)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

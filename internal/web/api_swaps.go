@@ -75,6 +75,6 @@ func (s *Server) discardRemoteSwap(w http.ResponseWriter, r *http.Request, hostI
 		writeError(w, http.StatusBadGateway, "failed to discard the swap record: "+err.Error())
 		return
 	}
-	s.logEvent(r, "swap-discard", name, "Discarded the unfinished update record of "+name+" on "+hostID)
+	s.logEvent(r, "swap-discard", name, "Discarded the unfinished update record of "+name+" on "+s.hostLabel(hostID))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "discarded", "name": name, "host": hostID})
 }

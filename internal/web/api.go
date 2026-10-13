@@ -279,3 +279,17 @@ func (s *Server) isQueueItemSelf(ctx context.Context, item PendingUpdate) bool {
 	}
 	return s.getLocalContainerLabels(ctx, item.ContainerName)["sentinel.self"] == "true"
 }
+
+// hostLabel names a cluster host for people: its name, or the first eight
+// characters of its ID when the name is unknown.
+func (s *Server) hostLabel(hostID string) string {
+	if s.deps.Cluster != nil {
+		if h, ok := s.deps.Cluster.GetHost(hostID); ok && h.Name != "" {
+			return h.Name
+		}
+	}
+	if len(hostID) > 12 {
+		return hostID[:8]
+	}
+	return hostID
+}

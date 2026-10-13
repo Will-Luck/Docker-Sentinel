@@ -427,7 +427,7 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 					Type:          events.EventContainerUpdate,
 					ContainerName: name,
 					HostID:        hostID,
-					Message:       "GHCR switch failed on " + hostID + ": " + err.Error(),
+					Message:       "GHCR switch failed on " + s.hostLabel(hostID) + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
 			} else {
@@ -436,12 +436,12 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(hostID, name) })
 		}()
 
-		s.logEvent(r, "ghcr_switch", name, "Remote GHCR switch to "+ghcrImage+" on "+hostID)
+		s.logEvent(r, "ghcr_switch", name, "Remote GHCR switch to "+ghcrImage+" on "+s.hostLabel(hostID))
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":     "started",
 			"name":       name,
 			"ghcr_image": ghcrImage,
-			"message":    "migration to GHCR started for " + name + " on " + hostID,
+			"message":    "migration to GHCR started for " + name + " on " + s.hostLabel(hostID),
 		})
 		return
 	}

@@ -48,13 +48,13 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 					Type:          events.EventContainerState,
 					ContainerName: name,
 					HostID:        hostID,
-					Message:       "restart failed on " + hostID + ": " + err.Error(),
+					Message:       "restart failed on " + s.hostLabel(hostID) + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
 			}
 			// Success event is published by handleContainerActionResult.
 		}()
-		s.logEvent(r, "restart", name, "Container restarted on "+hostID)
+		s.logEvent(r, "restart", name, "Container restarted on "+s.hostLabel(hostID))
 		writeJSON(w, http.StatusOK, map[string]string{"status": "restarting", "name": name, "message": "restart initiated for " + name})
 		return
 	}
@@ -155,13 +155,13 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 					Type:          events.EventContainerState,
 					ContainerName: name,
 					HostID:        hostID,
-					Message:       "stop failed on " + hostID + ": " + err.Error(),
+					Message:       "stop failed on " + s.hostLabel(hostID) + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
 			}
 			// Success event is published by handleContainerActionResult.
 		}()
-		s.logEvent(r, "stop", name, "Container stopped on "+hostID)
+		s.logEvent(r, "stop", name, "Container stopped on "+s.hostLabel(hostID))
 		writeJSON(w, http.StatusOK, map[string]string{"status": "stopping", "name": name, "message": "stop initiated for " + name})
 		return
 	}
@@ -242,13 +242,13 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 					Type:          events.EventContainerState,
 					ContainerName: name,
 					HostID:        hostID,
-					Message:       "start failed on " + hostID + ": " + err.Error(),
+					Message:       "start failed on " + s.hostLabel(hostID) + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
 			}
 			// Success event is published by handleContainerActionResult.
 		}()
-		s.logEvent(r, "start", name, "Container started on "+hostID)
+		s.logEvent(r, "start", name, "Container started on "+s.hostLabel(hostID))
 		writeJSON(w, http.StatusOK, map[string]string{"status": "starting", "name": name, "message": "start initiated for " + name})
 		return
 	}
@@ -353,7 +353,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 					Type:          events.EventContainerUpdate,
 					ContainerName: name,
 					HostID:        hostID,
-					Message:       "update failed on " + hostID + ": " + err.Error(),
+					Message:       "update failed on " + s.hostLabel(hostID) + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
 			} else {
@@ -367,7 +367,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 			s.finishRemoteUpdating(hostID, name)
 		}()
 
-		s.logEvent(r, "update", name, "Remote update triggered on "+hostID)
+		s.logEvent(r, "update", name, "Remote update triggered on "+s.hostLabel(hostID))
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "started",
 			"name":    name,
@@ -484,7 +484,7 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 
-		s.logEvent(r, "rollback", name, "Remote rollback triggered on "+hostID)
+		s.logEvent(r, "rollback", name, "Remote rollback triggered on "+s.hostLabel(hostID))
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status": "started", "name": name, "message": "rollback started for " + name,
 		})
@@ -547,7 +547,7 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		s.logEvent(r, "check", name, "Manual registry check for remote container on "+hostID)
+		s.logEvent(r, "check", name, "Manual registry check for remote container on "+s.hostLabel(hostID))
 
 		// Check against the digest the agent reported, as the scan does:
 		// the hub's own Docker usually does not have the image.
@@ -803,7 +803,7 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 					Type:          events.EventContainerUpdate,
 					ContainerName: name,
 					HostID:        hostID,
-					Message:       "update to " + body.Tag + " failed on " + hostID + ": " + err.Error(),
+					Message:       "update to " + body.Tag + " failed on " + s.hostLabel(hostID) + ": " + err.Error(),
 					Timestamp:     time.Now(),
 				})
 			} else {
@@ -812,7 +812,7 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 			s.finishRemoteUpdating(hostID, name)
 		}()
 
-		s.logEvent(r, "update_to_version", name, "Remote update to "+body.Tag+" on "+hostID)
+		s.logEvent(r, "update_to_version", name, "Remote update to "+body.Tag+" on "+s.hostLabel(hostID))
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "started",
 			"name":    name,
