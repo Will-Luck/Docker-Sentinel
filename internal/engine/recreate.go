@@ -115,6 +115,12 @@ func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, veri
 	return nil
 }
 
+// changed reports whether replace got far enough to change anything. When
+// it did not (the rename failed), there is nothing to undo.
+func (s *swap) changed() bool {
+	return s.renamed || s.newID != ""
+}
+
 // undo reverts whatever replace did. It returns an error when the old
 // container could not be brought back, for example because the daemon
 // already deleted a --rm container on stop.

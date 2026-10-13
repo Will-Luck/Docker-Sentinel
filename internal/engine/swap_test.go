@@ -95,6 +95,33 @@ func TestUpdateContainerRestoresOldContainerWhenValidationFails(t *testing.T) {
 	}
 }
 
+// A swap that fails before it changes anything (here a leftover
+// <name>-sentinel-old holds the name) is a failed update, not a rollback:
+// the container was never touched, so no rollback is reported and the
+// rollback policy is not applied.
+func TestUpdateContainerRenameFailureIsPlainFailure(t *testing.T) {
+	mock, u := setupUpdateWithScanVerify(t)
+	u.cfg.SetRollbackPolicy("manual")
+	mock.renameErrTo["nginx-sentinel-old"] = errors.New("name already in use")
+
+	if err := u.UpdateContainer(context.Background(), "aaa", "nginx", ""); err == nil {
+		t.Fatal("expected an error from the failed rename")
+	}
+	if len(mock.ops) != 2 || mock.ops[1] != "rename aaa nginx-sentinel-old" {
+		t.Errorf("ops = %v, want only the pull and the failed rename", mock.ops)
+	}
+	history, _ := u.store.ListHistory(10, "")
+	if len(history) != 1 || history[0].Outcome != "failed" {
+		t.Errorf("history = %+v, want one failed record", history)
+	}
+	if p, ok := u.store.GetPolicyOverride("nginx"); ok {
+		t.Errorf("rollback policy applied (%q) although nothing was rolled back", p)
+	}
+	if on, _ := u.store.GetMaintenance("nginx"); on {
+		t.Error("maintenance flag left set")
+	}
+}
+
 // When the old container cannot be given its name back (here the rename
 // fails; for a --rm container the daemon has already deleted it), the
 // update falls back to recreating it from the snapshot.

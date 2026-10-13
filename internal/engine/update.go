@@ -252,6 +252,11 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	u.log.Info("replacing container", "name", name, "image", pullImage)
 	sw := newSwap(u.docker, u.log, name, id, inspect, 30)
 	if err := sw.replace(ctx, rc, true, nil); err != nil {
+		if !sw.changed() {
+			u.log.Error("could not set the old container aside, nothing was changed", "name", name, "error", err)
+			u.reportFailedUpdate(ctx, name, oldImage, pullImage, extractDigestForRecord(inspect), start, err)
+			return fmt.Errorf("replace %s: %w", name, err)
+		}
 		u.log.Error("replacement failed, restoring the old container", "name", name, "error", err)
 		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, err)
 		return fmt.Errorf("replace %s: %w", name, err)
@@ -287,7 +292,11 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			Timestamp:     u.clock.Now(),
 		})
 		metrics.UpdatesTotal.WithLabelValues("failed").Inc()
-		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, fmt.Errorf("validation failed: %v", err))
+		cause := errors.New("new container failed validation")
+		if err != nil {
+			cause = fmt.Errorf("validation failed: %w", err)
+		}
+		u.restoreAfterFailedUpdate(ctx, sw, snapshotData, start, cause)
 		return fmt.Errorf("new container %s failed validation", name)
 	}
 
@@ -583,6 +592,36 @@ func (u *Updater) restoreOld(ctx context.Context, sw *swap, snapshotData []byte)
 		}
 	}
 	return nil
+}
+
+// reportFailedUpdate records and notifies an update that failed before it
+// changed the container.
+func (u *Updater) reportFailedUpdate(ctx context.Context, name, oldImage, newImage, oldDigest string, start time.Time, cause error) {
+	ctx = context.WithoutCancel(ctx)
+	if err := u.store.SetMaintenance(name, false); err != nil {
+		u.log.Warn("failed to clear maintenance flag", "name", name, "error", err)
+	}
+	if err := u.store.RecordUpdate(store.UpdateRecord{
+		Timestamp:     u.clock.Now(),
+		ContainerName: name,
+		OldImage:      oldImage,
+		OldDigest:     oldDigest,
+		NewImage:      newImage,
+		Outcome:       "failed",
+		Duration:      u.clock.Since(start),
+		Error:         cause.Error(),
+	}); err != nil {
+		u.log.Warn("failed to persist update failure record", "name", name, "error", err)
+	}
+	metrics.UpdatesTotal.WithLabelValues("failed").Inc()
+	u.publishEvent(events.EventContainerUpdate, name, "update failed")
+	u.notifier.Notify(ctx, notify.Event{
+		Type:          notify.EventUpdateFailed,
+		ContainerName: name,
+		OldImage:      oldImage,
+		Error:         cause.Error(),
+		Timestamp:     u.clock.Now(),
+	})
 }
 
 // reportRollback records and notifies the result of rolling a failed update
