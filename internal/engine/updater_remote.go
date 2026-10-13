@@ -126,8 +126,10 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			"host", host.HostName, "name", c.Name, "image", c.Image,
 			"remote_digest", check.RemoteDigest)
 
-		// Build target image for semver version bumps.
-		scanTarget := ""
+		// Target image: the newer tag for a version bump, otherwise (a
+		// same-tag update) the container's own image, which the agent
+		// re-pulls. Agents before v2.17.0 fail on an empty target.
+		scanTarget := c.Image
 		if len(check.NewerVersions) > 0 {
 			scanTarget = replaceTag(c.Image, check.NewerVersions[0])
 		}

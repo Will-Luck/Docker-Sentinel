@@ -79,3 +79,26 @@ func TestScanPrunesRemoteQueueOnlyForHostsItHeardFrom(t *testing.T) {
 		t.Error("queue entry listed::removed survived although its host listed without it")
 	}
 }
+
+// A same-tag update (a new image behind the tag a remote container runs)
+// has no newer tag. The scan must still send the agent a real image
+// reference: agents before v2.17.0 fail on an empty one.
+func TestScanRemoteSameTagUpdateSendsCurrentImage(t *testing.T) {
+	mock := newMockDocker()
+	mock.distDigests["nginx:latest"] = "sha256:new"
+	u, _ := newTestUpdater(t, mock)
+	u.cfg.SetDefaultPolicy("auto")
+	fc := &fakeCluster{
+		connected: []string{"h1"},
+		lists: map[string][]RemoteContainer{"h1": {
+			{Name: "web", Image: "nginx:latest", ImageDigest: "sha256:old", State: "running"},
+		}},
+	}
+	u.SetClusterScanner(fc)
+
+	u.Scan(context.Background(), ScanScheduled)
+
+	if len(fc.updates) != 1 || fc.updates[0] != "h1/web -> nginx:latest" {
+		t.Fatalf("updates sent = %q, want [h1/web -> nginx:latest]", fc.updates)
+	}
+}
