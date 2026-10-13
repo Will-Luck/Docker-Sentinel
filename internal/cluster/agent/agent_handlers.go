@@ -159,25 +159,30 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 	}
 
 	start := time.Now()
-	var oldImage, oldDigest, newDigest string
+	var oldImage, oldDigest, newImage, newDigest string
 	var oldContainerID string
 	var err error
 	if isSelf {
 		sr, selfErr := a.selfUpdateContainer(ctx, name, targetImage)
-		oldImage, oldDigest, newDigest = sr.oldImage, sr.oldDigest, sr.newDigest
+		oldImage, oldDigest, newImage, newDigest = sr.oldImage, sr.oldDigest, sr.newImage, sr.newDigest
 		oldContainerID = sr.oldContainerID
 		err = selfErr
 	} else {
-		oldImage, oldDigest, newDigest, err = a.recreateContainer(ctx, name, targetImage)
+		rr, recreateErr := a.recreateContainer(ctx, name, targetImage)
+		oldImage, oldDigest, newImage, newDigest = rr.oldImage, rr.oldDigest, rr.newImage, rr.newDigest
+		err = recreateErr
 	}
 	dur := time.Since(start)
+	if newImage == "" {
+		newImage = targetImage
+	}
 
 	result := &proto.UpdateResult{
 		RequestId:     requestID,
 		ContainerName: name,
 		OldImage:      oldImage,
 		OldDigest:     oldDigest,
-		NewImage:      targetImage,
+		NewImage:      newImage,
 		NewDigest:     newDigest,
 		Duration:      durationpb.New(dur),
 	}

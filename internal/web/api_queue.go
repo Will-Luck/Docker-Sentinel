@@ -114,6 +114,17 @@ func queueKeyName(r *http.Request) (key, name string) {
 	return key, name
 }
 
+// remoteUpdateTarget is the image a remote agent is asked to update to. A
+// digest-only update (same tag, new image behind it) has no newer tag, so
+// the agent re-pulls the container's current image; agents before v2.17.0
+// fail on an empty target.
+func remoteUpdateTarget(currentImage, newerTarget string) string {
+	if newerTarget != "" {
+		return newerTarget
+	}
+	return currentImage
+}
+
 // apiApprove approves a pending update and triggers the update.
 func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 	key, name := queueKeyName(r)
@@ -149,7 +160,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		if update.HostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 			// Remote container — dispatch to the agent via cluster.
 			s.markRemoteUpdating(update.HostID, update.ContainerName)
-			err = s.deps.Cluster.UpdateRemoteContainer(ctx, update.HostID, update.ContainerName, approveTarget, update.RemoteDigest)
+			err = s.deps.Cluster.UpdateRemoteContainer(ctx, update.HostID, update.ContainerName, remoteUpdateTarget(update.CurrentImage, approveTarget), update.RemoteDigest)
 			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(update.HostID, update.ContainerName) })
 		} else if update.Type == "service" && s.deps.Swarm != nil {
 			err = s.deps.Swarm.UpdateService(ctx, update.ContainerID, update.ContainerName, approveTarget)

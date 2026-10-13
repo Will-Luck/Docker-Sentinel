@@ -55,46 +55,66 @@ func (a *Agent) heartbeatLoop(ctx context.Context, stream proto.AgentService_Cha
 
 // --- Container Operations ---
 
+// recreateResult describes a finished (or failed) container recreate.
+type recreateResult struct {
+	oldImage, oldDigest string
+	newImage, newDigest string
+}
+
+// targetOrCurrent returns target, or the container's own image reference
+// when target is empty. Hubs send an empty target for a digest-only update
+// (same tag, new image behind it), and the update then re-pulls that tag.
+func targetOrCurrent(target string, inspect *container.InspectResponse) string {
+	if target != "" || inspect.Config == nil {
+		return target
+	}
+	return inspect.Config.Image
+}
+
 // recreateContainer stops, removes, and recreates a container with a new
 // image. Preserves all configuration from the current container inspect.
-// Returns the old image, old digest, new digest, and any error.
-func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string) (oldImage, oldDigest, newDigest string, err error) {
+// An empty targetImage re-pulls the container's current image.
+func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string) (recreateResult, error) {
+	var r recreateResult
+
 	// Find and inspect the current container.
 	cID, err := a.findContainerID(ctx, name)
 	if err != nil {
-		return "", "", "", fmt.Errorf("find container %s: %w", name, err)
+		return r, fmt.Errorf("find container %s: %w", name, err)
 	}
 
 	inspect, err := a.docker.InspectContainer(ctx, cID)
 	if err != nil {
-		return "", "", "", fmt.Errorf("inspect %s: %w", name, err)
+		return r, fmt.Errorf("inspect %s: %w", name, err)
 	}
 
-	oldImage = inspect.Config.Image
+	targetImage = targetOrCurrent(targetImage, &inspect)
+	r.newImage = targetImage
+	r.oldImage = inspect.Config.Image
 
 	// Get current image digest for the audit trail.
-	oldDigest, _ = a.docker.ImageDigest(ctx, oldImage)
+	r.oldDigest, _ = a.docker.ImageDigest(ctx, r.oldImage)
 
 	// Pull the target image. If pull fails but the image is already
 	// available locally, continue (supports local/dev images).
 	if err := a.docker.PullImage(ctx, targetImage); err != nil {
 		if _, localErr := a.docker.ImageDigest(ctx, targetImage); localErr != nil {
-			return oldImage, oldDigest, "", fmt.Errorf("pull %s: %w", targetImage, err)
+			return r, fmt.Errorf("pull %s: %w", targetImage, err)
 		}
 		a.log.Warn("pull failed but image available locally", "image", targetImage, "pull_error", err)
 	}
 
 	// Get the new image's digest.
-	newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
+	r.newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
 
 	// Stop the running container. 30s timeout is generous but safe.
 	if err := a.docker.StopContainer(ctx, cID, 30); err != nil {
-		return oldImage, oldDigest, newDigest, fmt.Errorf("stop %s: %w", name, err)
+		return r, fmt.Errorf("stop %s: %w", name, err)
 	}
 
 	// Remove the old container.
 	if err := a.docker.RemoveContainer(ctx, cID); err != nil {
-		return oldImage, oldDigest, newDigest, fmt.Errorf("remove %s: %w", name, err)
+		return r, fmt.Errorf("remove %s: %w", name, err)
 	}
 
 	// Rebuild the container config with the new image. Network plan
@@ -104,7 +124,7 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 
 	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, np.primary)
 	if err != nil {
-		return oldImage, oldDigest, newDigest, fmt.Errorf("create %s: %w", name, err)
+		return r, fmt.Errorf("create %s: %w", name, err)
 	}
 
 	for _, netName := range np.extras {
@@ -114,10 +134,10 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	}
 
 	if err := a.docker.StartContainer(ctx, newID); err != nil {
-		return oldImage, oldDigest, newDigest, fmt.Errorf("start %s: %w", name, err)
+		return r, fmt.Errorf("start %s: %w", name, err)
 	}
 
-	return oldImage, oldDigest, newDigest, nil
+	return r, nil
 }
 
 // networkPlan separates a container's networks into a primary (for
@@ -194,6 +214,7 @@ func configFromInspect(inspect *container.InspectResponse, targetImage string) (
 // container ID, so the caller can stop/remove it after reporting success.
 type selfUpdateResult struct {
 	oldImage, oldDigest, newDigest string
+	newImage                       string
 	oldContainerID                 string
 }
 
@@ -211,6 +232,8 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 		return r, fmt.Errorf("inspect %s: %w", name, err)
 	}
 
+	targetImage = targetOrCurrent(targetImage, &inspect)
+	r.newImage = targetImage
 	r.oldImage = inspect.Config.Image
 	r.oldDigest, _ = a.docker.ImageDigest(ctx, r.oldImage)
 
