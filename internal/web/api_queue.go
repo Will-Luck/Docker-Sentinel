@@ -181,7 +181,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 			// Remote container — dispatch to the agent via cluster.
 			s.markRemoteUpdating(update.HostID, update.ContainerName)
 			err = s.deps.Cluster.UpdateRemoteContainer(ctx, update.HostID, update.ContainerName, remoteUpdateTarget(update.CurrentImage, approveTarget), update.RemoteDigest)
-			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(update.HostID, update.ContainerName) })
+			s.finishRemoteUpdating(update.HostID, update.ContainerName)
 		} else if update.Type == "service" && s.deps.Swarm != nil {
 			err = s.deps.Swarm.UpdateService(ctx, update.ContainerID, update.ContainerName, approveTarget)
 		} else {

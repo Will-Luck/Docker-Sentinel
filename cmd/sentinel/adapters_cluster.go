@@ -14,6 +14,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	clusterserver "github.com/Will-Luck/Docker-Sentinel/internal/cluster/server"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
@@ -100,13 +101,14 @@ func (a *clusterAdapter) AllHostContainers() []web.RemoteContainer {
 				})
 			}
 			result = append(result, web.RemoteContainer{
-				Name:     c.Name,
-				Image:    c.Image,
-				State:    c.State,
-				HostID:   info.ID,
-				HostName: info.Name,
-				Labels:   c.Labels,
-				Ports:    ports,
+				Name:        c.Name,
+				Image:       c.Image,
+				ImageDigest: c.ImageDigest,
+				State:       c.State,
+				HostID:      info.ID,
+				HostName:    info.Name,
+				Labels:      c.Labels,
+				Ports:       ports,
 			})
 		}
 	}
@@ -327,6 +329,27 @@ func (a *clusterScannerAdapter) HostPaused(hostID string) bool {
 // PullImage asks an agent to pull an image (a pull-only update).
 func (a *clusterScannerAdapter) PullImage(_ context.Context, hostID, ref string) error {
 	return a.srv.PullImage(hostID, ref)
+}
+
+// CheckRemoteForUpdate checks a remote container's image against the
+// digest its agent reported, with its labels' semver scope and tag
+// filters, as the remote scan does.
+func (a *registryCheckerAdapter) CheckRemoteForUpdate(ctx context.Context, imageRef, localDigest string, labels map[string]string) (web.RemoteCheck, error) {
+	include, exclude := docker.ContainerTagFilters(labels)
+	res := a.checker.CheckVersionedWithDigest(ctx, imageRef, localDigest, docker.ContainerSemverScope(labels), include, exclude)
+	if res.Error != nil {
+		return web.RemoteCheck{}, res.Error
+	}
+	if res.IsLocal {
+		return web.RemoteCheck{}, nil
+	}
+	return web.RemoteCheck{
+		UpdateAvailable:        res.UpdateAvailable,
+		NewerVersions:          res.NewerVersions,
+		ResolvedCurrentVersion: res.ResolvedCurrentVersion,
+		ResolvedTargetVersion:  res.ResolvedTargetVersion,
+		RemoteDigest:           res.RemoteDigest,
+	}, nil
 }
 
 // knownContainer returns what srv last heard about a remote container.

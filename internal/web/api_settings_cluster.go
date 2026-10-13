@@ -18,7 +18,7 @@ func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
 		"enabled":            "false",
 		"port":               "9443",
 		"grace_period":       "30m",
-		"remote_policy":      "manual",
+		"remote_policy":      s.remoteDefaultPolicy(), // the global default until one is saved
 		"auto_update_agents": "false",
 		"advertise_addr":     "",
 	}

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,4 +85,59 @@ func TestApiIgnoreVersion_RemoteRowUsesItsScopedKey(t *testing.T) {
 	if len(ig.added["web"]) != 0 || len(ig.added["h1::web"]) != 1 {
 		t.Errorf("ignored versions saved under %v, want only h1::web", ig.added)
 	}
+}
+
+// remote-orchestration-20: after an approved or update-to-version remote
+// update, the "Updating" flag was cleared without telling the browser, so
+// the row stayed on "Updating". A state event for the row follows.
+func TestRemoteUpdate_RowIsRefreshedAfterTheUpdate(t *testing.T) {
+	newServer := func() (*Server, <-chan events.SSEEvent, func()) {
+		cp := &failingUpdateCluster{mockClusterProviderWithContainers: mockClusterProviderWithContainers{
+			hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"},
+			containers: []RemoteContainer{{Name: "web", Image: "nginx:1", HostID: "h1", HostName: "Agent One"}},
+		}}
+		srv := remoteUpdateServer(cp, &recordingHistory{})
+		srv.remoteHold = 10 * time.Millisecond
+		ch, cancel := srv.deps.EventBus.Subscribe()
+		return srv, ch, cancel
+	}
+	waitState := func(t *testing.T, srv *Server, ch <-chan events.SSEEvent) {
+		t.Helper()
+		deadline := time.After(3 * time.Second)
+		for {
+			select {
+			case e := <-ch:
+				if e.Type == events.EventContainerState && e.ContainerName == "web" && e.HostID == "h1" {
+					if srv.isRemoteUpdating("h1", "web") {
+						t.Error("the row was refreshed while still marked updating")
+					}
+					return
+				}
+			case <-deadline:
+				t.Fatal("no state event for the row after the update")
+			}
+		}
+	}
+
+	t.Run("approve", func(t *testing.T) {
+		srv, ch, cancel := newServer()
+		defer cancel()
+		srv.deps.Queue = &approvingQueue{items: []PendingUpdate{{HostID: "h1", HostName: "Agent One", ContainerName: "web", CurrentImage: "nginx:1"}}}
+		r := httptest.NewRequest(http.MethodPost, "/api/approve/h1::web", nil)
+		r.SetPathValue("key", "h1::web")
+		srv.apiApprove(httptest.NewRecorder(), r)
+		waitState(t, srv, ch)
+	})
+	t.Run("update to version", func(t *testing.T) {
+		srv, ch, cancel := newServer()
+		defer cancel()
+		r := httptest.NewRequest(http.MethodPost, "/api/containers/web/update-to-version?host=h1", strings.NewReader(`{"tag":"2"}`))
+		r.SetPathValue("name", "web")
+		w := httptest.NewRecorder()
+		srv.apiUpdateToVersion(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+		waitState(t, srv, ch)
+	})
 }

@@ -362,15 +362,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 			// unblocks this goroutine, but the browser needs time to receive it and
 			// fetch the updated row HTML. After clearing, fire a second SSE event
 			// so the row refreshes to show "Running" instead of lingering on "Updating".
-			time.AfterFunc(5*time.Second, func() {
-				s.clearRemoteUpdating(hostID, name)
-				s.deps.EventBus.Publish(events.SSEEvent{
-					Type:          events.EventContainerState,
-					ContainerName: name,
-					HostID:        hostID,
-					Timestamp:     time.Now(),
-				})
-			})
+			s.finishRemoteUpdating(hostID, name)
 		}()
 
 		s.logEvent(r, "update", name, "Remote update triggered on "+hostID)
@@ -555,33 +547,27 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 
 		s.logEvent(r, "check", name, "Manual registry check for remote container on "+hostID)
 
-		updateAvailable, newerVersions, resolvedCurrent, resolvedTarget, checkErr :=
-			s.deps.RegistryChecker.CheckForUpdate(r.Context(), rc.Image)
+		// Check against the digest the agent reported, as the scan does:
+		// the hub's own Docker usually does not have the image.
+		var check RemoteCheck
+		var checkErr error
+		if rcheck, ok := s.deps.RegistryChecker.(RemoteRegistryChecker); ok {
+			check, checkErr = rcheck.CheckRemoteForUpdate(r.Context(), rc.Image, rc.ImageDigest, rc.Labels)
+		} else {
+			check.UpdateAvailable, check.NewerVersions, check.ResolvedCurrentVersion, check.ResolvedTargetVersion, checkErr =
+				s.deps.RegistryChecker.CheckForUpdate(r.Context(), rc.Image)
+		}
 		if checkErr != nil {
 			s.deps.Log.Warn("registry check failed for remote container", "name", name, "host", hostID, "error", checkErr)
 			writeError(w, http.StatusBadGateway, "registry check failed: "+checkErr.Error())
 			return
 		}
 
-		if updateAvailable {
-			if len(newerVersions) > 0 && s.deps.IgnoredVersions != nil {
-				ignored, _ := s.deps.IgnoredVersions.GetIgnoredVersions(name)
-				if len(ignored) > 0 {
-					ignoredSet := make(map[string]bool, len(ignored))
-					for _, v := range ignored {
-						ignoredSet[v] = true
-					}
-					var filtered []string
-					for _, v := range newerVersions {
-						if !ignoredSet[v] {
-							filtered = append(filtered, v)
-						}
-					}
-					newerVersions = filtered
-				}
-			}
-
-			if len(newerVersions) == 0 {
+		if check.UpdateAvailable {
+			// Versions ignored for this remote container are kept under its
+			// host-scoped key. An update with no newer tag (a new image
+			// behind the same tag) is queued as such, as the scan does.
+			if s.ignoredFor(hostID+"::"+name, &check) {
 				writeJSON(w, http.StatusOK, map[string]any{
 					"status":  "up_to_date",
 					"name":    name,
@@ -593,9 +579,11 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 			s.deps.Queue.Add(PendingUpdate{
 				ContainerName:          name,
 				CurrentImage:           rc.Image,
-				NewerVersions:          newerVersions,
-				ResolvedCurrentVersion: resolvedCurrent,
-				ResolvedTargetVersion:  resolvedTarget,
+				CurrentDigest:          rc.ImageDigest,
+				RemoteDigest:           check.RemoteDigest,
+				NewerVersions:          check.NewerVersions,
+				ResolvedCurrentVersion: check.ResolvedCurrentVersion,
+				ResolvedTargetVersion:  check.ResolvedTargetVersion,
 				HostID:                 hostID,
 				HostName:               rc.HostName,
 			})
@@ -613,7 +601,7 @@ func (s *Server) apiCheck(w http.ResponseWriter, r *http.Request) {
 				"status":         "update_available",
 				"name":           name,
 				"message":        "Update available for " + name,
-				"newer_versions": newerVersions,
+				"newer_versions": check.NewerVersions,
 			})
 			return
 		}
@@ -825,7 +813,7 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 			} else {
 				s.deps.Queue.Remove(queueKey)
 			}
-			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(hostID, name) })
+			s.finishRemoteUpdating(hostID, name)
 		}()
 
 		s.logEvent(r, "update_to_version", name, "Remote update to "+body.Tag+" on "+hostID)

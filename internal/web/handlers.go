@@ -240,7 +240,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 	if targetView == nil && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		for _, rc := range s.deps.Cluster.AllHostContainers() {
 			if rc.Name == name && (hostFilter == "" || rc.HostID == hostFilter) {
-				policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
+				policy := s.remotePolicy(rc)
 				tag := registry.ExtractTag(rc.Image)
 				if tag == "" {
 					if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {
@@ -550,7 +550,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
+		policy := s.remotePolicy(*rc)
 		tag := registry.ExtractTag(rc.Image)
 		if tag == "" {
 			if idx := strings.LastIndex(rc.Image, "/"); idx >= 0 {

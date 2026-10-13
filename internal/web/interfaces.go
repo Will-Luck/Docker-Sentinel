@@ -226,13 +226,15 @@ type ClusterProvider interface {
 
 // RemoteContainer represents a container on a remote host.
 type RemoteContainer struct {
-	Name     string            `json:"name"`
-	Image    string            `json:"image"`
-	State    string            `json:"state"` // "running", "exited", etc.
-	HostID   string            `json:"host_id"`
-	HostName string            `json:"host_name"`
-	Labels   map[string]string `json:"labels,omitempty"`
-	Ports    []PortMapping     `json:"ports,omitempty"`
+	Name  string `json:"name"`
+	Image string `json:"image"`
+	// ImageDigest is the digest its agent reported for the image it runs.
+	ImageDigest string            `json:"image_digest,omitempty"`
+	State       string            `json:"state"` // "running", "exited", etc.
+	HostID      string            `json:"host_id"`
+	HostName    string            `json:"host_name"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Ports       []PortMapping     `json:"ports,omitempty"`
 }
 
 // ClusterHost represents a remote agent host for the web layer.

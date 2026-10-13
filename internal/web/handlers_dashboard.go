@@ -679,7 +679,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 				// Resolve policy the same way we do for local containers:
 				// label first, then DB override (keyed by hostID::name for remote).
-				policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
+				policy := s.remotePolicy(rc)
 
 				var newestVersion, rcTarget string
 				var hasUpdate bool

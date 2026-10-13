@@ -94,8 +94,10 @@ type Server struct {
 	scanGate             chan struct{}      // closed on first dashboard load to unblock the scheduler
 	scanGateOnce         sync.Once
 	pendingRemoteUpdates sync.Map // key: "hostID::name" → struct{}
-	hostAddress          string   // SENTINEL_HOST override for port links; empty = use request host
-	authLimiter          *rateLimiter
+	// remoteHold overrides remoteUpdatingHold (tests).
+	remoteHold  time.Duration
+	hostAddress string // SENTINEL_HOST override for port links; empty = use request host
+	authLimiter *rateLimiter
 }
 
 func (s *Server) markRemoteUpdating(hostID, name string) {
@@ -104,6 +106,31 @@ func (s *Server) markRemoteUpdating(hostID, name string) {
 
 func (s *Server) clearRemoteUpdating(hostID, name string) {
 	s.pendingRemoteUpdates.Delete(hostID + "::" + name)
+}
+
+// remoteUpdatingHold is how long a remote container stays marked updating
+// after its update returns, so the row fetch the update's own event
+// triggers still shows it updating.
+const remoteUpdatingHold = 5 * time.Second
+
+// finishRemoteUpdating clears the updating mark of a remote container once
+// the hold (remoteUpdatingHold, or the server's own for tests) has passed,
+// then tells the browser to refresh its row, which would otherwise stay on
+// "Updating".
+func (s *Server) finishRemoteUpdating(hostID, name string) {
+	hold := s.remoteHold
+	if hold == 0 {
+		hold = remoteUpdatingHold
+	}
+	time.AfterFunc(hold, func() {
+		s.clearRemoteUpdating(hostID, name)
+		s.deps.EventBus.Publish(events.SSEEvent{
+			Type:          events.EventContainerState,
+			ContainerName: name,
+			HostID:        hostID,
+			Timestamp:     time.Now(),
+		})
+	})
 }
 
 func (s *Server) isRemoteUpdating(hostID, name string) bool {
