@@ -10,6 +10,9 @@ import (
 	"github.com/moby/moby/api/types/network"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker/imageconfig"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
 // Two releases of an app image whose defaults change between them.
@@ -279,5 +282,72 @@ func TestHandleUpdateContainer_UsesThePreviousImagesItIsSent(t *testing.T) {
 	}
 	if c := h.byName("web"); !hasEnv(c.env, "APP_VERSION=2") || hasEnv(c.env, "APP_VERSION=0") {
 		t.Errorf("env = %v, want app:2's APP_VERSION=2 only", c.env)
+	}
+}
+
+// fakeRegistryConfigs stands in for the registry: it knows the configs of
+// images by digest and records the credentials it was given.
+type fakeRegistryConfigs struct {
+	local   docker.ImageConfigReader
+	creds   func() []registry.RegistryCredential
+	configs map[string]*container.Config
+	asked   []string
+}
+
+func (f *fakeRegistryConfigs) Config(ctx context.Context, img imageconfig.Image) (*container.Config, error) {
+	f.asked = append(f.asked, img.Ref+"@"+img.Digest)
+	if f.local != nil {
+		if cfg, err := f.local.ImageConfig(ctx, img.Digest); err == nil {
+			return cfg, nil
+		}
+	}
+	if cfg, ok := f.configs[img.Digest]; ok {
+		return cfg, nil
+	}
+	return nil, errors.New("manifest unknown")
+}
+
+// An image the container ran before is usually gone from the host (image
+// cleanup removed it). The agent fetches its config from the registry, with
+// the credentials the hub sent for the update, and a fetch that fails
+// changes nothing.
+func TestRecreateContainer_FetchesEarlierImagesFromTheRegistry(t *testing.T) {
+	h := newFakeHost()
+	h.addImage("registry.example/app:1", "sha256:app-1", appV1)
+	h.registry["registry.example/app:2"] = "sha256:app-2"
+	h.imageConfigs["sha256:app-2"] = appV2
+	h.addFromImage(t, "web", "registry.example/app:1",
+		&container.Config{Env: []string{"APP_VERSION=0", "APP_MODE=prod"}, Cmd: []string{"serve", "--v0"}}, nil, nil, true)
+	a := newSwapAgent(t, h)
+	src := &fakeRegistryConfigs{configs: map[string]*container.Config{
+		"sha256:app-0": {Env: []string{"APP_VERSION=0"}, Cmd: []string{"serve", "--v0"}},
+	}}
+	a.imageConfigSource = func(local docker.ImageConfigReader, creds func() []registry.RegistryCredential) imageConfigFinder {
+		src.local, src.creds = local, creds
+		return src
+	}
+
+	st := &recStream{}
+	req := &proto.UpdateContainerRequest{
+		ContainerName: "web", TargetImage: "registry.example/app:2",
+		RegistryAuth: docker.EncodeRegistryAuth("ci", "s3cret", "registry.example"),
+		PreviousImages: []*proto.PreviousImage{
+			{Ref: "registry.example/app:0", Digest: "sha256:app-0"},
+			{Ref: "registry.example/app:gone", Digest: "sha256:gone"},
+		},
+	}
+	if err := a.handleUpdateContainer(context.Background(), st, req, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	c := h.byName("web")
+	if c == nil || !hasEnv(c.env, "APP_VERSION=2") || hasEnv(c.env, "APP_VERSION=0") || !hasEnv(c.env, "APP_MODE=prod") {
+		t.Fatalf("web = %+v, want app:2's APP_VERSION and the user's APP_MODE", c)
+	}
+	if src.creds == nil {
+		t.Fatal("no credentials passed to the registry lookup")
+	}
+	creds := src.creds()
+	if len(creds) != 1 || creds[0].Registry != "registry.example" || creds[0].Username != "ci" || creds[0].Secret != "s3cret" {
+		t.Errorf("credentials = %+v, want the ones the hub sent, for registry.example", creds)
 	}
 }

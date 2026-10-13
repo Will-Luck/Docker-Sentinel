@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,8 +15,10 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker/imageconfig"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 )
 
@@ -126,11 +130,15 @@ type updateOptions struct {
 	// runs none.
 	hooks     []*proto.HookSpec
 	skipHooks bool
+	// registryAuth is the X-Registry-Auth value for the target image's
+	// registry, also used to fetch earlier images' configs.
+	registryAuth string
 }
 
 // updateOptionsFrom reads the options of an update request.
 func updateOptionsFrom(req *proto.UpdateContainerRequest) updateOptions {
-	return updateOptions{previous: req.GetPreviousImages(), hooks: req.GetHooks(), skipHooks: req.GetSkipHooks()}
+	return updateOptions{previous: req.GetPreviousImages(), hooks: req.GetHooks(), skipHooks: req.GetSkipHooks(),
+		registryAuth: req.GetRegistryAuth()}
 }
 
 // errSkippedByHook ends an update a pre-update hook asked to skip (exit
@@ -240,7 +248,7 @@ func (a *Agent) recreate(ctx context.Context, name, targetImage string, opts upd
 	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{
 		Image:                 targetImage,
 		OldImage:              a.imageDefaults(ctx, inspect.Image, name),
-		InheritedImages:       a.previousImageConfigs(ctx, name, opts.previous),
+		InheritedImages:       a.previousImageConfigs(ctx, name, targetImage, opts.registryAuth, opts.previous),
 		FreshAnonymousVolumes: removeVolumes,
 	})
 	newID, warning, err := a.swaps.Update(ctx, engine.HostUpdate{
@@ -318,22 +326,35 @@ func (a *Agent) imageDefaults(ctx context.Context, imageID, name string) *contai
 }
 
 // previousImageConfigs returns the configs of the images a container ran
-// before its current one (prev, from the hub's history) that this host can
-// still read, by image ID or repository digest. A container an older
-// Sentinel updated kept the config of the first image it ran, so the
-// recreate leaves out what came from these too. One that cannot be read is
-// skipped: what came from it is kept, as before.
-func (a *Agent) previousImageConfigs(ctx context.Context, name string, prev []*proto.PreviousImage) []*container.Config {
-	reader, ok := a.docker.(docker.ImageConfigReader)
-	if !ok {
+// before its current one (prev, from the hub's history): read on the host
+// when the image is still there, else fetched from its registry with the
+// credentials the hub sent with the update (registryAuth, for the target
+// image's registry). A container an older Sentinel updated kept the config
+// of the first image it ran, so the recreate leaves out what came from
+// these too. One that cannot be found is skipped, and what came from it is
+// kept, as before: a lookup never fails the update.
+func (a *Agent) previousImageConfigs(ctx context.Context, name, targetImage, registryAuth string, prev []*proto.PreviousImage) []*container.Config {
+	if len(prev) == 0 {
 		return nil
 	}
+	local, _ := a.docker.(docker.ImageConfigReader)
+	creds := credentialsFromAuth(registryAuth, targetImage)
+	newSource := a.imageConfigSource
+	if newSource == nil {
+		newSource = func(local docker.ImageConfigReader, creds func() []registry.RegistryCredential) imageConfigFinder {
+			return imageconfig.New(local, creds)
+		}
+	}
+	src := newSource(local, func() []registry.RegistryCredential { return creds })
+
 	var out []*container.Config
 	for _, p := range prev {
 		if p.GetDigest() == "" {
 			continue
 		}
-		cfg, err := reader.ImageConfig(ctx, p.GetDigest())
+		fetchCtx, cancel := context.WithTimeout(ctx, previousImageTimeout)
+		cfg, err := src.Config(fetchCtx, imageconfig.Image{Ref: p.GetRef(), Digest: p.GetDigest()})
+		cancel()
 		if err != nil {
 			a.log.Debug("could not read an image the container ran before; keeping what it may have inherited from it",
 				"container", name, "image", p.GetRef(), "digest", p.GetDigest(), "error", err)
@@ -342,6 +363,32 @@ func (a *Agent) previousImageConfigs(ctx context.Context, name string, prev []*p
 		out = append(out, cfg)
 	}
 	return out
+}
+
+// previousImageTimeout bounds the lookup of one earlier image's config.
+const previousImageTimeout = 30 * time.Second
+
+// credentialsFromAuth turns the X-Registry-Auth value the hub sent for an
+// update into the registry credential of the target image's registry, for
+// the registry lookups of the update. None when the hub sent none.
+func credentialsFromAuth(encoded, targetImage string) []registry.RegistryCredential {
+	if encoded == "" || targetImage == "" {
+		return nil
+	}
+	raw, err := base64.URLEncoding.DecodeString(encoded)
+	if err != nil {
+		if raw, err = base64.StdEncoding.DecodeString(encoded); err != nil {
+			return nil
+		}
+	}
+	var auth struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if json.Unmarshal(raw, &auth) != nil || auth.Username == "" {
+		return nil
+	}
+	return []registry.RegistryCredential{{Registry: registry.RegistryHost(targetImage), Username: auth.Username, Secret: auth.Password}}
 }
 
 // removeVolumes reports whether a container is updated onto fresh anonymous

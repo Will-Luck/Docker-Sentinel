@@ -40,8 +40,10 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker/imageconfig"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
@@ -180,6 +182,15 @@ type Agent struct {
 	// cfg.Store; nil without a store, and updates are then refused.
 	settings *config.Config
 	swaps    *engine.HostSwaps
+
+	// imageConfigSource makes the lookup of the configs of images a
+	// container ran before (previousImageConfigs); nil for the default.
+	imageConfigSource func(local docker.ImageConfigReader, creds func() []registry.RegistryCredential) imageConfigFinder
+}
+
+// imageConfigFinder finds the config of an image by digest.
+type imageConfigFinder interface {
+	Config(ctx context.Context, img imageconfig.Image) (*container.Config, error)
 }
 
 // New creates a new Agent. Call Run to start the main loop.
