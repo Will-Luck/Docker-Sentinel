@@ -184,8 +184,9 @@ var oldInstanceRE = regexp.MustCompile(`^(.+)-old-\d+$`)
 
 // CleanupOldInstances removes "<name>-old-<unix>" containers left behind by
 // earlier self-updates. A container is only removed when it carries the
-// sentinel.self label, is not running, and the instance it was replaced by
-// (the same name without the suffix) is running. Anonymous volumes are kept.
+// sentinel.self label, is exited or created (never paused, restarting or
+// dead), and the instance it was replaced by (the same name without the
+// suffix) is running. Anonymous volumes are kept.
 func (su *SelfUpdater) CleanupOldInstances(ctx context.Context) {
 	containers, err := su.docker.ListAllContainers(ctx)
 	if err != nil {
@@ -199,7 +200,8 @@ func (su *SelfUpdater) CleanupOldInstances(ctx context.Context) {
 		}
 	}
 	for _, c := range containers {
-		if c.Labels["sentinel.self"] != "true" || c.State == container.StateRunning || len(c.Names) == 0 {
+		if c.Labels["sentinel.self"] != "true" || len(c.Names) == 0 ||
+			(c.State != container.StateExited && c.State != container.StateCreated) {
 			continue
 		}
 		m := oldInstanceRE.FindStringSubmatch(strings.TrimPrefix(c.Names[0], "/"))
