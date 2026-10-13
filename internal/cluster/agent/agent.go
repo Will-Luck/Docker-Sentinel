@@ -267,6 +267,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	if a.selfID != nil {
 		selfID = a.selfID()
 	}
+	// The full ID of this container, or "" if it cannot be found (then nothing
+	// is recovered or cleaned up).
+	selfID = selfupdate.ResolveSelfID(ctx, a.docker, selfID)
 	selfOutcome := selfupdate.Recover(ctx, a.docker, selfID, a.cfg.DataDir, a.log)
 	if selfOutcome == nil {
 		selfOutcome = selfupdate.ReportOutcome(a.cfg.DataDir, a.log)

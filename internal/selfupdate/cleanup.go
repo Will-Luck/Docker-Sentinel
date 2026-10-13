@@ -132,17 +132,52 @@ func helperDead(c container.Summary) bool {
 	return false
 }
 
+// SelfContainerEnv names the environment variable that tells a Sentinel which
+// container it is (name or ID), for when its ID cannot be read from the
+// system: it is used only if neither the mount info nor the cgroup names the
+// container, and the container must exist and carry sentinel.self=true.
+const SelfContainerEnv = "SENTINEL_SELF_CONTAINER"
+
 // SelfID returns this container's ID: from the container path in
-// /proc/self/mountinfo, which holds whatever hostname the container was given,
-// else the hostname (a container's default hostname is its short ID).
+// /proc/self/mountinfo (which holds whatever hostname the container was
+// given), else from /proc/self/cgroup (cgroup v1 docker/<id>, v2
+// docker-<id>.scope), else the value of SENTINEL_SELF_CONTAINER, else the
+// hostname (a container's default hostname is its short ID). Use ResolveSelf
+// to find the container in the Docker API; it checks an override.
 func SelfID() string {
+	var detected string
 	if b, err := os.ReadFile("/proc/self/mountinfo"); err == nil {
-		if id := containerIDFromMountInfo(string(b)); id != "" {
-			return id
+		detected = containerIDFromMountInfo(string(b))
+	}
+	if detected == "" {
+		if b, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+			detected = containerIDFromCgroup(string(b))
 		}
 	}
-	h, _ := os.Hostname()
-	return h
+	host, _ := os.Hostname()
+	return selfIDFrom(detected, os.Getenv(SelfContainerEnv), host)
+}
+
+// selfIDFrom picks the ID from what was detected, the override and the hostname.
+func selfIDFrom(detected, override, hostname string) string {
+	switch {
+	case detected != "":
+		return detected
+	case override != "":
+		return override
+	}
+	return hostname
+}
+
+var cgroupIDRE = regexp.MustCompile(`(?:/docker/|docker-)([0-9a-f]{64})`)
+
+// containerIDFromCgroup finds the container ID in /proc/self/cgroup content:
+// cgroup v1 lists ".../docker/<id>", v2 under systemd "docker-<id>.scope".
+func containerIDFromCgroup(cgroup string) string {
+	if m := cgroupIDRE.FindStringSubmatch(cgroup); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 var containerPathRE = regexp.MustCompile(`/containers/([0-9a-f]{64})/`)

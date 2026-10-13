@@ -528,8 +528,11 @@ func (a *Agent) ownContainerName(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("list containers: %w", err)
 	}
-	self := selfupdate.FindSelf(containers, id())
-	if self == nil || len(self.Names) == 0 {
+	self, err := selfupdate.ResolveSelf(containers, id())
+	if err != nil {
+		return "", err
+	}
+	if len(self.Names) == 0 {
 		return "", selfupdate.ErrSelfUnknown
 	}
 	return strings.TrimPrefix(self.Names[0], "/"), nil

@@ -449,3 +449,29 @@ func TestSelfUpdateRefusesWhenItCannotTellWhichContainerItIs(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfUpdateHonoursTheSelfContainerOverrideAndRefusesANonSentinel(t *testing.T) {
+	t.Setenv(selfupdate.SelfContainerEnv, "lh-sentinel-hub")
+	ev, mock := twoSentinels()
+	su := NewSelfUpdater(ev, newTestSelfUpdater(mock).log)
+	su.selfID = func() string { return "lh-sentinel-hub" }
+	if err := su.Update(context.Background(), "img:2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.createCalls) != 1 || mock.createCalls[0] != "lh-sentinel-hub" {
+		t.Errorf("create calls = %v", mock.createCalls)
+	}
+
+	t.Setenv(selfupdate.SelfContainerEnv, "other-thing")
+	ev, mock = twoSentinels()
+	mock.containers = append(mock.containers, container.Summary{ID: "zzz", Names: []string{"/other-thing"}})
+	su = NewSelfUpdater(ev, newTestSelfUpdater(mock).log)
+	su.selfID = func() string { return "other-thing" }
+	err := su.Update(context.Background(), "img:2.0")
+	if err == nil || !strings.Contains(err.Error(), selfupdate.SelfContainerEnv) {
+		t.Fatalf("err = %v, want a refusal naming %s", err, selfupdate.SelfContainerEnv)
+	}
+	if len(mock.renameCalls) != 0 {
+		t.Errorf("renames = %v", mock.renameCalls)
+	}
+}

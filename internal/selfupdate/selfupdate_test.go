@@ -1058,3 +1058,94 @@ func TestWatchOutcomeStopsOnShutdownAndIgnoresAMissingMarker(t *testing.T) {
 	case <-time.After(60 * time.Millisecond):
 	}
 }
+
+// ---- SENTINEL_SELF_CONTAINER and cgroup detection ----
+
+func TestContainerIDFromCgroup(t *testing.T) {
+	id := strings.Repeat("0123456789abcdef", 4)
+	cases := map[string]string{
+		"v1":              "12:memory:/docker/" + id + "\n11:cpu:/docker/" + id + "\n",
+		"v2 systemd":      "0::/system.slice/docker-" + id + ".scope\n",
+		"v2 plain":        "0::/\n",
+		"not a container": "0::/user.slice/user-1000.slice/session-2.scope\n",
+	}
+	want := map[string]string{"v1": id, "v2 systemd": id, "v2 plain": "", "not a container": ""}
+	for name, in := range cases {
+		if got := containerIDFromCgroup(in); got != want[name] {
+			t.Errorf("%s: id = %q, want %q", name, got, want[name])
+		}
+	}
+}
+
+func TestSelfIDOrder(t *testing.T) {
+	cases := []struct{ detected, env, host, want string }{
+		{"detected", "envname", "host", "detected"}, // detection wins over the override
+		{"", "envname", "host", "envname"},          // the override beats the hostname guess
+		{"", "", "host", "host"},
+	}
+	for _, c := range cases {
+		if got := selfIDFrom(c.detected, c.env, c.host); got != c.want {
+			t.Errorf("%+v: got %q", c, got)
+		}
+	}
+}
+
+func overrideHost() []container.Summary {
+	self := map[string]string{"sentinel.self": "true"}
+	return []container.Summary{
+		{ID: "aaaaaaaaaaaa1111", Names: []string{"/lh2-hub"}, Labels: self},
+		{ID: "bbbbbbbbbbbb2222", Names: []string{"/lh-sentinel-hub"}, Labels: self},
+		{ID: "cccccccccccc3333", Names: []string{"/grafana"}},
+	}
+}
+
+// With SENTINEL_SELF_CONTAINER (the name or an ID) the container is looked up
+// in the Docker API and must carry sentinel.self=true.
+func TestResolveSelfUsesTheOverrideWhenTheIDCannotBeDetected(t *testing.T) {
+	t.Setenv(SelfContainerEnv, "lh-sentinel-hub")
+	got, err := ResolveSelf(overrideHost(), "lh-sentinel-hub")
+	if err != nil || got.ID != "bbbbbbbbbbbb2222" {
+		t.Fatalf("by name: %+v %v", got, err)
+	}
+
+	t.Setenv(SelfContainerEnv, "bbbbbbbbbbbb")
+	got, err = ResolveSelf(overrideHost(), "bbbbbbbbbbbb")
+	if err != nil || got.ID != "bbbbbbbbbbbb2222" {
+		t.Fatalf("by ID: %+v %v", got, err)
+	}
+}
+
+func TestResolveSelfRefusesAnOverrideThatIsNotASentinel(t *testing.T) {
+	for _, v := range []string{"grafana", "cccccccccccc", "no-such-container"} {
+		t.Setenv(SelfContainerEnv, v)
+		got, err := ResolveSelf(overrideHost(), v)
+		if err == nil || got != nil {
+			t.Errorf("%q: resolved %+v, want a refusal", v, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), SelfContainerEnv) {
+			t.Errorf("%q: error %q should name %s", v, err, SelfContainerEnv)
+		}
+	}
+}
+
+func TestResolveSelfRefusalNamesTheOverrideVariable(t *testing.T) {
+	t.Setenv(SelfContainerEnv, "")
+	_, err := ResolveSelf(overrideHost(), "")
+	if !errors.Is(err, ErrSelfUnknown) || !strings.Contains(err.Error(), SelfContainerEnv) {
+		t.Errorf("err = %v", err)
+	}
+	_, err = ResolveSelf(overrideHost(), "ffffffffffff")
+	if !errors.Is(err, ErrSelfUnknown) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// A detected ID is used as before; the override is not consulted.
+func TestResolveSelfIgnoresTheOverrideWhenTheIDWasDetected(t *testing.T) {
+	t.Setenv(SelfContainerEnv, "lh2-hub")
+	got, err := ResolveSelf(overrideHost(), "bbbbbbbbbbbb")
+	if err != nil || got.ID != "bbbbbbbbbbbb2222" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}

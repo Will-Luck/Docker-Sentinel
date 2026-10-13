@@ -15,6 +15,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/moby/moby/api/types/container"
 )
 
 var validTag = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
@@ -959,15 +960,20 @@ func (s *Server) recordRemoteFailure(err error, rec UpdateRecord) error {
 // selfContainerID returns this process's own container ID; tests replace it.
 var selfContainerID = selfupdate.SelfID
 
-// ownContainer returns the container this Sentinel is running in, found by its
-// container ID.
+// ownContainer returns the container this Sentinel is running in: found by its
+// container ID, or by SENTINEL_SELF_CONTAINER when the ID cannot be read (see
+// selfupdate.ResolveSelf).
 func ownContainer(containers []ContainerSummary) (ContainerSummary, bool) {
-	id := selfContainerID()
-	if id == "" {
+	list := make([]container.Summary, len(containers))
+	for i, c := range containers {
+		list[i] = container.Summary{ID: c.ID, Names: c.Names, Labels: c.Labels}
+	}
+	self, err := selfupdate.ResolveSelf(list, selfContainerID())
+	if err != nil {
 		return ContainerSummary{}, false
 	}
 	for _, c := range containers {
-		if strings.HasPrefix(c.ID, id) {
+		if c.ID == self.ID {
 			return c, true
 		}
 	}

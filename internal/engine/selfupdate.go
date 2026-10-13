@@ -65,9 +65,9 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	if su.selfID != nil {
 		id = su.selfID
 	}
-	self := selfupdate.FindSelf(containers, id())
-	if self == nil {
-		return selfupdate.ErrSelfUnknown
+	self, err := selfupdate.ResolveSelf(containers, id())
+	if err != nil {
+		return err
 	}
 	selfID, selfName := self.ID, ""
 	if len(self.Names) > 0 {
@@ -217,7 +217,9 @@ func (su *SelfUpdater) CleanupOldInstances(ctx context.Context) {
 	if su.selfID != nil {
 		id = su.selfID
 	}
-	self := id()
+	// The full ID of this container, or "" if it cannot be found (then
+	// nothing is touched).
+	self := selfupdate.ResolveSelfID(ctx, su.docker, id())
 	selfupdate.Recover(ctx, su.docker, self, su.dataDir, su.log)
 	selfupdate.CleanupLeftovers(ctx, su.docker, self, su.dataDir, su.log)
 }

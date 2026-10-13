@@ -422,9 +422,53 @@ func FindSelf(containers []container.Summary, selfID string) *container.Summary 
 	return nil
 }
 
+// ResolveSelf finds this Sentinel's own container among containers, given the
+// ID SelfID returned. A detected ID (or the hostname) is matched as an ID
+// prefix. When the ID is the SENTINEL_SELF_CONTAINER override, it may be a name
+// or an ID, and the container must carry sentinel.self=true, else it is
+// refused. Nothing is ever guessed: no match gives ErrSelfUnknown.
+func ResolveSelf(containers []container.Summary, selfID string) (*container.Summary, error) {
+	override := os.Getenv(SelfContainerEnv)
+	if override != "" && selfID == override {
+		for i := range containers {
+			c := &containers[i]
+			named := false
+			for _, n := range c.Names {
+				named = named || strings.TrimPrefix(n, "/") == override
+			}
+			if !named && !strings.HasPrefix(c.ID, override) {
+				continue
+			}
+			if c.Labels["sentinel.self"] != "true" {
+				return nil, fmt.Errorf("%s=%q is a container without sentinel.self=true, so it is not a Sentinel: %w", SelfContainerEnv, override, ErrSelfUnknown)
+			}
+			return c, nil
+		}
+		return nil, fmt.Errorf("%s=%q matches no container on this host: %w", SelfContainerEnv, override, ErrSelfUnknown)
+	}
+	if c := FindSelf(containers, selfID); c != nil {
+		return c, nil
+	}
+	return nil, ErrSelfUnknown
+}
+
+// ResolveSelfID is ResolveSelf for callers that need only the container ID: it
+// lists the host's containers and returns "" when this one cannot be found.
+func ResolveSelfID(ctx context.Context, d Docker, selfID string) string {
+	all, err := d.ListAllContainers(ctx)
+	if err != nil {
+		return ""
+	}
+	if c, err := ResolveSelf(all, selfID); err == nil {
+		return c.ID
+	}
+	return ""
+}
+
 // ErrSelfUnknown means this process's own container could not be determined,
-// so no self-update is done: guessing could replace another Sentinel.
-var ErrSelfUnknown = errors.New("could not determine which container this Sentinel is running in, so it will not self-update (a guess could replace another Sentinel)")
+// so no self-update is done: guessing could replace another Sentinel. Set
+// SENTINEL_SELF_CONTAINER to the container's name or ID to tell it.
+var ErrSelfUnknown = errors.New("could not determine which container this Sentinel is running in, so it will not self-update (a guess could replace another Sentinel); set " + SelfContainerEnv + " to this container's name or ID")
 
 func findContainer(ctx context.Context, d Docker, name string) (*container.Summary, error) {
 	all, err := d.ListAllContainers(ctx)

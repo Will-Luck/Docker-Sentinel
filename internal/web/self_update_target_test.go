@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 )
 
 // queueOf is an update queue holding pending updates by container name.
@@ -126,5 +127,33 @@ func TestApiUpdateToVersionSelfUpdatesOnlyTheOwnContainer(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no self-update started for the own container")
+	}
+}
+
+// SENTINEL_SELF_CONTAINER tells the dashboard which container it is when the
+// container ID cannot be read; it must be a Sentinel.
+func TestApiSelfUpdateHonoursSelfContainerOverride(t *testing.T) {
+	t.Setenv(selfupdate.SelfContainerEnv, "lh-sentinel-hub")
+	srv, su := twoSentinelServer(t, "lh-sentinel-hub")
+	w := httptest.NewRecorder()
+	srv.apiSelfUpdate(w, httptest.NewRequest(http.MethodPost, "/api/self-update", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	if target := <-su.targets; target != "img/sentinel:3.0.0" {
+		t.Errorf("target = %q", target)
+	}
+
+	t.Setenv(selfupdate.SelfContainerEnv, "no-such")
+	srv, su = twoSentinelServer(t, "no-such")
+	w = httptest.NewRecorder()
+	srv.apiSelfUpdate(w, httptest.NewRequest(http.MethodPost, "/api/self-update", nil))
+	if w.Code == http.StatusOK || !strings.Contains(w.Body.String(), "SENTINEL_SELF_CONTAINER") {
+		t.Errorf("a bad override was accepted or the error does not name the variable: %d %s", w.Code, w.Body)
+	}
+	select {
+	case target := <-su.targets:
+		t.Errorf("self-update started for %q", target)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
