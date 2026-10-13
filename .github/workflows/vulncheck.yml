@@ -1,0 +1,26 @@
+name: Vulncheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Weekly, so a new advisory against a dependency, or a Go patch release
+  # that fixes the toolchain pinned in go.mod, fails a run between pushes.
+  # GitHub disables scheduled workflows after 60 days without repository
+  # activity; re-enable this one in the Actions tab when that happens.
+  schedule:
+    - cron: "17 6 * * 1"
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

@@ -67,3 +67,19 @@ jobs:
           export PATH="$(go env GOPATH)/bin:$PATH"
           make lint
 
+  vulncheck:
+    runs-on: ubuntu-latest
+    container:
+      image: golang:1.26-alpine
+      network: gitea_default
+    steps:
+      - name: Install dependencies
+        run: apk add --no-cache git
+
+      - name: Checkout
+        run: |
+          git clone http://gitea-token:${{ github.token }}@gitea:3000/${{ github.repository }}.git .
+          git checkout ${{ github.sha }}
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
