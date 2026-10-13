@@ -9,10 +9,12 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,6 +34,26 @@ type CA struct {
 	mu       sync.Mutex // protects cert issuance (serialise serial number generation)
 }
 
+// keepBrokenCA moves the CA files EnsureCA cannot use aside (suffixed
+// .broken-<time>) before it creates a new CA, and says so in the log.
+func keepBrokenCA(dir, certPath, keyPath, why string) {
+	suffix := ".broken-" + time.Now().UTC().Format("20060102-150405")
+	var kept []string
+	for _, p := range []string{certPath, keyPath} {
+		if !fileExists(p) {
+			continue
+		}
+		if err := os.Rename(p, p+suffix); err != nil {
+			slog.Error("could not keep the old cluster CA file", "file", p, "error", err)
+			continue
+		}
+		kept = append(kept, p+suffix)
+	}
+	slog.Error("the cluster CA cannot be used ("+why+"): creating a new one; every agent must enrol again. "+
+		"To keep the old CA instead, stop Sentinel and restore the kept files under their own names",
+		"dir", dir, "kept", strings.Join(kept, ", "))
+}
+
 // EnsureCA loads or creates a CA certificate and key in the given directory.
 // If ca.pem and ca-key.pem already exist and parse correctly, they are reused.
 // Otherwise a fresh CA is generated. Directory is created if it doesn't exist.
@@ -46,13 +68,18 @@ func EnsureCA(dir string) (*CA, error) {
 	certPath := filepath.Join(dir, "ca.pem")
 	keyPath := filepath.Join(dir, "ca-key.pem")
 
-	// Try loading existing CA first.
-	if fileExists(certPath) && fileExists(keyPath) {
+	// Load the existing CA. One that cannot be read (or half of one) is
+	// replaced, as the cluster cannot run without a CA, but never silently:
+	// a new CA locks out every enrolled agent. The old files are kept.
+	certExists, keyExists := fileExists(certPath), fileExists(keyPath)
+	if certExists && keyExists {
 		ca, err := loadCA(certPath, keyPath)
 		if err == nil {
 			return ca, nil
 		}
-		// Existing files are broken — regenerate below.
+		keepBrokenCA(dir, certPath, keyPath, fmt.Sprintf("it cannot be read: %v", err))
+	} else if certExists || keyExists {
+		keepBrokenCA(dir, certPath, keyPath, "ca.pem or ca-key.pem is missing")
 	}
 
 	// Generate new CA key pair.
