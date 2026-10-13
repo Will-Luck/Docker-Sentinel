@@ -222,16 +222,17 @@ func (d *DigestScheduler) timeUntilNext() time.Duration {
 	now := d.clock.Now()
 	hour, min := d.digestTime()
 
-	next := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, now.Location())
-	if !now.Before(next) {
-		next = next.Add(d.digestInterval())
+	// Slots fall every interval from the digest time; start from yesterday's
+	// so a slot after midnight of a shorter interval is found too, and step
+	// until the next slot is ahead (it was added once only, so after the
+	// day's last slot of a 12h interval the delay went negative and the
+	// digest fired every minute until midnight).
+	interval := d.digestInterval()
+	next := time.Date(now.Year(), now.Month(), now.Day(), hour, min, 0, 0, now.Location()).AddDate(0, 0, -1)
+	for !now.Before(next) {
+		next = next.Add(interval)
 	}
-
-	delay := next.Sub(now)
-	if delay < 0 {
-		delay = 1 * time.Minute
-	}
-	return delay
+	return next.Sub(now)
 }
 
 // effectiveMode returns the notification mode for a container,
