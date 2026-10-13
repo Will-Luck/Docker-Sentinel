@@ -9,6 +9,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/moby/moby/api/types/container"
@@ -90,7 +91,7 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	su.log.Info("self-update initiated", "name", selfName, "image", imageRef)
 
 	// 3. Signature gate for the new Sentinel image, before anything changes.
-	if err := su.verifyTarget(ctx, inspect.Config.Labels, imageRef); err != nil {
+	if err := su.verifyTarget(ctx, selfName, inspect.Config.Image, inspect.Config.Labels, imageRef); err != nil {
 		return err
 	}
 
@@ -126,21 +127,27 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 }
 
 // verifyTarget applies the signature-verification gate to the new image: in
-// enforce mode an image that fails, or a missing cosign, refuses the update;
-// in warn mode the failure is logged.
-func (su *SelfUpdater) verifyTarget(ctx context.Context, labels map[string]string, image string) error {
+// enforce mode an image that fails, or a missing or unconfigured cosign,
+// refuses the update; in warn mode the failure is logged. A refusal is
+// recorded in the history as a failed update and notified once, like any other
+// refused update (name and oldImage describe this Sentinel).
+func (su *SelfUpdater) verifyTarget(ctx context.Context, name, oldImage string, labels map[string]string, image string) error {
 	if su.updater == nil {
 		return nil
 	}
 	u := su.updater
 	mode := u.verifyModeFor(labels)
-	switch {
-	case mode == verify.ModeDisabled:
+	if mode == verify.ModeDisabled {
 		return nil
-	case u.imgVerifier == nil && mode == verify.ModeEnforce:
-		su.log.Warn("signature verification is set to enforce but cosign is not available, refusing the self-update", "image", image)
-		return fmt.Errorf("self-update: %w", ErrVerifierUnavailable)
-	case u.imgVerifier == nil:
+	}
+	start := u.clock.Now()
+	if reason := u.unverifiable(mode); reason != nil {
+		su.log.Warn("signature verification cannot be done, refusing the self-update", "image", image, "reason", reason)
+		err := u.refuseUnverifiable(name, oldImage, image, "", "", start, reason)
+		u.notifyUnverifiable(context.WithoutCancel(ctx), []error{err})
+		return fmt.Errorf("self-update: %w", reason)
+	}
+	if u.imgVerifier == nil { // warn mode
 		su.log.Warn("signature verification is set to warn but cosign is not available, self-updating without a signature check", "image", image)
 		return nil
 	}
@@ -150,7 +157,17 @@ func (su *SelfUpdater) verifyTarget(ctx context.Context, labels map[string]strin
 		su.log.Info("signature verified", "image", image)
 	case mode == verify.ModeEnforce:
 		su.log.Warn("signature verification failed, refusing the self-update", "image", image, "error", result.Error)
-		return fmt.Errorf("signature verification failed for %s: %s", image, result.Error)
+		reason := fmt.Errorf("signature verification failed for %s: %s", image, result.Error)
+		_ = u.refuseUnverifiable(name, oldImage, image, "", "", start, reason)
+		u.notifier.Notify(context.WithoutCancel(ctx), notify.Event{
+			Type:          notify.EventUpdateFailed,
+			ContainerName: name,
+			OldImage:      oldImage,
+			NewImage:      image,
+			Error:         reason.Error(),
+			Timestamp:     u.clock.Now(),
+		})
+		return reason
 	default:
 		su.log.Warn("signature verification failed, proceeding (warn mode)", "image", image, "error", result.Error)
 	}

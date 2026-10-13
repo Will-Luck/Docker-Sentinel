@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"slices"
@@ -473,5 +474,45 @@ func TestSelfUpdateHonoursTheSelfContainerOverrideAndRefusesANonSentinel(t *test
 	}
 	if len(mock.renameCalls) != 0 {
 		t.Errorf("renames = %v", mock.renameCalls)
+	}
+}
+
+// When the signature gate refuses the hub's own self-update, the refusal is
+// recorded in the history and notified once, like any other refused update.
+func TestSelfUpdateRefusalIsRecordedAndNotifiedOnce(t *testing.T) {
+	cases := map[string]struct {
+		mode     verify.Mode
+		verifier ImageVerifier
+		want     string
+	}{
+		"enforce without cosign": {verify.ModeEnforce, nil, "cosign is not available"},
+		"enforce, bad signature": {verify.ModeEnforce, &mockImageVerifier{result: &verify.Result{Verified: false, Error: "no matching signatures"}}, "no matching signatures"},
+	}
+	for name, c := range cases {
+		ev, su := newSelfUpdateFixture("img:1.0")
+		u, _ := newTestUpdater(t, ev.mockDocker)
+		u.SetVerifyMode(c.mode)
+		if c.verifier != nil {
+			u.SetVerifier(c.verifier)
+		}
+		su.SetUpdater(u)
+		rec := recordNotifications(u)
+
+		if err := su.Update(context.Background(), "img:2.0"); err == nil {
+			t.Fatalf("%s: expected a refusal", name)
+		}
+
+		rows, _ := u.store.ListHistory(10, "")
+		if len(rows) != 1 || rows[0].Outcome != "failed" || rows[0].ContainerName != "sentinel" ||
+			rows[0].OldImage != "img:1.0" || rows[0].NewImage != "img:2.0" || !strings.Contains(rows[0].Error, c.want) {
+			t.Errorf("%s: history = %+v, want one failed row for sentinel img:1.0 -> img:2.0 mentioning %q", name, rows, c.want)
+		}
+		failed := rec.ofType(notify.EventUpdateFailed)
+		if len(failed) != 1 || !strings.Contains(failed[0].Error, c.want) {
+			t.Errorf("%s: notifications = %+v, want exactly one failure naming %q", name, failed, c.want)
+		}
+		if n := len(rec.ofType(notify.EventUpdateStarted)); n != 0 {
+			t.Errorf("%s: %d update-started notifications for a refused update", name, n)
+		}
 	}
 }
