@@ -188,7 +188,8 @@ func (a *Agent) runAutonomous(ctx context.Context) error {
 // monitoring pass. Anomalies (unexpected stops, state changes) are journaled
 // for the server to process on reconnection.
 func (a *Agent) autonomousScan(ctx context.Context) {
-	containers, err := a.docker.ListContainers(ctx)
+	// All containers, so stopped ones are counted too.
+	containers, err := a.docker.ListAllContainers(ctx)
 	if err != nil {
 		a.log.Error("autonomous scan: failed to list containers", "error", err)
 		return

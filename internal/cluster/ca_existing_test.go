@@ -21,7 +21,7 @@ func TestEnsureCA_KeepsACAItCannotRead(t *testing.T) {
 			dir := t.TempDir()
 			certPath := filepath.Join(dir, "ca.pem")
 			broken := []byte("not a certificate")
-			if err := os.WriteFile(certPath, broken, 0644); err != nil {
+			if err := os.WriteFile(certPath, broken, 0600); err != nil {
 				t.Fatal(err)
 			}
 			if tc.writeKey {

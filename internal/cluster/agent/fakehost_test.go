@@ -83,6 +83,9 @@ type fakeHost struct {
 	// its argv joined with spaces.
 	execs    []string
 	execExit map[string]int
+	// listHook, if set, runs in every ListAllContainers once the list is
+	// taken, before it is returned.
+	listHook func()
 	// createHook, if set, runs once a create has taken effect.
 	createHook func()
 	// tags lists each TagImage call as "source target".
@@ -411,7 +414,11 @@ func (h *fakeHost) ListAllContainers(context.Context) ([]container.Summary, erro
 		return nil, err
 	}
 	defer h.late()
-	return h.summaries(false), nil
+	out := h.summaries(false)
+	if h.listHook != nil {
+		h.listHook()
+	}
+	return out, nil
 }
 
 // InspectContainer finds the container by ID, name or ID prefix, as the

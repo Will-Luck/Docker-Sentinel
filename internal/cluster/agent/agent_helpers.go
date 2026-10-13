@@ -28,17 +28,33 @@ func (a *Agent) sendMsg(stream proto.AgentService_ChannelClient, msg *proto.Agen
 	return stream.Send(msg)
 }
 
+// heartbeatInterval is how often the agent sends a heartbeat, and
+// listRefreshEvery how many heartbeats apart it also sends its container
+// list (5 minutes), so the hub's view of the host does not wait for the
+// next scan. Variables so tests can shorten them.
+var (
+	heartbeatInterval = 30 * time.Second
+	listRefreshEvery  = 10
+)
+
 // heartbeatLoop sends periodic heartbeats to the server. Returns on
 // stream error or context cancellation.
 func (a *Agent) heartbeatLoop(ctx context.Context, stream proto.AgentService_ChannelClient) error {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
+	beats := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			beats++
+			if beats%listRefreshEvery == 0 {
+				if err := a.handleListContainers(ctx, stream, ""); err != nil && ctx.Err() == nil {
+					a.log.Warn("could not send the container list", "error", err)
+				}
+			}
 			msg := &proto.AgentMessage{
 				Payload: &proto.AgentMessage_Heartbeat{
 					Heartbeat: &proto.Heartbeat{

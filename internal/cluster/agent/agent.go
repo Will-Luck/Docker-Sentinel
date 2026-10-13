@@ -124,6 +124,9 @@ type Agent struct {
 	connected      bool
 	containerCount int
 
+	// listMu serialises taking and sending container lists.
+	listMu sync.Mutex
+
 	// sendMu serialises writes to the bidirectional gRPC stream.
 	// gRPC stream Send() is not safe for concurrent use — multiple
 	// goroutines (heartbeat, command handlers) call it simultaneously.
@@ -159,6 +162,10 @@ type Agent struct {
 	// keepaliveDialled is the keepalive interval (nanoseconds) the
 	// current connection was dialled with.
 	keepaliveDialled atomic.Int64
+
+	// autoCancel ends autonomous mode while it runs (startAutonomous).
+	autoMu     sync.Mutex
+	autoCancel context.CancelFunc
 
 	// updating holds the names of containers being updated (beginUpdate).
 	updatingMu sync.Mutex
@@ -281,12 +288,11 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		a.log.Info("enrollment complete", "host_id", a.hostID)
 	} else {
-		// Load the host ID from the previously saved file.
-		id, err := os.ReadFile(filepath.Join(a.cfg.DataDir, "host-id"))
+		id, err := a.loadHostID()
 		if err != nil {
-			return fmt.Errorf("read host id: %w", err)
+			return err
 		}
-		a.hostID = strings.TrimSpace(string(id))
+		a.hostID = id
 		a.log.Info("already enrolled", "host_id", a.hostID)
 	}
 
@@ -295,19 +301,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	// enters autonomous mode (monitoring only, no updates) while continuing
 	// reconnection attempts in the background.
 	bo := newBackoff()
-	var autonomousCancel context.CancelFunc
+	defer a.stopAutonomous("agent stopping")
 
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
-		}
-
-		// If autonomous mode was running, cancel it — we're about to
-		// attempt a real session. If the session fails we'll restart it.
-		if autonomousCancel != nil {
-			autonomousCancel()
-			autonomousCancel = nil
-			a.log.Info("autonomous mode suspended for reconnection attempt")
 		}
 
 		sessionStart := time.Now()
@@ -334,17 +332,11 @@ func (a *Agent) Run(ctx context.Context) error {
 		// Track when we went offline for autonomous mode decisions.
 		a.setOffline()
 
-		// Enter autonomous mode if the grace period has elapsed.
-		// The autonomous loop runs in its own goroutine and is
-		// cancelled when the next reconnection attempt starts.
+		// Enter autonomous mode once the grace period has passed. It keeps
+		// running through the reconnect attempts and ends when the agent
+		// connects again (setConnected).
 		if a.shouldEnterAutonomous() {
-			autoCtx, cancel := context.WithCancel(ctx)
-			autonomousCancel = cancel
-			go func() {
-				if err := a.runAutonomous(autoCtx); err != nil && autoCtx.Err() == nil {
-					a.log.Error("autonomous mode exited with error", "error", err)
-				}
-			}()
+			a.startAutonomous(ctx)
 		}
 
 		wait := bo.next()
@@ -362,9 +354,6 @@ func (a *Agent) Run(ctx context.Context) error {
 
 		select {
 		case <-ctx.Done():
-			if autonomousCancel != nil {
-				autonomousCancel()
-			}
 			return ctx.Err()
 		case <-time.After(wait):
 		}
@@ -561,14 +550,19 @@ func (a *Agent) enroll(ctx context.Context) error {
 
 	a.hostID = resp.HostId
 
-	// Persist credentials to disk. Order matters: write key last so a
-	// partial write leaves us in an "unenrolled" state that retries
-	// cleanly.
+	// Persist credentials to disk. Order matters: the key goes last, as
+	// isEnrolled looks for it, so a partial write leaves the agent
+	// unenrolled. (The token is used up by then: a new one is needed.)
 	if err := os.WriteFile(a.caPath, resp.CaCert, 0600); err != nil {
 		return fmt.Errorf("write ca cert: %w", err)
 	}
 	if err := os.WriteFile(a.certPath, resp.AgentCert, 0600); err != nil {
 		return fmt.Errorf("write agent cert: %w", err)
+	}
+	// Save host ID so we can reload it on restart.
+	idPath := filepath.Join(a.cfg.DataDir, "host-id")
+	if err := os.WriteFile(idPath, []byte(a.hostID), 0600); err != nil {
+		return fmt.Errorf("write host id: %w", err)
 	}
 
 	keyDER, err := x509.MarshalECPrivateKey(key)
@@ -579,14 +573,38 @@ func (a *Agent) enroll(ctx context.Context) error {
 	if err := os.WriteFile(a.keyPath, keyPEM, 0600); err != nil {
 		return fmt.Errorf("write agent key: %w", err)
 	}
-
-	// Save host ID so we can reload it on restart.
-	idPath := filepath.Join(a.cfg.DataDir, "host-id")
-	if err := os.WriteFile(idPath, []byte(a.hostID), 0600); err != nil {
-		return fmt.Errorf("write host id: %w", err)
-	}
-
 	return nil
+}
+
+// loadHostID returns the host ID the hub gave this agent: from the host-id
+// file, else from its certificate, whose common name the hub sets to it
+// (an enrolment cut short may have left no host-id file). The file is then
+// written again.
+func (a *Agent) loadHostID() (string, error) {
+	idPath := filepath.Join(a.cfg.DataDir, "host-id")
+	if b, err := os.ReadFile(idPath); err == nil && strings.TrimSpace(string(b)) != "" {
+		return strings.TrimSpace(string(b)), nil
+	}
+	a.credMu.Lock()
+	certPEM, err := os.ReadFile(a.certPath)
+	a.credMu.Unlock()
+	if err != nil {
+		return "", fmt.Errorf("read host id: no host-id file and no certificate: %w", err)
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return "", errors.New("read host id: no host-id file and the certificate cannot be read")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || cert.Subject.CommonName == "" {
+		return "", fmt.Errorf("read host id: no host-id file and the certificate names no host: %v", err)
+	}
+	id := cert.Subject.CommonName
+	if err := os.WriteFile(idPath, []byte(id), 0600); err != nil { //nolint:gosec // idPath is in the agent's own data directory
+		a.log.Warn("could not write the host-id file again", "error", err)
+	}
+	a.log.Warn("host-id file missing, using the host ID in the agent's certificate", "host_id", id)
+	return id, nil
 }
 
 // connect establishes a gRPC connection with mTLS using the agent's
@@ -698,15 +716,52 @@ func certErrorGuidance(err error) (msg, fix string) {
 }
 
 // setConnected marks the agent as connected and clears the offline timer.
+// Autonomous mode, if it was running, ends.
 func (a *Agent) setConnected() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	wasOffline := !a.offlineSince.IsZero()
 	a.connected = true
 	a.offlineSince = time.Time{}
+	a.mu.Unlock()
 	if wasOffline {
 		a.log.Info("connection restored")
 	}
+	a.stopAutonomous("connected to the server")
+}
+
+// startAutonomous starts autonomous mode unless it is running.
+func (a *Agent) startAutonomous(ctx context.Context) {
+	a.autoMu.Lock()
+	defer a.autoMu.Unlock()
+	if a.autoCancel != nil {
+		return
+	}
+	autoCtx, cancel := context.WithCancel(ctx)
+	a.autoCancel = cancel
+	go func() {
+		if err := a.runAutonomous(autoCtx); err != nil && autoCtx.Err() == nil {
+			a.log.Error("autonomous mode exited with error", "error", err)
+		}
+	}()
+}
+
+// stopAutonomous ends autonomous mode if it is running.
+func (a *Agent) stopAutonomous(why string) {
+	a.autoMu.Lock()
+	defer a.autoMu.Unlock()
+	if a.autoCancel == nil {
+		return
+	}
+	a.autoCancel()
+	a.autoCancel = nil
+	a.log.Info("autonomous mode ended", "reason", why)
+}
+
+// autonomousRunning reports whether autonomous mode is running.
+func (a *Agent) autonomousRunning() bool {
+	a.autoMu.Lock()
+	defer a.autoMu.Unlock()
+	return a.autoCancel != nil
 }
 
 // setOffline marks the agent as disconnected and starts the offline timer.

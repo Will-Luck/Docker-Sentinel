@@ -115,7 +115,16 @@ func (a *Agent) safeHandle(op, reqID string, fn func() error) {
 // handleListContainers lists local containers and sends the result back
 // to the server. An empty requestID marks an unsolicited refresh.
 func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentService_ChannelClient, requestID string) error {
-	a.log.Info("listing containers", "request_id", requestID)
+	if requestID != "" {
+		a.log.Info("listing containers", "request_id", requestID)
+	} else {
+		a.log.Debug("sending the container list")
+	}
+
+	// One list at a time, taken and sent in order: the hub keeps whichever
+	// list arrives last, so an older one must never overtake a newer one.
+	a.listMu.Lock()
+	defer a.listMu.Unlock()
 
 	containers, err := a.listLocalContainers(ctx)
 	if err != nil {

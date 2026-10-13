@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -72,5 +73,81 @@ func TestHandleListContainers_UnsolicitedRefreshSendsNothingOnFailure(t *testing
 	}
 	if n := len(st.messages()); n != 0 {
 		t.Errorf("agent sent %d messages for a failed unsolicited refresh, want 0", n)
+	}
+}
+
+// cluster-agent-13: the agent pushes its container list after each update
+// or action. Two pushes could overtake each other, so the hub kept the
+// older list. Lists go out in the order they were taken.
+func TestHandleListContainers_PushesGoOutInOrder(t *testing.T) {
+	h := newFakeHost()
+	web := h.addContainer("web", "nginx:1", true)
+	a := newTestAgent(t.TempDir(), h)
+	st := &recStream{}
+
+	firstTaking := make(chan struct{})
+	release := make(chan struct{})
+	calls := 0
+	var mu sync.Mutex
+	h.listHook = func() {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n == 1 {
+			close(firstTaking)
+			<-release // the first push is slow to take its list
+		}
+	}
+
+	done := make(chan struct{})
+	go func() { _ = a.handleListContainers(context.Background(), st, ""); close(done) }()
+	<-firstTaking
+	// The container stops; a second push follows while the first is slow.
+	h.mu.Lock()
+	web.running = false
+	h.mu.Unlock()
+	second := make(chan struct{})
+	go func() { _ = a.handleListContainers(context.Background(), st, ""); close(second) }()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	<-done
+	<-second
+
+	msgs := st.messages()
+	if len(msgs) != 2 {
+		t.Fatalf("sent %d lists, want 2", len(msgs))
+	}
+	last := msgs[1].GetContainerList().GetContainers()
+	if len(last) != 1 || last[0].GetState() != "exited" {
+		t.Errorf("last list sent = %v, want the newer one, with web exited", last)
+	}
+}
+
+// cluster-agent-7: the hub heard the full container list only when an
+// agent connected, after the agent's own updates and actions, and at scans
+// (6 hours apart by default), so a container stopped or started by hand
+// showed its old state for hours. The agent sends its list with every
+// listRefreshEvery-th heartbeat.
+func TestHeartbeatLoop_SendsTheContainerListRegularly(t *testing.T) {
+	defer func(i time.Duration, n int) { heartbeatInterval, listRefreshEvery = i, n }(heartbeatInterval, listRefreshEvery)
+	heartbeatInterval, listRefreshEvery = 5*time.Millisecond, 2
+
+	h := newFakeHost()
+	h.addContainer("web", "nginx:1", true)
+	a := newTestAgent(t.TempDir(), h)
+	st := &recStream{}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_ = a.heartbeatLoop(ctx, st)
+
+	lists := 0
+	for _, m := range st.messages() {
+		if m.GetContainerList() != nil {
+			lists++
+		}
+	}
+	if lists == 0 {
+		t.Error("no container list sent with the heartbeats")
 	}
 }
