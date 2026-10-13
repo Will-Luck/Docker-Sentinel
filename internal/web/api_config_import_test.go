@@ -79,3 +79,40 @@ func TestHandleHistory_RendersRemovedConnectorRows(t *testing.T) {
 		t.Error("host name missing from rendered history")
 	}
 }
+
+// A config export carries the signature verification settings, and
+// importing it into a fresh instance keeps every one of them.
+func TestConfigExportImportKeepsVerifySettings(t *testing.T) {
+	verifySettings := map[string]string{
+		"verify_mode":            "enforce",
+		"cosign_path":            "/usr/local/bin/cosign",
+		"cosign_keyless":         "true",
+		"cosign_key_path":        "/keys/cosign.pub",
+		"cosign_identity":        "https://github.com/o/r/.github/workflows/release.yml@refs/heads/main",
+		"cosign_oidc_issuer":     "https://token.actions.githubusercontent.com",
+		"cosign_identity_regexp": "false",
+	}
+	from := newMockSettingsStore()
+	for k, v := range verifySettings {
+		from.data[k] = v
+	}
+	w := httptest.NewRecorder()
+	(&Server{deps: Dependencies{SettingsStore: from, Log: slog.Default()}}).
+		apiConfigExport(w, httptest.NewRequest(http.MethodGet, "/api/config/export", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("export status = %d, body %s", w.Code, w.Body.String())
+	}
+
+	to := newMockSettingsStore()
+	w2 := httptest.NewRecorder()
+	(&Server{deps: Dependencies{SettingsStore: to, Log: slog.Default()}}).
+		apiConfigImport(w2, httptest.NewRequest(http.MethodPost, "/api/config/import", strings.NewReader(w.Body.String())))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("import status = %d, body %s", w2.Code, w2.Body.String())
+	}
+	for k, v := range verifySettings {
+		if to.data[k] != v {
+			t.Errorf("%s = %q after the round trip, want %q", k, to.data[k], v)
+		}
+	}
+}
