@@ -22,7 +22,9 @@ var oldInstanceRE = regexp.MustCompile(`^(.+)-old-\d+$`)
 // succeeds; this only clears what a helper left behind, and only for an old
 // instance that has the sentinel.self label, is exited or created, and whose
 // replacement (the same name without the suffix) is running and, if it has a
-// health check, healthy. A helper is only removed when it has exited.
+// health check, healthy. A helper is only removed when it has exited, or was created and never
+// started for over 15 minutes (it is then taken for dead and does not hold
+// the cleanup back).
 // Anonymous volumes are kept.
 func CleanupLeftovers(ctx context.Context, d Docker, dataDir string, log Logger) {
 	containers, err := d.ListAllContainers(ctx)
@@ -37,7 +39,7 @@ func CleanupLeftovers(ctx context.Context, d Docker, dataDir string, log Logger)
 		if len(c.Names) == 0 {
 			continue
 		}
-		if c.Labels[HelperLabel] == "true" && c.State != container.StateExited {
+		if c.Labels[HelperLabel] == "true" && !helperDead(c) {
 			helperActive = true
 		}
 		if c.State == container.StateRunning {
@@ -67,7 +69,7 @@ func CleanupLeftovers(ctx context.Context, d Docker, dataDir string, log Logger)
 			continue
 		}
 		name := strings.TrimPrefix(c.Names[0], "/")
-		isHelper := c.Labels[HelperLabel] == "true" && c.State == container.StateExited
+		isHelper := c.Labels[HelperLabel] == "true" && helperDead(c)
 		if c.Labels[HelperLabel] == "true" && !isHelper {
 			continue
 		}

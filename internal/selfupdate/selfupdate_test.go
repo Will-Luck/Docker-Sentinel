@@ -675,3 +675,34 @@ func TestRecoverLeavesAnUnfinishedSwapAloneWhenItIsStillRunning(t *testing.T) {
 		}
 	})
 }
+
+// A helper that never started is dead after 15 minutes; it must not block the
+// cleanup of old containers for ever.
+func TestCleanupLeftoversTreatsAStaleCreatedHelperAsDead(t *testing.T) {
+	f, mk := cleanupFixture()
+	self := map[string]string{"sentinel.self": "true"}
+	f.state["cur"] = &container.State{Running: true}
+	stale := mk("helper", "sentinel-self-update-helper", "created", map[string]string{HelperLabel: "true"})
+	stale.Created = time.Now().Add(-20 * time.Minute).Unix()
+	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self), stale}
+
+	CleanupLeftovers(context.Background(), f, "", nopLog{})
+
+	if !slices.Equal(removed(f), []string{"helper", "old"}) {
+		t.Errorf("removed %v, want the stale helper and the old container", removed(f))
+	}
+}
+
+func TestCleanupLeftoversKeepsAFreshCreatedHelper(t *testing.T) {
+	f, mk := cleanupFixture()
+	self := map[string]string{"sentinel.self": "true"}
+	f.state["cur"] = &container.State{Running: true}
+	fresh := mk("helper", "sentinel-self-update-helper", "created", map[string]string{HelperLabel: "true"})
+	fresh.Created = time.Now().Add(-time.Minute).Unix()
+	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self), fresh}
+
+	CleanupLeftovers(context.Background(), f, "", nopLog{})
+	if len(f.events) != 0 {
+		t.Errorf("removed %v while a fresh helper exists", f.events)
+	}
+}
