@@ -382,7 +382,7 @@
                             <tr class="container-row state-{{.State}}{{if .HasUpdate}} has-update{{end}}" data-name="{{.Name}}" data-host="{{.HostID}}" data-registry="{{.Registry}}" onclick="onRowClick(event, '{{.Name}}')">
                                 <td class="td-checkbox">
                                     {{if not .IsSelf}}
-                                        <input type="checkbox" class="row-select" value="{{.Name}}" data-host="{{.HostID}}" id="select-{{if .HostID}}{{.HostID}}-{{end}}{{.Name}}" aria-label="Select {{.Name}}{{if .HostID}} on {{.HostID}}{{end}}">
+                                        <input type="checkbox" class="row-select" value="{{.Name}}" data-host="{{.HostID}}" data-host-name="{{.HostName}}" id="select-{{if .HostID}}{{.HostID}}-{{end}}{{.Name}}" aria-label="Select {{.Name}}{{if .HostID}} on {{.HostID}}{{end}}">
                                     {{end}}
                                 </td>
                                 <td>

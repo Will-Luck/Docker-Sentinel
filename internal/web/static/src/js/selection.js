@@ -25,10 +25,19 @@ function containerActionURL(key, action) {
     return url;
 }
 
+// Host names seen on ticked rows, so dialogs can say "web (Agent One)"
+// instead of a 32-character host ID.
+var hostNames = {};
+
+function shortHostID(host) {
+    return host.length > 12 ? host.slice(0, 8) : host;
+}
+
 // selectionLabel names a selected row for dialogs and toasts.
 function selectionLabel(key) {
     var t = parseSelectionKey(key);
-    return t.host ? t.name + " (" + t.host + ")" : t.name;
+    if (!t.host) return t.name;
+    return t.name + " (" + (hostNames[t.host] || shortHostID(t.host)) + ")";
 }
 
 // policyTargets turns selection keys into {name, host} pairs for the bulk
@@ -41,7 +50,10 @@ function policyTargets(keys) {
 
 // checkboxKey is the selection key of a dashboard row checkbox.
 function checkboxKey(cb) {
-    return selectionKey(cb.getAttribute("data-host") || "", cb.value);
+    var host = cb.getAttribute("data-host") || "";
+    var hostName = cb.getAttribute("data-host-name");
+    if (host && hostName) hostNames[host] = hostName;
+    return selectionKey(host, cb.value);
 }
 
 export { selectionKey, parseSelectionKey, containerActionURL, selectionLabel, policyTargets, checkboxKey };

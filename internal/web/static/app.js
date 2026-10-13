@@ -54,9 +54,14 @@
     if (t.host) url += "?host=" + encodeURIComponent(t.host);
     return url;
   }
+  var hostNames = {};
+  function shortHostID(host) {
+    return host.length > 12 ? host.slice(0, 8) : host;
+  }
   function selectionLabel(key) {
     var t = parseSelectionKey(key);
-    return t.host ? t.name + " (" + t.host + ")" : t.name;
+    if (!t.host) return t.name;
+    return t.name + " (" + (hostNames[t.host] || shortHostID(t.host)) + ")";
   }
   function policyTargets(keys) {
     return keys.map(function(k) {
@@ -66,7 +71,10 @@
     });
   }
   function checkboxKey(cb) {
-    return selectionKey(cb.getAttribute("data-host") || "", cb.value);
+    var host = cb.getAttribute("data-host") || "";
+    var hostName = cb.getAttribute("data-host-name");
+    if (host && hostName) hostNames[host] = hostName;
+    return selectionKey(host, cb.value);
   }
 
   // internal/web/static/src/js/utils.js
