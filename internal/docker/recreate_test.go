@@ -287,6 +287,52 @@ func TestStripImageDefaultsDropsImageEntrypointAndCmd(t *testing.T) {
 	}
 }
 
+// `--entrypoint /app/bin` with no arguments clears the image's CMD. The
+// entrypoint equals the image's, but dropping it would let the daemon add
+// the image CMD back, changing the command line.
+func TestStripImageDefaultsKeepsEntrypointThatClearedCmd(t *testing.T) {
+	img := &container.Config{Entrypoint: []string{"/app/bin"}, Cmd: []string{"serve"}}
+	cfg := &container.Config{Entrypoint: []string{"/app/bin"}}
+
+	StripImageDefaults(cfg, nil, img)
+
+	if !slices.Equal(cfg.Entrypoint, []string{"/app/bin"}) || len(cfg.Cmd) != 0 {
+		t.Errorf("Entrypoint = %v Cmd = %v, want the entrypoint kept and no cmd", cfg.Entrypoint, cfg.Cmd)
+	}
+}
+
+// The daemon names a container's host after its short ID when none is
+// given, and older daemons list that short ID as a network alias. Carrying
+// either over would name the new container after the old one.
+func TestRecreateConfigDropsDefaultHostnameAndIDAliases(t *testing.T) {
+	inspect := container.InspectResponse{
+		ID:         "0123456789abcdef0123456789abcdef",
+		Config:     &container.Config{Image: "app:1", Hostname: "0123456789ab"},
+		HostConfig: &container.HostConfig{NetworkMode: "app_net"},
+		NetworkSettings: &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+			"app_net": {Aliases: []string{"web", "0123456789ab"}, Links: []string{"db:db"}, GwPriority: 10},
+		}},
+	}
+
+	rc := RecreateConfig(inspect, RecreateOptions{})
+
+	if rc.Config.Hostname != "" {
+		t.Errorf("Hostname = %q, want the old container's short ID dropped", rc.Config.Hostname)
+	}
+	ep := rc.NetworkingConfig.EndpointsConfig["app_net"]
+	if !slices.Equal(ep.Aliases, []string{"web"}) {
+		t.Errorf("Aliases = %v, want [web]", ep.Aliases)
+	}
+	if !slices.Equal(ep.Links, []string{"db:db"}) || ep.GwPriority != 10 {
+		t.Errorf("Links = %v GwPriority = %d, want both carried", ep.Links, ep.GwPriority)
+	}
+
+	inspect.Config.Hostname = "web"
+	if rc := RecreateConfig(inspect, RecreateOptions{}); rc.Config.Hostname != "web" {
+		t.Errorf("a user hostname was dropped: %q", rc.Config.Hostname)
+	}
+}
+
 func TestRecreateConfigWithoutOldImageKeepsConfig(t *testing.T) {
 	inspect := container.InspectResponse{
 		Config:     &container.Config{Image: "app:1", Env: []string{"PATH=/old"}, Cmd: []string{"serve"}},

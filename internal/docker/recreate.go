@@ -52,8 +52,28 @@ func RecreateConfig(inspect container.InspectResponse, opts RecreateOptions) Rec
 		StripImageDefaults(cfg, hostCfg, opts.OldImage)
 	}
 	netCfg := NetworkingConfigFrom(inspect.NetworkSettings)
+	dropShortIDNames(cfg, netCfg, inspect.ID)
 	netCfg = SanitiseForNetworkMode(cfg, hostCfg, netCfg)
 	return Recreate{Config: cfg, HostConfig: hostCfg, NetworkingConfig: netCfg, CarriedVolumes: carried}
+}
+
+// dropShortIDNames removes the names the daemon derived from the old
+// container's ID: the hostname it assigns when none is given (the short ID)
+// and the short-ID network alias older daemons add. The replacement gets its
+// own, as with docker compose.
+func dropShortIDNames(cfg *container.Config, netCfg *network.NetworkingConfig, oldID string) {
+	isIDPrefix := func(s string) bool { return len(s) >= 12 && strings.HasPrefix(oldID, s) }
+	if isIDPrefix(cfg.Hostname) {
+		cfg.Hostname = ""
+	}
+	if netCfg == nil {
+		return
+	}
+	for _, ep := range netCfg.EndpointsConfig {
+		if ep != nil && slices.ContainsFunc(ep.Aliases, isIDPrefix) {
+			ep.Aliases = slices.DeleteFunc(slices.Clone(ep.Aliases), isIDPrefix)
+		}
+	}
 }
 
 // CarryAnonymousVolumes makes the replacement of a container mount the
@@ -164,8 +184,12 @@ func StripImageDefaults(cfg *container.Config, hostCfg *container.HostConfig, im
 		}
 	}
 	// The daemon fills Cmd from the image only when Entrypoint is empty, so
-	// Cmd can come from the image only if Entrypoint did.
-	if slices.Equal(cfg.Entrypoint, img.Entrypoint) {
+	// Cmd can come from the image only if Entrypoint did. An entrypoint equal
+	// to the image's but with no cmd while the image has one was set on
+	// purpose (`--entrypoint` clears the image CMD): dropping it would let
+	// the daemon add the CMD back.
+	clearedCmd := len(cfg.Cmd) == 0 && len(img.Cmd) > 0
+	if slices.Equal(cfg.Entrypoint, img.Entrypoint) && !clearedCmd {
 		cfg.Entrypoint = nil
 		if slices.Equal(cfg.Cmd, img.Cmd) {
 			cfg.Cmd = nil
@@ -240,8 +264,9 @@ func SanitiseForNetworkMode(cfg *container.Config, hostCfg *container.HostConfig
 
 // NetworkingConfigFrom rebuilds the endpoint settings of a container's
 // networks for a create request. Only what the user configured is kept
-// (IPAM config, aliases, driver options, network ID and MAC address), not
-// runtime fields such as the gateway or the assigned IP address.
+// (IPAM config, links, aliases, driver options, gateway priority, network ID
+// and MAC address), not runtime fields such as the gateway or the assigned IP
+// address.
 func NetworkingConfigFrom(ns *container.NetworkSettings) *network.NetworkingConfig {
 	if ns == nil || len(ns.Networks) == 0 {
 		return nil
@@ -254,8 +279,10 @@ func NetworkingConfigFrom(ns *container.NetworkSettings) *network.NetworkingConf
 		}
 		endpoints[netName] = &network.EndpointSettings{
 			IPAMConfig: ep.IPAMConfig,
+			Links:      ep.Links,
 			Aliases:    ep.Aliases,
 			DriverOpts: ep.DriverOpts,
+			GwPriority: ep.GwPriority,
 			NetworkID:  ep.NetworkID,
 			MacAddress: ep.MacAddress,
 		}
