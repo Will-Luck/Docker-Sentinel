@@ -326,10 +326,35 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 
 	oldImage := svc.Spec.TaskTemplate.ContainerSpec.Image
 
-	// Build the new spec with the updated image.
+	// Build the new spec with the updated image. The container spec is copied
+	// so the inspected service is not modified through the shared pointer.
 	newSpec := svc.Spec
+	containerSpec := *svc.Spec.TaskTemplate.ContainerSpec
+	newSpec.TaskTemplate.ContainerSpec = &containerSpec
 	if targetImage != "" {
-		newSpec.TaskTemplate.ContainerSpec.Image = targetImage
+		containerSpec.Image = targetImage
+	} else {
+		// Digest-only update on a mutable tag. Swarm pins the service to
+		// tag@sha256:<digest> and does not re-resolve a pinned reference, so
+		// resubmitting the spec unchanged rolls nothing out. Drop the old pin,
+		// re-pin to the digest the registry serves now when it can be resolved,
+		// and bump ForceUpdate so the manager schedules a rollout regardless.
+		base := oldImage
+		if i := strings.Index(base, "@sha256:"); i > 0 {
+			base = base[:i]
+		}
+		containerSpec.Image = base
+		if digest, err := u.docker.DistributionDigest(ctx, base); err == nil && digest != "" {
+			containerSpec.Image = base + "@" + digest
+		} else if err != nil {
+			u.log.Debug("could not resolve new service digest, submitting unpinned tag", "name", name, "image", base, "error", err)
+		}
+		newSpec.TaskTemplate.ForceUpdate++
+	}
+	var priorStatus *swarm.UpdateStatus
+	if svc.UpdateStatus != nil {
+		cp := *svc.UpdateStatus
+		priorStatus = &cp
 	}
 
 	u.notifier.Notify(ctx, notify.Event{
@@ -355,7 +380,7 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 	}
 
 	// Poll for rollout completion.
-	outcome, pollErr := u.pollServiceUpdate(ctx, serviceID, name)
+	outcome, pollErr := u.pollServiceUpdate(ctx, serviceID, name, priorStatus)
 
 	duration := u.clock.Since(start)
 
@@ -440,7 +465,11 @@ const (
 // pollServiceUpdate polls the service's UpdateStatus until it reaches a
 // terminal state or the timeout expires. Returns the outcome string and
 // any error. Uses u.clock.After for testability with mock clocks.
-func (u *Updater) pollServiceUpdate(ctx context.Context, serviceID, name string) (string, error) {
+//
+// prior is the service's UpdateStatus before the update was submitted. A status
+// that started no later than prior belongs to an earlier rollout and is ignored,
+// so a leftover "completed" state is not mistaken for this update's result.
+func (u *Updater) pollServiceUpdate(ctx context.Context, serviceID, name string, prior *swarm.UpdateStatus) (string, error) {
 	deadline := u.clock.Now().Add(serviceUpdateTimeout)
 
 	for {
@@ -458,7 +487,7 @@ func (u *Updater) pollServiceUpdate(ctx context.Context, serviceID, name string)
 				continue
 			}
 
-			if svc.UpdateStatus == nil {
+			if svc.UpdateStatus == nil || updateStatusIsStale(svc.UpdateStatus, prior) {
 				continue
 			}
 
@@ -475,4 +504,14 @@ func (u *Updater) pollServiceUpdate(ctx context.Context, serviceID, name string)
 			}
 		}
 	}
+}
+
+// updateStatusIsStale reports whether cur is the status of a rollout that began
+// at or before prior. Statuses without a start time cannot be told apart, so
+// they are never treated as stale.
+func updateStatusIsStale(cur, prior *swarm.UpdateStatus) bool {
+	if prior == nil || prior.StartedAt == nil {
+		return false
+	}
+	return cur.StartedAt == nil || !cur.StartedAt.After(*prior.StartedAt)
 }

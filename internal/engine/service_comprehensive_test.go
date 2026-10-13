@@ -304,7 +304,7 @@ func TestUpdateServiceNoTargetImage(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should still call UpdateService (forces re-pull via QueryRegistry).
+	// Should still call UpdateService (digest-only update: re-pinned and force-updated).
 	if len(mock.updateSvcCalls) != 1 {
 		t.Errorf("UpdateService calls = %d, want 1", len(mock.updateSvcCalls))
 	}
