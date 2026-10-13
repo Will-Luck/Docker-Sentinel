@@ -98,6 +98,22 @@ func parkedName(name string) string {
 // updated or not. An empty targetImage re-pulls the container's current
 // image.
 func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string) (recreateResult, error) {
+	return a.recreate(ctx, name, targetImage, updateOptions{})
+}
+
+// updateOptions is what the hub sends with an update besides its target.
+type updateOptions struct {
+	// previous are the images the container ran before its current one.
+	previous []*proto.PreviousImage
+}
+
+// updateOptionsFrom reads the options of an update request.
+func updateOptionsFrom(req *proto.UpdateContainerRequest) updateOptions {
+	return updateOptions{previous: req.GetPreviousImages()}
+}
+
+// recreate is recreateContainer with the options the hub sent.
+func (a *Agent) recreate(ctx context.Context, name, targetImage string, opts updateOptions) (recreateResult, error) {
 	var r recreateResult
 	if a.swaps == nil {
 		return r, errors.New("this agent has no database for its update journal, so it does not update containers")
@@ -160,6 +176,7 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{
 		Image:                 targetImage,
 		OldImage:              a.imageDefaults(ctx, inspect.Image, name),
+		InheritedImages:       a.previousImageConfigs(ctx, name, opts.previous),
 		FreshAnonymousVolumes: removeVolumes,
 	})
 	_, warning, err := a.swaps.Update(ctx, engine.HostUpdate{
@@ -209,6 +226,33 @@ func (a *Agent) imageDefaults(ctx context.Context, imageID, name string) *contai
 		return nil
 	}
 	return cfg
+}
+
+// previousImageConfigs returns the configs of the images a container ran
+// before its current one (prev, from the hub's history) that this host can
+// still read, by image ID or repository digest. A container an older
+// Sentinel updated kept the config of the first image it ran, so the
+// recreate leaves out what came from these too. One that cannot be read is
+// skipped: what came from it is kept, as before.
+func (a *Agent) previousImageConfigs(ctx context.Context, name string, prev []*proto.PreviousImage) []*container.Config {
+	reader, ok := a.docker.(docker.ImageConfigReader)
+	if !ok {
+		return nil
+	}
+	var out []*container.Config
+	for _, p := range prev {
+		if p.GetDigest() == "" {
+			continue
+		}
+		cfg, err := reader.ImageConfig(ctx, p.GetDigest())
+		if err != nil {
+			a.log.Debug("could not read an image the container ran before; keeping what it may have inherited from it",
+				"container", name, "image", p.GetRef(), "digest", p.GetDigest(), "error", err)
+			continue
+		}
+		out = append(out, cfg)
+	}
+	return out
 }
 
 // removeVolumes reports whether a container is updated onto fresh anonymous

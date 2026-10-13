@@ -129,14 +129,21 @@ message UpdateContainerRequest {
   // with the credentials stored on the hub. Empty when there are none.
   string registry_auth = 20;
   // Images the container ran before its current one (from the hub's update
-  // history, newest first, at most 10): image IDs, digest references or
-  // tags. The agent leaves out of the new container the values that came
-  // from any of them. Agents before v3.0.0 ignore it.
-  repeated string previous_images = 10;
+  // history, newest first, at most 10). The agent leaves out of the new
+  // container the values that came from any of them. Agents before v3.0.0
+  // ignore it.
+  repeated PreviousImage previous_images = 10;
   // The lifecycle hooks the hub has stored for this container. They win
   // over the container's sentinel.hook.* labels, phase by phase, as on the
   // hub. Agents before v3.0.0 ignore it.
   repeated HookSpec hooks = 11;
+}
+
+// An image a container ran: the reference it ran it under, which names its
+// repository, and its image ID or repository digest.
+message PreviousImage {
+  string ref = 1;
+  string digest = 2;
 }
 
 // A lifecycle hook to run in a container.

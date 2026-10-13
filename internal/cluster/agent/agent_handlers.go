@@ -195,7 +195,7 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		handover = sr.handover
 		err = selfErr
 	} else {
-		rr, recreateErr := a.recreateContainer(ctx, name, targetImage)
+		rr, recreateErr := a.recreate(ctx, name, targetImage, updateOptionsFrom(req))
 		oldImage, oldDigest, newImage, newDigest = rr.oldImage, rr.oldDigest, rr.newImage, rr.newDigest
 		warning = rr.warning
 		err = recreateErr

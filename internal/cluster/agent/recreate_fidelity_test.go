@@ -8,6 +8,8 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 )
 
 // Two releases of an app image whose defaults change between them.
@@ -222,5 +224,60 @@ func TestRecreateContainer_RestoredAutoRemoveContainerIsAsItWas(t *testing.T) {
 	}
 	if got := c.volumeAt("/data"); got != vol {
 		t.Errorf("restored /data is %q, want the old container's %q", got, vol)
+	}
+}
+
+// A container an older Sentinel updated was created with the whole config
+// of the image it ran before (app:0 here), so that image's env, command and
+// labels stayed in it. Given the images the container ran before (the hub
+// sends them from its history), the agent leaves out what came from them
+// too, and the new container takes app:2's defaults.
+func TestRecreateContainer_LeavesOutWhatEarlierImagesGave(t *testing.T) {
+	h := fidelityHost(t)
+	appV0 := &container.Config{
+		Env:    []string{"PATH=/usr/local/bin:/usr/bin", "APP_VERSION=0"},
+		Cmd:    []string{"serve", "--v0"},
+		Labels: map[string]string{"org.opencontainers.image.version": "0"},
+	}
+	h.addImage("app:0", "sha256:app-0", appV0)
+	h.addFromImage(t, "web", "app:1",
+		&container.Config{
+			Env:    []string{"PATH=/usr/local/bin:/usr/bin", "APP_VERSION=0", "APP_MODE=prod"},
+			Cmd:    []string{"serve", "--v0"},
+			Labels: map[string]string{"org.opencontainers.image.version": "0", "com.example.team": "ops"},
+		}, nil, nil, true)
+	a := newSwapAgent(t, h)
+
+	prev := []*proto.PreviousImage{{Ref: "app:0", Digest: "sha256:app-0"}, {Ref: "app:gone", Digest: "sha256:gone"}}
+	if _, err := a.recreate(context.Background(), "web", "app:2", updateOptions{previous: prev}); err != nil {
+		t.Fatalf("recreate: %v", err)
+	}
+	c := h.byName("web")
+	if !slices.Equal(c.cfg.Cmd, appV2.Cmd) {
+		t.Errorf("cmd = %v, want the new image's %v", c.cfg.Cmd, appV2.Cmd)
+	}
+	if !hasEnv(c.env, "APP_VERSION=2") || hasEnv(c.env, "APP_VERSION=0") || !hasEnv(c.env, "APP_MODE=prod") {
+		t.Errorf("env = %v, want APP_VERSION=2 and the user's APP_MODE=prod", c.env)
+	}
+	if c.labels["org.opencontainers.image.version"] != "2" || c.labels["com.example.team"] != "ops" {
+		t.Errorf("labels = %v, want the new image's version and the user's team label", c.labels)
+	}
+}
+
+// The same through the update request the hub sends.
+func TestHandleUpdateContainer_UsesThePreviousImagesItIsSent(t *testing.T) {
+	h := fidelityHost(t)
+	h.addImage("app:0", "sha256:app-0", &container.Config{Env: []string{"APP_VERSION=0"}})
+	h.addFromImage(t, "web", "app:1", &container.Config{Env: []string{"APP_VERSION=0"}}, nil, nil, true)
+	a := newSwapAgent(t, h)
+
+	st := &recStream{}
+	req := &proto.UpdateContainerRequest{ContainerName: "web", TargetImage: "app:2",
+		PreviousImages: []*proto.PreviousImage{{Ref: "app:0", Digest: "sha256:app-0"}}}
+	if err := a.handleUpdateContainer(context.Background(), st, req, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	if c := h.byName("web"); !hasEnv(c.env, "APP_VERSION=2") || hasEnv(c.env, "APP_VERSION=0") {
+		t.Errorf("env = %v, want app:2's APP_VERSION=2 only", c.env)
 	}
 }

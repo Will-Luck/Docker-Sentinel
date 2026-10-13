@@ -219,7 +219,38 @@ func (p *remoteUpdatePrep) prepare(ctx context.Context, hostID string, req *prot
 			return err
 		}
 	}
+	req.PreviousImages = previousImages(p.db, hostID, name, c.ImageDigest)
 	return nil
+}
+
+// maxPreviousImages bounds the images sent with an update.
+const maxPreviousImages = 10
+
+// previousImages returns the images a remote container ran before its
+// current one (whose digest is current), from the hub's update history:
+// newest first, each once, at most maxPreviousImages. A row without the
+// old image's digest names no image for certain and is skipped.
+func previousImages(db *store.Store, hostID, name, current string) []*proto.PreviousImage {
+	recs, err := db.ListHistoryByContainer(store.ScopedKey(hostID, name), 100)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	if current != "" {
+		seen[current] = true
+	}
+	var out []*proto.PreviousImage
+	for _, rec := range recs { // newest first
+		if rec.OldDigest == "" || seen[rec.OldDigest] {
+			continue
+		}
+		seen[rec.OldDigest] = true
+		out = append(out, &proto.PreviousImage{Ref: rec.OldImage, Digest: rec.OldDigest})
+		if len(out) == maxPreviousImages {
+			break
+		}
+	}
+	return out
 }
 
 // knownContainer returns what srv last heard about a remote container.

@@ -75,7 +75,7 @@ func TestRollbackContainerSync_PrepAddsToTheRequest(t *testing.T) {
 		if !rollback {
 			t.Error("prep of a rollback was told it is an update")
 		}
-		req.PreviousImages = []string{"sha256:old"}
+		req.PreviousImages = []*proto.PreviousImage{{Ref: "nginx:0", Digest: "sha256:old"}}
 		return nil
 	})
 
@@ -86,7 +86,7 @@ func TestRollbackContainerSync_PrepAddsToTheRequest(t *testing.T) {
 	}
 	select {
 	case req := <-got:
-		if len(req.GetPreviousImages()) != 1 || req.GetPreviousImages()[0] != "sha256:old" {
+		if len(req.GetPreviousImages()) != 1 || req.GetPreviousImages()[0].GetDigest() != "sha256:old" {
 			t.Errorf("agent got previous images %v, want what the prep added", req.GetPreviousImages())
 		}
 	case <-time.After(5 * time.Second):
