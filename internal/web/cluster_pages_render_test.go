@@ -147,3 +147,33 @@ func TestContainerPage_RemoteShowsIDAndHost(t *testing.T) {
 		t.Errorf("a blank container ID row is shown")
 	}
 }
+
+// A Swarm task's tag is taken from its image reference by the same rule as
+// everywhere else, so a registry with a port ("192.168.1.60:5443/lh/app:1.0.1")
+// shows 1.0.1 and not "5443/lh/app:1.0.1".
+func TestTaskTag_RegistryWithPort(t *testing.T) {
+	for in, want := range map[string]string{
+		"192.168.1.60:5443/lh/app:1.0.1": "1.0.1",
+		"nginx:1.25":                     "1.25",
+	} {
+		if got := taskTag(in, "5443/lh/app:1.0.1"); got != want {
+			t.Errorf("taskTag(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := taskTag("", "fallback"); got != "fallback" {
+		t.Errorf("no image: %q, want the reported tag", got)
+	}
+}
+
+// The service page uses the same option styles as the container page, so its
+// Policy and Notification sections are not unstyled.
+func TestServicePage_UsesTheContainerPageOptionStyles(t *testing.T) {
+	b, _ := staticFS.ReadFile("static/service.html")
+	if strings.Contains(string(b), "policy-card") || strings.Contains(string(b), "notify-pref-cards") {
+		t.Error("service.html still uses classes that have no styles")
+	}
+	css, _ := staticFS.ReadFile("static/style.css")
+	if !strings.Contains(string(b), `class="notify-option"`) || !strings.Contains(string(css), ".notify-option") {
+		t.Error("service.html should use the styled notify-option markup")
+	}
+}

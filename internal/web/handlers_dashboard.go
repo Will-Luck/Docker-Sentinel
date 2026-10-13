@@ -226,7 +226,7 @@ func (s *Server) buildServiceView(d ServiceDetail, pendingNames map[string]bool,
 			NodeAddr: t.NodeAddr,
 			State:    t.State,
 			Image:    t.Image,
-			Tag:      t.Tag,
+			Tag:      taskTag(t.Image, t.Tag),
 			Slot:     t.Slot,
 			Error:    t.Error,
 		}
@@ -865,4 +865,14 @@ func extractIP(addr string) string {
 		}
 	}
 	return addr
+}
+
+// taskTag is the tag of a Swarm task's image. It is worked out from the image
+// reference, which handles a registry with a port, and falls back to the tag
+// the engine reported when there is no image.
+func taskTag(image, reported string) string {
+	if image == "" {
+		return reported
+	}
+	return ImageTag(image)
 }
