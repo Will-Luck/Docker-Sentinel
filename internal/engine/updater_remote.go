@@ -554,6 +554,8 @@ func (u *Updater) dropQueued(key, why string) {
 		return
 	}
 	u.queue.Remove(key)
+	// No longer pending: it leaves the digest with the queue.
+	_ = u.store.ClearNotifyState(key)
 	u.log.Info("removed stale queue entry ("+why+")", "name", key)
 	u.publishEvent(events.EventQueueChange, key, "removed: "+why)
 }

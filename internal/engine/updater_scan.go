@@ -463,6 +463,15 @@ func availableTarget(imageRef string, check registry.CheckResult) string {
 // whether nothing is left to act on. Updates without a version list are
 // checked against ignoreKey instead.
 func (u *Updater) filterIgnored(name string, check *registry.CheckResult) (allIgnored bool) {
+	allIgnored = u.filterIgnoredVersions(name, check)
+	if allIgnored {
+		// Nothing is pending any more, so it leaves the digest with the queue.
+		_ = u.store.ClearNotifyState(name)
+	}
+	return allIgnored
+}
+
+func (u *Updater) filterIgnoredVersions(name string, check *registry.CheckResult) (allIgnored bool) {
 	ignored, _ := u.store.GetIgnoredVersions(name)
 	if len(ignored) == 0 {
 		return false

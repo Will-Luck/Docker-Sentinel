@@ -284,6 +284,10 @@ func (s *Server) apiIgnoreVersion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.deps.Queue.Remove(key)
+	if s.deps.NotifyState != nil {
+		// Ignored, so no longer pending: it leaves the digest with the queue.
+		_ = s.deps.NotifyState.ClearNotifyState(update.Key())
+	}
 	s.logEvent(r, "ignore", name, "Ignored version "+ignoredVersion)
 
 	writeJSON(w, http.StatusOK, map[string]string{
