@@ -168,6 +168,53 @@ func (g *Graph) Sort() ([]string, error) {
 	return result, nil
 }
 
+// Order returns every container name with each container after the
+// containers it depends on, like Sort, but never fails: when only containers
+// in a cycle are left, the first of them by name goes next, which breaks the
+// cycle. cycles lists the cycles found, for logging (nil when there are
+// none). Ties are broken by name, so the order is stable.
+func (g *Graph) Order() (order []string, cycles [][]string) {
+	pending := make(map[string]int) // name -> dependencies not yet ordered
+	dependents := make(map[string][]string)
+	for name := range g.all {
+		pending[name] = 0
+	}
+	for name, deps := range g.adj {
+		for _, dep := range deps {
+			pending[name]++
+			dependents[dep] = append(dependents[dep], name)
+		}
+	}
+	broken := false
+	for len(pending) > 0 {
+		next := ""
+		for name, n := range pending {
+			if n == 0 && (next == "" || name < next) {
+				next = name
+			}
+		}
+		if next == "" {
+			broken = true
+			for name := range pending {
+				if next == "" || name < next {
+					next = name
+				}
+			}
+		}
+		delete(pending, next)
+		order = append(order, next)
+		for _, d := range dependents[next] {
+			if _, ok := pending[d]; ok {
+				pending[d]--
+			}
+		}
+	}
+	if broken {
+		cycles = g.DetectCycles()
+	}
+	return order, cycles
+}
+
 // DetectCycles uses three-colour DFS to find circular dependencies.
 func (g *Graph) DetectCycles() [][]string {
 	const (

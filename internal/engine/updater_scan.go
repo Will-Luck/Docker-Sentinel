@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/deps"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
@@ -535,6 +536,9 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		reserve = 2
 	}
 
+	// Update dependencies before their dependents.
+	containers = u.orderByDependencies(containers)
+
 	// Updates refused for want of cosign are notified once, together.
 	defer func() { u.notifyUnverifiable(context.WithoutCancel(ctx), result.Errors) }()
 
@@ -845,6 +849,11 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 					continue
 				}
 			}
+			// An update earlier in this scan may have recreated it (a
+			// network namespace consumer of an updated provider).
+			if cur, err := u.docker.InspectContainer(ctx, name); err == nil && cur.ID != "" {
+				c.ID = cur.ID
+			}
 			if err := u.UpdateContainer(ctx, c.ID, name, scanTarget); err != nil {
 				u.log.Error("auto-update failed", "name", name, "error", err)
 				result.Failed++
@@ -978,4 +987,30 @@ func shouldNotifyUpdate(mode string, state *store.NotifyState, remoteDigest stri
 		return false // no snooze configured: suppress the same digest for good
 	}
 	return !now.Before(state.SnoozedUntil)
+}
+
+// orderByDependencies orders containers so that each comes after the
+// containers it depends on (sentinel.depends-on, compose depends_on, a
+// container: network mode), so a scan updates a dependency before its
+// dependents. A cycle is broken by name and logged.
+func (u *Updater) orderByDependencies(containers []container.Summary) []container.Summary {
+	infos := make([]deps.ContainerInfo, 0, len(containers))
+	byName := make(map[string]container.Summary, len(containers))
+	for _, c := range containers {
+		name := containerName(c)
+		byName[name] = c
+		infos = append(infos, deps.ContainerInfo{ID: c.ID, Name: name, Labels: c.Labels, NetworkMode: c.HostConfig.NetworkMode})
+	}
+	if len(byName) != len(containers) {
+		return containers // names are unique; never drop one
+	}
+	order, cycles := deps.Build(infos).Order()
+	for _, cycle := range cycles {
+		u.log.Warn("dependency cycle, updating these containers in name order", "containers", strings.Join(cycle, " -> "))
+	}
+	ordered := make([]container.Summary, 0, len(containers))
+	for _, name := range order {
+		ordered = append(ordered, byName[name])
+	}
+	return ordered
 }

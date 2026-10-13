@@ -1,6 +1,7 @@
 package deps
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -257,5 +258,42 @@ func TestUnknownDepsIgnored(t *testing.T) {
 	}
 	if len(order) != 1 || order[0] != "app" {
 		t.Errorf("expected [app], got %v", order)
+	}
+}
+
+// Order puts dependencies first like Sort, and breaks a cycle instead of
+// failing: the first container of the cycle by name goes first, and the
+// cycle is reported.
+func TestOrderBreaksCycles(t *testing.T) {
+	g := Build([]ContainerInfo{
+		{Name: "web", Labels: map[string]string{"sentinel.depends-on": "api"}},
+		{Name: "api", Labels: map[string]string{"sentinel.depends-on": "db"}},
+		{Name: "db"},
+		{Name: "a", Labels: map[string]string{"sentinel.depends-on": "b"}},
+		{Name: "b", Labels: map[string]string{"sentinel.depends-on": "a"}},
+		{Name: "c", Labels: map[string]string{"sentinel.depends-on": "a"}},
+	})
+
+	order, cycles := g.Order()
+
+	pos := make(map[string]int)
+	for i, n := range order {
+		pos[n] = i
+	}
+	if len(order) != 6 {
+		t.Fatalf("order = %v, want all six containers", order)
+	}
+	for _, e := range [][2]string{{"db", "api"}, {"api", "web"}, {"a", "b"}, {"a", "c"}} {
+		if pos[e[0]] > pos[e[1]] {
+			t.Errorf("order = %v, want %s before %s", order, e[0], e[1])
+		}
+	}
+	if len(cycles) != 1 {
+		t.Errorf("cycles = %v, want the a/b cycle", cycles)
+	}
+
+	order, cycles = Build([]ContainerInfo{{Name: "x"}, {Name: "y", Labels: map[string]string{"sentinel.depends-on": "x"}}}).Order()
+	if !slices.Equal(order, []string{"x", "y"}) || cycles != nil {
+		t.Errorf("order = %v cycles = %v, want [x y] and no cycle", order, cycles)
 	}
 }
