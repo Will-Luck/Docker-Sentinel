@@ -242,7 +242,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// Report how a self-update that just replaced the previous agent ended,
 	// and remove what an earlier one left behind.
 	selfupdate.ReportOutcome(a.cfg.DataDir, a.log)
-	selfupdate.CleanupLeftovers(ctx, a.docker, a.log)
+	selfupdate.CleanupLeftovers(ctx, a.docker, a.cfg.DataDir, a.log)
 
 	// Finish or undo any update an earlier run was killed in the middle
 	// of, before anything else can touch a container, then keep retrying

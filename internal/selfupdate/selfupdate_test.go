@@ -38,6 +38,7 @@ type fake struct {
 	stopErr, startErr map[string]error
 	createErr         map[string]error
 	nextID            int
+	onStop            func()
 }
 
 func newFake() *fake {
@@ -68,6 +69,9 @@ func (f *fake) InspectContainer(_ context.Context, id string) (container.Inspect
 }
 func (f *fake) StopContainer(_ context.Context, id string, _ int) error {
 	f.note("stop:" + id)
+	if f.onStop != nil {
+		f.onStop()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.stopErr[id]; err != nil {
@@ -380,12 +384,27 @@ func TestReportOutcomeReadsAndRemovesTheFile(t *testing.T) {
 	}
 }
 
-func TestCleanupLeftoversRemovesOnlyExitedLeftovers(t *testing.T) {
+func cleanupFixture() (*fake, func(id, name, state string, labels map[string]string) container.Summary) {
 	f := newFake()
 	mk := func(id, name, state string, labels map[string]string) container.Summary {
 		return container.Summary{ID: id, Names: []string{"/" + name}, State: container.ContainerState(state), Labels: labels}
 	}
+	return f, mk
+}
+
+func removed(f *fake) []string {
+	got := []string{}
+	for _, e := range f.events {
+		got = append(got, strings.TrimPrefix(e, "remove:"))
+	}
+	slices.Sort(got)
+	return got
+}
+
+func TestCleanupLeftoversRemovesOnlyExitedLeftovers(t *testing.T) {
+	f, mk := cleanupFixture()
 	self := map[string]string{"sentinel.self": "true"}
+	f.state["cur"] = &container.State{Running: true}
 	f.list = []container.Summary{
 		mk("cur", "sentinel", "running", self),
 		mk("gone1", "sentinel-old-1700000000", "exited", self),
@@ -395,16 +414,98 @@ func TestCleanupLeftoversRemovesOnlyExitedLeftovers(t *testing.T) {
 		mk("keep-orphan", "lost-old-5", "exited", self),
 		mk("keep-unlabelled", "grafana-old-111", "exited", nil),
 		mk("helper-done", "sentinel-self-update-helper", "exited", map[string]string{HelperLabel: "true"}),
-		mk("helper-live", "x-self-update-helper", "running", map[string]string{HelperLabel: "true"}),
 	}
-	CleanupLeftovers(context.Background(), f, nopLog{})
+	CleanupLeftovers(context.Background(), f, "", nopLog{})
 
-	got := []string{}
-	for _, e := range f.events {
-		got = append(got, strings.TrimPrefix(e, "remove:"))
+	if want := []string{"gone1", "gone2", "helper-done"}; !slices.Equal(removed(f), want) {
+		t.Errorf("removed %v, want %v", removed(f), want)
 	}
-	slices.Sort(got)
-	if want := []string{"gone1", "gone2", "helper-done"}; !slices.Equal(got, want) {
-		t.Errorf("removed %v, want %v", got, want)
+}
+
+// The old container is the helper's way back until the helper has judged the
+// new one. Cleanup in the new instance must not remove it before then.
+func TestCleanupLeftoversKeepsOldContainerWhileAHelperIsActive(t *testing.T) {
+	for _, state := range []string{"running", "created", "restarting"} {
+		f, mk := cleanupFixture()
+		self := map[string]string{"sentinel.self": "true"}
+		f.state["cur"] = &container.State{Running: true}
+		f.list = []container.Summary{
+			mk("cur", "sentinel", "running", self),
+			mk("old", "sentinel-old-1700000000", "exited", self),
+			mk("helper", "sentinel-self-update-helper", state, map[string]string{HelperLabel: "true"}),
+		}
+		CleanupLeftovers(context.Background(), f, "", nopLog{})
+		if len(f.events) != 0 {
+			t.Errorf("helper %s: removed %v while the swap was in progress", state, f.events)
+		}
+	}
+}
+
+func TestCleanupLeftoversKeepsOldContainerWhileTheOutcomeSaysInProgress(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteOutcome(dir, Outcome{Result: ResultInProgress, FinishedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	f, mk := cleanupFixture()
+	self := map[string]string{"sentinel.self": "true"}
+	f.state["cur"] = &container.State{Running: true}
+	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self)}
+
+	CleanupLeftovers(context.Background(), f, dir, nopLog{})
+	if len(f.events) != 0 {
+		t.Errorf("removed %v during an in-progress swap", f.events)
+	}
+	// ReportOutcome must not swallow the marker either.
+	if out := ReportOutcome(dir, nopLog{}); out != nil {
+		t.Errorf("ReportOutcome reported an in-progress swap: %+v", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, OutcomeFile)); err != nil {
+		t.Errorf("the in-progress marker was removed: %v", err)
+	}
+}
+
+// Only a replacement that is running, and healthy if it has a health check,
+// makes the old container expendable.
+func TestCleanupLeftoversNeedsAHealthyRunningReplacement(t *testing.T) {
+	cases := map[string]*container.State{
+		"not running": {Running: false},
+		"restarting":  {Running: true, Restarting: true},
+		"unhealthy":   {Running: true, Health: &container.Health{Status: container.Unhealthy}},
+		"starting":    {Running: true, Health: &container.Health{Status: container.Starting}},
+	}
+	for name, st := range cases {
+		f, mk := cleanupFixture()
+		self := map[string]string{"sentinel.self": "true"}
+		f.state["cur"] = st
+		f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self)}
+		CleanupLeftovers(context.Background(), f, "", nopLog{})
+		if len(f.events) != 0 {
+			t.Errorf("%s: removed %v", name, f.events)
+		}
+	}
+	f, mk := cleanupFixture()
+	self := map[string]string{"sentinel.self": "true"}
+	f.state["cur"] = &container.State{Running: true, Health: &container.Health{Status: container.Healthy}}
+	f.list = []container.Summary{mk("cur", "sentinel", "running", self), mk("old", "sentinel-old-1", "exited", self)}
+	CleanupLeftovers(context.Background(), f, "", nopLog{})
+	if !slices.Equal(removed(f), []string{"old"}) {
+		t.Errorf("healthy replacement: removed %v", removed(f))
+	}
+}
+
+// The helper marks the swap as in progress before it touches anything.
+func TestRunMarksTheSwapInProgressBeforeStoppingTheOldContainer(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	s := spec()
+	s.OutcomeDir = t.TempDir()
+	var marker string
+	f.onStop = func() {
+		b, _ := os.ReadFile(filepath.Join(s.OutcomeDir, OutcomeFile))
+		marker = string(b)
+	}
+	newRunner(f).Run(context.Background(), s)
+	if !strings.Contains(marker, `"in_progress"`) {
+		t.Errorf("outcome file when the old container was stopped: %q", marker)
 	}
 }

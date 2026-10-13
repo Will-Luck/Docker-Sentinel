@@ -18,6 +18,10 @@ const OutcomeFile = "self-update-outcome.json"
 
 // Result values of an Outcome.
 const (
+	// ResultInProgress marks the swap as under way: the helper writes it before
+	// it touches anything, and the old container must be left alone until it
+	// is replaced by the final outcome.
+	ResultInProgress = "in_progress"
 	ResultSuccess    = "success"
 	ResultRolledBack = "rolled_back"
 	ResultFailed     = "failed"
@@ -45,6 +49,11 @@ type Runner struct {
 // lock; if the new container then fails to start, or does not stay up, it is
 // removed and the old one is started again under its own name.
 func (r Runner) Run(ctx context.Context, spec Spec) Outcome {
+	if err := WriteOutcome(spec.OutcomeDir, Outcome{
+		Result: ResultInProgress, OldImage: spec.OldImage, NewImage: spec.NewImage, FinishedAt: time.Now().UTC(),
+	}); err != nil {
+		r.Log.Warn("self-update helper: could not mark the swap as in progress", "error", err)
+	}
 	out := r.run(ctx, spec)
 	out.OldImage, out.NewImage, out.FinishedAt = spec.OldImage, spec.NewImage, time.Now().UTC()
 	if err := WriteOutcome(spec.OutcomeDir, out); err != nil {
@@ -183,8 +192,14 @@ func ReportOutcome(dir string, log Logger) *Outcome {
 		}
 		return nil
 	}
-	_ = os.Remove(path)
 	var out Outcome
+	if json.Unmarshal(data, &out) == nil && out.Result == ResultInProgress {
+		// The swap is still under way (or its helper died): leave the marker
+		// for whoever reads it next, and do not report it.
+		log.Debug("a self-update is still in progress")
+		return nil
+	}
+	_ = os.Remove(path)
 	if err := json.Unmarshal(data, &out); err != nil {
 		log.Warn("self-update outcome file is corrupt, ignored", "error", err)
 		return nil
@@ -199,4 +214,26 @@ func ReportOutcome(dir string, log Logger) *Outcome {
 		log.Error("self-update failed", "attempted", out.NewImage, "reason", out.Error)
 	}
 	return &out
+}
+
+// inProgressStale is how long an in-progress marker is believed. A helper
+// finishes in about a minute; a marker older than this belongs to a helper
+// that died, and must not hold the cleanup back for ever.
+const inProgressStale = 15 * time.Minute
+
+// InProgress reports whether the data directory holds a fresh in-progress
+// marker, that is a swap whose helper has not finished.
+func InProgress(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(dir, OutcomeFile))
+	if err != nil {
+		return false
+	}
+	var out Outcome
+	if json.Unmarshal(data, &out) != nil || out.Result != ResultInProgress {
+		return false
+	}
+	return time.Since(out.FinishedAt) < inProgressStale
 }

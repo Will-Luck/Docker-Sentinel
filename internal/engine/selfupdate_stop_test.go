@@ -138,6 +138,7 @@ func TestCleanupOldInstancesRemovesOnlyStoppedLeftovers(t *testing.T) {
 		oldInstance("keep-orphan", "lost-old-5", "exited"),
 		oldInstance("keep-name", "sentinel-old-backup", "exited"),
 	}
+	mock.inspectResults["cur"] = container.InspectResponse{State: &container.State{Running: true}}
 	su := NewSelfUpdater(mock, newTestSelfUpdater(mock).log)
 
 	su.CleanupOldInstances(context.Background())
@@ -156,6 +157,7 @@ func TestSchedulerStartupRemovesOldInstances(t *testing.T) {
 		oldInstance("cur", "sentinel", "running"),
 		oldInstance("gone", "sentinel-old-1700000000", "exited"),
 	}
+	mock.inspectResults["cur"] = container.InspectResponse{State: &container.State{Running: true}}
 	u, clk := newTestUpdater(t, mock)
 	sched := NewScheduler(u, u.cfg, u.log, clk)
 	sched.SetSelfUpdater(NewSelfUpdater(mock, u.log))

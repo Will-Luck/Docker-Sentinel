@@ -210,5 +210,5 @@ func isPortConflict(err error) bool {
 // CleanupOldInstances removes containers left behind by earlier self-updates
 // (see selfupdate.CleanupLeftovers).
 func (su *SelfUpdater) CleanupOldInstances(ctx context.Context) {
-	selfupdate.CleanupLeftovers(ctx, su.docker, su.log)
+	selfupdate.CleanupLeftovers(ctx, su.docker, su.dataDir, su.log)
 }
