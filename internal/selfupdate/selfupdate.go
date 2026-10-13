@@ -88,6 +88,10 @@ type Spec struct {
 	// OldRestart is the old container's restart policy, which the helper
 	// changes during the swap and puts back if it rolls back.
 	OldRestart container.RestartPolicy `json:"old_restart"`
+	// NewRestart is the policy the replacement is meant to have. It is created
+	// with none, so that after a daemon restart inside the swap only the old
+	// container returns, and gets this policy once the swap is committed.
+	NewRestart container.RestartPolicy `json:"new_restart"`
 	// StopTimeout is the grace period, in seconds, for stopping the old one.
 	StopTimeout int `json:"stop_timeout"`
 	// OutcomeDir is where the helper writes the outcome file ("" = nowhere).
@@ -246,6 +250,8 @@ func Begin(ctx context.Context, p Params) (*Handover, error) {
 	}
 
 	rc := BuildReplacement(p.Inspect, p.Image, p.OldImageDefaults)
+	// No restart policy until the helper commits the swap (see Spec.NewRestart).
+	rc.HostConfig.RestartPolicy = container.RestartPolicy{Name: container.RestartPolicyDisabled}
 	p.Log.Info("self-update: creating the replacement", "name", p.Name, "image", p.Image)
 	newID, err := p.Docker.CreateContainer(ctx, p.Name, rc.Config, rc.HostConfig, rc.NetworkingConfig)
 	if err != nil {
@@ -261,6 +267,7 @@ func Begin(ctx context.Context, p Params) (*Handover, error) {
 	}
 	if p.Inspect.HostConfig != nil {
 		spec.OldRestart = p.Inspect.HostConfig.RestartPolicy
+		spec.NewRestart = p.Inspect.HostConfig.RestartPolicy
 	}
 	binds := []string{hostSocket + ":" + helperSocket}
 	if b, outDir, ok := dataBind(p.Inspect, p.DataDir); ok {

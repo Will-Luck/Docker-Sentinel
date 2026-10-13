@@ -107,8 +107,14 @@ func (r Runner) run(ctx context.Context, spec Spec) Outcome {
 	}
 
 	r.Log.Info("self-update helper: new container is up, removing the old one", "old", spec.OldName)
+	// The swap is committed: the new container now restarts as it was meant
+	// to, and the old one must not come back with the daemon.
+	if spec.NewRestart.Name != "" && spec.NewRestart.Name != container.RestartPolicyDisabled {
+		r.setRestart(ctx, spec.NewID, spec.NewRestart)
+	}
 	if err := d.RemoveContainer(ctx, spec.OldID); err != nil {
 		r.Log.Warn("self-update helper: could not remove the old container; it is cleaned up at the next start", "error", err)
+		r.setRestart(ctx, spec.OldID, container.RestartPolicy{Name: container.RestartPolicyDisabled})
 	}
 	return Outcome{Result: ResultSuccess}
 }
@@ -146,6 +152,9 @@ func (r Runner) settle(ctx context.Context, spec Spec, poll time.Duration) strin
 
 // setRestart changes a container's restart policy, when the Docker client can.
 func (r Runner) setRestart(ctx context.Context, id string, p container.RestartPolicy) {
+	if p.Name == "" {
+		p.Name = container.RestartPolicyDisabled // a container with no policy has "no"
+	}
 	u, ok := r.Docker.(docker.RestartPolicyUpdater)
 	if !ok {
 		return

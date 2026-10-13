@@ -40,6 +40,7 @@ type fake struct {
 	createErr         map[string]error
 	nextID            int
 	onStop            func()
+	removeErr         map[string]error
 }
 
 func newFake() *fake {
@@ -86,6 +87,10 @@ func (f *fake) StopContainer(_ context.Context, id string, _ int) error {
 func (f *fake) RemoveContainer(_ context.Context, id string) error {
 	f.note("remove:" + id)
 	f.mu.Lock()
+	if err := f.removeErr[id]; err != nil {
+		f.mu.Unlock()
+		return err
+	}
 	delete(f.state, id)
 	f.list = slices.DeleteFunc(slices.Clone(f.list), func(c container.Summary) bool { return c.ID == id })
 	f.mu.Unlock()
@@ -747,5 +752,108 @@ func TestOwnContainerIDReadsTheMountInfo(t *testing.T) {
 	}
 	if got := containerIDFromMountInfo("nothing here"); got != "" {
 		t.Errorf("id = %q from a mountinfo with no container path", got)
+	}
+}
+
+func setMarker(t *testing.T, dir string, o Outcome) {
+	t.Helper()
+	if o.FinishedAt.IsZero() {
+		o.FinishedAt = time.Now()
+	}
+	if err := WriteOutcome(dir, o); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBeginCreatesTheReplacementWithoutARestartPolicy(t *testing.T) {
+	f := newFake()
+	p := params(f)
+	p.Inspect.HostConfig.RestartPolicy = container.RestartPolicy{Name: "unless-stopped"}
+	if _, err := Begin(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.hosts["id-sentinel"].RestartPolicy.Name; got != container.RestartPolicyDisabled {
+		t.Errorf("replacement restart policy = %q, want none until the swap is committed", got)
+	}
+	specEnv := f.created["id-sentinel-self-update-helper"].Env[0]
+	if !strings.Contains(specEnv, `"new_restart":{"Name":"unless-stopped"`) {
+		t.Errorf("the real policy is not in the helper's spec: %s", specEnv)
+	}
+}
+
+func TestRunGivesTheNewContainerItsRealPolicyOnlyAfterItSettles(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	s := spec()
+	s.NewRestart = container.RestartPolicy{Name: "unless-stopped"}
+	if out := newRunner(f).Run(context.Background(), s); out.Result != ResultSuccess {
+		t.Fatalf("outcome = %+v", out)
+	}
+	iStart, iPolicy := slices.Index(f.events, "start:new1"), slices.Index(f.events, "policy:new1:unless-stopped")
+	if iPolicy < 0 || iPolicy < iStart {
+		t.Errorf("events = %v, want the new container's policy set after it started and settled", f.events)
+	}
+
+	f2 := newFake()
+	f2.state["old1"] = &container.State{Running: true}
+	f2.startErr["new1"] = errors.New("boom")
+	newRunner(f2).Run(context.Background(), s)
+	if slices.Contains(f2.events, "policy:new1:unless-stopped") {
+		t.Errorf("a rolled-back replacement got its real policy: %v", f2.events)
+	}
+}
+
+func TestRunStopsTheOldContainerComingBackIfItCannotBeRemoved(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	f.removeErr = map[string]error{"old1": errors.New("busy")}
+	s := spec()
+	if out := newRunner(f).Run(context.Background(), s); out.Result != ResultSuccess {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if f.events[len(f.events)-1] != "policy:old1:no" {
+		t.Errorf("events = %v: a committed swap's old container must not return with the daemon", f.events)
+	}
+}
+
+func parkedWithReplacement(replState string) *fake {
+	f, _ := interruptedSwap()
+	f.list[1].State = container.ContainerState(replState)
+	return f
+}
+
+func TestRecoverUndoesAnUncommittedSwapWhoseReplacementIsRunning(t *testing.T) {
+	for _, state := range []string{"running", "restarting"} {
+		f := parkedWithReplacement(state)
+		dir := t.TempDir()
+		pol := container.RestartPolicy{Name: "unless-stopped"}
+		setMarker(t, dir, Outcome{Result: ResultInProgress, OldID: selfHostname + "7890", NewID: "new1", OldRestart: &pol})
+
+		out := Recover(context.Background(), f, selfHostname, dir, nopLog{})
+
+		if out == nil || out.Result != ResultRolledBack {
+			t.Fatalf("%s: outcome = %+v", state, out)
+		}
+		want := []string{"stop:new1", "remove:new1", "rename:" + selfHostname + "7890>sentinel", "policy:" + selfHostname + "7890:unless-stopped"}
+		if !slices.Equal(f.events, want) {
+			t.Errorf("%s: events = %v, want %v", state, f.events, want)
+		}
+	}
+}
+
+func TestRecoverLeavesARunningReplacementAloneWithoutAnUncommittedMarker(t *testing.T) {
+	// No marker, or a final one: the swap was committed (the old instance only
+	// came back because it could not be removed), so the new one stays.
+	for name, mark := range map[string]func(dir string){
+		"none":    func(string) {},
+		"success": func(dir string) { setMarker(t, dir, Outcome{Result: ResultSuccess, OldID: selfHostname + "7890"}) },
+		"other":   func(dir string) { setMarker(t, dir, Outcome{Result: ResultInProgress, OldID: "someone-else"}) },
+	} {
+		f := parkedWithReplacement("running")
+		dir := t.TempDir()
+		mark(dir)
+		if out := Recover(context.Background(), f, selfHostname, dir, nopLog{}); out != nil || len(f.events) != 0 {
+			t.Errorf("%s: acted: %+v %v", name, out, f.events)
+		}
 	}
 }

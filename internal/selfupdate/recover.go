@@ -46,6 +46,7 @@ func Recover(ctx context.Context, d Docker, hostname, dataDir string, log Logger
 	}
 	base := m[1]
 
+	marker := readMarker(dataDir)
 	var replacement *container.Summary
 	for i := range containers {
 		c := &containers[i]
@@ -59,12 +60,28 @@ func Recover(ctx context.Context, d Docker, hostname, dataDir string, log Logger
 			replacement = c
 		}
 	}
-	if replacement == nil || (replacement.State != container.StateCreated && replacement.State != container.StateExited) {
+	if replacement == nil {
+		return nil
+	}
+	switch replacement.State {
+	case container.StateCreated, container.StateExited:
+		// Never started, or gone: nothing of the new version is running.
+	case container.StateRunning, container.StateRestarting:
+		// Only an uncommitted swap whose helper has died is undone: this
+		// instance's own in-progress marker says so, and no helper is alive. A
+		// replacement running without that was committed and stays.
+		if marker == nil || marker.OldID != self.ID || (marker.NewID != "" && marker.NewID != replacement.ID) {
+			return nil
+		}
+	default:
 		return nil
 	}
 
 	log.Warn("this instance was parked by a self-update that never finished (the host restarted mid-swap); putting it back",
 		"parked_as", self.Names[0], "replacement", replacement.ID)
+	if replacement.State == container.StateRunning || replacement.State == container.StateRestarting {
+		_ = d.StopContainer(ctx, replacement.ID, 10)
+	}
 	if err := d.RemoveContainer(ctx, replacement.ID); err != nil {
 		log.Error("self-update recovery: could not remove the replacement", "error", err)
 		return nil
@@ -76,7 +93,7 @@ func Recover(ctx context.Context, d Docker, hostname, dataDir string, log Logger
 
 	out := &Outcome{Result: ResultRolledBack, ContainerName: base,
 		Error: "the host restarted before the new version was started; the previous version was put back"}
-	if marker := readMarker(dataDir); marker != nil && marker.OldID == self.ID {
+	if marker != nil && marker.OldID == self.ID {
 		out.OldImage, out.NewImage, out.FinishedAt = marker.OldImage, marker.NewImage, marker.FinishedAt
 		if marker.OldRestart != nil {
 			if u, ok := d.(docker.RestartPolicyUpdater); ok {
