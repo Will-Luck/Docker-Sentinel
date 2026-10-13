@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -51,7 +52,7 @@ func rollbackContainer(ctx context.Context, d docker.API, j swapJournal, name st
 		}
 	}
 
-	undoTag, err := ensureImage(ctx, d, inspect.Config.Image, inspect.Image, log)
+	undoTag, err := ensureImage(ctx, d, inspect.Config.Image, inspect.Image, log, liveID)
 	if err != nil {
 		return "", fmt.Errorf("rollback image for %s: %w", name, err)
 	}
@@ -170,7 +171,7 @@ func findContainerID(ctx context.Context, d docker.API, name string) (string, er
 // ref and accepts the result only if it is the same image: a mutable tag
 // that has moved on cannot bring the old version back. The returned func
 // points ref back where it was, for when the rollback is abandoned.
-func ensureImage(ctx context.Context, d docker.API, ref, imageID string, log *logging.Logger) (func(), error) {
+func ensureImage(ctx context.Context, d docker.API, ref, imageID string, log *logging.Logger, replacing ...string) (func(), error) {
 	noop := func() {}
 	if imageID == "" || ref == "" {
 		return noop, nil // snapshot from an older version: no image ID recorded
@@ -188,13 +189,32 @@ func ensureImage(ctx context.Context, d docker.API, ref, imageID string, log *lo
 		}
 		return noop, fmt.Errorf("image %s is no longer on this host and %s now points at a different image", shortImageID(imageID), ref)
 	}
-	return retag(ctx, d, ref, imageID, log)
+	undo, err := retag(ctx, d, ref, imageID, log, replacing...)
+	var shared *sharedTagError
+	if errors.As(err, &shared) {
+		return noop, fmt.Errorf("rolling back would point %s at the old image, but %s still runs the image it names now; roll %s back by hand or stop %s first",
+			ref, shared.user, shared.user, shared.user)
+	}
+	return undo, err
+}
+
+// sharedTagError says a tag was left alone because another container runs
+// the image it names.
+type sharedTagError struct {
+	ref, user string
+}
+
+func (e *sharedTagError) Error() string {
+	return fmt.Sprintf("%s is left alone: %s runs the image it names", e.ref, e.user)
 }
 
 // retag points the tag ref at imageID, so that a container running that
-// image shows it by name and Sentinel's scans can resolve it. The returned
-// func points ref back at the image it named before.
-func retag(ctx context.Context, d docker.API, ref, imageID string, log *logging.Logger) (func(), error) {
+// image shows it by name and Sentinel's scans can resolve it. It does not
+// when another running container (other than the ones in replacing, which
+// are about to go) runs the image the tag names now: that container would
+// then look out of date. The returned func points ref back at the image it
+// named before.
+func retag(ctx context.Context, d docker.API, ref, imageID string, log *logging.Logger, replacing ...string) (func(), error) {
 	noop := func() {}
 	previous, prevErr := d.ImageID(ctx, ref)
 	if prevErr == nil && previous == imageID {
@@ -202,6 +222,11 @@ func retag(ctx context.Context, d docker.API, ref, imageID string, log *logging.
 	}
 	if strings.Contains(ref, "@") {
 		return noop, fmt.Errorf("%s does not resolve to image %s", ref, shortImageID(imageID))
+	}
+	if prevErr == nil && previous != "" {
+		if user := runningOn(ctx, d, previous, replacing); user != "" {
+			return noop, &sharedTagError{ref: ref, user: user}
+		}
 	}
 	if err := d.TagImage(ctx, imageID, ref); err != nil {
 		return noop, fmt.Errorf("point %s back at image %s: %w", ref, shortImageID(imageID), err)
@@ -215,6 +240,21 @@ func retag(ctx context.Context, d docker.API, ref, imageID string, log *logging.
 			log.Warn("could not point the tag back at its previous image", "image", ref, "error", err)
 		}
 	}, nil
+}
+
+// runningOn returns the name of a running container, other than those in
+// except, that runs image imageID, or "".
+func runningOn(ctx context.Context, d docker.API, imageID string, except []string) string {
+	running, err := d.ListContainers(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, c := range running {
+		if c.ImageID == imageID && !slices.Contains(except, c.ID) {
+			return containerName(c)
+		}
+	}
+	return ""
 }
 
 // shortImageID shortens "sha256:<hex>" to 12 hex digits for messages.

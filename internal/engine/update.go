@@ -634,7 +634,7 @@ func (u *Updater) undoUpdate(ctx context.Context, sw *swap, snapshotData []byte)
 	var old container.InspectResponse
 	if json.Unmarshal(snapshotData, &old) == nil && old.Config != nil && old.Image != "" {
 		if _, err := retag(ctx, u.docker, old.Config.Image, old.Image, u.log); err != nil {
-			u.log.Warn("could not point the tag back at the old image", "name", sw.name, "error", err)
+			u.log.Info("not pointing the tag back at the old image", "name", sw.name, "reason", err)
 		}
 	}
 	return sw.oldID, nil
