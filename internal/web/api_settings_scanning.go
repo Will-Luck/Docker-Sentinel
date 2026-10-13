@@ -117,9 +117,9 @@ func (s *Server) apiVerifierSettings(w http.ResponseWriter, _ *http.Request) {
 			"keyless":     store.SettingCosignKeyless,
 			"key_path":    store.SettingCosignKeyPath,
 			// Who must have signed an image in keyless mode.
-			"identity":        "cosign_identity",
-			"oidc_issuer":     "cosign_oidc_issuer",
-			"identity_regexp": "cosign_identity_regexp",
+			"identity":        store.SettingCosignIdentity,
+			"oidc_issuer":     store.SettingCosignOIDCIssuer,
+			"identity_regexp": store.SettingCosignIdentityRegexp,
 		}
 		for field, dbKey := range keys {
 			if v, err := s.deps.SettingsStore.LoadSetting(dbKey); err == nil && v != "" {
@@ -197,7 +197,7 @@ func (s *Server) apiVerifierSettingsSave(w http.ResponseWriter, r *http.Request)
 		v    *string
 		key  string
 		name string
-	}{{req.Identity, "cosign_identity", "identity"}, {req.OIDCIssuer, "cosign_oidc_issuer", "oidc_issuer"}} {
+	}{{req.Identity, store.SettingCosignIdentity, "identity"}, {req.OIDCIssuer, store.SettingCosignOIDCIssuer, "oidc_issuer"}} {
 		if f.v == nil {
 			continue
 		}
@@ -212,7 +212,7 @@ func (s *Server) apiVerifierSettingsSave(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if req.IdentityRegexp != nil {
-		if err := s.deps.SettingsStore.SaveSetting("cosign_identity_regexp", strconv.FormatBool(*req.IdentityRegexp)); err != nil {
+		if err := s.deps.SettingsStore.SaveSetting(store.SettingCosignIdentityRegexp, strconv.FormatBool(*req.IdentityRegexp)); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save setting")
 			return
 		}

@@ -148,7 +148,7 @@ func TestApiVerifierSettings_KeylessSignerFields(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
-	if ss.data["cosign_identity"] == "" || ss.data["cosign_oidc_issuer"] != "https://token.actions.githubusercontent.com" || ss.data["cosign_identity_regexp"] != "true" {
+	if ss.data[store.SettingCosignIdentity] == "" || ss.data[store.SettingCosignOIDCIssuer] != "https://token.actions.githubusercontent.com" || ss.data[store.SettingCosignIdentityRegexp] != "true" {
 		t.Errorf("signer settings not saved: %v", ss.data)
 	}
 
@@ -162,11 +162,11 @@ func TestApiVerifierSettings_KeylessSignerFields(t *testing.T) {
 
 	// An omitted field is left alone; an empty one clears it.
 	save(`{"mode":"enforce"}`)
-	if ss.data["cosign_identity"] == "" {
+	if ss.data[store.SettingCosignIdentity] == "" {
 		t.Errorf("an omitted identity was cleared")
 	}
 	save(`{"identity":""}`)
-	if ss.data["cosign_identity"] != "" {
+	if ss.data[store.SettingCosignIdentity] != "" {
 		t.Errorf("an empty identity was not cleared")
 	}
 	if w := save(`{"identity":"` + strings.Repeat("a", 2000) + `"}`); w.Code != http.StatusBadRequest {
