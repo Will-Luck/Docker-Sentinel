@@ -73,7 +73,6 @@ func (c *Client) ImageConfig(ctx context.Context, ref string) (*container.Config
 		Healthcheck: ic.Healthcheck,
 		Shell:       ic.Shell,
 		OnBuild:     ic.OnBuild,
-		ArgsEscaped: ic.ArgsEscaped,
 	}
 	if len(ic.ExposedPorts) > 0 {
 		cfg.ExposedPorts = make(network.PortSet, len(ic.ExposedPorts))
