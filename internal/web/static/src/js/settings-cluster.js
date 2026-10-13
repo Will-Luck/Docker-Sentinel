@@ -30,6 +30,12 @@ function loadClusterSettings() {
             var autoUpdate = s.auto_update_agents === "true";
             document.getElementById("cluster-auto-update").checked = autoUpdate;
             _updateToggleText("cluster-auto-update-text", autoUpdate);
+            var removeVolumesAgents = s.remove_volumes_agents === "true";
+            var rvEl = document.getElementById("cluster-remove-volumes-agents");
+            if (rvEl) {
+                rvEl.checked = removeVolumesAgents;
+                _updateToggleText("cluster-remove-volumes-agents-text", removeVolumesAgents);
+            }
             toggleClusterFields(enabled);
         })
         .catch(function(err) {
@@ -73,6 +79,8 @@ function saveClusterSettings() {
     var enabled = document.getElementById("cluster-enabled").checked;
     var autoUpdateEl = document.getElementById("cluster-auto-update");
     _updateToggleText("cluster-auto-update-text", autoUpdateEl.checked);
+    var rvEl = document.getElementById("cluster-remove-volumes-agents");
+    if (rvEl) _updateToggleText("cluster-remove-volumes-agents-text", rvEl.checked);
     fetch("/api/settings/cluster", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -81,7 +89,8 @@ function saveClusterSettings() {
             port: document.getElementById("cluster-port").value,
             grace_period: document.getElementById("cluster-grace").value,
             remote_policy: document.getElementById("cluster-policy").value,
-            auto_update_agents: autoUpdateEl.checked
+            auto_update_agents: autoUpdateEl.checked,
+            remove_volumes_agents: rvEl ? rvEl.checked : false
         })
     })
         .then(function(resp) {

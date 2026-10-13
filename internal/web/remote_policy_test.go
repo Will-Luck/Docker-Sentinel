@@ -108,3 +108,20 @@ func TestApiCheck_RemoteUsesTheAgentsDigestAndQueuesSameTagUpdates(t *testing.T)
 		t.Errorf("queued %+v (%v), want the same-tag update with its digests", got, ok)
 	}
 }
+
+// "Remove volumes on agents too" is off until saved, and saved like the
+// other cluster settings.
+func TestClusterSettings_RemoveVolumesOnAgents(t *testing.T) {
+	ss := newMockSettingsStore()
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: &mockConfigReader{defaultPolicy: "manual"}, Log: slog.Default(), EventBus: events.New()}}
+	w := httptest.NewRecorder()
+	srv.apiClusterSettings(w, httptest.NewRequest("GET", "/api/settings/cluster", nil))
+	if !strings.Contains(w.Body.String(), `"remove_volumes_agents":"false"`) {
+		t.Errorf("cluster settings = %s, want remove_volumes_agents false by default", w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	srv.apiClusterSettingsSave(w, httptest.NewRequest("POST", "/api/settings/cluster", strings.NewReader(`{"remove_volumes_agents":true}`)))
+	if w.Code != http.StatusOK || ss.data["cluster_remove_volumes_agents"] != "true" {
+		t.Errorf("save = %d %s, stored %q; want it saved", w.Code, w.Body.String(), ss.data["cluster_remove_volumes_agents"])
+	}
+}

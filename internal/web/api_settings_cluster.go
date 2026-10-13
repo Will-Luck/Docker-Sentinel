@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
@@ -21,6 +22,8 @@ func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
 		"remote_policy":      s.remoteDefaultPolicy(), // the global default until one is saved
 		"auto_update_agents": "false",
 		"advertise_addr":     "",
+
+		"remove_volumes_agents": "false",
 	}
 
 	if s.deps.SettingsStore != nil {
@@ -31,6 +34,8 @@ func (s *Server) apiClusterSettings(w http.ResponseWriter, _ *http.Request) {
 			"remote_policy":      store.SettingClusterRemotePolicy,
 			"auto_update_agents": store.SettingClusterAutoUpdateAgents,
 			"advertise_addr":     store.SettingClusterAdvertise,
+
+			"remove_volumes_agents": cluster.SettingRemoveVolumesOnAgents,
 		}
 		for field, dbKey := range keys {
 			if v, err := s.deps.SettingsStore.LoadSetting(dbKey); err == nil && v != "" {
@@ -53,6 +58,8 @@ func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) 
 		RemotePolicy     string  `json:"remote_policy"`
 		AutoUpdateAgents *bool   `json:"auto_update_agents"`
 		AdvertiseAddr    *string `json:"advertise_addr"`
+		// RemoveVolumesAgents sends the Remove volumes setting to agents too.
+		RemoveVolumesAgents *bool `json:"remove_volumes_agents"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -128,6 +135,17 @@ func (s *Server) apiClusterSettingsSave(w http.ResponseWriter, r *http.Request) 
 			val = "true"
 		}
 		if err := s.deps.SettingsStore.SaveSetting(store.SettingClusterAutoUpdateAgents, val); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save setting")
+			return
+		}
+	}
+
+	if req.RemoveVolumesAgents != nil {
+		val := "false"
+		if *req.RemoveVolumesAgents {
+			val = "true"
+		}
+		if err := s.deps.SettingsStore.SaveSetting(cluster.SettingRemoveVolumesOnAgents, val); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to save setting")
 			return
 		}

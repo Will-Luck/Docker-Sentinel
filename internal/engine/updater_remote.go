@@ -549,11 +549,22 @@ func (u *Updater) AgentSettings() AgentSettings {
 		LatestAutoUpdate: u.cfg.LatestAutoUpdate(),
 		ImageCleanup:     u.cfg.ImageCleanup(),
 		ImageBackup:      u.isImageBackup(),
-		RemoveVolumes:    u.isRemoveVolumes(),
+		RemoveVolumes:    u.isRemoveVolumes() && u.removeVolumesOnAgents(),
 		HooksEnabled:     u.cfg.HooksEnabled(),
 		DependencyAware:  u.cfg.DependencyAware(),
 		RollbackPolicy:   u.rollbackPolicy(),
 	}
+}
+
+// removeVolumesOnAgents reports whether the hub's Remove volumes setting is
+// sent to agents too (cluster.SettingRemoveVolumesOnAgents). Off unless
+// saved: agents before v3.0.0 never removed volumes.
+func (u *Updater) removeVolumesOnAgents() bool {
+	if u.settings == nil {
+		return false
+	}
+	v, err := u.settings.LoadSetting(cluster.SettingRemoveVolumesOnAgents)
+	return err == nil && v == "true"
 }
 
 // checkGHCRAlternatives probes GHCR for alternatives to Docker Hub images.

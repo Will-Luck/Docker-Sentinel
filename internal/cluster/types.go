@@ -53,6 +53,11 @@ const FeatureKeepalive = "keepalive"
 // (agents since v3.0.0).
 const FeatureDiscardSwap = "discard-swap"
 
+// SettingRemoveVolumesOnAgents is the hub setting ("true" or "false",
+// default false) that sends its Remove volumes setting to agents too.
+// Agents before v3.0.0 never removed volumes, so it is a separate choice.
+const SettingRemoveVolumesOnAgents = "cluster_remove_volumes_agents"
+
 // FeaturePullResult is the agent feature that says it answers a pull
 // request with its result (agents since v3.0.0).
 const FeaturePullResult = "pull-result"
