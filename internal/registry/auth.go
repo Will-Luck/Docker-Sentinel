@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -34,12 +35,20 @@ func FetchAnonymousToken(ctx context.Context, repo string) (string, error) {
 // For other registries, returns empty — callers use Basic auth directly.
 func FetchToken(ctx context.Context, repo string, cred *RegistryCredential, host string) (string, error) {
 	tok, err := fetchToken(ctx, repo, cred, host)
+	if err == nil && cred != nil {
+		ClearRejectedCredential(host)
+	}
 	if err == nil || cred == nil {
 		return tok, err
 	}
 	// A stored credential the registry rejects (expired or revoked PAT) must
-	// not stop version detection for public images: retry anonymously.
-	noteRejectedCredential(host, err)
+	// not stop version detection for public images: retry anonymously. Only
+	// the registry's own refusal marks the login as rejected; a network error
+	// or a 5xx says nothing about it.
+	var refused *tokenStatusError
+	if errors.As(err, &refused) && (refused.code == http.StatusUnauthorized || refused.code == http.StatusForbidden) {
+		noteRejectedCredential(host, err)
+	}
 	if anon, anonErr := fetchToken(ctx, repo, nil, host); anonErr == nil {
 		return anon, nil
 	}
@@ -56,6 +65,14 @@ var (
 
 // credentialRejectionWarnEvery limits the warning to once per host per interval.
 const credentialRejectionWarnEvery = 30 * time.Minute
+
+// tokenStatusError is a token endpoint answering with a non-200 status.
+type tokenStatusError struct {
+	what string
+	code int
+}
+
+func (e *tokenStatusError) Error() string { return fmt.Sprintf("%s returned %d", e.what, e.code) }
 
 func noteRejectedCredential(host string, err error) {
 	rejectedMu.Lock()
@@ -121,7 +138,7 @@ func fetchToken(ctx context.Context, repo string, cred *RegistryCredential, host
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("auth endpoint returned %d", resp.StatusCode)
+		return "", &tokenStatusError{what: "auth endpoint", code: resp.StatusCode}
 	}
 
 	var tok TokenResponse
@@ -182,7 +199,7 @@ func fetchChallengeToken(ctx context.Context, host, repo string, cred *RegistryC
 	}
 	defer tresp.Body.Close()
 	if tresp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token endpoint of %s returned %d", host, tresp.StatusCode)
+		return "", &tokenStatusError{what: "token endpoint of " + host, code: tresp.StatusCode}
 	}
 	var tok struct {
 		Token       string `json:"token"`
@@ -245,7 +262,7 @@ func FetchGHCRToken(ctx context.Context, repo string, cred *RegistryCredential) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GHCR auth endpoint returned %d", resp.StatusCode)
+		return "", &tokenStatusError{what: "GHCR auth endpoint", code: resp.StatusCode}
 	}
 
 	var tok TokenResponse

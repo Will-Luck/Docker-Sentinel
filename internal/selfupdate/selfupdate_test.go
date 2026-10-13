@@ -86,12 +86,20 @@ func (f *fake) RemoveContainer(_ context.Context, id string) error {
 	f.note("remove:" + id)
 	f.mu.Lock()
 	delete(f.state, id)
+	f.list = slices.DeleteFunc(slices.Clone(f.list), func(c container.Summary) bool { return c.ID == id })
 	f.mu.Unlock()
 	return nil
 }
 func (f *fake) CreateContainer(_ context.Context, name string, cfg *container.Config, h *container.HostConfig, n *network.NetworkingConfig) (string, error) {
 	if err := f.createErr[name]; err != nil {
 		return "", err
+	}
+	for _, c := range f.list { // the daemon refuses a name that is taken
+		for _, n := range c.Names {
+			if strings.TrimPrefix(n, "/") == name {
+				return "", fmt.Errorf("name %q is already in use", name)
+			}
+		}
 	}
 	f.nextID++
 	id := fmt.Sprintf("id-%s", name)
@@ -509,5 +517,33 @@ func TestRunMarksTheSwapInProgressBeforeStoppingTheOldContainer(t *testing.T) {
 	newRunner(f).Run(context.Background(), s)
 	if !strings.Contains(marker, `"in_progress"`) {
 		t.Errorf("outcome file when the old container was stopped: %q", marker)
+	}
+}
+
+// Only a leftover helper is removed by name. A container that merely has the
+// helper's name is somebody's, and is left alone (and the update stops).
+func TestBeginDoesNotRemoveAUserContainerNamedLikeTheHelper(t *testing.T) {
+	f := newFake()
+	f.list = []container.Summary{{ID: "user1", Names: []string{"/sentinel-self-update-helper"}, State: "running"}}
+	if _, err := Begin(context.Background(), params(f)); err == nil {
+		t.Fatal("expected an error: the helper's name is taken by another container")
+	}
+	if slices.Contains(f.events, "remove:user1") {
+		t.Error("removed a container that is not a Sentinel helper")
+	}
+	if f.names["old1"] != "sentinel" {
+		t.Errorf("running container left named %q", f.names["old1"])
+	}
+}
+
+func TestBeginRemovesAnExitedLeftoverHelper(t *testing.T) {
+	f := newFake()
+	f.list = []container.Summary{{ID: "stale", Names: []string{"/sentinel-self-update-helper"}, State: "exited",
+		Labels: map[string]string{HelperLabel: "true"}}}
+	if _, err := Begin(context.Background(), params(f)); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(f.events, "remove:stale") {
+		t.Errorf("leftover helper not removed: %v", f.events)
 	}
 }

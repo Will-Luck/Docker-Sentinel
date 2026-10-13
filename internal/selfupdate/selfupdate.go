@@ -268,9 +268,12 @@ func Begin(ctx context.Context, p Params) (*Handover, error) {
 	}
 
 	helperName := p.Name + "-self-update-helper"
-	// A helper left by an earlier attempt would hold the name.
-	if old, err := findByName(ctx, p.Docker, helperName); err == nil && old != "" {
-		_ = p.Docker.RemoveContainer(ctx, old)
+	// A helper left by an earlier attempt holds the name. Only an exited helper
+	// of ours is removed; a container that merely has the name is somebody
+	// else's, and the update stops there (the create below fails on the name).
+	if old, err := findContainer(ctx, p.Docker, helperName); err == nil && old != nil &&
+		old.Labels[HelperLabel] == "true" && old.State == container.StateExited {
+		_ = p.Docker.RemoveContainer(ctx, old.ID)
 	}
 	// The helper runs the image this instance runs (by its ID), not the target:
 	// the target may be older than the helper subcommand (a rollback to v2.x)
@@ -349,17 +352,17 @@ func (h *Handover) cleanup() {
 	_ = h.p.Docker.RenameContainer(bg, h.oldID, h.p.Name)
 }
 
-func findByName(ctx context.Context, d Docker, name string) (string, error) {
+func findContainer(ctx context.Context, d Docker, name string) (*container.Summary, error) {
 	all, err := d.ListAllContainers(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	for _, c := range all {
+	for i, c := range all {
 		for _, n := range c.Names {
 			if strings.TrimPrefix(n, "/") == name {
-				return c.ID, nil
+				return &all[i], nil
 			}
 		}
 	}
-	return "", nil
+	return nil, nil
 }

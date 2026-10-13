@@ -131,3 +131,37 @@ func TestRejectedCredentialIsRecordedForTheSettingsPage(t *testing.T) {
 		t.Error("ClearRejectedCredential left the record")
 	}
 }
+
+// A network blip is not a rejection: only the registry's 401 or 403 marks the
+// login as rejected, and a later success clears the mark.
+func TestRejectedCredentialOnlyRecordedForAuthRefusals(t *testing.T) {
+	ClearRejectedCredential("docker.io")
+	status := http.StatusInternalServerError
+	withFakeRegistry(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": "T"})
+	}))
+	cred := &RegistryCredential{Username: "me", Secret: "pat"}
+
+	_, _ = FetchToken(context.Background(), "org/app", cred, "docker.io")
+	if _, ok := RejectedCredentials()["docker.io"]; ok {
+		t.Error("a 500 from the token endpoint marked the login as rejected")
+	}
+
+	status = http.StatusForbidden
+	_, _ = FetchToken(context.Background(), "org/app", cred, "docker.io")
+	if _, ok := RejectedCredentials()["docker.io"]; !ok {
+		t.Fatal("a 403 did not mark the login as rejected")
+	}
+
+	status = http.StatusOK
+	if _, err := FetchToken(context.Background(), "org/app", cred, "docker.io"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := RejectedCredentials()["docker.io"]; ok {
+		t.Error("the mark stayed after the login worked again")
+	}
+}
