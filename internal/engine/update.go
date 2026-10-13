@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"strings"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/network"
 )
 
 // UpdateContainer performs the full update lifecycle for a single container:
@@ -247,15 +245,10 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	}
 
 	// 5. Create and start the new container.
-	newConfig := cloneConfig(inspect.Config)
-	if targetImage != "" {
-		newConfig.Image = targetImage
-	}
+	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{Image: targetImage})
+	newConfig, hostConfig, netConfig := rc.Config, rc.HostConfig, rc.NetworkingConfig
 	u.writeBackHookLabels(name, newConfig)
 	addMaintenanceLabel(newConfig)
-
-	hostConfig := inspect.HostConfig
-	netConfig := rebuildNetworkingConfig(inspect.NetworkSettings)
 
 	u.log.Info("creating new container", "name", name, "image", pullImage)
 	newID, err := u.docker.CreateContainer(ctx, name, newConfig, hostConfig, netConfig)
@@ -645,16 +638,6 @@ func isSentinel(labels map[string]string) bool {
 	return labels["sentinel.self"] == "true"
 }
 
-// cloneConfig creates a shallow copy of the container config with cloned labels.
-func cloneConfig(cfg *container.Config) *container.Config {
-	if cfg == nil {
-		return &container.Config{}
-	}
-	clone := *cfg
-	clone.Labels = maps.Clone(cfg.Labels)
-	return &clone
-}
-
 // writeBackHookLabels copies the container's stored hooks onto the new
 // config as sentinel.hook.* labels when SENTINEL_HOOKS_WRITE_LABELS is on.
 // finaliseContainer clones this config, so the labels survive it.
@@ -703,11 +686,9 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 		return id, &finaliseError{stage: "inspect", err: fmt.Errorf("container HostConfig is nil for %s", name)}
 	}
 
-	cleanConfig := cloneConfig(inspect.Config)
+	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{})
+	cleanConfig, hostConfig, netConfig := rc.Config, rc.HostConfig, rc.NetworkingConfig
 	delete(cleanConfig.Labels, guardian.MaintenanceLabel)
-
-	hostConfig := inspect.HostConfig
-	netConfig := rebuildNetworkingConfig(inspect.NetworkSettings)
 
 	u.log.Info("finalising container (removing maintenance label)", "name", name)
 
@@ -730,28 +711,6 @@ func (u *Updater) finaliseContainer(ctx context.Context, id, name string) (strin
 
 	u.log.Info("finalised container", "name", name, "new_id", truncateID(newID))
 	return newID, nil
-}
-
-// rebuildNetworkingConfig extracts only the IPAM config, aliases, and driver opts
-// from NetworkSettings — NOT operational fields like Gateway or IPAddress.
-func rebuildNetworkingConfig(ns *container.NetworkSettings) *network.NetworkingConfig {
-	if ns == nil || len(ns.Networks) == 0 {
-		return nil
-	}
-
-	endpoints := make(map[string]*network.EndpointSettings)
-	for netName, ep := range ns.Networks {
-		endpoints[netName] = &network.EndpointSettings{
-			IPAMConfig: ep.IPAMConfig,
-			Aliases:    ep.Aliases,
-			DriverOpts: ep.DriverOpts,
-			NetworkID:  ep.NetworkID,
-			MacAddress: ep.MacAddress,
-		}
-	}
-	return &network.NetworkingConfig{
-		EndpointsConfig: endpoints,
-	}
 }
 
 // extractDigestForRecord gets the image digest from an inspect response.

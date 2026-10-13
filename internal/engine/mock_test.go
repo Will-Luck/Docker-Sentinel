@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,44 @@ type mockDocker struct {
 	serviceTasksErr  map[string]error
 	nodes            []swarm.Node
 	nodesErr         error
+
+	// createHostHistory and createNetHistory hold the HostConfig and
+	// NetworkingConfig of every create, in the same order as createHistory.
+	createHostHistory []*container.HostConfig
+	createNetHistory  []*network.NetworkingConfig
+	// createErrOnCall fails the nth CreateContainer call (1-based).
+	createErrOnCall map[int]error
+	// renameErrTo fails a rename to the given name.
+	renameErrTo map[string]error
+	// imageConfigs is what ImageConfig returns, keyed by image ID or ref.
+	imageConfigs map[string]*container.Config
+	// ops logs every rename, create, stop, start and remove in call order,
+	// as "op target" (create logs the name, the others the container ID).
+	ops []string
+}
+
+// cloneConfig copies a container config and its labels, so a recorded
+// create config is not changed by later edits to the original.
+func cloneConfig(cfg *container.Config) *container.Config {
+	if cfg == nil {
+		return &container.Config{}
+	}
+	clone := *cfg
+	clone.Labels = maps.Clone(cfg.Labels)
+	return &clone
+}
+
+func (m *mockDocker) logOp(op, target string) {
+	m.mu.Lock()
+	m.ops = append(m.ops, op+" "+target)
+	m.mu.Unlock()
+}
+
+func (m *mockDocker) ImageConfig(_ context.Context, ref string) (*container.Config, error) {
+	if cfg, ok := m.imageConfigs[ref]; ok {
+		return cfg, nil
+	}
+	return nil, fmt.Errorf("no such image: %s", ref)
 }
 
 func newMockDocker() *mockDocker {
@@ -129,6 +168,9 @@ func newMockDocker() *mockDocker {
 		rollbackSvcErr:  make(map[string]error),
 		serviceTasks:    make(map[string][]swarm.Task),
 		serviceTasksErr: make(map[string]error),
+		createErrOnCall: make(map[int]error),
+		renameErrTo:     make(map[string]error),
+		imageConfigs:    make(map[string]*container.Config),
 	}
 }
 
@@ -148,6 +190,7 @@ func (m *mockDocker) InspectContainer(_ context.Context, id string) (container.I
 }
 
 func (m *mockDocker) StopContainer(_ context.Context, id string, _ int) error {
+	m.logOp("stop", id)
 	m.mu.Lock()
 	m.stopCalls = append(m.stopCalls, id)
 	m.mu.Unlock()
@@ -158,6 +201,7 @@ func (m *mockDocker) StopContainer(_ context.Context, id string, _ int) error {
 }
 
 func (m *mockDocker) RemoveContainer(_ context.Context, id string) error {
+	m.logOp("remove", id)
 	m.mu.Lock()
 	m.removeCalls = append(m.removeCalls, id)
 	m.mu.Unlock()
@@ -167,14 +211,26 @@ func (m *mockDocker) RemoveContainer(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *container.Config, _ *container.HostConfig, _ *network.NetworkingConfig) (string, error) {
+func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig) (string, error) {
+	m.logOp("create", name)
 	m.mu.Lock()
 	m.createCalls = append(m.createCalls, name)
+	call := len(m.createCalls)
 	if cfg != nil {
 		m.createConfigs[name] = cfg
 		m.createHistory = append(m.createHistory, cloneConfig(cfg))
 	}
+	var hostCopy *container.HostConfig
+	if hostCfg != nil {
+		hc := *hostCfg
+		hostCopy = &hc
+	}
+	m.createHostHistory = append(m.createHostHistory, hostCopy)
+	m.createNetHistory = append(m.createNetHistory, netCfg)
 	m.mu.Unlock()
+	if err, ok := m.createErrOnCall[call]; ok {
+		return "", err
+	}
 	if err, ok := m.createErr[name]; ok {
 		return "", err
 	}
@@ -183,13 +239,22 @@ func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *contai
 		id = r
 	}
 	if m.mirrorCreate {
+		mirrorHost := &container.HostConfig{}
+		if hostCopy != nil {
+			mirrorHost = hostCopy
+		}
+		var imageID string
+		if cfg != nil {
+			imageID = m.imageIDs[cfg.Image]
+		}
 		m.mu.Lock()
 		m.inspectResults[id] = container.InspectResponse{
 			ID:              id,
 			Name:            "/" + name,
+			Image:           imageID,
 			State:           &container.State{Running: true},
 			Config:          cloneConfig(cfg),
-			HostConfig:      &container.HostConfig{},
+			HostConfig:      mirrorHost,
 			NetworkSettings: &container.NetworkSettings{},
 		}
 		m.mu.Unlock()
@@ -198,6 +263,7 @@ func (m *mockDocker) CreateContainer(_ context.Context, name string, cfg *contai
 }
 
 func (m *mockDocker) StartContainer(_ context.Context, id string) error {
+	m.logOp("start", id)
 	m.mu.Lock()
 	m.startCalls = append(m.startCalls, id)
 	m.mu.Unlock()
@@ -218,9 +284,13 @@ func (m *mockDocker) RestartContainer(_ context.Context, id string) error {
 }
 
 func (m *mockDocker) RenameContainer(_ context.Context, id string, newName string) error {
+	m.logOp("rename", id+" "+newName)
 	m.mu.Lock()
 	m.renameCalls = append(m.renameCalls, struct{ id, newName string }{id, newName})
 	m.mu.Unlock()
+	if err, ok := m.renameErrTo[newName]; ok {
+		return err
+	}
 	if err, ok := m.renameErr[id]; ok {
 		return err
 	}
@@ -289,6 +359,7 @@ func (m *mockDocker) TagImage(_ context.Context, src, target string) error {
 }
 
 func (m *mockDocker) RemoveContainerWithVolumes(_ context.Context, id string) error {
+	m.logOp("remove-with-volumes", id)
 	m.mu.Lock()
 	m.removeWithVolumesCalls = append(m.removeWithVolumesCalls, id)
 	m.mu.Unlock()

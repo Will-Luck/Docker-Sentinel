@@ -43,11 +43,9 @@ func rollback(ctx context.Context, d docker.API, name string, snapshotData []byt
 		}
 	}
 
-	cfg := cloneConfig(inspect.Config)
-	hostConfig := inspect.HostConfig
-	netConfig := rebuildNetworkingConfig(inspect.NetworkSettings)
+	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{})
 
-	newID, err := d.CreateContainer(ctx, name, cfg, hostConfig, netConfig)
+	newID, err := d.CreateContainer(ctx, name, rc.Config, rc.HostConfig, rc.NetworkingConfig)
 	if err != nil {
 		return fmt.Errorf("create rollback container: %w", err)
 	}
