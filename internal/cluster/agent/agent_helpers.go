@@ -71,9 +71,24 @@ func targetOrCurrent(target string, inspect *container.InspectResponse) string {
 	return inspect.Config.Image
 }
 
-// recreateContainer stops, removes, and recreates a container with a new
-// image. Preserves all configuration from the current container inspect.
-// An empty targetImage re-pulls the container's current image.
+// parkedName is the name a container is moved to while its replacement is
+// built. The local engine uses the same suffix.
+func parkedName(name string) string {
+	return name + "-sentinel-old"
+}
+
+// recreateContainer replaces a container with one built from the same
+// configuration on targetImage, and never leaves the host without it:
+//
+//  1. pull the image and build the new config (nothing is touched yet)
+//  2. park the old container under parkedName (it keeps running)
+//  3. create the replacement under the real name
+//  4. stop the old container and start the replacement
+//  5. remove the old container
+//
+// If step 3 or 4 fails, the replacement is removed, the old container gets
+// its name back and is started again. An empty targetImage re-pulls the
+// container's current image.
 func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string) (recreateResult, error) {
 	var r recreateResult
 
@@ -107,37 +122,136 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	// Get the new image's digest.
 	r.newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
 
-	// Stop the running container. 30s timeout is generous but safe.
-	if err := a.docker.StopContainer(ctx, cID, 30); err != nil {
-		return r, fmt.Errorf("stop %s: %w", name, err)
+	spec := buildRecreateSpec(&inspect, targetImage)
+
+	parked := parkedName(name)
+	if id, err := a.findContainerID(ctx, parked); err == nil {
+		return r, fmt.Errorf("container %s (%s) is left over from an interrupted update; remove it, or rename it to %s if %s is missing, then retry",
+			parked, truncateID(id), name, name)
 	}
-
-	// Remove the old container.
-	if err := a.docker.RemoveContainer(ctx, cID); err != nil {
-		return r, fmt.Errorf("remove %s: %w", name, err)
+	if err := a.docker.RenameContainer(ctx, cID, parked); err != nil {
+		return r, fmt.Errorf("rename %s to %s: %w", name, parked, err)
 	}
+	old := parkedContainer{id: cID, name: name, inspect: &inspect, targetImage: targetImage}
 
-	// Rebuild the container config with the new image. Network plan
-	// separates primary (for create) from extras (for connect after).
-	cfg, hostCfg := configFromInspect(&inspect, targetImage)
-	np := buildNetworkPlan(inspect.NetworkSettings)
-
-	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, np.primary)
+	newID, err := a.createFromSpec(ctx, name, spec)
 	if err != nil {
+		a.restoreParked(ctx, old, "")
 		return r, fmt.Errorf("create %s: %w", name, err)
 	}
 
-	for _, netName := range np.extras {
-		if err := a.docker.NetworkConnect(ctx, netName, newID); err != nil {
-			a.log.Error("extra network connect failed", "container", name, "network", netName, "error", err)
-		}
+	// Stop before start: the replacement needs the old container's ports.
+	// 30s timeout is generous but safe.
+	if err := a.docker.StopContainer(ctx, cID, 30); err != nil {
+		a.restoreParked(ctx, old, newID)
+		return r, fmt.Errorf("stop %s: %w", name, err)
 	}
 
 	if err := a.docker.StartContainer(ctx, newID); err != nil {
+		a.restoreParked(ctx, old, newID)
 		return r, fmt.Errorf("start %s: %w", name, err)
 	}
 
+	// A --rm container was already deleted by the daemon when it stopped.
+	if err := a.docker.RemoveContainer(ctx, cID); err != nil && !autoRemoves(&inspect) {
+		a.log.Warn("container updated, but the old one could not be removed",
+			"container", name, "old_container", parked, "error", err)
+	}
+
 	return r, nil
+}
+
+// recreateSpec is everything needed to create a container like an existing
+// one: the config to create it with and the networks to attach.
+//
+// buildRecreateSpec is the one place the agent turns an inspected container
+// into create parameters. The local engine's config helpers (sanitising for
+// network_mode "container:", carrying anonymous volumes) belong here when
+// they land, so remote and local recreates build containers the same way.
+type recreateSpec struct {
+	cfg     *container.Config
+	hostCfg *container.HostConfig
+	nets    networkPlan
+}
+
+func buildRecreateSpec(inspect *container.InspectResponse, image string) recreateSpec {
+	cfg, hostCfg := configFromInspect(inspect, image)
+	return recreateSpec{cfg: cfg, hostCfg: hostCfg, nets: buildNetworkPlan(inspect.NetworkSettings)}
+}
+
+// createFromSpec creates a container named name from spec and connects its
+// extra networks. A failed network connect is logged, not fatal: the
+// container can run without its secondary networks.
+func (a *Agent) createFromSpec(ctx context.Context, name string, spec recreateSpec) (string, error) {
+	id, err := a.docker.CreateContainer(ctx, name, spec.cfg, spec.hostCfg, spec.nets.primary)
+	if err != nil {
+		return "", err
+	}
+	for _, netName := range spec.nets.extras {
+		if err := a.docker.NetworkConnect(ctx, netName, id); err != nil {
+			a.log.Error("extra network connect failed", "container", name, "network", netName, "error", err)
+		}
+	}
+	return id, nil
+}
+
+// parkedContainer is an old container moved aside during a recreate.
+type parkedContainer struct {
+	id, name    string
+	inspect     *container.InspectResponse
+	targetImage string // image the failed replacement was built from
+}
+
+func autoRemoves(inspect *container.InspectResponse) bool {
+	return inspect.HostConfig != nil && inspect.HostConfig.AutoRemove
+}
+
+// restoreParked undoes a failed recreate: it removes the half-made
+// replacement (if any), gives the old container its name back and starts
+// it again. A --rm container is deleted by the daemon when it stops, so it
+// is created again from its inspected config on its old image instead.
+// Errors are logged: the caller is already returning the failure that got
+// us here. The rollback runs to the end even if ctx has been cancelled.
+func (a *Agent) restoreParked(ctx context.Context, old parkedContainer, newID string) {
+	ctx = context.WithoutCancel(ctx)
+
+	if newID != "" {
+		if err := a.docker.RemoveContainer(ctx, newID); err != nil {
+			a.log.Error("rollback: failed to remove the replacement container", "container", old.name, "id", truncateID(newID), "error", err)
+		}
+	}
+
+	if err := a.docker.RenameContainer(ctx, old.id, old.name); err != nil {
+		if !autoRemoves(old.inspect) {
+			a.log.Error("rollback: failed to give the old container its name back; it is still on the host",
+				"container", old.name, "parked_as", parkedName(old.name), "error", err)
+			return
+		}
+		a.recreateRemoved(ctx, old)
+		return
+	}
+
+	if err := a.docker.StartContainer(ctx, old.id); err != nil {
+		a.log.Error("rollback: failed to start the old container", "container", old.name, "error", err)
+	}
+}
+
+// recreateRemoved brings back a --rm container that the daemon deleted when
+// it was stopped. For a same-tag update the tag now names the new image, so
+// the old image is used by ID.
+func (a *Agent) recreateRemoved(ctx context.Context, old parkedContainer) {
+	image := old.inspect.Config.Image
+	if image == old.targetImage && old.inspect.Image != "" {
+		image = old.inspect.Image
+	}
+	id, err := a.createFromSpec(ctx, old.name, buildRecreateSpec(old.inspect, image))
+	if err != nil {
+		a.log.Error("rollback: failed to recreate the removed --rm container", "container", old.name, "image", image, "error", err)
+		return
+	}
+	if err := a.docker.StartContainer(ctx, id); err != nil {
+		a.log.Error("rollback: failed to start the recreated --rm container", "container", old.name, "error", err)
+	}
 }
 
 // networkPlan separates a container's networks into a primary (for
@@ -254,27 +368,14 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 		return r, fmt.Errorf("rename self: %w", err)
 	}
 
-	// Build config for the replacement container. Network plan separates
-	// primary (for create) from extras (for connect after), avoiding the
-	// Docker API 1.44+ rejection of multiple endpoints at create time.
-	cfg, hostCfg := configFromInspect(&inspect, targetImage)
-	np := buildNetworkPlan(inspect.NetworkSettings)
-
-	// Create new container with the original name.
+	// Create new container with the original name, then connect extra
+	// networks beyond the primary.
 	a.log.Info("self-update: creating replacement", "name", name, "image", targetImage)
-	newID, err := a.docker.CreateContainer(ctx, name, cfg, hostCfg, np.primary)
+	newID, err := a.createFromSpec(ctx, name, buildRecreateSpec(&inspect, targetImage))
 	if err != nil {
 		a.log.Error("self-update: create failed, rolling back rename", "error", err)
 		_ = a.docker.RenameContainer(ctx, cID, name)
 		return r, fmt.Errorf("create replacement: %w", err)
-	}
-
-	// Connect extra networks beyond the primary.
-	for _, netName := range np.extras {
-		if err := a.docker.NetworkConnect(ctx, netName, newID); err != nil {
-			a.log.Error("self-update: extra network connect failed", "network", netName, "error", err)
-			// Non-fatal: container can start without secondary networks.
-		}
 	}
 
 	// Start the replacement.

@@ -21,12 +21,13 @@ type fakeHost struct {
 	mu         sync.Mutex
 	containers map[string]*fakeContainer // by ID
 	images     map[string]string         // locally present image ref -> image ID
+	imageIDs   map[string]bool           // every image ID present, tagged or not
 	registry   map[string]string         // pullable image ref -> image ID
 	nextID     int
 
 	createErr  map[string]error // by image ref of the container being created
 	startErr   map[string]error // by image ref of the container being started
-	stopErr    map[string]error // by container name at the time of the stop
+	stopErr    map[string]error // by container ID
 	renameErr  map[string]error // by requested new name
 	pullCalls  []string
 	startCalls []string
@@ -45,6 +46,7 @@ func newFakeHost() *fakeHost {
 	return &fakeHost{
 		containers: map[string]*fakeContainer{},
 		images:     map[string]string{},
+		imageIDs:   map[string]bool{},
 		registry:   map[string]string{},
 		createErr:  map[string]error{},
 		startErr:   map[string]error{},
@@ -59,6 +61,7 @@ func (h *fakeHost) addContainer(name, image string, running bool) *fakeContainer
 	defer h.mu.Unlock()
 	if _, ok := h.images[image]; !ok {
 		h.images[image] = "sha256:" + strings.ReplaceAll(image, ":", "-") + "-v1"
+		h.imageIDs[h.images[image]] = true
 	}
 	h.nextID++
 	c := &fakeContainer{
@@ -161,7 +164,7 @@ func (h *fakeHost) StopContainer(_ context.Context, id string, _ int) error {
 	if !ok {
 		return fmt.Errorf("No such container: %s", id)
 	}
-	if err := h.stopErr[c.name]; err != nil {
+	if err := h.stopErr[id]; err != nil {
 		return err
 	}
 	c.running = false
@@ -191,13 +194,9 @@ func (h *fakeHost) CreateContainer(_ context.Context, name string, cfg *containe
 		return "", err
 	}
 	imageID, ok := h.images[cfg.Image]
-	if !ok {
-		// Creating from an image ID is allowed when some local ref has it.
-		for _, id := range h.images {
-			if id == cfg.Image {
-				imageID, ok = id, true
-			}
-		}
+	if !ok && h.imageIDs[cfg.Image] {
+		// An image ID stays usable after its tag moves to a newer image.
+		imageID, ok = cfg.Image, true
 	}
 	if !ok {
 		return "", fmt.Errorf("No such image: %s", cfg.Image)
@@ -265,6 +264,7 @@ func (h *fakeHost) PullImage(_ context.Context, ref string) error {
 		return fmt.Errorf("manifest unknown: %s", ref)
 	}
 	h.images[ref] = id
+	h.imageIDs[id] = true
 	return nil
 }
 
