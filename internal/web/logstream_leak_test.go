@@ -15,7 +15,7 @@ import (
 func muxFrame(text string) []byte {
 	hdr := make([]byte, 8)
 	hdr[0] = 1
-	binary.BigEndian.PutUint32(hdr[4:], uint32(len(text)))
+	binary.BigEndian.PutUint32(hdr[4:], uint32(len(text))) //nolint:gosec // test frame, the length is tiny
 	return append(hdr, []byte(text)...)
 }
 
