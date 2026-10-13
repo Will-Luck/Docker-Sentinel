@@ -536,8 +536,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 
 	// Updates refused for want of cosign are notified once, together.
-	var unverifiable []string
-	defer func() { u.notifyUnverifiable(context.WithoutCancel(ctx), unverifiable) }()
+	defer func() { u.notifyUnverifiable(context.WithoutCancel(ctx), result.Errors) }()
 
 	for i, c := range containers {
 		if ctx.Err() != nil {
@@ -850,9 +849,6 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				u.log.Error("auto-update failed", "name", name, "error", err)
 				result.Failed++
 				result.Errors = append(result.Errors, err)
-				if errors.Is(err, ErrVerifierUnavailable) {
-					unverifiable = append(unverifiable, name)
-				}
 				if errors.Is(err, ErrRolledBack) {
 					if f := u.failedUpdate(ctx, imageRef, check); f.Digest != "" || f.Version != "" {
 						if err := u.store.SetFailedUpdate(name, f); err != nil {
