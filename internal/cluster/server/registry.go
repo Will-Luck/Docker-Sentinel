@@ -381,6 +381,67 @@ func (r *Registry) PromoteCertSerial(hostID, presented string) (replaced string,
 	return replaced, true, nil
 }
 
+// certMatch says how a presented certificate serial relates to a host.
+type certMatch int
+
+const (
+	certUnknown certMatch = iota // neither of the host's serials
+	certCurrent                  // the host's current certificate
+	certPending                  // its renewed certificate, not used before
+)
+
+// MatchCertSerial classifies the serial an agent presented. A host record
+// from before serials were tracked (CertSerial empty) adopts the presented
+// serial as current.
+func (r *Registry) MatchCertSerial(hostID, presented string) (certMatch, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	hs, ok := r.hosts[hostID]
+	if !ok || presented == "" {
+		return certUnknown, nil
+	}
+	switch presented {
+	case hs.Info.CertSerial:
+		return certCurrent, nil
+	case hs.Info.PendingCertSerial:
+		return certPending, nil
+	}
+	if hs.Info.CertSerial == "" {
+		hs.Info.CertSerial = presented
+		r.log.Info("recorded the certificate serial of a host enrolled before serials were tracked", "id", hostID, "serial", presented)
+		return certCurrent, r.persistLocked(hostID, hs)
+	}
+	return certUnknown, nil
+}
+
+// RevokeAndRemove revokes every certificate the host holds (its current
+// one and any pending renewal) and removes the host, all under one hold of
+// the registry lock. A renewal racing with it either lands first, and its
+// serial is revoked here, or finds the host gone and revokes its own cert.
+func (r *Registry) RevokeAndRemove(hostID string) (revoked []string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if hs, ok := r.hosts[hostID]; ok {
+		for _, serial := range []string{hs.Info.CertSerial, hs.Info.PendingCertSerial} {
+			if serial == "" {
+				continue
+			}
+			if err := r.store.AddRevokedCert(serial); err != nil {
+				return revoked, fmt.Errorf("revoke cert: %w", err)
+			}
+			revoked = append(revoked, serial)
+		}
+	}
+	delete(r.hosts, hostID)
+	if err := r.store.DeleteClusterHost(hostID); err != nil {
+		return revoked, fmt.Errorf("delete host %s from store: %w", hostID, err)
+	}
+	r.log.Info("revoked and removed host", "id", hostID)
+	return revoked, nil
+}
+
 // persistLocked writes hs to the store. Caller holds r.mu.
 func (r *Registry) persistLocked(hostID string, hs *HostState) error {
 	data, err := json.Marshal(hs.Info)
@@ -396,17 +457,6 @@ func (r *Registry) GetCertSerial(hostID string) string {
 	defer r.mu.RUnlock()
 	if hs, ok := r.hosts[hostID]; ok {
 		return hs.Info.CertSerial
-	}
-	return ""
-}
-
-// GetPendingCertSerial returns the host's renewed certificate serial that
-// the agent has not used yet, or "".
-func (r *Registry) GetPendingCertSerial(hostID string) string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if hs, ok := r.hosts[hostID]; ok {
-		return hs.Info.PendingCertSerial
 	}
 	return ""
 }

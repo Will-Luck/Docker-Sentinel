@@ -19,7 +19,9 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 // HistoryRecorder is the subset of store.Store needed for persisting update
@@ -406,19 +408,47 @@ func (s *Server) PauseHost(id string) error {
 // the agent can no longer authenticate.
 func (s *Server) RevokeHost(id string) error {
 	// Mid-renewal a host has two valid certificates: the one in use and
-	// the renewed one it has not connected with yet.
-	for _, serial := range []string{s.registry.GetCertSerial(id), s.registry.GetPendingCertSerial(id)} {
-		if serial == "" {
-			continue
-		}
-		if err := s.store.AddRevokedCert(serial); err != nil {
-			return fmt.Errorf("revoke cert: %w", err)
-		}
+	// the renewed one it has not connected with yet. Both are revoked in
+	// the same step that removes the host, so a renewal cannot slip in
+	// between.
+	revoked, err := s.registry.RevokeAndRemove(id)
+	for _, serial := range revoked {
 		s.log.Info("revoked certificate", "hostID", id, "serial", serial)
 	}
-
+	if err != nil && len(revoked) == 0 {
+		return err
+	}
 	s.disconnectAgent(id)
-	return s.registry.Remove(id)
+	return err
+}
+
+// authoriseCert checks that the certificate a peer presented is one the
+// hub issued to hostID: its current certificate, or its renewed one, which
+// becomes current here (and the certificate it replaces is revoked).
+func (s *Server) authoriseCert(ctx context.Context, hostID string) error {
+	serial, _ := peerCertSerial(ctx)
+	match, err := s.registry.MatchCertSerial(hostID, serial)
+	if err != nil {
+		s.log.Error("failed to record the agent's certificate serial", "hostID", hostID, "serial", serial, "error", err)
+		return status.Error(codes.Internal, "certificate check unavailable")
+	}
+	switch match {
+	case certCurrent:
+		return nil
+	case certPending:
+		replaced, promoted, err := s.registry.PromoteCertSerial(hostID, serial)
+		if err != nil {
+			s.log.Error("failed to record the agent's renewed certificate", "hostID", hostID, "serial", serial, "error", err)
+			return status.Error(codes.Internal, "certificate check unavailable")
+		}
+		if promoted {
+			s.log.Info("agent is using its renewed certificate, old one revoked", "hostID", hostID, "serial", serial, "revoked", replaced)
+		}
+		return nil
+	default:
+		s.log.Warn("agent presented a certificate the hub did not issue to it", "hostID", hostID, "serial", serial)
+		return status.Error(codes.PermissionDenied, "certificate is not the one issued to this host")
+	}
 }
 
 // disconnectAgent cancels the active stream for a host, if one exists.

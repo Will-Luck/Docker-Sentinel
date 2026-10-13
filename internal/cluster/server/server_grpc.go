@@ -180,14 +180,11 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		return status.Errorf(codes.NotFound, "host %s not registered", hostID)
 	}
 
-	// An agent that connects with its renewed certificate has it on disk
-	// and working: make it current and revoke the one it replaces.
-	if serial, ok := peerCertSerial(stream.Context()); ok {
-		if replaced, promoted, err := s.registry.PromoteCertSerial(hostID, serial); err != nil {
-			s.log.Error("failed to record the agent's renewed certificate", "hostID", hostID, "serial", serial, "error", err)
-		} else if promoted {
-			s.log.Info("agent is using its renewed certificate, old one revoked", "hostID", hostID, "serial", serial, "revoked", replaced)
-		}
+	// Only a certificate the hub issued to this host gets in. An agent
+	// that connects with its renewed one has it on disk and working: it
+	// becomes current and the one it replaces is revoked.
+	if err := s.authoriseCert(stream.Context(), hostID); err != nil {
+		return err
 	}
 
 	// Capture the agent's IP from the gRPC peer address so the dashboard
@@ -342,6 +339,12 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 		return nil, status.Error(codes.Internal, "revocation check unavailable")
 	} else if revoked {
 		return nil, status.Error(codes.PermissionDenied, "certificate has been revoked")
+	}
+	if _, ok := s.registry.Get(hostID); !ok {
+		return nil, status.Errorf(codes.NotFound, "host %s not registered", hostID)
+	}
+	if err := s.authoriseCert(ctx, hostID); err != nil {
+		return nil, err
 	}
 
 	containers := protoToContainers(report.Containers)
