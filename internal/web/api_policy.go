@@ -39,7 +39,7 @@ func (s *Server) apiChangePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Self-protection: refuse to change policy on Sentinel itself.
-	if s.isProtectedContainer(r.Context(), name) {
+	if s.isProtectedTarget(r, name) {
 		writeError(w, http.StatusForbidden, "cannot change policy on sentinel itself")
 		return
 	}

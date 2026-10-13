@@ -364,7 +364,7 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isProtectedContainer(r.Context(), name) {
+	if s.isProtectedTarget(r, name) {
 		writeError(w, http.StatusForbidden, "cannot switch sentinel itself")
 		return
 	}

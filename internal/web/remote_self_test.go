@@ -154,3 +154,36 @@ func (nopHistory) ListAllHistory() ([]UpdateRecord, error)                    { 
 func (nopHistory) ListHistoryByContainer(string, int) ([]UpdateRecord, error) { return nil, nil }
 func (nopHistory) GetMaintenance(string) (bool, error)                        { return false, nil }
 func (nopHistory) RecordUpdate(UpdateRecord) error                            { return nil }
+
+// Restart, stop, start and GHCR switch protect only the hub's own
+// container. The same name on a remote host (here a Sentinel agent) is an
+// ordinary remote container, addressed with ?host=.
+func TestProtectedHandlers_OnlyTheHubsOwnContainer(t *testing.T) {
+	handlers := map[string]func(*Server, http.ResponseWriter, *http.Request){
+		"restart": (*Server).apiRestart,
+		"stop":    (*Server).apiStop,
+		"start":   (*Server).apiStart,
+		"ghcr":    (*Server).apiSwitchToGHCR,
+	}
+	for op, h := range handlers {
+		t.Run(op, func(t *testing.T) {
+			srv := selfTestServer()
+
+			r := httptest.NewRequest(http.MethodPost, "/api/x/sentinel?host=h1", nil)
+			r.SetPathValue("name", "sentinel")
+			w := httptest.NewRecorder()
+			h(srv, w, r)
+			if w.Code == http.StatusForbidden {
+				t.Errorf("%s on the remote agent named sentinel: 403 %s", op, w.Body.String())
+			}
+
+			r = httptest.NewRequest(http.MethodPost, "/api/x/sentinel", nil)
+			r.SetPathValue("name", "sentinel")
+			w = httptest.NewRecorder()
+			h(srv, w, r)
+			if w.Code != http.StatusForbidden {
+				t.Errorf("%s on the hub's own container: status %d, want 403", op, w.Code)
+			}
+		})
+	}
+}

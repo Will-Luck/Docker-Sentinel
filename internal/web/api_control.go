@@ -24,7 +24,7 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isProtectedContainer(r.Context(), name) {
+	if s.isProtectedTarget(r, name) {
 		writeError(w, http.StatusForbidden, "cannot restart sentinel itself via the dashboard")
 		return
 	}
@@ -111,7 +111,7 @@ func (s *Server) apiStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isProtectedContainer(r.Context(), name) {
+	if s.isProtectedTarget(r, name) {
 		writeError(w, http.StatusForbidden, "cannot stop sentinel itself via the dashboard")
 		return
 	}
@@ -198,7 +198,7 @@ func (s *Server) apiStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isProtectedContainer(r.Context(), name) {
+	if s.isProtectedTarget(r, name) {
 		writeError(w, http.StatusForbidden, "cannot start sentinel itself via the dashboard")
 		return
 	}
@@ -285,7 +285,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isProtectedContainer(r.Context(), name) {
+	if s.isProtectedTarget(r, name) {
 		writeError(w, http.StatusForbidden, "cannot update sentinel itself via the dashboard")
 		return
 	}
@@ -429,7 +429,7 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.isProtectedContainer(r.Context(), name) {
+	if s.isProtectedTarget(r, name) {
 		writeError(w, http.StatusForbidden, "cannot rollback sentinel itself via the dashboard")
 		return
 	}
@@ -832,7 +832,7 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 
 	targetImage := webReplaceTag(imageRef, body.Tag)
 
-	if s.isProtectedContainer(r.Context(), name) {
+	if s.isProtectedTarget(r, name) {
 		// Sentinel — route through self-updater helper container.
 		if s.deps.SelfUpdater == nil {
 			writeError(w, http.StatusNotImplemented, "self-update not available")

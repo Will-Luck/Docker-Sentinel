@@ -40,10 +40,12 @@ func containerPolicy(labels map[string]string, defaultPolicy string) string {
 	return "manual"
 }
 
-// isProtectedContainer checks if a container has the sentinel.self=true label.
-func (s *Server) isProtectedContainer(ctx context.Context, name string) bool {
-	labels := s.getContainerLabels(ctx, name)
-	return labels["sentinel.self"] == "true"
+// isProtectedTarget reports whether the container a request names is this
+// Sentinel itself. The host comes from ?host=; only the hub's own (local)
+// container is protected, while a container on a remote host, a Sentinel
+// agent included, is an ordinary remote container.
+func (s *Server) isProtectedTarget(r *http.Request, name string) bool {
+	return s.isQueueItemSelf(r.Context(), PendingUpdate{HostID: r.URL.Query().Get("host"), ContainerName: name})
 }
 
 // resolvedPolicy returns the effective policy: DB override → label → global default.
@@ -58,25 +60,6 @@ func (s *Server) resolvedPolicy(labels map[string]string, name string) string {
 		defaultPolicy = s.deps.Config.DefaultPolicy()
 	}
 	return containerPolicy(labels, defaultPolicy)
-}
-
-// getContainerLabels fetches labels for a named container, checking local
-// Docker, Swarm services, and remote cluster containers in order.
-func (s *Server) getContainerLabels(ctx context.Context, name string) map[string]string {
-	if labels := s.getLocalContainerLabels(ctx, name); labels != nil {
-		return labels
-	}
-
-	// Remote cluster containers.
-	if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
-		for _, rc := range s.deps.Cluster.AllHostContainers() {
-			if rc.Name == name {
-				return rc.Labels
-			}
-		}
-	}
-
-	return nil
 }
 
 // allContainerLabels builds a consolidated name→labels map from local Docker,
