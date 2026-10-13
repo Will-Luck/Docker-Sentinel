@@ -209,8 +209,19 @@ func (a *eventLogAdapter) ListLogs(limit int) ([]web.LogEntry, error) {
 // settingsStoreAdapter bridges store.Store to web.SettingsStore.
 type settingsStoreAdapter struct{ s *store.Store }
 
+// settingSaved, when set, is told about every setting saved through the web
+// UI after it is stored, so settings that need a live reaction (Home
+// Assistant discovery) take effect without a restart.
+var settingSaved func(key string)
+
 func (a *settingsStoreAdapter) SaveSetting(key, value string) error {
-	return a.s.SaveSetting(key, value)
+	if err := a.s.SaveSetting(key, value); err != nil {
+		return err
+	}
+	if settingSaved != nil {
+		settingSaved(key)
+	}
+	return nil
 }
 
 func (a *settingsStoreAdapter) LoadSetting(key string) (string, error) {

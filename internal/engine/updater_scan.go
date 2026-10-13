@@ -959,13 +959,16 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		if err := u.haDiscovery.PublishPendingCount(u.queue.Len()); err != nil {
 			u.log.Debug("ha discovery: failed to publish pending count", "error", err)
 		}
+		var pending []string
 		for _, item := range u.queue.List() {
 			if item.HostID != "" {
 				continue // only publish local containers
 			}
-			if err := u.haDiscovery.PublishContainerState(item.ContainerName, true); err != nil {
-				u.log.Debug("ha discovery: failed to publish state", "name", item.ContainerName, "error", err)
-			}
+			pending = append(pending, item.ContainerName)
+		}
+		// Sensors for containers that left the queue are set back to OFF.
+		if err := u.haDiscovery.SyncContainerStates(pending); err != nil {
+			u.log.Debug("ha discovery: failed to publish states", "error", err)
 		}
 	}
 

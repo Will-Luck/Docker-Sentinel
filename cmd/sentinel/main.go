@@ -512,36 +512,15 @@ func main() {
 		updater.SetVerifyMode(verifyMode)
 	}
 
-	// Set up HA discovery if enabled and an MQTT channel is configured.
-	if haEnabled, _ := db.LoadSetting("ha_discovery_enabled"); haEnabled == "true" {
-		if haChannels, haErr := db.GetNotificationChannels(); haErr == nil {
-			for _, ch := range haChannels {
-				if ch.Type == notify.ProviderMQTT && ch.Enabled {
-					var mqttSettings notify.MQTTSettings
-					if json.Unmarshal(ch.Settings, &mqttSettings) == nil {
-						haPrefix, _ := db.LoadSetting("ha_discovery_prefix")
-						clientID := mqttSettings.ClientID
-						if clientID == "" {
-							clientID = "docker-sentinel"
-						}
-						ha, haConnErr := notify.NewHADiscovery(notify.HADiscoveryConfig{
-							Broker:   mqttSettings.Broker,
-							ClientID: clientID,
-							Username: mqttSettings.Username,
-							Password: mqttSettings.Password,
-							Prefix:   haPrefix,
-						})
-						if haConnErr != nil {
-							log.Warn("failed to start HA discovery", "error", haConnErr)
-						} else {
-							updater.SetHADiscovery(ha)
-							defer ha.Close()
-							log.Info("home assistant MQTT discovery enabled", "broker", mqttSettings.Broker)
-						}
-					}
-					break
-				}
-			}
+	// Home Assistant discovery follows the saved settings and reconnects
+	// whenever they change, so the Settings toggle works without a restart.
+	haDiscovery := &notify.HADiscovery{}
+	updater.SetHADiscovery(haDiscovery)
+	defer haDiscovery.Close()
+	applyHADiscovery(db, haDiscovery, log)
+	settingSaved = func(key string) {
+		if key == "ha_discovery_enabled" || key == "ha_discovery_prefix" {
+			go applyHADiscovery(db, haDiscovery, log)
 		}
 	}
 
