@@ -4161,6 +4161,12 @@
         if (text) text.textContent = data.keyless === "true" ? "On" : "Off";
       }
       if (keyPathEl) keyPathEl.value = data.key_path || "";
+      var warn = document.getElementById("cosign-warning");
+      if (warn) {
+        var missing = data.mode && data.mode !== "disabled" && data.cosign_available === "false";
+        warn.style.display = missing ? "" : "none";
+        warn.textContent = missing ? "Cosign was not found at this path inside the container, so signatures cannot be checked. " + (data.mode === "enforce" ? "In enforce mode, updates are blocked until cosign is available." : "In warn mode, updates are not verified.") : "";
+      }
       if (preview) {
         if (data.mode === "disabled" || !data.mode) {
           preview.textContent = "Disabled";

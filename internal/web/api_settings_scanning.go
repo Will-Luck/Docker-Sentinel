@@ -3,6 +3,8 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"os/exec"
+	"strconv"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -115,6 +117,8 @@ func (s *Server) apiVerifierSettings(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
+	result["cosign_available"] = strconv.FormatBool(cosignOnPath(result["cosign_path"]))
+
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -186,4 +190,11 @@ func (s *Server) apiVerifierSettingsSave(w http.ResponseWriter, r *http.Request)
 
 	s.logEvent(r, "settings", "", "Verifier settings updated")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
+// cosignOnPath reports whether the cosign binary can be found where the
+// verifier will look for it: inside the Sentinel container.
+func cosignOnPath(path string) bool {
+	_, err := exec.LookPath(path)
+	return err == nil
 }

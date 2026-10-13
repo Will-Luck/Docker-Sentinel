@@ -465,7 +465,8 @@
                             <div class="setting-row">
                                 <div class="setting-info">
                                     <div class="setting-label">Cosign path</div>
-                                    <div class="setting-desc">Path to the cosign binary on the host</div>
+                                    <div class="setting-desc">Path to the cosign binary inside the Sentinel container. Cosign is not part of the Sentinel image: mount a binary into the container or build an image that includes it.</div>
+                                    <div class="setting-desc" id="cosign-warning" style="display:none;color:var(--warning, #b45309)" role="alert"></div>
                                 </div>
                                 <input type="text" id="cosign-path" class="setting-input" placeholder="cosign" style="width:200px">
                             </div>

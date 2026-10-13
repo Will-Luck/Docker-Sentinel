@@ -1113,3 +1113,29 @@ func TestEffectiveRollbackPolicy_UsesRuntimeConfig(t *testing.T) {
 		t.Errorf("effectiveRollbackPolicy without config = %q, want the saved manual", got)
 	}
 }
+
+// The page warns when verification is on but cosign cannot be found, so the
+// field reports availability for the configured path.
+func TestApiVerifierSettings_ReportsCosignAvailability(t *testing.T) {
+	ss := newMockSettingsStore()
+	ss.data[store.SettingVerifyMode] = "enforce"
+	ss.data[store.SettingCosignPath] = "/nonexistent/cosign-binary"
+	srv := newTestServer(ss)
+	w := httptest.NewRecorder()
+	srv.apiVerifierSettings(w, httptest.NewRequest(http.MethodGet, "/api/settings/verifier", nil))
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["cosign_available"] != "false" {
+		t.Errorf("cosign_available = %q, want false for a missing binary", got["cosign_available"])
+	}
+
+	ss.data[store.SettingCosignPath] = "sh" // any binary on PATH
+	w = httptest.NewRecorder()
+	srv.apiVerifierSettings(w, httptest.NewRequest(http.MethodGet, "/api/settings/verifier", nil))
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got["cosign_available"] != "true" {
+		t.Errorf("cosign_available = %q, want true when the binary is found", got["cosign_available"])
+	}
+}
