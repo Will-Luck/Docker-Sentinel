@@ -113,15 +113,16 @@ func (c *Client) PullImage(ctx context.Context, refStr string) error {
 	return resp.Wait(ctx)
 }
 
-// ImageDigest returns the repo digest of a locally available image.
-// Falls back to the image ID if no repo digest is available.
+// ImageDigest returns the repo digest of a locally available image, the
+// one of imageRef's repository when the image is in several (see
+// repoDigestFor). Falls back to the image ID if no repo digest is available.
 func (c *Client) ImageDigest(ctx context.Context, imageRef string) (string, error) {
 	resp, err := c.api.ImageInspect(ctx, imageRef)
 	if err != nil {
 		return "", err
 	}
-	if len(resp.RepoDigests) > 0 {
-		return resp.RepoDigests[0], nil
+	if d := repoDigestFor(imageRef, resp.RepoDigests); d != "" {
+		return d, nil
 	}
 	return resp.ID, nil
 }
