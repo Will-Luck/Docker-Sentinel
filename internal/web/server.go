@@ -203,7 +203,7 @@ func (s *Server) ListenAndServe(addr string) error {
 	if s.deps.Auth != nil {
 		handler = s.setupRedirectHandler(s.mux)
 	}
-	handler = securityHeaders(handler)
+	handler = securityHeaders(limitBody(maxRequestBody, handler))
 	s.server = &http.Server{
 		Addr:         addr,
 		Handler:      handler,

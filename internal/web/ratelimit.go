@@ -79,6 +79,26 @@ func rateLimit(rl *rateLimiter, next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusTooManyRequests, "too many requests, try again later")
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxAuthBody)
 		next(w, r)
 	}
+}
+
+// maxAuthBody caps the body of the public auth endpoints (login, setup,
+// passkey and TOTP steps), which take a few small JSON fields.
+const maxAuthBody = 64 << 10
+
+// maxRequestBody caps every request body. The largest legitimate one is a
+// configuration import, which has its own 5 MB limit.
+const maxRequestBody = 8 << 20
+
+// limitBody caps the size of request bodies so an unauthenticated client
+// cannot make the server buffer an arbitrarily large one.
+func limitBody(max int64, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, max)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
