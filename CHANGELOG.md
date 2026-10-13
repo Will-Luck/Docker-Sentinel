@@ -176,6 +176,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   syncing when it is replaced or switched off.
 - An abandoned "Link single sign-on" no longer breaks the next SSO sign-in,
   and only messages that begin with an action failure show as errors.
+- "Update to version" and the GHCR switch on a container on another host left no history row (the notification still went out). Both now record success or failure under the host-scoped key, like Update now.
+- Approving a local update that failed no longer risks a second failed row in the history: local updates record their own history in the engine for every failure, and only remote updates are recorded by the web layer.
+- Settings > Scanning showed the poll interval and grace period as a blank "Custom..." and Show stopped as Off while the environment set 10m, 30s and true, so saving there could overwrite the real values. The page now shows the value in effect for every setting the environment can set, says whether it is saved or from the environment, and the scanner, verifier and notification retry forms send only the fields you changed.
+- At phone width (390 px) the dashboard no longer squeezes container names away: Image, Policy and Ports collapse properly and the Status column keeps only the width its badge needs.
+- Cluster host cards showed an agent's version as "vv3.0.0-rc4" and let the commit hash overflow the card; the version is now shown once and the full text is in a tooltip.
+- The page of a container on another host showed a blank Container ID and did not say which host it is on; it now shows both.
+- The service page's Policy and Notification Preferences sections were unstyled and named their options differently from the container page; they now match it. A Swarm task on a registry with a port showed its image tag cut to "5443/lh/app:1.0.1".
+- The Logs page showed raw host IDs ("Container stopped on 37770888f2...") and one line named a user by ID. Activity-log lines and failure messages now name the host, and the SSO unlink line names the user.
+- The history's scan summary counts did not add up (165 checked against 66 + 96 + 18): containers whose registry check failed, ones skipped for a swap in progress, ones whose newer versions were all ignored, rolled back before, or held back by a dry run were in no count. Each now lands in exactly one, and "check failed" is shown as its own figure.
 
 ### Added
 
@@ -264,6 +273,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings the server sends. Servers and agents before v3.0.0 ignore them.
 - Enrolment tokens are longer: they end with `.<fingerprint>` of the
   server's CA.
+- An agent reported an update as done as soon as the new container
+  started, and removed the old one: an image that exits right after start
+  left the service down and "Restarting". Agents now validate a new
+  container as the server does for its own: they wait the grace period
+  (the server's, or the agent's `SENTINEL_GRACE_PERIOD`, or the
+  container's `sentinel.grace-period` label), check that it is still
+  running and, with a healthcheck, healthy, and otherwise put the old
+  container back and report a rollback. The server then notifies the
+  failure and the rollback and applies its rollback policy to the
+  container, as for a local rollback.
+- An agent updated by "Auto-update agents" left no history row, so
+  Rollback of that agent's own container found nothing to go back to, and
+  a Rollback of a remote container from the dashboard left no row either.
+  The server now records the history of a remote update or rollback that
+  nothing else records (the agent's result, or why it got none).
+- Setting the rollback policy back to "No change" on the server never
+  reached agents, which kept showing the previous policy.
+- When signature verification refused a remote update because the image
+  could not be checked at all (enforce without cosign, or keyless without
+  an identity), the server sent "update started" and "update failed" for
+  that container on its own. Refused remote updates now join the one
+  notification a scan sends for all the updates it refused, each with a
+  failed history row, as local and Swarm ones do; one refused from the
+  dashboard sends no notification, as a local one does.
 - One precedence rule for image backup, remove volumes and the rollback
   policy: a value saved on the Settings page overrides the environment
   (`SENTINEL_IMAGE_BACKUP`, `SENTINEL_REMOVE_VOLUMES`,
@@ -308,6 +341,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A local container on a mutable tag such as `latest` that ran an older
+  image than its tag was queued without the versions remote containers
+  show, so ignoring it stored a digest. Its queue entry now carries the
+  current and target versions, resolved from the image it runs.
+- A rollback started from the dashboard or the API wrote nothing to the
+  update history and sent no notification. A successful one is now
+  recorded as a rollback with both images and notified.
+- When a new container failed validation (an image that exits straight
+  after start), the log and the notification said "validation failed:
+  <nil>" and the history kept only a rollback row without images. They
+  now give the reason (exit code, restart count or health status), the
+  history records the failed update with its old and new image, and the
+  rollback row names the images too.
 - When an update failed and the daemon would not remove the new
   container, the service stayed down until a later recovery. The failed
   container is now renamed aside (`<name>-sentinel-failed`) with its
@@ -551,6 +597,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back, and an agent tells the hub.
 - A self-update helper that was created but never started no longer blocks
   the cleanup of old containers for ever; after 15 minutes it is removed.
+- A self-update's outcome was never reported on the instance that came back:
+  the helper writes it about twenty seconds after the new instance starts, so
+  the new instance saw "in progress" at boot and logged nothing, and after a
+  rollback the old agent never told the hub. The instance now waits in the
+  background (up to two minutes) for the final outcome and reports it once;
+  an agent sends a failure to the hub at once instead of at the next
+  reconnect.
+- If the helper was killed during the settle period and the daemon then
+  restarted, the old and the new Sentinel both came back and the new one
+  crash-looped on the database lock. The replacement now has no restart
+  policy until the swap is committed (it gets its real policy then, and the
+  old container is set not to return), and an old instance that finds a
+  running or crash-looping replacement next to it with its own unfinished
+  marker and no helper alive removes it and takes its name back.
+- Startup cleanup on an agent removed another Sentinel's `-old-` leftover on
+  the same host; it now touches only containers named after itself. After an
+  upgrade from a pre-v3 agent the old container lingered until the next
+  restart; the cleanup now runs again two minutes after start.
+- With two Sentinel containers on one host, a self-update picked the first
+  container labelled `sentinel.self`, swapped that one, and the cleanup that
+  followed removed it entirely. A Sentinel now finds the container it runs
+  in by its own container ID, for the scheduled self-update, the dashboard's
+  self-update and update-to-version, and an agent's self-update; if it
+  cannot tell which container it is, it refuses and changes nothing. An agent
+  asked to update a Sentinel container updates its own, whatever name the hub
+  sent.
+- The self-update no longer removes anything on the strength of the helper
+  having exited: it follows the helper's outcome marker. An unfinished or
+  unknown outcome leaves both containers as they are and logs it loudly.
+- A Sentinel finds its own container by the ID in `/proc/self/mountinfo`, then
+  in `/proc/self/cgroup` (cgroup v1 `docker/<id>`, v2 `docker-<id>.scope`),
+  before falling back to the hostname. If none of these works, for example
+  with a custom hostname on a runtime that hides both, set the new
+  environment variable `SENTINEL_SELF_CONTAINER` to this container's name or
+  ID. It is used only when the ID cannot be read from the system, and is
+  checked against the Docker API: the container must exist and carry the
+  `sentinel.self=true` label, or the self-update is refused with an error
+  that names the variable.
+- When the signature gate refused Sentinel's own self-update (enforce mode
+  without cosign, or an image that fails the check), it sent no notification
+  and left no history row, only a log line. A refused self-update now records
+  a failed update in the history and sends one failure notification.
 - Cluster agents dropped out of the cluster for good a year after they
   enrolled: an agent certificate lasts 365 days and nothing renewed it, so
   the only way back was a re-enrolment that gave the host a new ID. Once
@@ -835,6 +923,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remote updates started from the dashboard or the API (approve, "Update
   now", update to version) now send the same notifications as local ones:
   started, then succeeded or failed.
+- A Rollback of a remote container from the dashboard or the API sent no
+  notification. It now sends "rollback succeeded" or "rollback failed" for
+  "name on host", as a local rollback does, and records one rollback row
+  from the image the container ran to the one it went back to.
 - Saving Settings > Notifications overwrote a webhook channel's real header
   (for example `Authorization: Bearer ...`) with its masked form, so the
   channel started failing with 401. Masked values, including those inside
@@ -949,6 +1041,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the broker connection. Saves now hand the change to one background
   worker, so the last save always decides the final state and the page
   never waits on the broker.
+- When a pre-update hook exited 75 to skip an update, "update started"
+  had already gone out and nothing followed, locally or on a cluster
+  host. A new "Update Skipped" notification now closes it, naming the
+  container (and host) and the reason. It is on for channels that receive
+  all events and can be switched per channel under the channel's event
+  list; a channel that already has a saved event list needs "Update
+  Skipped" ticked to get it. It also appears in the template editor.
+- The scheduled digest listed far more containers than were queued (173
+  against 88 in a test cluster): every remote update appeared twice, once
+  by bare name, states of removed containers and hosts were never cleared,
+  and remote names showed raw host IDs. Each remote update is now listed
+  once as "name on host", and a scan clears the stored state of remote
+  containers that are gone, whose host left the cluster, or that were
+  updated outside Sentinel (a host that is only offline keeps its own).
+- "Update available" notifications carried no new image, so a custom
+  template's `{{.NewImage}}` rendered empty. It is now the target image
+  (the newer tag, or the same tag for a digest-only update), for local,
+  Swarm and remote updates.
 
 ## [2.16.1] - 2026-10-13
 
