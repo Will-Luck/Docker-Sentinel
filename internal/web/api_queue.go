@@ -174,12 +174,18 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			s.deps.Log.Error("approved update failed", "name", name, "error", err)
+			// Remote rows are keyed "hostID::name" (update.Key()), like
+			// every other remote history row; local keys are the name.
+			newImage := approveTarget
+			if update.HostID != "" {
+				newImage = remoteUpdateTarget(update.CurrentImage, approveTarget)
+			}
 			_ = s.deps.Store.RecordUpdate(UpdateRecord{
 				Timestamp:     start,
-				ContainerName: update.ContainerName,
+				ContainerName: update.Key(),
 				OldImage:      update.CurrentImage,
 				OldDigest:     update.CurrentDigest,
-				NewImage:      approveTarget,
+				NewImage:      newImage,
 				Outcome:       "failed",
 				Duration:      time.Since(start),
 				Error:         err.Error(),
@@ -193,10 +199,11 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Info("remote update succeeded", "name", name, "host", update.HostID)
 			_ = s.deps.Store.RecordUpdate(UpdateRecord{
 				Timestamp:     start,
-				ContainerName: update.ContainerName,
+				ContainerName: update.Key(),
 				OldImage:      update.CurrentImage,
 				OldDigest:     update.CurrentDigest,
-				NewImage:      approveTarget,
+				NewImage:      remoteUpdateTarget(update.CurrentImage, approveTarget),
+				NewDigest:     update.RemoteDigest,
 				Outcome:       "success",
 				Duration:      time.Since(start),
 				Type:          update.Type,

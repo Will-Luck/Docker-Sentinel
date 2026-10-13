@@ -122,8 +122,8 @@ func TestHandleOfflineJournal_PersistsHistory(t *testing.T) {
 	if rec.Timestamp != ts {
 		t.Errorf("Timestamp: got %v, want %v", rec.Timestamp, ts)
 	}
-	if rec.ContainerName != "nginx" {
-		t.Errorf("ContainerName: got %q, want %q", rec.ContainerName, "nginx")
+	if rec.ContainerName != store.ScopedKey("host-1", "nginx") {
+		t.Errorf("ContainerName: got %q, want %q (the key every remote history row uses)", rec.ContainerName, store.ScopedKey("host-1", "nginx"))
 	}
 	if rec.OldImage != "nginx:1.24" {
 		t.Errorf("OldImage: got %q, want %q", rec.OldImage, "nginx:1.24")
@@ -252,8 +252,8 @@ func TestHandleOfflineJournal_MixedOutcomes(t *testing.T) {
 	if records[0].Outcome != "success" {
 		t.Errorf("record[0] Outcome: got %q, want %q", records[0].Outcome, "success")
 	}
-	if records[0].ContainerName != "postgres" {
-		t.Errorf("record[0] ContainerName: got %q, want %q", records[0].ContainerName, "postgres")
+	if records[0].ContainerName != store.ScopedKey("host-3", "postgres") {
+		t.Errorf("record[0] ContainerName: got %q, want %q", records[0].ContainerName, store.ScopedKey("host-3", "postgres"))
 	}
 
 	// Second: failed with error

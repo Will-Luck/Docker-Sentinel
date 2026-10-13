@@ -149,18 +149,9 @@ func (a *clusterAdapter) RemoteContainerLogs(ctx context.Context, hostID, contai
 
 func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, containerName string) error {
 	// Look up the most recent successful update from history to find the old image.
-	scopedName := store.ScopedKey(hostID, containerName)
-	records, err := a.store.ListHistoryByContainer(scopedName, 10)
+	oldImage, err := lastRemoteOldImage(a.store, hostID, containerName)
 	if err != nil {
-		return fmt.Errorf("lookup update history for %s: %w", scopedName, err)
-	}
-	// Find the most recent successful update with a valid old image.
-	var oldImage string
-	for _, rec := range records {
-		if rec.Outcome == "success" && rec.OldImage != "" {
-			oldImage = rec.OldImage
-			break
-		}
+		return err
 	}
 	if oldImage == "" {
 		return fmt.Errorf("no successful update history found for %s, cannot determine rollback image", containerName)
@@ -178,6 +169,43 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 		return fmt.Errorf("rollback failed")
 	}
 	return nil
+}
+
+// lastRemoteOldImage returns the old image of the most recent successful
+// update of containerName on hostID, or "" if there is none. Remote history
+// rows are keyed "hostID::name". Rows written before v2.17.0 by an approved
+// update or the offline journal used the plain name with the host ID set,
+// and still count; same-named containers on other hosts do not.
+func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, error) {
+	scoped, err := st.ListHistoryByContainer(store.ScopedKey(hostID, containerName), 20)
+	if err != nil {
+		return "", fmt.Errorf("lookup update history for %s on %s: %w", containerName, hostID, err)
+	}
+	legacy, err := st.ListHistoryByContainer(containerName, 100)
+	if err != nil {
+		return "", fmt.Errorf("lookup update history for %s on %s: %w", containerName, hostID, err)
+	}
+	var best *store.UpdateRecord
+	consider := func(recs []store.UpdateRecord, legacyRows bool) {
+		for i := range recs {
+			rec := &recs[i]
+			if legacyRows && rec.HostID != hostID {
+				continue
+			}
+			if rec.Outcome != "success" || rec.OldImage == "" {
+				continue
+			}
+			if best == nil || rec.Timestamp.After(best.Timestamp) {
+				best = rec
+			}
+		}
+	}
+	consider(scoped, false)
+	consider(legacy, true)
+	if best == nil {
+		return "", nil
+	}
+	return best.OldImage, nil
 }
 
 // clusterManager implements web.ClusterLifecycle for dynamic cluster

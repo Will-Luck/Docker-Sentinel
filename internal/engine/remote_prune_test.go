@@ -5,6 +5,9 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // fakeCluster is a ClusterScanner with a fixed set of connected hosts and
@@ -16,6 +19,22 @@ type fakeCluster struct {
 	listErr   map[string]error
 	updates   []string // "hostID/name -> target"
 }
+
+// tickingClock moves on a millisecond every time it is read.
+type tickingClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *tickingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(time.Millisecond)
+	return c.now
+}
+
+func (c *tickingClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+func (c *tickingClock) Since(t time.Time) time.Duration        { return c.Now().Sub(t) }
 
 func (f *fakeCluster) ConnectedHosts() []string { return f.connected }
 
@@ -100,5 +119,33 @@ func TestScanRemoteSameTagUpdateSendsCurrentImage(t *testing.T) {
 
 	if len(fc.updates) != 1 || fc.updates[0] != "h1/web -> nginx:latest" {
 		t.Fatalf("updates sent = %q, want [h1/web -> nginx:latest]", fc.updates)
+	}
+}
+
+// History rows for remote updates carry the host, so History shows the
+// host name and remote rollback can find them.
+func TestScanRemoteAutoUpdateHistoryNamesTheHost(t *testing.T) {
+	mock := newMockDocker()
+	mock.distDigests["nginx:latest"] = "sha256:new"
+	u, _ := newTestUpdater(t, mock)
+	// History rows are keyed by time; with the frozen test clock the scan
+	// summary would overwrite the update row.
+	u.clock = &tickingClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	u.cfg.SetDefaultPolicy("auto")
+	u.SetClusterScanner(&fakeCluster{
+		connected: []string{"h1"},
+		lists: map[string][]RemoteContainer{"h1": {
+			{Name: "web", Image: "nginx:latest", ImageDigest: "sha256:old", State: "running"},
+		}},
+	})
+
+	u.Scan(context.Background(), ScanScheduled)
+
+	recs, err := u.store.ListHistoryByContainer(store.ScopedKey("h1", "web"), 10)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("history for h1::web = %d rows (err %v), want 1", len(recs), err)
+	}
+	if recs[0].HostID != "h1" || recs[0].HostName != "name-h1" {
+		t.Errorf("history row host = %q/%q, want h1/name-h1", recs[0].HostID, recs[0].HostName)
 	}
 }

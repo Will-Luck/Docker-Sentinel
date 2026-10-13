@@ -616,7 +616,7 @@ func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 
 		rec := store.UpdateRecord{
 			Timestamp:     ts,
-			ContainerName: e.Container,
+			ContainerName: store.ScopedKey(hostID, e.Container),
 			OldImage:      e.OldImage,
 			NewImage:      e.NewImage,
 			OldDigest:     e.OldDigest,

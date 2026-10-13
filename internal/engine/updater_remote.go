@@ -167,6 +167,8 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 					OldImage:      c.Image,
 					NewImage:      scanTarget,
 					Outcome:       "dry_run",
+					HostID:        hostID,
+					HostName:      host.HostName,
 				})
 				continue
 			}
@@ -213,6 +215,8 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				NewDigest:     ur.NewDigest,
 				Outcome:       ur.Outcome,
 				Duration:      ur.Duration,
+				HostID:        hostID,
+				HostName:      host.HostName,
 			}); err != nil {
 				u.log.Warn("failed to record remote update history", "name", scopedName, "error", err)
 			}
