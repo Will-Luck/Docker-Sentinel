@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,9 @@ type HostState struct {
 	DisconnectErr string
 	DisconnectCat string    // "network", "cert", "server", ""
 	lastPersist   time.Time // when LastSeen was last written to BoltDB
+	// EngineSharedWith lists other hosts that report the same Docker
+	// engine ID: the same daemon enrolled more than once.
+	EngineSharedWith []string
 }
 
 // Registry tracks connected agent hosts and their container state.
@@ -262,6 +266,34 @@ func (r *Registry) UpdateEngineID(hostID, engineID string) error {
 	return nil
 }
 
+// RefreshEngineSharing recomputes, for every host, which other hosts report
+// the same Docker engine ID, and returns the ones sharing hostID's engine.
+func (r *Registry) RefreshEngineSharing(hostID string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	byEngine := make(map[string][]string)
+	for id, hs := range r.hosts {
+		if hs.Info.EngineID != "" {
+			byEngine[hs.Info.EngineID] = append(byEngine[hs.Info.EngineID], id)
+		}
+	}
+	for id, hs := range r.hosts {
+		var others []string
+		for _, other := range byEngine[hs.Info.EngineID] {
+			if other != id {
+				others = append(others, other)
+			}
+		}
+		sort.Strings(others)
+		hs.EngineSharedWith = others
+	}
+	if hs, ok := r.hosts[hostID]; ok {
+		return append([]string(nil), hs.EngineSharedWith...)
+	}
+	return nil
+}
+
 // UpdateContainers replaces the known container list for a host.
 // Only stored in memory -- the server doesn't persist remote container lists
 // because the agent will re-report them on reconnection.
@@ -312,6 +344,7 @@ func (r *Registry) Get(hostID string) (*HostState, bool) {
 		cp.Containers = make([]cluster.ContainerInfo, len(hs.Containers))
 		copy(cp.Containers, hs.Containers)
 	}
+	cp.EngineSharedWith = append([]string(nil), hs.EngineSharedWith...)
 	return &cp, true
 }
 

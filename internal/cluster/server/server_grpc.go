@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
@@ -358,6 +359,13 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 	if report.EngineId != "" {
 		if err := s.registry.UpdateEngineID(hostID, report.EngineId); err != nil {
 			s.log.Warn("failed to store engine ID", "hostID", hostID, "error", err)
+		}
+		// The same daemon enrolled twice shows its containers under two
+		// hosts, and approvals for both race on one daemon. Say so; which
+		// host to remove is the user's call.
+		if others := s.registry.RefreshEngineSharing(hostID); len(others) > 0 {
+			s.log.Warn("the same Docker engine is enrolled as more than one host; remove the extra host on the cluster page",
+				"hostID", hostID, "engine_id", report.EngineId, "other_hosts", strings.Join(others, ","))
 		}
 	}
 
