@@ -87,8 +87,9 @@ func parkedName(name string) string {
 //  5. remove the old container
 //
 // If step 3 or 4 fails, the replacement is removed, the old container gets
-// its name back and is started again. An empty targetImage re-pulls the
-// container's current image.
+// its name back and is started again. A container that was not running is
+// neither stopped nor started: it comes back stopped, updated or not. An
+// empty targetImage re-pulls the container's current image.
 func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string) (recreateResult, error) {
 	var r recreateResult
 
@@ -132,7 +133,7 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	if err := a.docker.RenameContainer(ctx, cID, parked); err != nil {
 		return r, fmt.Errorf("rename %s to %s: %w", name, parked, err)
 	}
-	old := parkedContainer{id: cID, name: name, inspect: &inspect, targetImage: targetImage}
+	old := parkedContainer{id: cID, name: name, inspect: &inspect, targetImage: targetImage, wasRunning: isRunning(&inspect)}
 
 	newID, err := a.createFromSpec(ctx, name, spec)
 	if err != nil {
@@ -140,16 +141,18 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 		return r, fmt.Errorf("create %s: %w", name, err)
 	}
 
-	// Stop before start: the replacement needs the old container's ports.
-	// 30s timeout is generous but safe.
-	if err := a.docker.StopContainer(ctx, cID, 30); err != nil {
-		a.restoreParked(ctx, old, newID)
-		return r, fmt.Errorf("stop %s: %w", name, err)
-	}
+	if old.wasRunning {
+		// Stop before start: the replacement needs the old container's
+		// ports. 30s timeout is generous but safe.
+		if err := a.docker.StopContainer(ctx, cID, 30); err != nil {
+			a.restoreParked(ctx, old, newID)
+			return r, fmt.Errorf("stop %s: %w", name, err)
+		}
 
-	if err := a.docker.StartContainer(ctx, newID); err != nil {
-		a.restoreParked(ctx, old, newID)
-		return r, fmt.Errorf("start %s: %w", name, err)
+		if err := a.docker.StartContainer(ctx, newID); err != nil {
+			a.restoreParked(ctx, old, newID)
+			return r, fmt.Errorf("start %s: %w", name, err)
+		}
 	}
 
 	// A --rm container was already deleted by the daemon when it stopped.
@@ -200,6 +203,11 @@ type parkedContainer struct {
 	id, name    string
 	inspect     *container.InspectResponse
 	targetImage string // image the failed replacement was built from
+	wasRunning  bool
+}
+
+func isRunning(inspect *container.InspectResponse) bool {
+	return inspect.State != nil && inspect.State.Running
 }
 
 func autoRemoves(inspect *container.InspectResponse) bool {
@@ -208,10 +216,11 @@ func autoRemoves(inspect *container.InspectResponse) bool {
 
 // restoreParked undoes a failed recreate: it removes the half-made
 // replacement (if any), gives the old container its name back and starts
-// it again. A --rm container is deleted by the daemon when it stops, so it
-// is created again from its inspected config on its old image instead.
-// Errors are logged: the caller is already returning the failure that got
-// us here. The rollback runs to the end even if ctx has been cancelled.
+// it again if it was running. A --rm container is deleted by the daemon
+// when it stops, so it is created again from its inspected config on its
+// old image instead. Errors are logged: the caller is already returning
+// the failure that got us here. The rollback runs to the end even if ctx
+// has been cancelled.
 func (a *Agent) restoreParked(ctx context.Context, old parkedContainer, newID string) {
 	ctx = context.WithoutCancel(ctx)
 
@@ -231,6 +240,9 @@ func (a *Agent) restoreParked(ctx context.Context, old parkedContainer, newID st
 		return
 	}
 
+	if !old.wasRunning {
+		return
+	}
 	if err := a.docker.StartContainer(ctx, old.id); err != nil {
 		a.log.Error("rollback: failed to start the old container", "container", old.name, "error", err)
 	}
@@ -247,6 +259,9 @@ func (a *Agent) recreateRemoved(ctx context.Context, old parkedContainer) {
 	id, err := a.createFromSpec(ctx, old.name, buildRecreateSpec(old.inspect, image))
 	if err != nil {
 		a.log.Error("rollback: failed to recreate the removed --rm container", "container", old.name, "image", image, "error", err)
+		return
+	}
+	if !old.wasRunning {
 		return
 	}
 	if err := a.docker.StartContainer(ctx, id); err != nil {

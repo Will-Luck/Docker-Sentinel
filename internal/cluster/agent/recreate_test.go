@@ -212,3 +212,48 @@ func TestRecreateContainer_AutoRemoveSameTagRestoredOnOldImage(t *testing.T) {
 		t.Errorf("web running=%v on image %s, want running on the old image %s", c.running, c.imageID, old.imageID)
 	}
 }
+
+// --- Keep the container's running state ---
+
+// A container the user stopped (or a one-shot job that has exited) must
+// come back stopped: updating its image is not a reason to start it.
+func TestRecreateContainer_StoppedContainerStaysStopped(t *testing.T) {
+	h := newFakeHost()
+	h.addContainer("backup-job", "restic:1", false)
+	h.registry["restic:2"] = "sha256:restic-2"
+	a := newTestAgent(t.TempDir(), h)
+
+	if _, err := a.recreateContainer(context.Background(), "backup-job", "restic:2"); err != nil {
+		t.Fatalf("recreateContainer: %v", err)
+	}
+	h.requireOnly(t, "backup-job", "restic:2", false)
+	if len(h.startCalls) != 0 {
+		t.Errorf("start called %d times for a container that was stopped", len(h.startCalls))
+	}
+}
+
+func TestRecreateContainer_StoppedContainerStaysStoppedOnRollback(t *testing.T) {
+	h := newFakeHost()
+	h.addContainer("backup-job", "restic:1", false)
+	h.registry["restic:2"] = "sha256:restic-2"
+	h.createErr["restic:2"] = errors.New("invalid mount config")
+	a := newTestAgent(t.TempDir(), h)
+
+	if _, err := a.recreateContainer(context.Background(), "backup-job", "restic:2"); err == nil {
+		t.Fatal("recreateContainer returned no error although create failed")
+	}
+	h.requireOnly(t, "backup-job", "restic:1", false)
+}
+
+// The same through the update request the hub sends.
+func TestHandleUpdateContainer_StoppedContainerStaysStopped(t *testing.T) {
+	h := newFakeHost()
+	h.addContainer("maintenance", "nginx:1", false)
+	h.registry["nginx:2"] = "sha256:nginx-2"
+	a := newTestAgent(t.TempDir(), h)
+
+	if ur := updateResult(t, a, "maintenance", "nginx:2"); ur.GetOutcome() != "success" {
+		t.Fatalf("outcome = %q (%s), want success", ur.GetOutcome(), ur.GetError())
+	}
+	h.requireOnly(t, "maintenance", "nginx:2", false)
+}
