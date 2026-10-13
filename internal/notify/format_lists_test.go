@@ -137,3 +137,44 @@ func TestCustomTemplateBadSyntaxFallsBack(t *testing.T) {
 		t.Fatalf("expected default format, got %q", m)
 	}
 }
+
+func TestTelegramLongErrorKeepsCodeSpanClosed(t *testing.T) {
+	ev := testEvent(EventUpdateFailed)
+	ev.Error = strings.Repeat("x", 6000)
+	got := formatTelegram(ev)
+	if n := strings.Count(got, "`"); n%2 != 0 {
+		t.Fatalf("unbalanced backticks (%d) after truncation", n)
+	}
+	if len([]rune(got)) > 4096 {
+		t.Fatalf("message is %d runes, over Telegram's 4096", len([]rune(got)))
+	}
+}
+
+func TestDiscordRendersCustomTemplate(t *testing.T) {
+	SetCustomTemplates(map[string]string{"update_available": "custom {{.ContainerName}} " + strings.Repeat("z", 5000)})
+	defer SetCustomTemplates(nil)
+	var body []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	if err := NewDiscord(srv.URL).Send(context.Background(), testEvent(EventUpdateAvailable)); err != nil {
+		t.Fatal(err)
+	}
+	var p struct {
+		Embeds []struct {
+			Description string `json:"description"`
+		} `json:"embeds"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		t.Fatal(err)
+	}
+	d := p.Embeds[0].Description
+	if !strings.HasPrefix(d, "custom nginx") {
+		t.Fatalf("description = %.40q", d)
+	}
+	if len([]rune(d)) > 4096 {
+		t.Fatalf("description is %d runes, Discord caps at 4096", len([]rune(d)))
+	}
+}

@@ -32,6 +32,9 @@ func NewDiscord(webhookURL string) *Discord {
 // discordFieldMax is the longest embed field value Discord accepts.
 const discordFieldMax = 1024
 
+// discordDescriptionMax is the longest embed description Discord accepts.
+const discordDescriptionMax = 4096
+
 // Name returns the provider name for logging.
 func (d *Discord) Name() string { return "discord" }
 
@@ -41,6 +44,10 @@ func (d *Discord) Send(ctx context.Context, event Event) error {
 		Title:     formatTitle(event.Type),
 		Color:     discordColor(event.Type),
 		Timestamp: event.Timestamp.UTC().Format(time.RFC3339),
+	}
+
+	if body, ok := renderCustom(event); ok {
+		embed.Description = truncateRunes(body, discordDescriptionMax)
 	}
 
 	if names := summaryNames(event); names != nil {
@@ -110,10 +117,11 @@ type discordPayload struct {
 }
 
 type discordEmbed struct {
-	Title     string         `json:"title"`
-	Color     int            `json:"color"`
-	Fields    []discordField `json:"fields,omitempty"`
-	Timestamp string         `json:"timestamp,omitempty"`
+	Title       string         `json:"title"`
+	Description string         `json:"description,omitempty"`
+	Color       int            `json:"color"`
+	Fields      []discordField `json:"fields,omitempty"`
+	Timestamp   string         `json:"timestamp,omitempty"`
 }
 
 type discordField struct {

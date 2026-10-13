@@ -78,9 +78,13 @@ type telegramPayload struct {
 // stray underscore or asterisk anywhere else makes the Bot API reject the
 // message with a 400.
 func formatTelegram(e Event) string {
-	return truncateRunes(formatMarkdownWith(e, telegramCode), 4000)
+	out := truncateRunes(formatMarkdownWith(e, telegramCode), 4000)
+	if strings.Count(out, "`")%2 != 0 {
+		out += "`" // a cut inside a code span must not leave it open
+	}
+	return out
 }
 
 func telegramCode(s string) string {
-	return "`" + strings.ReplaceAll(s, "`", "'") + "`"
+	return "`" + strings.ReplaceAll(truncateRunes(s, 3000), "`", "'") + "`"
 }
