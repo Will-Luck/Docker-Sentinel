@@ -303,9 +303,13 @@ func NewerVersionsScopedWithBeyond(current string, tags []string, scope, default
 // NewerVersionsScoped is like NewerVersions but accepts an explicit per-container
 // scope and a global defaultScope. Comparison is variant-aware (#84): candidates
 // whose build-variant suffix differs from the current tag's are skipped, so a
-// bare tag only sees bare/pre-release tags and a -alpine tag only sees -alpine
-// tags. When scope is ScopeDefault (no per-container override), defaultScope
+// bare tag only sees bare tags and a -alpine tag only sees -alpine tags. When scope is ScopeDefault (no per-container override), defaultScope
 // controls the precision-based filtering logic:
+//
+// A current tag that is not itself a pre-release is never offered a pre-release
+// tag (rc, beta, dev, ...); a pre-release current still sees later pre-releases
+// and the final release.
+//
 //   - ScopeDefault (relaxed): 3-part→patch, 2-part→minor+patch, 1-part→all
 //   - ScopeStrict: 3-part→none, 2-part→patch, 1-part→minor+patch
 func NewerVersionsScoped(current string, tags []string, scope, defaultScope docker.SemverScope) []SemVer {
@@ -327,8 +331,8 @@ func NewerVersionsScoped(current string, tags []string, scope, defaultScope dock
 		}
 
 		// #84: variant-aware comparison. A bare current tag (nginx:1.24.0) only
-		// competes with bare or pre-release tags; a variant tag (1.24.0-alpine)
-		// only with the same variant. Without this, images that publish many
+		// competes with bare tags (pre-releases are filtered below); a variant
+		// tag (1.24.0-alpine) only with the same variant. Without this, images that publish many
 		// flavours (-alpine, -perl, -bookworm, -otel, ...) inflate the newer
 		// list and the beyond-scope count by a variant multiplier.
 		if sv.Variant() != curVariant {
@@ -390,6 +394,11 @@ func NewerVersionsScoped(current string, tags []string, scope, defaultScope dock
 			}
 		}
 		if cur.LessThan(sv) {
+			// A stable current tag is never offered a pre-release: moving a
+			// production container onto 1.25.0-rc0 is not an update.
+			if sv.IsPreRelease() && !cur.IsPreRelease() {
+				continue
+			}
 			newer = append(newer, sv)
 		}
 	}
@@ -467,6 +476,12 @@ func versionSchemeMismatch(a, b SemVer) bool {
 // variant (alpine, perl, bookworm, otel, slim, ...). Pre-releases participate
 // in version ordering (1.2.3-rc1 < 1.2.3); variants partition the tag space.
 var preReleaseSuffixRE = regexp.MustCompile(`(?i)^(alpha|beta|rc|pre|preview|dev|snapshot|nightly|canary|next|ea|milestone|m)([-.]?\d+)?$`)
+
+// IsPreRelease reports whether the tag carries a pre-release suffix such as
+// rc1, beta.2 or dev, as opposed to being a release or a build variant.
+func (v SemVer) IsPreRelease() bool {
+	return v.Pre != "" && preReleaseSuffixRE.MatchString(v.Pre)
+}
 
 // Variant returns the build-variant identifier of a tag, or "" for bare tags
 // and pre-release suffixes. "1.24.0" and "2.0.0-rc1" are both variant "";

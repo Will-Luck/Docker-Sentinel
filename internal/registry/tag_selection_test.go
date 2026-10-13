@@ -110,3 +110,27 @@ func TestSemVerLessThan_PrereleaseNumbersCompareNumerically(t *testing.T) {
 		t.Errorf("newest-first order = %v, want rc10 before rc9", got)
 	}
 }
+
+func TestNewerVersionsScoped_StableCurrentSkipsPrereleases(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		tags    []string
+		scope   docker.SemverScope
+		want    []string
+	}{
+		{"3-part stable", "1.2.3", []string{"1.2.4-rc1", "1.2.4"}, docker.ScopeDefault, []string{"1.2.4"}},
+		{"3-part stable, only a pre-release", "1.2.3", []string{"1.2.4-rc1"}, docker.ScopeDefault, nil},
+		{"2-part stable", "1.24", []string{"1.25.0-rc0", "1.25.0-beta2"}, docker.ScopeDefault, nil},
+		{"every pre-release word", "1.0.0", []string{"2.0.0-alpha", "2.0.0-beta", "2.0.0-pre1", "2.0.0-dev", "2.0.0-snapshot", "2.0.0-nightly", "2.0.0-preview1"}, docker.ScopeMajor, nil},
+		{"pre-release current still sees later pre-releases and the release", "2.0.0-rc1", []string{"2.0.0-rc2", "2.0.0"}, docker.ScopePatch, []string{"2.0.0", "2.0.0-rc2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rawVersions(NewerVersionsScoped(tt.current, tt.tags, tt.scope, docker.ScopeDefault))
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

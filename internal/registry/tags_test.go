@@ -363,8 +363,9 @@ func TestNewerVersionsScoped_FloatingTagAndDedup(t *testing.T) {
 			expected: []string{"2026.5.0", "2026.4.0"},
 		},
 		{
+			// Current is itself a pre-release: a stable current never sees them.
 			name:     "NEW-2_pre_release_retained_distinct",
-			current:  "2026.4.0",
+			current:  "2026.4.1-rc0",
 			tags:     []string{"2026.4.1", "2026.4.1-rc1"},
 			expected: []string{"2026.4.1", "2026.4.1-rc1"},
 		},
@@ -656,12 +657,12 @@ func TestNewerVersionsScoped_VariantAware(t *testing.T) {
 			expected: []string{"2.0.0-rc2", "2.0.0"},
 		},
 		{
-			// Bare current sees pre-releases of higher versions but no variants.
-			name:     "bare_current_sees_higher_prerelease",
+			// Bare current sees neither variants nor pre-releases of higher versions.
+			name:     "bare_current_skips_higher_prerelease",
 			current:  "1.25.2",
-			tags:     []string{"1.25.3-rc1", "1.25.3-alpine", "1.26.0-beta1"},
+			tags:     []string{"1.25.3-rc1", "1.25.3-alpine", "1.26.0-beta1", "1.26.0"},
 			scope:    docker.ScopeMajor,
-			expected: []string{"1.26.0-beta1", "1.25.3-rc1"},
+			expected: []string{"1.26.0"},
 		},
 	}
 
