@@ -185,6 +185,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The service page's Policy and Notification Preferences sections were unstyled and named their options differently from the container page; they now match it. A Swarm task on a registry with a port showed its image tag cut to "5443/lh/app:1.0.1".
 - The Logs page showed raw host IDs ("Container stopped on 37770888f2...") and one line named a user by ID. Activity-log lines and failure messages now name the host, and the SSO unlink line names the user.
 - The history's scan summary counts did not add up (165 checked against 66 + 96 + 18): containers whose registry check failed, ones skipped for a swap in progress, ones whose newer versions were all ignored, rolled back before, or held back by a dry run were in no count. Each now lands in exactly one, and "check failed" is shown as its own figure.
+- The queue page kept a row for an entry removed elsewhere (approved from another client, the API, an auto-update or a scan finding it up to date) until you reloaded; it now refreshes on any queue change.
+- The container and service pages now show the pending-updates count in the navigation, like the other pages.
+- At phone width the dashboard's Name column now takes the free width instead of a fixed 20%, so container names are no longer cut at about eight characters.
+- An untouched Apply on the poll interval or Save on scan concurrency (and the other Apply and Save buttons on Settings) still sent a request, turning a value set by the environment into a saved override. They now send nothing while they show what was loaded, and the toggles the environment can also set say when they now override it.
 
 ### Added
 
@@ -341,6 +345,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The scan summary did not add up ("165 checked" against 162 in the
+  counts): Swarm task containers were counted in the total but in no
+  count, and remote containers whose registry check failed, whose update
+  was ignored or that a dry run passed over were in none either. Every
+  container and service a scan looks at now lands in exactly one count,
+  the total is their sum, and Swarm task containers are left to their
+  service.
 - A local container on a mutable tag such as `latest` that ran an older
   image than its tag was queued without the versions remote containers
   show, so ignoring it stored a digest. Its queue entry now carries the
@@ -927,6 +938,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   notification. It now sends "rollback succeeded" or "rollback failed" for
   "name on host", as a local rollback does, and records one rollback row
   from the image the container ran to the one it went back to.
+- An agent's update of itself was recorded as a success, and notified as
+  one, as soon as its helper took over, before the swap; a self-update
+  that was then rolled back added a failed row and no notification. The
+  server now waits for the outcome, which the agent that comes back (the
+  new version, or the old one put back) reports, and records one row and
+  sends one notification with it. After 10 minutes without an outcome it
+  records the update as failed: "the agent did not come back on the new
+  version". Servers before v3.0.0 are told "success" as before.
+- Remote rollbacks were recorded as updates (outcome success, type
+  rollback), so History showed them as Updated and its Rollback filter
+  left them out. They are now recorded as local ones are: rolled back, or
+  failed with "rollback failed: <why>". Rows from before v3.0.0 still
+  count when Rollback looks for the update to undo.
+- A request to update another Sentinel container on an agent's host
+  updates the agent's own container, but the history row named the
+  container requested, which did not change. It now names the container
+  that changed, from the image it ran.
+- When an agent rolled back an update because the new container did not
+  stay up, the reason was only "the new container did not stay up". It now
+  says why, as a local update does: the exit code, the restart count, or
+  the healthcheck's output.
+- A remote update whose agent dropped its connection failed with "agent
+  37770888... disconnected". Errors from a request to an agent now name
+  its host.
 - Saving Settings > Notifications overwrote a webhook channel's real header
   (for example `Authorization: Bearer ...`) with its masked form, so the
   channel started failing with 401. Masked values, including those inside
@@ -1059,6 +1094,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   template's `{{.NewImage}}` rendered empty. It is now the target image
   (the newer tag, or the same tag for a digest-only update), for local,
   Swarm and remote updates.
+- An update you ignored left the queue but stayed in the scheduled
+  digest, so the digest could list one more than the queue held. Ignoring
+  an update (from the queue, or when a scan finds every newer version
+  already ignored, locally or on a cluster host) and dropping a stale
+  remote queue row now also clear its stored notification state.
 
 ## [2.16.1] - 2026-10-13
 
