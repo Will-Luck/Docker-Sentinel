@@ -158,7 +158,7 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 	}
 
 	// Use the existing update mechanism to switch back to the old image.
-	ur, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, oldImage, "")
+	ur, err := a.srv.RollbackContainerSync(ctx, hostID, containerName, oldImage)
 	if err != nil {
 		return err
 	}
@@ -192,7 +192,8 @@ func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, 
 			if legacyRows && rec.HostID != hostID {
 				continue
 			}
-			if rec.Outcome != "success" || rec.OldImage == "" {
+			// A rollback row is not an update to undo.
+			if rec.Outcome != "success" || rec.OldImage == "" || rec.Type == "rollback" {
 				continue
 			}
 			if best == nil || rec.Timestamp.After(best.Timestamp) {

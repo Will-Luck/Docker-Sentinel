@@ -145,8 +145,10 @@ func (s *Server) awaitPending(ctx context.Context, hostID, requestID string, ch 
 }
 
 // request sends msg to the agent under a fresh request ID and waits for the
-// agent's reply, for at most timeout. what names the request in errors.
-func (s *Server) request(ctx context.Context, hostID, what string, timeout time.Duration, msg *proto.ServerMessage) (*proto.AgentMessage, error) {
+// agent's reply, for at most timeout. what names the request in errors. If
+// the wait runs out and purpose is set, the request is remembered so a
+// reply that arrives later is recorded for what it was (recordLateUpdate).
+func (s *Server) request(ctx context.Context, hostID, what, purpose string, timeout time.Duration, msg *proto.ServerMessage) (*proto.AgentMessage, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -167,16 +169,57 @@ func (s *Server) request(ctx context.Context, hostID, what string, timeout time.
 
 	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
 	if err != nil {
+		if purpose != "" && ctx.Err() != nil {
+			s.rememberLate(hostID, reqID, purpose)
+		}
 		return nil, fmt.Errorf("await %s: %w", what, err)
 	}
 	return resp, nil
+}
+
+// lateRequestTTL is how long the hub remembers a request it stopped
+// waiting for.
+const lateRequestTTL = time.Hour
+
+type lateRequest struct {
+	purpose string
+	at      time.Time
+}
+
+func (s *Server) rememberLate(hostID, requestID, purpose string) {
+	s.lateMu.Lock()
+	defer s.lateMu.Unlock()
+	if s.late == nil {
+		s.late = make(map[string]lateRequest)
+	}
+	now := time.Now()
+	for k, lr := range s.late {
+		if now.Sub(lr.at) > lateRequestTTL {
+			delete(s.late, k)
+		}
+	}
+	s.late[hostID+":"+requestID] = lateRequest{purpose: purpose, at: now}
+}
+
+// takeLate returns (and forgets) the purpose of a request the hub stopped
+// waiting for, or "".
+func (s *Server) takeLate(hostID, requestID string) string {
+	s.lateMu.Lock()
+	defer s.lateMu.Unlock()
+	key := hostID + ":" + requestID
+	lr, ok := s.late[key]
+	if !ok || time.Since(lr.at) > lateRequestTTL {
+		return ""
+	}
+	delete(s.late, key)
+	return lr.purpose
 }
 
 // ListContainersSync sends a ListContainersRequest to the agent and blocks
 // until the agent responds with a ContainerList or the context is cancelled.
 // The request_id on the ServerMessage is used for correlation.
 func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]cluster.ContainerInfo, error) {
-	resp, err := s.request(ctx, hostID, "container list", listTimeout, &proto.ServerMessage{
+	resp, err := s.request(ctx, hostID, "container list", "", listTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_ListContainers{
 			ListContainers: &proto.ListContainersRequest{},
 		},
@@ -199,7 +242,17 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 // UpdateContainerSync sends an UpdateContainerRequest to the agent and blocks
 // until the agent responds with an UpdateResult or the context is cancelled.
 func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (*proto.UpdateResult, error) {
-	resp, err := s.request(ctx, hostID, "update result", updateTimeout, &proto.ServerMessage{
+	return s.updateContainerSync(ctx, hostID, containerName, targetImage, targetDigest, "update")
+}
+
+// RollbackContainerSync moves a remote container back to image. On the
+// agent it is an update; the hub records a late result as a rollback.
+func (s *Server) RollbackContainerSync(ctx context.Context, hostID, containerName, image string) (*proto.UpdateResult, error) {
+	return s.updateContainerSync(ctx, hostID, containerName, image, "", "rollback")
+}
+
+func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName, targetImage, targetDigest, purpose string) (*proto.UpdateResult, error) {
+	resp, err := s.request(ctx, hostID, "update result", purpose, updateTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_UpdateContainer{
 			UpdateContainer: &proto.UpdateContainerRequest{
 				ContainerName: containerName,
@@ -223,7 +276,7 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 // ContainerActionSync sends a ContainerActionRequest to the agent and blocks
 // until the agent responds with a ContainerActionResult or the context is cancelled.
 func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName, action string) error {
-	resp, err := s.request(ctx, hostID, "container action result", actionTimeout, &proto.ServerMessage{
+	resp, err := s.request(ctx, hostID, "container action result", "", actionTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_ContainerAction{
 			ContainerAction: &proto.ContainerActionRequest{
 				ContainerName: containerName,
@@ -255,7 +308,7 @@ func (s *Server) FetchLogsSync(ctx context.Context, hostID, containerName string
 		lines = 500
 	}
 
-	resp, err := s.request(ctx, hostID, "fetch logs", logsTimeout, &proto.ServerMessage{
+	resp, err := s.request(ctx, hostID, "fetch logs", "", logsTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_FetchLogs{
 			FetchLogs: &proto.FetchLogsRequest{
 				ContainerName: containerName,

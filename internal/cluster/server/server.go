@@ -92,6 +92,11 @@ type Server struct {
 	// agent's response. Multiple concurrent requests per host are supported.
 	pending map[string]*pendingRequest
 
+	// lateMu guards late: requests the hub stopped waiting for, by
+	// "hostID:requestID", with what they were for.
+	lateMu sync.Mutex
+	late   map[string]lateRequest
+
 	// renewMu guards lastRenewal: when the hub last signed a renewal for
 	// each host.
 	renewMu     sync.Mutex

@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -52,5 +54,44 @@ func TestHandleUpdateResult_AnsweredResultNotRecordedTwice(t *testing.T) {
 	}
 	if n := hist.count(); n != 0 {
 		t.Errorf("history records = %d, want 0 (the waiting caller records it)", n)
+	}
+}
+
+// A rollback whose result arrives after the hub stopped waiting must be
+// recorded as a rollback. Recorded as a forward update, the next Rollback
+// would pick it and put the rolled-back image straight back.
+func TestLateRollbackResult_RecordedAsRollback(t *testing.T) {
+	srv, hostID, stream := connectAgent(t)
+	hist := &mockHistoryRecorder{}
+	srv.SetHistoryRecorder(hist)
+
+	defer func(d time.Duration) { updateTimeout = d }(updateTimeout)
+	updateTimeout = 200 * time.Millisecond
+
+	reqs := make(chan *proto.ServerMessage, 1)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if msg.GetUpdateContainer() != nil {
+				reqs <- msg
+			}
+		}
+	}()
+
+	if _, err := srv.RollbackContainerSync(context.Background(), hostID, "web", "nginx:1"); err == nil {
+		t.Fatal("rollback returned no error although the agent never answered in time")
+	}
+	req := <-reqs
+	if err := stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{UpdateResult: &proto.UpdateResult{
+		RequestId: req.GetRequestId(), ContainerName: "web", OldImage: "nginx:2", NewImage: "nginx:1", Outcome: "success",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return hist.count() == 1 }, "late rollback result not recorded")
+	if r := hist.all()[0]; r.Type != "rollback" {
+		t.Errorf("late rollback recorded with type %q, want rollback", r.Type)
 	}
 }

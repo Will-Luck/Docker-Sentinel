@@ -521,6 +521,10 @@ func (s *Server) recordLateUpdate(hostID string, ur *proto.UpdateResult) {
 		HostID:        hostID,
 		HostName:      hostName,
 	}
+	// A rollback that finished late is a rollback, not an update to undo.
+	if s.takeLate(hostID, ur.RequestId) == "rollback" {
+		rec.Type = "rollback"
+	}
 	if err := s.history.RecordUpdate(rec); err != nil {
 		s.log.Warn("failed to record late update result", "hostID", hostID, "container", ur.ContainerName, "error", err)
 	}

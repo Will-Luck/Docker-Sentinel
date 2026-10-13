@@ -74,3 +74,26 @@ func TestRollbackRemoteContainer_IgnoresOtherHostsHistory(t *testing.T) {
 		t.Fatalf("rollback on host-1 used another host's history: %v", err)
 	}
 }
+
+// A rollback row says which image the container left, but it is not an
+// update to undo: Rollback picks the last forward update.
+func TestLastRemoteOldImage_SkipsRollbackRows(t *testing.T) {
+	_, db := historyAdapter(t)
+	key := store.ScopedKey("host-1", "nginx")
+	now := time.Now()
+	for _, rec := range []store.UpdateRecord{
+		{Timestamp: now, ContainerName: key, OldImage: "nginx:1.25", NewImage: "nginx:1.26", Outcome: "success", HostID: "host-1"},
+		{Timestamp: now.Add(time.Minute), ContainerName: key, OldImage: "nginx:1.26", NewImage: "nginx:1.25", Outcome: "success", HostID: "host-1", Type: "rollback"},
+	} {
+		if err := db.RecordUpdate(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := lastRemoteOldImage(db, "host-1", "nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "nginx:1.25" {
+		t.Errorf("rollback image = %q, want nginx:1.25 from the forward update", got)
+	}
+}
