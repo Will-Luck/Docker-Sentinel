@@ -72,3 +72,55 @@ func TestUnansweredUpdate_ReplayedResultReplacesTheFailure(t *testing.T) {
 		return len(recs) == 1 && recs[0].Outcome == "success"
 	}, "the replayed result should replace the failure row")
 }
+
+// review (minor): a rollback that the agent finished while the stream was
+// down was replayed as a plain update, so the next Rollback would undo it.
+// The replay takes the request's purpose, and replaces the failure row.
+func TestUnansweredRollback_ReplayedAsARollback(t *testing.T) {
+	srv, addr, st, _ := testServer(t)
+	srv.SetHistoryRecorder(st)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, as, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+
+	reqID := make(chan string, 1)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if msg.GetUpdateContainer() != nil {
+				reqID <- msg.GetRequestId()
+				return
+			}
+		}
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := srv.RollbackContainerSync(context.Background(), hostID, "web", "nginx:1")
+		done <- err
+	}()
+	id := <-reqID
+	closeConn()
+	err := <-done
+	key := store.ScopedKey(hostID, "web")
+	if err := st.RecordUpdate(store.UpdateRecord{
+		Timestamp: cluster.HistoryTime(err, time.Now()), ContainerName: key, Outcome: "failed", HostID: hostID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stream2, _, closeConn2 := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, as)
+	t.Cleanup(closeConn2)
+	if err := stream2.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_OfflineJournal{OfflineJournal: &proto.OfflineJournal{
+		Entries: []*proto.JournalEntry{{Id: id, Timestamp: timestamppb.Now(), Action: "update", Container: "web",
+			OldImage: "nginx:2", NewImage: "nginx:1", Outcome: "success"}},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		recs, _ := st.ListHistoryByContainer(key, 10)
+		return len(recs) == 1 && recs[0].Outcome == "success" && recs[0].Type == "rollback"
+	}, "the replayed rollback should replace the failure row, as a rollback")
+}
