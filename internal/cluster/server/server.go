@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
 
@@ -241,6 +242,9 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 		grpc.MaxRecvMsgSize(maxMessageSize),
 		grpc.MaxSendMsgSize(maxMessageSize),
 		grpc.StatsHandler(&oversizeLogger{log: s.log}),
+		grpc.KeepaliveParams(keepalive.ServerParameters{Time: keepaliveTime, Timeout: keepaliveTimeout}),
+		// Agents ping every 30 seconds; allow that, idle streams included.
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 20 * time.Second, PermitWithoutStream: true}),
 	)
 
 	proto.RegisterEnrollmentServiceServer(s.grpcSrv, s)
@@ -521,3 +525,12 @@ func (s *Server) refuseRenewal(hostID string, as *agentStream, csrDER []byte) st
 	s.lastRenewal[hostID] = time.Now()
 	return ""
 }
+
+// Keepalive: the hub pings an agent connection that has been idle for
+// keepaliveTime and drops it if no answer comes within keepaliveTimeout,
+// so a partitioned agent is noticed in well under a minute. Variables so
+// tests can shorten them.
+var (
+	keepaliveTime    = 30 * time.Second
+	keepaliveTimeout = 10 * time.Second
+)

@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -483,6 +484,9 @@ func (a *Agent) connect(ctx context.Context) error {
 			grpc.MaxCallRecvMsgSize(cluster.MaxMessageSize),
 			grpc.MaxCallSendMsgSize(cluster.MaxMessageSize),
 		),
+		// Ping the server when the connection is quiet, so a partition is
+		// noticed in about 40 seconds instead of when TCP gives up.
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 10 * time.Second, PermitWithoutStream: true}),
 	)
 	if err != nil {
 		return fmt.Errorf("dial server: %w", err)
