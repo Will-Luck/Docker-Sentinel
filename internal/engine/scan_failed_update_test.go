@@ -14,11 +14,11 @@ import (
 func setupBrokenLatestScan(t *testing.T) (*mockDocker, *Updater) {
 	t.Helper()
 	mock := newMockDocker()
-	ref := "docker.io/library/nginx:latest"
+	ref := "localhost:1/nginx:latest"
 	mock.containers = []container.Summary{
 		{ID: "aaa", Names: []string{"/nginx"}, Image: ref, Labels: map[string]string{"sentinel.policy": "auto"}},
 	}
-	mock.imageDigests[ref] = "docker.io/library/nginx@sha256:old"
+	mock.imageDigests[ref] = "localhost:1/nginx@sha256:old"
 	mock.distDigests[ref] = "sha256:broken"
 	mock.inspectResults["aaa"] = container.InspectResponse{
 		ID: "aaa", Name: "/nginx",
@@ -40,7 +40,7 @@ func setupBrokenLatestScan(t *testing.T) (*mockDocker, *Updater) {
 // is treated like any other.
 func TestScanSkipsContainerSetAsideBySwap(t *testing.T) {
 	mock, u := setupBrokenLatestScan(t)
-	ref := "docker.io/library/nginx:latest"
+	ref := "localhost:1/nginx:latest"
 	labels := map[string]string{"sentinel.policy": "auto"}
 	mock.containers = []container.Summary{
 		{ID: "aside", Names: []string{"/web-sentinel-old"}, Image: ref, Labels: labels},
@@ -79,7 +79,7 @@ func TestScanSkipsUpdateThatWasRolledBack(t *testing.T) {
 	}
 
 	// A new digest is a new update and is tried.
-	mock.distDigests["docker.io/library/nginx:latest"] = "sha256:fixed"
+	mock.distDigests["localhost:1/nginx:latest"] = "sha256:fixed"
 	u.Scan(context.Background(), ScanScheduled)
 	if len(mock.pullCalls) != 2 {
 		t.Errorf("pulls = %d, want the new digest tried", len(mock.pullCalls))
