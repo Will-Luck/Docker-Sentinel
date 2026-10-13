@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 )
@@ -190,5 +191,82 @@ func TestOIDCSettings_SaveDoesNotPinLinkExistingToTheEnvValue(t *testing.T) {
 	save(`{"enabled":false,"link_existing":false}`) // still the saved value
 	if ss.data["oidc_link_existing"] != "false" {
 		t.Errorf("the saved value was lost: %q", ss.data["oidc_link_existing"])
+	}
+}
+
+func sessionCookieFor(t *testing.T, srv *Server, u authUserRef) *http.Cookie {
+	t.Helper()
+	token, _ := auth.GenerateSessionToken()
+	exp := time.Now().Add(time.Hour)
+	if err := srv.deps.Auth.Sessions.CreateSession(auth.Session{Token: token, UserID: u.id, CreatedAt: time.Now(), ExpiresAt: exp}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	auth.SetSessionCookie(rec, token, exp, false)
+	return rec.Result().Cookies()[0]
+}
+
+type authUserRef struct{ id string }
+
+// The callback of a link started on the Account page binds the identity only
+// to the user who started it, and only with their session.
+func TestFinishOIDCLink_OnlyForTheStartersSession(t *testing.T) {
+	info := &auth.OIDCUserInfo{Issuer: "https://idp.example", Subject: "sub-1", Username: "x"}
+	setup := func() (*Server, auth.User, auth.User) {
+		srv := newMFATestServer()
+		a := createTestUser(srv.deps.Auth, "alice", "Str0ngP@ssword!")
+		b := createTestUser(srv.deps.Auth, "bob", "Str0ngP@ssword!")
+		return srv, a, b
+	}
+	run := func(srv *Server, startedBy string, cookie *http.Cookie) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/api/auth/oidc/callback", nil)
+		if cookie != nil {
+			r.AddCookie(cookie)
+		}
+		w := httptest.NewRecorder()
+		srv.finishOIDCLink(w, r, startedBy, info)
+		return w
+	}
+
+	srv, a, _ := setup()
+	if w := run(srv, a.ID, nil); w.Header().Get("Location") != "/login?error=sso_failed" {
+		t.Errorf("no session: redirect %q", w.Header().Get("Location"))
+	}
+	if u, _ := srv.deps.Auth.Users.GetUser(a.ID); u.OIDCSubject != "" {
+		t.Errorf("linked without a session")
+	}
+
+	srv, a, b := setup()
+	if w := run(srv, a.ID, sessionCookieFor(t, srv, authUserRef{b.ID})); w.Header().Get("Location") != "/login?error=sso_failed" {
+		t.Errorf("another user's session: redirect %q", w.Header().Get("Location"))
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		if u, _ := srv.deps.Auth.Users.GetUser(id); u.OIDCSubject != "" {
+			t.Errorf("identity linked to %s by someone else's session", id)
+		}
+	}
+
+	srv, a, _ = setup()
+	if w := run(srv, a.ID, sessionCookieFor(t, srv, authUserRef{a.ID})); w.Header().Get("Location") != "/account?sso=linked" {
+		t.Errorf("starter's session: redirect %q", w.Header().Get("Location"))
+	}
+	if u, _ := srv.deps.Auth.Users.GetUser(a.ID); u.OIDCSubject != "sub-1" {
+		t.Errorf("starter's identity not linked")
+	}
+}
+
+func TestClearOIDCFlowCookies_IncludesTheLinkIntent(t *testing.T) {
+	w := httptest.NewRecorder()
+	clearOIDCFlowCookies(w, false)
+	seen := map[string]bool{}
+	for _, c := range w.Result().Cookies() {
+		if c.MaxAge < 0 {
+			seen[c.Name] = true
+		}
+	}
+	for _, n := range []string{"oidc_state", "oidc_nonce", "oidc_pkce", "oidc_link"} {
+		if !seen[n] {
+			t.Errorf("%s is not cleared", n)
+		}
 	}
 }

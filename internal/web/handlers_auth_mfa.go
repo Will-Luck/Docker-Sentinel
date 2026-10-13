@@ -193,6 +193,8 @@ func (s *Server) apiOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "OIDC not configured", http.StatusNotFound)
 		return
 	}
+	// A sign-in must not pick up the link intent of an abandoned link.
+	clearOIDCCookie(w, "oidc_link", s.deps.Auth.CookieSecure)
 	authURL, err := s.startOIDCFlow(w, provider)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -331,11 +333,7 @@ func (s *Server) apiOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Always clear the OIDC cookies once we've captured their values,
 	// even if the flow fails later — they are single-use by design.
-	defer func() {
-		clearOIDCCookie(w, "oidc_state", s.deps.Auth.CookieSecure)
-		clearOIDCCookie(w, "oidc_nonce", s.deps.Auth.CookieSecure)
-		clearOIDCCookie(w, "oidc_pkce", s.deps.Auth.CookieSecure)
-	}()
+	defer clearOIDCFlowCookies(w, s.deps.Auth.CookieSecure)
 
 	if r.URL.Query().Get("state") != stateCookie.Value {
 		http.Error(w, "invalid state", http.StatusBadRequest)
@@ -433,4 +431,12 @@ func (s *Server) finishOIDCLink(w http.ResponseWriter, r *http.Request, startedB
 	}
 	s.logEvent(r, "auth", "", "User "+rc.User.Username+" linked a single sign-on identity")
 	http.Redirect(w, r, "/account?sso=linked", http.StatusSeeOther)
+}
+
+// clearOIDCFlowCookies removes every cookie of an OIDC flow, including the
+// link intent, so an abandoned flow cannot leak into the next one.
+func clearOIDCFlowCookies(w http.ResponseWriter, secure bool) {
+	for _, name := range []string{"oidc_state", "oidc_nonce", "oidc_pkce", "oidc_link"} {
+		clearOIDCCookie(w, name, secure)
+	}
 }
