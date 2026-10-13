@@ -89,3 +89,45 @@ func TestParseBearerChallenge(t *testing.T) {
 		t.Error("Basic parsed as Bearer")
 	}
 }
+
+// An expired or revoked stored credential must not stop version detection: the
+// token request is retried anonymously, which still lists the tags of a public
+// image.
+func TestFetchToken_FallsBackToAnonymousWhenCredentialIsRejected(t *testing.T) {
+	var sawAnonymous bool
+	withFakeRegistry(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, hasAuth := r.BasicAuth(); hasAuth {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		sawAnonymous = true
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": "ANON"})
+	}))
+
+	for _, host := range []string{"docker.io", "ghcr.io"} {
+		sawAnonymous = false
+		tok, err := FetchToken(context.Background(), "org/app", &RegistryCredential{Username: "me", Secret: "revoked"}, host)
+		if err != nil || tok != "ANON" || !sawAnonymous {
+			t.Errorf("%s: token=%q err=%v anonymous=%v; want an anonymous token", host, tok, err, sawAnonymous)
+		}
+	}
+}
+
+func TestRejectedCredentialIsRecordedForTheSettingsPage(t *testing.T) {
+	ClearRejectedCredential("docker.io")
+	withFakeRegistry(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, ok := r.BasicAuth(); ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": "ANON"})
+	}))
+	_, _ = FetchToken(context.Background(), "org/app", &RegistryCredential{Username: "me", Secret: "revoked"}, "docker.io")
+	if _, ok := RejectedCredentials()["docker.io"]; !ok {
+		t.Error("the rejected credential was not recorded")
+	}
+	ClearRejectedCredential("docker.io")
+	if _, ok := RejectedCredentials()["docker.io"]; ok {
+		t.Error("ClearRejectedCredential left the record")
+	}
+}

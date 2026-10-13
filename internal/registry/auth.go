@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	neturl "net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,6 +33,65 @@ func FetchAnonymousToken(ctx context.Context, repo string) (string, error) {
 // For GHCR, it uses ghcr.io/token.
 // For other registries, returns empty — callers use Basic auth directly.
 func FetchToken(ctx context.Context, repo string, cred *RegistryCredential, host string) (string, error) {
+	tok, err := fetchToken(ctx, repo, cred, host)
+	if err == nil || cred == nil {
+		return tok, err
+	}
+	// A stored credential the registry rejects (expired or revoked PAT) must
+	// not stop version detection for public images: retry anonymously.
+	noteRejectedCredential(host, err)
+	if anon, anonErr := fetchToken(ctx, repo, nil, host); anonErr == nil {
+		return anon, nil
+	}
+	return "", err
+}
+
+// rejectedCreds records, per registry host, when the stored credential was last
+// rejected by the registry's token endpoint.
+var (
+	rejectedMu    sync.Mutex
+	rejectedCreds = map[string]time.Time{}
+	rejectedWarn  = map[string]time.Time{}
+)
+
+// credentialRejectionWarnEvery limits the warning to once per host per interval.
+const credentialRejectionWarnEvery = 30 * time.Minute
+
+func noteRejectedCredential(host string, err error) {
+	rejectedMu.Lock()
+	defer rejectedMu.Unlock()
+	now := time.Now()
+	rejectedCreds[host] = now
+	if last, ok := rejectedWarn[host]; !ok || now.Sub(last) >= credentialRejectionWarnEvery {
+		rejectedWarn[host] = now
+		slog.Warn("the stored registry credential was rejected, falling back to anonymous access", "registry", host, "error", err)
+	}
+}
+
+// RejectedCredentials returns, per registry host, when its stored credential
+// was last rejected. A credential that works again is not removed from the
+// list until ClearRejectedCredential, so the settings page can show which
+// logins need attention.
+func RejectedCredentials() map[string]time.Time {
+	rejectedMu.Lock()
+	defer rejectedMu.Unlock()
+	out := make(map[string]time.Time, len(rejectedCreds))
+	for h, t := range rejectedCreds {
+		out[h] = t
+	}
+	return out
+}
+
+// ClearRejectedCredential forgets a host's rejection, for example after the
+// credential was replaced.
+func ClearRejectedCredential(host string) {
+	rejectedMu.Lock()
+	defer rejectedMu.Unlock()
+	delete(rejectedCreds, host)
+	delete(rejectedWarn, host)
+}
+
+func fetchToken(ctx context.Context, repo string, cred *RegistryCredential, host string) (string, error) {
 	if host == "ghcr.io" {
 		return FetchGHCRToken(ctx, repo, cred)
 	}
