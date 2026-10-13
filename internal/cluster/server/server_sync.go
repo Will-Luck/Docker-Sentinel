@@ -357,14 +357,34 @@ func (s *Server) hostHas(hostID, feature string) bool {
 	return ok && slices.Contains(hs.Info.Features, feature)
 }
 
-// PullImage asks the agent on hostID to pull ref (a pull-only update). The
-// agent does not answer: a pull that fails shows at the next scan, which
-// finds the container still behind.
-func (s *Server) PullImage(hostID, ref string) error {
-	return s.SendCommand(hostID, &proto.ServerMessage{
-		RequestId: generateRequestID(),
-		Payload:   &proto.ServerMessage_PullImage{PullImage: &proto.PullImageRequest{ImageRef: ref}},
-	})
+// PullImageSync asks the agent on hostID to pull ref for the container
+// name (a pull-only update), with the registry credentials the hub holds
+// for ref, and returns how it went. An agent before v3.0.0 does not report
+// pulls: it is asked all the same, and ErrPullUnconfirmed returned.
+func (s *Server) PullImageSync(ctx context.Context, hostID, name, ref string) error {
+	req := &proto.PullImageRequest{ImageRef: ref, ContainerName: name}
+	if s.registryAuth != nil {
+		req.RegistryAuth = s.registryAuth(ref)
+	}
+	msg := &proto.ServerMessage{Payload: &proto.ServerMessage_PullImage{PullImage: req}}
+	if !s.hostHas(hostID, cluster.FeaturePullResult) {
+		if err := s.SendCommand(hostID, msg); err != nil {
+			return err
+		}
+		return cluster.ErrPullUnconfirmed
+	}
+	resp, err := s.request(ctx, hostID, "pull result", "", updateTimeout, msg)
+	if err != nil {
+		return err
+	}
+	ar, ok := resp.Payload.(*proto.AgentMessage_ContainerActionResult)
+	if !ok {
+		return fmt.Errorf("unexpected response type %T (wanted ContainerActionResult)", resp.Payload)
+	}
+	if r := ar.ContainerActionResult; r.GetOutcome() != "success" {
+		return fmt.Errorf("pull %s on the agent: %s", ref, r.GetError())
+	}
+	return nil
 }
 
 // HostPaused reports whether hostID is paused: it gets no new updates.

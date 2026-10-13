@@ -2,10 +2,12 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -23,16 +25,17 @@ type policyCluster struct {
 	*fakeCluster
 	paused   map[string]bool
 	pulls    []string
+	pullErr  error  // the answer to every pull
 	failWith string // the agents' error for every update, with outcome failed
 }
 
 func (p *policyCluster) HostPaused(hostID string) bool { return p.paused[hostID] }
 
-func (p *policyCluster) PullImage(_ context.Context, hostID, ref string) error {
+func (p *policyCluster) PullImage(_ context.Context, hostID, _, ref string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.pulls = append(p.pulls, hostID+"/"+ref)
-	return nil
+	return p.pullErr
 }
 
 func (p *policyCluster) UpdateContainer(ctx context.Context, hostID, name, target, digest string) (RemoteUpdateResult, error) {
@@ -282,5 +285,38 @@ func TestNotifyRemote(t *testing.T) {
 	defer cn.mu.Unlock()
 	if cn.events[0].ContainerName != "web on Agent One" {
 		t.Errorf("named %q, want web on Agent One", cn.events[0].ContainerName)
+	}
+}
+
+// review (important): a remote pull-only update was recorded as a
+// successful pull, and counted as updated, though nobody checked the pull:
+// on a private registry it failed on every scan and a new "pull_only" row
+// was written each time. Only a pull the agent confirms is recorded.
+func TestScanRemotePullOnly_OnlyAConfirmedPullIsRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		err     error
+		wantRow bool
+	}{
+		{"failed", errors.New("pull: unauthorized"), false},
+		{"unconfirmed (old agent)", cluster.ErrPullUnconfirmed, false},
+		{"confirmed", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u, pc, _ := remotePolicyFixture(t, map[string]string{"sentinel.pull-only": "true"})
+			pc.pullErr = tc.err
+			res := u.Scan(context.Background(), ScanScheduled)
+			recs, _ := u.store.ListHistoryByContainer(store.ScopedKey("h1", "web"), 5)
+			if (len(recs) == 1) != tc.wantRow {
+				t.Errorf("history = %+v, want a pull_only row: %v", recs, tc.wantRow)
+			}
+			if tc.wantRow != (res.Updated == 1) {
+				t.Errorf("updated = %d, want it counted only when the pull is confirmed", res.Updated)
+			}
+			// An unconfirmed pull is not a failure either: it may have worked.
+			if errors.Is(tc.err, cluster.ErrPullUnconfirmed) && (res.Failed != 0 || res.Skipped != 1) {
+				t.Errorf("unconfirmed pull: failed %d, skipped %d; want it counted as skipped", res.Failed, res.Skipped)
+			}
+		})
 	}
 }

@@ -3,12 +3,14 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 )
 
@@ -149,5 +151,27 @@ func TestHeartbeatLoop_SendsTheContainerListRegularly(t *testing.T) {
 	}
 	if lists == 0 {
 		t.Error("no container list sent with the heartbeats")
+	}
+}
+
+// review (important): the agent pulled without the registry credentials
+// the hub sends and never said how the pull went. It answers a pull request
+// with its result.
+func TestHandlePullImage_AnswersWithTheResult(t *testing.T) {
+	h := newFakeHost()
+	h.registry["nginx:2"] = "sha256:nginx-2"
+	a := newTestAgent(t.TempDir(), h)
+	if !slices.Contains(supportedFeatures, cluster.FeaturePullResult) {
+		t.Error("the agent does not advertise that it reports pulls")
+	}
+	for _, tc := range []struct{ ref, want string }{{"nginx:2", "success"}, {"private/app:2", "failed"}} {
+		st := &recStream{}
+		req := &proto.PullImageRequest{ImageRef: tc.ref, ContainerName: "web", RegistryAuth: "x"}
+		_ = a.handlePullImage(context.Background(), st, req, "req-1")
+		msgs := st.messages()
+		if len(msgs) != 1 || msgs[0].GetContainerActionResult().GetOutcome() != tc.want ||
+			msgs[0].GetContainerActionResult().GetContainerName() != "web" || msgs[0].GetContainerActionResult().GetRequestId() != "req-1" {
+			t.Errorf("pull %s answered %v, want %s for web", tc.ref, msgs, tc.want)
+		}
 	}
 }

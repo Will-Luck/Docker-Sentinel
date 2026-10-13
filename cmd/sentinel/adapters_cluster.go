@@ -353,9 +353,10 @@ func (a *clusterScannerAdapter) HostPaused(hostID string) bool {
 	return a.srv.HostPaused(hostID)
 }
 
-// PullImage asks an agent to pull an image (a pull-only update).
-func (a *clusterScannerAdapter) PullImage(_ context.Context, hostID, ref string) error {
-	return a.srv.PullImage(hostID, ref)
+// PullImage asks an agent to pull an image for a container (a pull-only
+// update) and says how it went.
+func (a *clusterScannerAdapter) PullImage(ctx context.Context, hostID, name, ref string) error {
+	return a.srv.PullImageSync(ctx, hostID, name, ref)
 }
 
 // CheckRemoteForUpdate checks a remote container's image against the

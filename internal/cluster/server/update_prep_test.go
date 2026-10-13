@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,8 +157,8 @@ func TestPullImage_SendsAPullRequest(t *testing.T) {
 			}
 		}
 	}()
-	if err := srv.PullImage(hostID, "nginx:2"); err != nil {
-		t.Fatal(err)
+	if err := srv.PullImageSync(context.Background(), hostID, "web", "nginx:2"); !errors.Is(err, cluster.ErrPullUnconfirmed) {
+		t.Fatalf("pull on an agent that does not report pulls: %v, want ErrPullUnconfirmed", err)
 	}
 	select {
 	case ref := <-got:
@@ -255,5 +256,61 @@ func TestDiscardSwapSync(t *testing.T) {
 	}
 	if err := srv.DiscardSwapSync(ctx, hostID, "missing"); !errors.Is(err, cluster.ErrNoSwapRecord) {
 		t.Errorf("discard with no record: %v, want ErrNoSwapRecord", err)
+	}
+}
+
+// review (important): the hub asked agents to pull without the registry
+// credentials and never heard how it went, so a pull-only update was
+// recorded as done whatever happened. An agent that reports pull results
+// is asked with the credentials and its result is returned; an older one
+// is asked as before and the pull reported as unconfirmed.
+func TestPullImageSync(t *testing.T) {
+	srv, hostID, stream := connectAgent(t)
+	srv.SetRegistryAuth(func(ref string) string { return "auth-for-" + ref })
+	got := make(chan *proto.PullImageRequest, 4)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if p := msg.GetPullImage(); p != nil {
+				got <- p
+				if msg.GetRequestId() == "" {
+					continue
+				}
+				outcome, errText := "success", ""
+				if p.GetImageRef() == "private/app:2" {
+					outcome, errText = "failed", "unauthorized"
+				}
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_ContainerActionResult{
+					ContainerActionResult: &proto.ContainerActionResult{RequestId: msg.GetRequestId(), ContainerName: p.GetContainerName(),
+						Action: "pull", Outcome: outcome, Error: errText},
+				}})
+			}
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.PullImageSync(ctx, hostID, "web", "nginx:2"); !errors.Is(err, cluster.ErrPullUnconfirmed) {
+		t.Errorf("pull on an agent without results: %v, want ErrPullUnconfirmed", err)
+	}
+	<-got
+
+	if err := stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_Heartbeat{Heartbeat: &proto.Heartbeat{
+		SupportedFeatures: []string{cluster.FeaturePullResult},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return srv.hostHas(hostID, cluster.FeaturePullResult) }, "the hub should see the feature")
+	if err := srv.PullImageSync(ctx, hostID, "web", "nginx:2"); err != nil {
+		t.Errorf("confirmed pull: %v", err)
+	}
+	if p := <-got; p.GetRegistryAuth() != "auth-for-nginx:2" || p.GetContainerName() != "web" {
+		t.Errorf("pull request %v, want the registry credentials and the container", p)
+	}
+	if err := srv.PullImageSync(ctx, hostID, "web", "private/app:2"); err == nil || !strings.Contains(err.Error(), "unauthorized") {
+		t.Errorf("failed pull: %v, want the agent's error", err)
 	}
 }

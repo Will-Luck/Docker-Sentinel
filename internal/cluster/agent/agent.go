@@ -56,6 +56,7 @@ var supportedFeatures = []string{
 	"list",
 	"logs",
 	cluster.FeatureDiscardSwap,
+	cluster.FeaturePullResult,
 }
 
 // DockerAPI defines the subset of Docker operations the agent needs.

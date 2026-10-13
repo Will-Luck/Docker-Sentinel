@@ -53,6 +53,14 @@ const FeatureKeepalive = "keepalive"
 // (agents since v3.0.0).
 const FeatureDiscardSwap = "discard-swap"
 
+// FeaturePullResult is the agent feature that says it answers a pull
+// request with its result (agents since v3.0.0).
+const FeaturePullResult = "pull-result"
+
+// ErrPullUnconfirmed is returned for a pull sent to an agent that does not
+// say how it went (agents before v3.0.0): it may or may not have worked.
+var ErrPullUnconfirmed = errors.New("the agent was asked to pull the image but does not report the result (it is older than v3.0.0)")
+
 // Errors of a remote swap record discard.
 var (
 	// ErrAgentTooOld: the agent cannot do what was asked (it is older than

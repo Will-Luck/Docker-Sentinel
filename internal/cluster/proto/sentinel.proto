@@ -193,6 +193,12 @@ message UpdateResult {
 
 message PullImageRequest {
   string image_ref = 1;  // image to pull (e.g. "nginx:1.26")
+  // X-Registry-Auth value for the image's registry, as in
+  // UpdateContainerRequest. Agents before v3.0.0 ignore it.
+  string registry_auth = 2;
+  // The container the pull is for (a pull-only update). Agents since
+  // v3.0.0 answer with a ContainerActionResult (action "pull") carrying it.
+  string container_name = 3;
 }
 
 // --- Hooks ---

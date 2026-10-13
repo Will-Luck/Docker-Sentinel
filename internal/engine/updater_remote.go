@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -345,9 +346,10 @@ type remoteHostPauser interface {
 }
 
 // remotePuller is implemented by a ClusterScanner that can ask an agent to
-// pull an image.
+// pull an image for a container. It returns how the pull went, or
+// cluster.ErrPullUnconfirmed when the agent does not say.
 type remotePuller interface {
-	PullImage(ctx context.Context, hostID, ref string) error
+	PullImage(ctx context.Context, hostID, name, ref string) error
 }
 
 // scheduleDue reports whether a container with a sentinel.schedule label
@@ -449,7 +451,15 @@ func (u *Updater) remotePullOnly(ctx context.Context, hostID string, host HostCo
 		result.Skipped++
 		return
 	}
-	if err := p.PullImage(ctx, hostID, target); err != nil {
+	err := p.PullImage(ctx, hostID, c.Name, target)
+	if errors.Is(err, cluster.ErrPullUnconfirmed) {
+		// It may have worked: neither a failure nor a pull to record.
+		u.log.Info("pull-only: the agent was asked to pull but does not report the result (it is older than v3.0.0)",
+			"host", host.HostName, "name", c.Name, "image", target)
+		result.Skipped++
+		return
+	}
+	if err != nil {
 		u.log.Error("pull-only failed", "host", host.HostName, "name", c.Name, "error", err)
 		result.Failed++
 		result.Errors = append(result.Errors, fmt.Errorf("%s/%s: pull-only: %w", host.HostName, c.Name, err))

@@ -65,7 +65,7 @@ func (a *Agent) receiveLoop(ctx context.Context, stream proto.AgentService_Chann
 
 		case *proto.ServerMessage_PullImage:
 			go a.safeHandle("pull-image", reqID, func() error {
-				return a.handlePullImage(ctx, p.PullImage)
+				return a.handlePullImage(ctx, stream, p.PullImage, reqID)
 			})
 
 		case *proto.ServerMessage_RunHook:
@@ -475,16 +475,31 @@ func (a *Agent) sendFetchLogsResult(stream proto.AgentService_ChannelClient, req
 }
 
 // handlePullImage pulls an image on the local Docker host.
-func (a *Agent) handlePullImage(ctx context.Context, req *proto.PullImageRequest) error {
+// A hub that waits for the result (it sent a request ID) gets it as a
+// ContainerActionResult with the action "pull".
+func (a *Agent) handlePullImage(ctx context.Context, stream proto.AgentService_ChannelClient, req *proto.PullImageRequest, requestID string) error {
 	ref := req.GetImageRef()
 	a.log.Info("pulling image", "ref", ref)
 
-	if err := a.docker.PullImage(ctx, ref); err != nil {
-		return fmt.Errorf("pull %s: %w", ref, err)
+	// The pull uses the credentials the hub sent.
+	err := a.docker.PullImage(docker.WithRegistryAuth(ctx, req.GetRegistryAuth()), ref)
+	if err != nil {
+		err = fmt.Errorf("pull %s: %w", ref, err)
+	} else {
+		a.log.Info("pull complete", "ref", ref)
 	}
-
-	a.log.Info("pull complete", "ref", ref)
-	return nil
+	if requestID != "" {
+		result := &proto.ContainerActionResult{RequestId: requestID, ContainerName: req.GetContainerName(), Action: "pull", Outcome: "success"}
+		if err != nil {
+			result.Outcome, result.Error = "failed", err.Error()
+		}
+		if sendErr := a.sendMsg(stream, &proto.AgentMessage{
+			Payload: &proto.AgentMessage_ContainerActionResult{ContainerActionResult: result},
+		}); sendErr != nil {
+			return sendErr
+		}
+	}
+	return err
 }
 
 // handleRunHook executes a command inside a container and sends the

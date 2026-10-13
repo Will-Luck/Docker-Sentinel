@@ -1490,8 +1490,14 @@ func (x *UpdateResult) GetDuration() *durationpb.Duration {
 }
 
 type PullImageRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ImageRef      string                 `protobuf:"bytes,1,opt,name=image_ref,json=imageRef,proto3" json:"image_ref,omitempty"` // image to pull (e.g. "nginx:1.26")
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ImageRef string                 `protobuf:"bytes,1,opt,name=image_ref,json=imageRef,proto3" json:"image_ref,omitempty"` // image to pull (e.g. "nginx:1.26")
+	// X-Registry-Auth value for the image's registry, as in
+	// UpdateContainerRequest. Agents before v3.0.0 ignore it.
+	RegistryAuth string `protobuf:"bytes,2,opt,name=registry_auth,json=registryAuth,proto3" json:"registry_auth,omitempty"`
+	// The container the pull is for (a pull-only update). Agents since
+	// v3.0.0 answer with a ContainerActionResult (action "pull") carrying it.
+	ContainerName string `protobuf:"bytes,3,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1529,6 +1535,20 @@ func (*PullImageRequest) Descriptor() ([]byte, []int) {
 func (x *PullImageRequest) GetImageRef() string {
 	if x != nil {
 		return x.ImageRef
+	}
+	return ""
+}
+
+func (x *PullImageRequest) GetRegistryAuth() string {
+	if x != nil {
+		return x.RegistryAuth
+	}
+	return ""
+}
+
+func (x *PullImageRequest) GetContainerName() string {
+	if x != nil {
+		return x.ContainerName
 	}
 	return ""
 }
@@ -2498,9 +2518,11 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"new_digest\x18\x06 \x01(\tR\tnewDigest\x12\x18\n" +
 	"\aoutcome\x18\a \x01(\tR\aoutcome\x12\x14\n" +
 	"\x05error\x18\b \x01(\tR\x05error\x125\n" +
-	"\bduration\x18\t \x01(\v2\x19.google.protobuf.DurationR\bduration\"/\n" +
+	"\bduration\x18\t \x01(\v2\x19.google.protobuf.DurationR\bduration\"{\n" +
 	"\x10PullImageRequest\x12\x1b\n" +
-	"\timage_ref\x18\x01 \x01(\tR\bimageRef\"\x90\x01\n" +
+	"\timage_ref\x18\x01 \x01(\tR\bimageRef\x12#\n" +
+	"\rregistry_auth\x18\x02 \x01(\tR\fregistryAuth\x12%\n" +
+	"\x0econtainer_name\x18\x03 \x01(\tR\rcontainerName\"\x90\x01\n" +
 	"\x0eRunHookRequest\x12%\n" +
 	"\x0econtainer_name\x18\x01 \x01(\tR\rcontainerName\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x18\n" +
