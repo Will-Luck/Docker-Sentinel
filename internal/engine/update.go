@@ -347,23 +347,8 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 	}
 	sw.commit(ctx)
 
-	// 6.5. Run post-update hooks (store entries, else the new container's
-	// labels, read from the container: the create config left out the
-	// labels the daemon fills in from the new image).
-	if u.hooks != nil && u.cfg.HooksEnabled() {
-		labels := maps.Clone(newConfig.Labels)
-		if created, err := u.docker.InspectContainer(ctx, newID); err == nil && created.Config != nil {
-			if labels == nil {
-				labels = make(map[string]string, len(created.Config.Labels))
-			}
-			maps.Copy(labels, created.Config.Labels)
-		}
-		if err := u.hooks.RunPostUpdate(ctx, newID, name, labels); err != nil {
-			u.log.Warn("post-update hook failed", "name", name, "error", err)
-		}
-	}
-
-	// 7. Remove maintenance label for Guardian compatibility.
+	// 7. Remove maintenance label for Guardian compatibility. Post-update
+	// hooks run after it, in the container that stays (runPostUpdateHooks).
 	finaliseNewID, finaliseErr := u.finaliseContainer(ctx, newID, name)
 	if finaliseErr != nil {
 		var fErr *finaliseError
@@ -444,12 +429,15 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 
 		// The provider changed even so: move its network dependents onto it.
 		u.afterProviderChange(ctx, name, newID, id)
+		u.runPostUpdateHooks(ctx, newID, name, newConfig.Labels)
 		u.publishEvent(events.EventContainerUpdate, name, "update complete with finalise warning")
 		return finaliseErr
 	}
 
+	// 7.5. Run post-update hooks in the finalised container.
+	u.runPostUpdateHooks(ctx, finaliseNewID, name, newConfig.Labels)
+
 	// 8. Success — clear maintenance and record.
-	_ = finaliseNewID // new ID tracked internally; not needed further
 	if err := u.store.SetMaintenance(name, false); err != nil {
 		u.log.Warn("failed to clear maintenance flag", "name", name, "error", err)
 	}
@@ -555,6 +543,25 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 	u.log.Info("update complete", "name", name, "duration", duration)
 	u.publishEvent(events.EventContainerUpdate, name, "update succeeded")
 	return nil
+}
+
+// runPostUpdateHooks runs the post-update hooks (store entries, else the
+// container's labels: those of the create config plus what the daemon
+// filled in from the new image) in the container id that stays.
+func (u *Updater) runPostUpdateHooks(ctx context.Context, id, name string, configLabels map[string]string) {
+	if u.hooks == nil || !u.cfg.HooksEnabled() {
+		return
+	}
+	labels := maps.Clone(configLabels)
+	if created, err := u.docker.InspectContainer(ctx, id); err == nil && created.Config != nil {
+		if labels == nil {
+			labels = make(map[string]string, len(created.Config.Labels))
+		}
+		maps.Copy(labels, created.Config.Labels)
+	}
+	if err := u.hooks.RunPostUpdate(ctx, id, name, labels); err != nil {
+		u.log.Warn("post-update hook failed", "name", name, "error", err)
+	}
 }
 
 // validateContainer checks that a container is running, not restarting, and

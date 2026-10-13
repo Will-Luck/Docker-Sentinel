@@ -2,11 +2,14 @@ package engine
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -65,5 +68,23 @@ func TestValidationWaitsForTheHealthcheck(t *testing.T) {
 	healthy, err := u.validateContainer(context.Background(), "new")
 	if err != nil || !healthy {
 		t.Errorf("healthy = %v err = %v, want it to wait for the healthcheck", healthy, err)
+	}
+}
+
+// Post-update hooks run in the container that stays: finalise replaces the
+// validated container to drop the maintenance label, which killed a hook
+// run before it and lost what it did inside the container.
+func TestPostUpdateHooksRunInTheFinalContainer(t *testing.T) {
+	f, u, old := setupFakeUpdate(t, true, nil)
+	old.cfg.Labels = map[string]string{"sentinel.hook.post-update": "warm-cache"}
+	u.SetHookRunner(hooks.NewRunner(f, &hookStoreStub{hooks: make(map[string][]hooks.Hook)}, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	u.cfg.SetHooksEnabled(true)
+
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	final := f.byName("app")
+	if final == nil || len(f.execCalls) != 1 || f.execCalls[0] != final.id {
+		t.Errorf("hook ran in %v, want only the final container %v (%v)", f.execCalls, final, f.names())
 	}
 }
