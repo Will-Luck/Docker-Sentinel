@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -181,11 +182,13 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 	start := time.Now()
 	var oldImage, oldDigest, newImage, newDigest, warning string
 	var oldContainerID string
+	var handover *selfupdate.Handover
 	var err error
 	if isSelf {
 		sr, selfErr := a.selfUpdateContainer(ctx, name, targetImage)
 		oldImage, oldDigest, newImage, newDigest = sr.oldImage, sr.oldDigest, sr.newImage, sr.newDigest
 		oldContainerID = sr.oldContainerID
+		handover = sr.handover
 		err = selfErr
 	} else {
 		rr, recreateErr := a.recreateContainer(ctx, name, targetImage)
@@ -227,6 +230,17 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 			a.log.Info("self-update: stopping old container to release DB lock", "id", truncateID(oldContainerID))
 			if stopErr := a.docker.StopContainer(context.Background(), oldContainerID, 10); stopErr != nil {
 				a.log.Error("self-update: failed to stop old container", "error", stopErr)
+			}
+		}()
+	}
+
+	// With a helper doing the swap, the helper stops this agent a few seconds
+	// from now. Wait for it in the background: if it ends without having
+	// replaced this agent, the swap is undone and the reason is logged.
+	if handover != nil && err == nil {
+		go func() {
+			if waitErr := handover.Wait(context.Background()); waitErr != nil {
+				a.log.Error("self-update did not take effect", "error", waitErr)
 			}
 		}()
 	}

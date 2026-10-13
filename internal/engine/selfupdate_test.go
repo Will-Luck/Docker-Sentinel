@@ -200,8 +200,9 @@ func TestSelfUpdateMultiNetwork(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// One network in create's NetworkingConfig, one via NetworkConnect.
-	if len(mock.networkConnectCalls) != 1 {
-		t.Fatalf("expected 1 NetworkConnect call for second network, got %d", len(mock.networkConnectCalls))
+	// The replacement is created attached to every network, as RecreateConfig
+	// builds it for every other recreate.
+	if len(mock.createNetHistory) != 1 || len(mock.createNetHistory[0].EndpointsConfig) != 2 {
+		t.Fatalf("create networking config = %+v, want both networks", mock.createNetHistory)
 	}
 }

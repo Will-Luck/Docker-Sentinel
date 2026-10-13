@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 )
 
 // sendMsg serialises a message send on the bidirectional stream.
@@ -504,25 +506,31 @@ func (a *Agent) recreateRemoved(ctx context.Context, old parkedContainer) {
 	}
 }
 
-// selfUpdateContainer uses the rename-before-replace pattern to update the
-// agent's own container without killing itself mid-update. The flow:
-//  1. Inspect to capture full config
-//  2. Pull the new image
-//  3. Rename self out of the way (container keeps running)
-//  4. Create new container with original name + new image, on all of the
-//     old container's networks
-//  5. Start the new container
-//  6. Old agent exits naturally (the new container takes over)
-//
-// On failure at step 4 or 5, the old container is renamed back.
-// selfUpdateResult extends the standard update return values with the old
-// container ID, so the caller can stop/remove it after reporting success.
+// selfUpdateResult extends the standard update return values with what the
+// caller needs to finish a self-update after reporting its result.
 type selfUpdateResult struct {
 	oldImage, oldDigest, newDigest string
 	newImage                       string
-	oldContainerID                 string
+	// oldContainerID is set when the replacement was started in-process: the
+	// caller stops the old container once the result is sent.
+	oldContainerID string
+	// handover is set when a helper container does the swap: the caller sends
+	// the result, then calls handover.Wait. The helper stops this agent a few
+	// seconds after it was started.
+	handover *selfupdate.Handover
 }
 
+// selfUpdateContainer updates the agent's own container without killing
+// itself mid-update. The agent cannot free its own published ports or
+// database lock before the new one starts, so with the Docker socket mounted
+// it sets the replacement up and hands the swap to a one-shot helper
+// container (package selfupdate): the helper stops this container, starts the
+// new one, waits for it to settle and puts this one back if it does not.
+// Without the socket (a TCP Docker host) the replacement is started in-process
+// while this container keeps running, and the caller stops it afterwards;
+// that fails with published host ports.
+//
+// Leftover "-old-" containers and helpers are removed at agent start.
 func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage string) (selfUpdateResult, error) {
 	var r selfUpdateResult
 
@@ -530,7 +538,6 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 	if err != nil {
 		return r, fmt.Errorf("find container %s: %w", name, err)
 	}
-	r.oldContainerID = cID
 
 	inspect, err := a.docker.InspectContainer(ctx, cID)
 	if err != nil {
@@ -552,6 +559,27 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 	}
 	r.newDigest, _ = a.docker.ImageDigest(ctx, targetImage)
 
+	defaults := selfupdate.ImageDefaults(ctx, a.docker, inspect.Image, a.log)
+
+	if !strings.HasPrefix(a.cfg.DockerSock, "tcp://") && !strings.HasPrefix(a.cfg.DockerSock, "tcps://") {
+		h, err := selfupdate.Begin(ctx, selfupdate.Params{
+			Docker: a.docker, Log: a.log, Inspect: inspect, Name: name, Image: targetImage,
+			OldImageDefaults: defaults, DataDir: a.cfg.DataDir, Socket: a.cfg.DockerSock,
+			// Long enough for the result to reach the hub before this agent stops.
+			Delay: 5 * time.Second,
+		})
+		switch {
+		case err == nil:
+			a.log.Info("self-update: handed over to the helper container", "old", h.OldName())
+			r.handover = h
+			return r, nil
+		case !errors.Is(err, selfupdate.ErrNoSocket):
+			return r, err
+		}
+		a.log.Info("self-update: the Docker socket is not mounted here, replacing in-process")
+	}
+
+	r.oldContainerID = cID
 	// Rename self out of the way. The container keeps running.
 	oldName := fmt.Sprintf("%s-old-%d", name, time.Now().Unix())
 	a.log.Info("self-update: renaming self", "from", name, "to", oldName)
@@ -559,21 +587,17 @@ func (a *Agent) selfUpdateContainer(ctx context.Context, name, targetImage strin
 		return r, fmt.Errorf("rename self: %w", err)
 	}
 
-	// Create new container with the original name.
-	a.log.Info("self-update: creating replacement", "name", name, "image", targetImage)
 	// The agent's own data directory may be an anonymous volume: it is
 	// always carried, never replaced by a fresh one.
-	newID, err := a.createFromSpec(ctx, name, buildRecreateSpec(&inspect, docker.RecreateOptions{
-		Image:    targetImage,
-		OldImage: a.imageDefaults(ctx, inspect.Image, name),
-	}))
+	a.log.Info("self-update: creating replacement", "name", name, "image", targetImage)
+	rc := selfupdate.BuildReplacement(inspect, targetImage, defaults)
+	newID, err := a.docker.CreateContainer(ctx, name, rc.Config, rc.HostConfig, rc.NetworkingConfig)
 	if err != nil {
 		a.log.Error("self-update: create failed, rolling back rename", "error", err)
 		_ = a.docker.RenameContainer(ctx, cID, name)
 		return r, fmt.Errorf("create replacement: %w", err)
 	}
 
-	// Start the replacement.
 	a.log.Info("self-update: starting replacement", "id", truncateID(newID))
 	if err := a.docker.StartContainer(ctx, newID); err != nil {
 		a.log.Error("self-update: start failed, rolling back", "error", err)

@@ -2,11 +2,14 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 )
@@ -197,5 +200,98 @@ func TestSelfUpdateStopFailureRollsBack(t *testing.T) {
 	last := ev.renameCalls[len(ev.renameCalls)-1]
 	if last.id != "abc123" || last.newName != "sentinel" {
 		t.Errorf("old container not renamed back, last rename = %+v", last)
+	}
+}
+
+func withSocket(inspect container.InspectResponse) container.InspectResponse {
+	inspect.ID = "abc123"
+	inspect.Mounts = []container.MountPoint{{Type: "bind", Source: "/run/docker.sock", Destination: "/var/run/docker.sock"}}
+	return inspect
+}
+
+// With the Docker socket mounted the swap is handed to a helper container
+// instead of being done in-process: the running instance never starts the
+// replacement or stops itself, because it cannot free its own published ports.
+func TestSelfUpdateUsesHelperWhenSocketIsMounted(t *testing.T) {
+	ev, su := newSelfUpdateFixture("img:1.0")
+	ev.inspectResults["abc123"] = withSocket(sentinelInspect("img:1.0"))
+	su.poll = time.Millisecond
+
+	err := su.Update(context.Background(), "img:2.0")
+	if err == nil {
+		t.Fatal("Update returned nil; with a helper it only returns when the helper did not replace us")
+	}
+	cfg := ev.createConfigs["sentinel-self-update-helper"]
+	if cfg == nil || cfg.Image != "img:2.0" || !slices.Equal(cfg.Cmd, []string{"self-update-helper"}) {
+		t.Fatalf("helper config = %+v", cfg)
+	}
+	if slices.Contains(ev.events, "start:new-sentinel") || slices.Contains(ev.events, "stop:abc123") {
+		t.Errorf("the running instance did the swap itself: %v", ev.events)
+	}
+}
+
+// Over a TCP Docker host there is no socket to give a helper: replace in-process.
+func TestSelfUpdateFallsBackInProcessForTCPDockerHost(t *testing.T) {
+	ev, su := newSelfUpdateFixture("img:1.0")
+	ev.inspectResults["abc123"] = withSocket(sentinelInspect("img:1.0"))
+	su.SetDockerSock("tcp://10.0.0.5:2376")
+
+	if err := su.Update(context.Background(), "img:2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(ev.events, "start:new-sentinel") || !slices.Contains(ev.events, "stop:abc123") {
+		t.Errorf("in-process swap did not run: %v", ev.events)
+	}
+	if ev.createConfigs["sentinel-self-update-helper"] != nil {
+		t.Error("a helper was created for a TCP Docker host")
+	}
+}
+
+func selfUpdaterWithGate(t *testing.T, mode verify.Mode, v ImageVerifier) (*eventDocker, *SelfUpdater) {
+	t.Helper()
+	ev, su := newSelfUpdateFixture("img:1.0")
+	u, _ := newTestUpdater(t, ev.mockDocker)
+	u.SetVerifyMode(mode)
+	if v != nil {
+		u.SetVerifier(v)
+	}
+	su.SetUpdater(u)
+	return ev, su
+}
+
+// The new Sentinel image goes through the same signature gate as any other
+// update: in enforce mode it is refused, before anything changes, when cosign
+// is missing or the signature does not verify.
+func TestSelfUpdateEnforceRefusesWithoutVerifier(t *testing.T) {
+	ev, su := selfUpdaterWithGate(t, verify.ModeEnforce, nil)
+	err := su.Update(context.Background(), "img:2.0")
+	if !errors.Is(err, ErrVerifierUnavailable) {
+		t.Fatalf("err = %v, want ErrVerifierUnavailable", err)
+	}
+	if len(ev.pullCalls) != 0 || len(ev.renameCalls) != 0 {
+		t.Errorf("something changed: pulls=%v renames=%v", ev.pullCalls, ev.renameCalls)
+	}
+}
+
+func TestSelfUpdateEnforceRefusesUnverifiedImage(t *testing.T) {
+	mv := &mockImageVerifier{result: &verify.Result{Verified: false, Error: "no matching signatures"}}
+	ev, su := selfUpdaterWithGate(t, verify.ModeEnforce, mv)
+	err := su.Update(context.Background(), "img:2.0")
+	if err == nil || !strings.Contains(err.Error(), "no matching signatures") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(ev.pullCalls) != 0 {
+		t.Errorf("image pulled despite the refusal: %v", ev.pullCalls)
+	}
+}
+
+func TestSelfUpdateWarnModeProceedsOnFailedVerification(t *testing.T) {
+	mv := &mockImageVerifier{result: &verify.Result{Verified: false, Error: "no matching signatures"}}
+	ev, su := selfUpdaterWithGate(t, verify.ModeWarn, mv)
+	if err := su.Update(context.Background(), "img:2.0"); err != nil {
+		t.Fatalf("warn mode should proceed: %v", err)
+	}
+	if len(ev.createCalls) != 1 {
+		t.Errorf("update did not run: %v", ev.createCalls)
 	}
 }

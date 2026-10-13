@@ -37,6 +37,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 )
 
 // Supported agent features advertised during heartbeat and state reports.
@@ -177,6 +178,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := os.MkdirAll(a.cfg.DataDir, 0700); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
+
+	// Report how a self-update that just replaced the previous agent ended,
+	// and remove what an earlier one left behind.
+	selfupdate.ReportOutcome(a.cfg.DataDir, a.log)
+	selfupdate.CleanupLeftovers(ctx, a.docker, a.log)
 
 	// Initialise the offline journal (loads any entries surviving a restart).
 	jrnl, err := newJournal(a.cfg.DataDir)

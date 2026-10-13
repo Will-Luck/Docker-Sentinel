@@ -32,6 +32,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
@@ -63,6 +64,9 @@ func main() {
 	mode := ""
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case selfupdate.HelperSubcommand:
+			// Hidden: the one-shot container a self-update starts.
+			os.Exit(runSelfUpdateHelper())
 		case "server":
 			mode = "server"
 			os.Args = append(os.Args[:1], os.Args[2:]...) // strip subcommand
@@ -128,6 +132,8 @@ func main() {
 		log.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
+	// Report how a self-update that just replaced the previous instance ended.
+	selfupdate.ReportOutcome(filepath.Dir(cfg.DBPath), log)
 	var dbClosed sync.Once
 	defer dbClosed.Do(func() { db.Close() })
 
@@ -567,6 +573,9 @@ func main() {
 	updater.SetShutdownContext(ctx)
 
 	selfUpdater := engine.NewSelfUpdater(client, log)
+	selfUpdater.SetUpdater(updater)
+	selfUpdater.SetDockerSock(cfg.DockerSock)
+	selfUpdater.SetDataDir(filepath.Dir(cfg.DBPath))
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)
 	scheduler.SetSelfUpdater(selfUpdater)

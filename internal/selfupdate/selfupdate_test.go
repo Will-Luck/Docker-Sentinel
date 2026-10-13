@@ -1,0 +1,410 @@
+package selfupdate
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+)
+
+type nopLog struct{}
+
+func (nopLog) Info(string, ...any)  {}
+func (nopLog) Warn(string, ...any)  {}
+func (nopLog) Error(string, ...any) {}
+func (nopLog) Debug(string, ...any) {}
+
+// fake is a Docker double that records calls in order.
+type fake struct {
+	mu      sync.Mutex
+	events  []string
+	created map[string]*container.Config
+	hosts   map[string]*container.HostConfig
+	nets    map[string]*network.NetworkingConfig
+	names   map[string]string // id -> current name
+	list    []container.Summary
+	state   map[string]*container.State // inspect results by id
+	// failures
+	stopErr, startErr map[string]error
+	createErr         map[string]error
+	nextID            int
+}
+
+func newFake() *fake {
+	return &fake{
+		created: map[string]*container.Config{}, hosts: map[string]*container.HostConfig{},
+		nets: map[string]*network.NetworkingConfig{}, names: map[string]string{},
+		state: map[string]*container.State{}, stopErr: map[string]error{}, startErr: map[string]error{},
+		createErr: map[string]error{},
+	}
+}
+
+func (f *fake) note(s string) { f.mu.Lock(); f.events = append(f.events, s); f.mu.Unlock() }
+
+func (f *fake) ListAllContainers(context.Context) ([]container.Summary, error) { return f.list, nil }
+func (f *fake) InspectContainer(_ context.Context, id string) (container.InspectResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, ok := f.state[id]
+	if !ok || st == nil {
+		return container.InspectResponse{}, errors.New("no such container")
+	}
+	cp := *st
+	if st.Health != nil {
+		h := *st.Health
+		cp.Health = &h
+	}
+	return container.InspectResponse{ID: id, State: &cp}, nil
+}
+func (f *fake) StopContainer(_ context.Context, id string, _ int) error {
+	f.note("stop:" + id)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.stopErr[id]; err != nil {
+		return err
+	}
+	if st := f.state[id]; st != nil {
+		st.Running = false
+	}
+	return nil
+}
+func (f *fake) RemoveContainer(_ context.Context, id string) error {
+	f.note("remove:" + id)
+	f.mu.Lock()
+	delete(f.state, id)
+	f.mu.Unlock()
+	return nil
+}
+func (f *fake) CreateContainer(_ context.Context, name string, cfg *container.Config, h *container.HostConfig, n *network.NetworkingConfig) (string, error) {
+	if err := f.createErr[name]; err != nil {
+		return "", err
+	}
+	f.nextID++
+	id := fmt.Sprintf("id-%s", name)
+	f.created[id], f.hosts[id], f.nets[id], f.names[id] = cfg, h, n, name
+	f.note("create:" + name)
+	return id, nil
+}
+func (f *fake) StartContainer(_ context.Context, id string) error {
+	f.note("start:" + id)
+	if err := f.startErr[id]; err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.state[id] = &container.State{Running: true}
+	f.mu.Unlock()
+	return nil
+}
+func (f *fake) RenameContainer(_ context.Context, id, name string) error {
+	f.note("rename:" + id + ">" + name)
+	f.names[id] = name
+	return nil
+}
+
+func hubInspect() container.InspectResponse {
+	return container.InspectResponse{
+		ID: "old1",
+		Config: &container.Config{
+			Image: "ghcr.io/example/sentinel:2.0.0", Env: []string{"SENTINEL_WEB_PORT=8080"},
+			Labels: map[string]string{"sentinel.self": "true"},
+		},
+		HostConfig: &container.HostConfig{
+			PortBindings:  map[network.Port][]network.PortBinding{network.MustParsePort("8080/tcp"): {{HostPort: "8080"}}},
+			RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		},
+		Mounts: []container.MountPoint{
+			{Type: mount.TypeBind, Source: "/run/docker.sock", Destination: "/var/run/docker.sock"},
+			{Type: mount.TypeVolume, Name: "sentinel-data", Destination: "/data"},
+		},
+	}
+}
+
+func params(f *fake) Params {
+	return Params{
+		Docker: f, Log: nopLog{}, Inspect: hubInspect(), Name: "sentinel",
+		Image: "ghcr.io/example/sentinel:3.0.0", DataDir: "/data",
+		Delay: time.Millisecond, Settle: 30 * time.Millisecond, Poll: time.Millisecond,
+		Watchdog: 50 * time.Millisecond,
+	}
+}
+
+func TestBeginSetsUpReplacementAndHelper(t *testing.T) {
+	f := newFake()
+	h, err := Begin(context.Background(), params(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(h.OldName(), "sentinel-old-") {
+		t.Errorf("old name = %q", h.OldName())
+	}
+
+	// The replacement is created, not started, with the ports and the marker.
+	newCfg, newHost := f.created["id-sentinel"], f.hosts["id-sentinel"]
+	if newCfg == nil || newCfg.Image != "ghcr.io/example/sentinel:3.0.0" {
+		t.Fatalf("replacement config = %+v", newCfg)
+	}
+	if !slices.Contains(newCfg.Env, "SENTINEL_SELF_UPDATE_REPLACEMENT=1") {
+		t.Errorf("replacement env = %v, want the self-update marker", newCfg.Env)
+	}
+	if len(newHost.PortBindings) != 1 {
+		t.Errorf("replacement lost its published ports: %+v", newHost.PortBindings)
+	}
+	if slices.Contains(f.events, "start:id-sentinel") {
+		t.Error("the replacement was started by the running instance; only the helper may start it")
+	}
+
+	// The helper runs the new image's helper subcommand with the socket and data mounted.
+	hc, hh := f.created["id-sentinel-self-update-helper"], f.hosts["id-sentinel-self-update-helper"]
+	if hc == nil {
+		t.Fatal("no helper created")
+	}
+	if hc.Image != "ghcr.io/example/sentinel:3.0.0" || !slices.Equal(hc.Cmd, []string{"self-update-helper"}) {
+		t.Errorf("helper image/cmd = %q %v", hc.Image, hc.Cmd)
+	}
+	if hc.Labels["sentinel.self"] != "false" || hc.Labels[HelperLabel] != "true" {
+		t.Errorf("helper labels = %v; it must not look like Sentinel", hc.Labels)
+	}
+	if !hh.AutoRemove || hh.NetworkMode != "none" {
+		t.Errorf("helper host config = %+v", hh)
+	}
+	if !slices.Contains(hh.Binds, "/run/docker.sock:/var/run/docker.sock") || !slices.Contains(hh.Binds, "sentinel-data:/sentinel-data") {
+		t.Errorf("helper binds = %v", hh.Binds)
+	}
+	if !slices.Contains(f.events, "start:id-sentinel-self-update-helper") {
+		t.Errorf("helper not started: %v", f.events)
+	}
+	if len(hc.Env) != 1 || !strings.HasPrefix(hc.Env[0], SpecEnv+"=") || !strings.Contains(hc.Env[0], `"new_id":"id-sentinel"`) {
+		t.Errorf("helper env = %v", hc.Env)
+	}
+}
+
+func TestBeginWithoutSocketMountReportsErrNoSocket(t *testing.T) {
+	f := newFake()
+	p := params(f)
+	p.Inspect.Mounts = nil
+	if _, err := Begin(context.Background(), p); !errors.Is(err, ErrNoSocket) {
+		t.Fatalf("err = %v, want ErrNoSocket", err)
+	}
+	if len(f.events) != 0 {
+		t.Errorf("nothing may change without a socket: %v", f.events)
+	}
+}
+
+func TestBeginHelperStartFailureRestoresEverything(t *testing.T) {
+	f := newFake()
+	f.startErr["id-sentinel-self-update-helper"] = errors.New("no such image")
+	if _, err := Begin(context.Background(), params(f)); err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"remove:id-sentinel-self-update-helper", "remove:id-sentinel"} {
+		if !slices.Contains(f.events, want) {
+			t.Errorf("missing %q in %v", want, f.events)
+		}
+	}
+	if f.names["old1"] != "sentinel" {
+		t.Errorf("running container left named %q", f.names["old1"])
+	}
+}
+
+// If the helper ends while the old instance still runs, the update did not
+// happen: Wait says so and puts things back.
+func TestWaitReportsHelperThatEndedWithoutReplacingUs(t *testing.T) {
+	f := newFake()
+	h, err := Begin(context.Background(), params(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	delete(f.state, "id-sentinel-self-update-helper") // the helper has gone
+	f.mu.Unlock()
+	if err := h.Wait(context.Background()); err == nil {
+		t.Fatal("Wait returned nil although this instance is still running")
+	}
+	if f.names["old1"] != "sentinel" || !slices.Contains(f.events, "remove:id-sentinel") {
+		t.Errorf("not restored: name=%q events=%v", f.names["old1"], f.events)
+	}
+}
+
+func TestWaitWatchdogRemovesAHangingHelper(t *testing.T) {
+	f := newFake()
+	h, err := Begin(context.Background(), params(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = h.Wait(context.Background()) // the helper stays "running"
+	if err == nil || !strings.Contains(err.Error(), "did not replace") {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Contains(f.events, "remove:id-sentinel-self-update-helper") {
+		t.Errorf("hanging helper not removed: %v", f.events)
+	}
+}
+
+func spec() Spec {
+	return Spec{
+		OldID: "old1", OldName: "sentinel-old-1", FinalName: "sentinel", NewID: "new1",
+		OldImage: "img:2", NewImage: "img:3", Settle: 20 * time.Millisecond, StopTimeout: 5,
+	}
+}
+
+func newRunner(f *fake) Runner { return Runner{Docker: f, Log: nopLog{}, Poll: time.Millisecond} }
+
+func TestRunStopsOldBeforeStartingNewThenRemovesOld(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	s := spec()
+	s.OutcomeDir = t.TempDir()
+
+	out := newRunner(f).Run(context.Background(), s)
+
+	if out.Result != ResultSuccess {
+		t.Fatalf("outcome = %+v", out)
+	}
+	want := []string{"stop:old1", "start:new1", "remove:old1"}
+	if !slices.Equal(f.events, want) {
+		t.Errorf("order = %v, want %v (stop first frees the ports and the database lock)", f.events, want)
+	}
+	if _, err := os.Stat(filepath.Join(s.OutcomeDir, OutcomeFile)); err != nil {
+		t.Errorf("outcome file not written: %v", err)
+	}
+}
+
+func TestRunRollsBackWhenNewContainerWillNotStart(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	f.startErr["new1"] = errors.New("port is already allocated")
+
+	out := newRunner(f).Run(context.Background(), spec())
+
+	if out.Result != ResultRolledBack {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if f.names["old1"] != "sentinel" || !slices.Contains(f.events, "remove:new1") || f.events[len(f.events)-1] != "start:old1" {
+		t.Errorf("not restored: name=%q events=%v", f.names["old1"], f.events)
+	}
+}
+
+func TestRunRollsBackWhenNewContainerDoesNotStayUp(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	f.startErr["new1"] = nil
+	r := newRunner(f)
+	// The new container dies shortly after it starts.
+	go func() {
+		for i := 0; i < 1000; i++ {
+			f.mu.Lock()
+			if st := f.state["new1"]; st != nil {
+				st.Running = false
+			}
+			f.mu.Unlock()
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	s := spec()
+	s.Settle = 100 * time.Millisecond
+
+	out := r.Run(context.Background(), s)
+
+	if out.Result != ResultRolledBack || !strings.Contains(out.Error, "stopped") {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if !slices.Contains(f.events, "remove:new1") {
+		t.Errorf("new container not removed: %v", f.events)
+	}
+}
+
+func TestRunRollsBackWhenNewContainerIsUnhealthy(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	f.state["new1"] = nil
+	r := newRunner(f)
+	f.startErr["new1"] = nil
+	go func() {
+		for i := 0; i < 1000; i++ {
+			f.mu.Lock()
+			if st := f.state["new1"]; st != nil {
+				st.Health = &container.Health{Status: container.Unhealthy}
+			}
+			f.mu.Unlock()
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	s := spec()
+	s.Settle = 100 * time.Millisecond
+
+	out := r.Run(context.Background(), s)
+	if out.Result != ResultRolledBack || !strings.Contains(out.Error, "unhealthy") {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestRunGivesUpWhenOldContainerCannotBeStopped(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	f.stopErr["old1"] = errors.New("daemon busy")
+
+	out := newRunner(f).Run(context.Background(), spec())
+
+	if out.Result != ResultFailed {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if slices.Contains(f.events, "start:new1") {
+		t.Errorf("the new container was started while the old one still ran: %v", f.events)
+	}
+	if f.names["old1"] != "sentinel" || !slices.Contains(f.events, "remove:new1") {
+		t.Errorf("not restored: name=%q events=%v", f.names["old1"], f.events)
+	}
+}
+
+func TestReportOutcomeReadsAndRemovesTheFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteOutcome(dir, Outcome{Result: ResultRolledBack, Error: "boom", NewImage: "img:3"}); err != nil {
+		t.Fatal(err)
+	}
+	out := ReportOutcome(dir, nopLog{})
+	if out == nil || out.Result != ResultRolledBack || out.Error != "boom" {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if ReportOutcome(dir, nopLog{}) != nil {
+		t.Error("the outcome was reported twice")
+	}
+}
+
+func TestCleanupLeftoversRemovesOnlyExitedLeftovers(t *testing.T) {
+	f := newFake()
+	mk := func(id, name, state string, labels map[string]string) container.Summary {
+		return container.Summary{ID: id, Names: []string{"/" + name}, State: container.ContainerState(state), Labels: labels}
+	}
+	self := map[string]string{"sentinel.self": "true"}
+	f.list = []container.Summary{
+		mk("cur", "sentinel", "running", self),
+		mk("gone1", "sentinel-old-1700000000", "exited", self),
+		mk("gone2", "sentinel-old-1700000999", "created", self),
+		mk("keep-paused", "sentinel-old-1700002222", "paused", self),
+		mk("keep-running", "sentinel-old-1700001111", "running", self),
+		mk("keep-orphan", "lost-old-5", "exited", self),
+		mk("keep-unlabelled", "grafana-old-111", "exited", nil),
+		mk("helper-done", "sentinel-self-update-helper", "exited", map[string]string{HelperLabel: "true"}),
+		mk("helper-live", "x-self-update-helper", "running", map[string]string{HelperLabel: "true"}),
+	}
+	CleanupLeftovers(context.Background(), f, nopLog{})
+
+	got := []string{}
+	for _, e := range f.events {
+		got = append(got, strings.TrimPrefix(e, "remove:"))
+	}
+	slices.Sort(got)
+	if want := []string{"gone1", "gone2", "helper-done"}; !slices.Equal(got, want) {
+		t.Errorf("removed %v, want %v", got, want)
+	}
+}

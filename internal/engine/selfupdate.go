@@ -2,26 +2,34 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"regexp"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
-	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
+	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/network"
 )
 
-// SelfUpdater manages self-update operations using the rename-before-replace
-// pattern. It renames the running container, creates a new one with the
-// original name, starts it, and then stops the old container (this process) so
-// the new instance can take over the BoltDB file lock.
+// SelfUpdater replaces the running Sentinel container with one on a new image.
+//
+// When the Docker socket is mounted in this container, the swap is handed to a
+// short-lived helper container (see package selfupdate): this process cannot
+// free its own published ports or database lock before the new one starts.
+// Without the socket (Sentinel reaches a remote daemon) it falls back to
+// replacing in-process: rename, create, start the new container, then stop
+// this one, which only works when no host ports are published.
 type SelfUpdater struct {
 	docker docker.API
 	log    *logging.Logger
+
+	updater *Updater // supplies the signature-verification gate
+	socket  string   // Docker socket path in this container ("" = default)
+	dataDir string   // directory of the database, for the helper's outcome file
+	poll    time.Duration
 }
 
 // NewSelfUpdater creates a SelfUpdater.
@@ -29,10 +37,21 @@ func NewSelfUpdater(d docker.API, log *logging.Logger) *SelfUpdater {
 	return &SelfUpdater{docker: d, log: log}
 }
 
-// Update performs a self-update using rename-before-replace.
-// It pulls the new image, renames the current container out of the way,
-// creates a new container with the original name and config, connects
-// extra networks, and starts it. The old process exits naturally.
+// SetUpdater attaches the Updater whose signature-verification mode and
+// verifier gate the new Sentinel image.
+func (su *SelfUpdater) SetUpdater(u *Updater) { su.updater = u }
+
+// SetDockerSock sets the Docker socket path inside this container. A tcp://
+// address means there is no socket to hand to a helper.
+func (su *SelfUpdater) SetDockerSock(path string) { su.socket = path }
+
+// SetDataDir sets the directory that holds the database, where the helper
+// records the outcome for the new instance to report.
+func (su *SelfUpdater) SetDataDir(dir string) { su.dataDir = dir }
+
+// Update replaces the running Sentinel container with one on targetImage (or
+// the container's current image when empty). On success it does not return:
+// the helper stops this process.
 func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	// 1. Find our own container.
 	containers, err := su.docker.ListContainers(ctx)
@@ -45,10 +64,7 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 		if c.Labels["sentinel.self"] == "true" {
 			selfID = c.ID
 			if len(c.Names) > 0 {
-				selfName = c.Names[0]
-				if len(selfName) > 0 && selfName[0] == '/' {
-					selfName = selfName[1:]
-				}
+				selfName = strings.TrimPrefix(c.Names[0], "/")
 			}
 			break
 		}
@@ -72,7 +88,12 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	}
 	su.log.Info("self-update initiated", "name", selfName, "image", imageRef)
 
-	// 3. Pull the new image before making any changes.
+	// 3. Signature gate for the new Sentinel image, before anything changes.
+	if err := su.verifyTarget(ctx, inspect.Config.Labels, imageRef); err != nil {
+		return err
+	}
+
+	// 4. Pull the new image before making any changes.
 	// If the pull fails but the image is already on the host, carry on
 	// (supports local builds and registry outages).
 	su.log.Info("pulling target image", "image", imageRef)
@@ -83,87 +104,94 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 		su.log.Warn("pull failed but image available locally", "image", imageRef, "pull_error", err)
 	}
 
-	// 4. Rename self out of the way.
+	defaults := selfupdate.ImageDefaults(ctx, su.docker, inspect.Image, su.log)
+
+	// 5. Hand the swap to a helper container when the Docker socket is mounted.
+	if !strings.HasPrefix(su.socket, "tcp://") && !strings.HasPrefix(su.socket, "tcps://") {
+		h, err := selfupdate.Begin(ctx, selfupdate.Params{
+			Docker: su.docker, Log: su.log, Inspect: inspect, Name: selfName, Image: imageRef,
+			OldImageDefaults: defaults, DataDir: su.dataDir, Socket: su.socket, Poll: su.poll,
+		})
+		switch {
+		case err == nil:
+			su.log.Info("self-update: handed over to the helper container", "old", h.OldName())
+			return h.Wait(context.Background())
+		case !errors.Is(err, selfupdate.ErrNoSocket):
+			return err
+		}
+		su.log.Info("self-update: the Docker socket is not mounted here, replacing in-process")
+	}
+	return su.updateInProcess(ctx, inspect, selfID, selfName, imageRef, defaults)
+}
+
+// verifyTarget applies the signature-verification gate to the new image: in
+// enforce mode an image that fails, or a missing cosign, refuses the update;
+// in warn mode the failure is logged.
+func (su *SelfUpdater) verifyTarget(ctx context.Context, labels map[string]string, image string) error {
+	if su.updater == nil {
+		return nil
+	}
+	u := su.updater
+	mode := u.verifyModeFor(labels)
+	switch {
+	case mode == verify.ModeDisabled:
+		return nil
+	case u.imgVerifier == nil && mode == verify.ModeEnforce:
+		su.log.Warn("signature verification is set to enforce but cosign is not available, refusing the self-update", "image", image)
+		return fmt.Errorf("self-update: %w", ErrVerifierUnavailable)
+	case u.imgVerifier == nil:
+		su.log.Warn("signature verification is set to warn but cosign is not available, self-updating without a signature check", "image", image)
+		return nil
+	}
+	result := u.imgVerifier.Verify(ctx, image)
+	switch {
+	case result.Verified:
+		su.log.Info("signature verified", "image", image)
+	case mode == verify.ModeEnforce:
+		su.log.Warn("signature verification failed, refusing the self-update", "image", image, "error", result.Error)
+		return fmt.Errorf("signature verification failed for %s: %s", image, result.Error)
+	default:
+		su.log.Warn("signature verification failed, proceeding (warn mode)", "image", image, "error", result.Error)
+	}
+	return nil
+}
+
+// updateInProcess replaces this container without a helper: rename it aside,
+// create and start the replacement while this one keeps serving, then stop
+// this one. A failed start removes the replacement and restores the name.
+// With published host ports the start fails and the update is rolled back.
+func (su *SelfUpdater) updateInProcess(ctx context.Context, inspect container.InspectResponse, selfID, selfName, imageRef string, defaults *container.Config) error {
 	oldName := fmt.Sprintf("%s-old-%d", selfName, time.Now().Unix())
 	su.log.Info("renaming self", "from", selfName, "to", oldName)
 	if err := su.docker.RenameContainer(ctx, selfID, oldName); err != nil {
 		return fmt.Errorf("rename self: %w", err)
 	}
 
-	// 5. Build config for the new container from inspect data.
-	// Override the image to the target version.
-	newConfig := *inspect.Config
-	newConfig.Image = imageRef
-	// Tell the replacement it starts while this instance still holds the
-	// database lock, so it waits for the lock instead of exiting after 5s.
-	newConfig.Env = append(slices.DeleteFunc(slices.Clone(inspect.Config.Env), func(e string) bool {
-		return strings.HasPrefix(e, store.SelfUpdateReplacementEnv+"=")
-	}), store.SelfUpdateReplacementEnv+"=1")
-
-	// Collect extra networks (all non-bridge, after the first which goes in NetworkingConfig).
-	var primaryNetwork string
-	var extraNetworks []string
-	if inspect.NetworkSettings != nil {
-		for netName := range inspect.NetworkSettings.Networks {
-			if netName == "bridge" {
-				continue
-			}
-			if primaryNetwork == "" {
-				primaryNetwork = netName
-			} else {
-				extraNetworks = append(extraNetworks, netName)
-			}
-		}
-	}
-
-	var netCfg *network.NetworkingConfig
-	if primaryNetwork != "" {
-		netCfg = &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				primaryNetwork: {},
-			},
-		}
-	}
-
-	// 6. Create new container with the original name.
+	rc := selfupdate.BuildReplacement(inspect, imageRef, defaults)
 	su.log.Info("creating replacement container", "name", selfName, "image", imageRef)
-	newID, err := su.docker.CreateContainer(ctx, selfName, &newConfig, inspect.HostConfig, netCfg)
+	newID, err := su.docker.CreateContainer(ctx, selfName, rc.Config, rc.HostConfig, rc.NetworkingConfig)
 	if err != nil {
-		// Rollback: rename back to original name.
 		su.log.Error("create failed, rolling back rename", "error", err)
 		_ = su.docker.RenameContainer(ctx, selfID, selfName)
 		return fmt.Errorf("create replacement: %w", err)
 	}
 
-	// 7. Connect extra networks.
-	for _, netName := range extraNetworks {
-		if err := su.docker.NetworkConnect(ctx, netName, newID); err != nil {
-			su.log.Error("failed to connect extra network", "network", netName, "error", err)
-			// Non-fatal: container can still start, just missing a secondary network.
-		}
-	}
-
-	// 8. Start the new container while the old one is still serving. If the
-	// start fails, remove the replacement and give the old container its name
-	// back; nothing has been stopped yet.
 	su.log.Info("starting replacement container", "id", newID[:12])
 	if err := su.docker.StartContainer(ctx, newID); err != nil {
 		su.log.Error("start failed, rolling back", "error", err)
 		_ = su.docker.RemoveContainer(ctx, newID)
 		_ = su.docker.RenameContainer(ctx, selfID, selfName)
 		if isPortConflict(err) {
-			return fmt.Errorf("start replacement: %w (the running instance still holds the published ports; update it from the host with docker pull and a recreate, or publish no ports and use a reverse proxy or host networking)", err)
+			return fmt.Errorf("start replacement: %w (the running instance still holds the published ports, and the Docker socket is not mounted here for the update helper; mount it, or publish no ports)", err)
 		}
 		return fmt.Errorf("start replacement: %w", err)
 	}
 
-	// 9. Stop the old container, which is this process. Without this it keeps
-	// the BoltDB file lock and the replacement exits at startup. A background
-	// context is used because the caller's context may be cancelled by the
-	// request that triggered the update.
+	// Stop the old container, which is this process: it holds the database
+	// lock. A background context is used because the caller's context may be
+	// cancelled by the request that triggered the update.
 	su.log.Info("self-update: new container running, stopping old container to release the database lock", "id", selfID)
 	if err := su.docker.StopContainer(context.Background(), selfID, 10); err != nil {
-		// Two instances would fight over the database; put things back.
 		su.log.Error("self-update: failed to stop old container, rolling back", "error", err)
 		_ = su.docker.RemoveContainer(context.Background(), newID)
 		_ = su.docker.RenameContainer(context.Background(), selfID, selfName)
@@ -179,39 +207,8 @@ func isPortConflict(err error) bool {
 	return strings.Contains(msg, "port is already allocated") || strings.Contains(msg, "address already in use")
 }
 
-// oldInstanceRE matches the name a superseded instance is renamed to.
-var oldInstanceRE = regexp.MustCompile(`^(.+)-old-\d+$`)
-
-// CleanupOldInstances removes "<name>-old-<unix>" containers left behind by
-// earlier self-updates. A container is only removed when it carries the
-// sentinel.self label, is exited or created (never paused, restarting or
-// dead), and the instance it was replaced by (the same name without the
-// suffix) is running. Anonymous volumes are kept.
+// CleanupOldInstances removes containers left behind by earlier self-updates
+// (see selfupdate.CleanupLeftovers).
 func (su *SelfUpdater) CleanupOldInstances(ctx context.Context) {
-	containers, err := su.docker.ListAllContainers(ctx)
-	if err != nil {
-		su.log.Debug("old instance cleanup: list containers failed", "error", err)
-		return
-	}
-	running := make(map[string]bool)
-	for _, c := range containers {
-		if c.State == container.StateRunning && len(c.Names) > 0 {
-			running[strings.TrimPrefix(c.Names[0], "/")] = true
-		}
-	}
-	for _, c := range containers {
-		if c.Labels["sentinel.self"] != "true" || len(c.Names) == 0 ||
-			(c.State != container.StateExited && c.State != container.StateCreated) {
-			continue
-		}
-		m := oldInstanceRE.FindStringSubmatch(strings.TrimPrefix(c.Names[0], "/"))
-		if m == nil || !running[m[1]] {
-			continue
-		}
-		if err := su.docker.RemoveContainer(ctx, c.ID); err != nil {
-			su.log.Warn("old instance cleanup: remove failed", "name", c.Names[0], "error", err)
-			continue
-		}
-		su.log.Info("removed leftover container from an earlier self-update", "name", strings.TrimPrefix(c.Names[0], "/"))
-	}
+	selfupdate.CleanupLeftovers(ctx, su.docker, su.log)
 }
