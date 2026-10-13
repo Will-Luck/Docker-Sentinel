@@ -30,3 +30,7 @@ func (l *LogNotifier) Send(_ context.Context, event Event) error {
 	)
 	return nil
 }
+
+// RecordOnly marks the log notifier as a record, not a delivery channel, so
+// its always-successful Send never counts as a delivered notification.
+func (l *LogNotifier) RecordOnly() bool { return true }

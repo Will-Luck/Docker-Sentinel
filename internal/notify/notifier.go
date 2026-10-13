@@ -50,6 +50,18 @@ type Event struct {
 	Timestamp      time.Time `json:"timestamp"`
 }
 
+// recordOnly is implemented by notifiers that keep a record of an event but
+// do not deliver it to anyone (the log notifier). Their result is ignored
+// when deciding whether a notification was delivered.
+type recordOnly interface {
+	RecordOnly() bool
+}
+
+func isRecordOnly(n Notifier) bool {
+	r, ok := n.(recordOnly)
+	return ok && r.RecordOnly()
+}
+
 // Notifier sends events to an external system.
 type Notifier interface {
 	Send(ctx context.Context, event Event) error
@@ -83,13 +95,18 @@ type Multi struct {
 	retryBackoff time.Duration // initial backoff, doubles each retry
 }
 
+// maxRetryBackoff caps every retry delay, including the first.
+const maxRetryBackoff = 30 * time.Second
+
 // NewMulti creates a dispatcher from the given notifiers.
 func NewMulti(log Logger, notifiers ...Notifier) *Multi {
 	return &Multi{notifiers: notifiers, log: log}
 }
 
 // Notify sends an event to all registered notifiers.
-// Returns true if at least one notifier succeeded (or none are configured).
+// Returns true if at least one real channel succeeded (or none are configured;
+// the log notifier is a record, not a channel). A batched event returns true
+// once buffered; its delivery result is only logged.
 // Errors are logged but never propagated — notifications must not block updates.
 //
 // When batching is enabled, batchable events are buffered and sent as
@@ -105,13 +122,14 @@ func (m *Multi) Notify(ctx context.Context, event Event) bool {
 		return m.dispatch(ctx, event)
 	}
 
-	// Buffer the event and start/reset the flush timer.
+	// Buffer the event. The timer starts with the first buffered event and is
+	// not reset by later ones, so a steady trickle cannot postpone the flush
+	// forever.
 	m.batchMu.Lock()
 	m.pending = append(m.pending, event)
-	if m.flushTimer != nil {
-		m.flushTimer.Stop()
+	if m.flushTimer == nil {
+		m.flushTimer = time.AfterFunc(window, m.flush)
 	}
-	m.flushTimer = time.AfterFunc(m.batchWindow, m.flush)
 	m.batchMu.Unlock()
 
 	return true
@@ -132,7 +150,7 @@ func (m *Multi) SetBatchWindow(d time.Duration) {
 func (m *Multi) SetRetry(maxRetries int, backoff time.Duration) {
 	m.retryMu.Lock()
 	m.maxRetries = maxRetries
-	m.retryBackoff = backoff
+	m.retryBackoff = min(backoff, maxRetryBackoff)
 	m.retryMu.Unlock()
 }
 
@@ -168,13 +186,20 @@ func (m *Multi) dispatch(ctx context.Context, event Event) bool {
 		return true
 	}
 
-	anyOK := false
+	// The log notifier always succeeds, so it must not mask a failed real
+	// channel: only real channels decide whether the event was delivered.
+	anyOK, realChannels := false, false
 	for _, n := range notifiers {
-		if m.retrySend(ctx, n, event) {
+		ok := m.retrySend(ctx, n, event)
+		if isRecordOnly(n) {
+			continue
+		}
+		realChannels = true
+		if ok {
 			anyOK = true
 		}
 	}
-	return anyOK
+	return anyOK || !realChannels
 }
 
 // retrySend attempts to send an event via a single notifier, retrying with
@@ -186,7 +211,8 @@ func (m *Multi) retrySend(ctx context.Context, n Notifier, event Event) bool {
 	backoff := m.retryBackoff
 	m.retryMu.RUnlock()
 
-	const maxBackoff = 30 * time.Second
+	const maxBackoff = maxRetryBackoff
+	backoff = min(backoff, maxBackoff)
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		err := n.Send(ctx, event)
