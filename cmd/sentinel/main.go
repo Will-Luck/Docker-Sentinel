@@ -554,6 +554,11 @@ func main() {
 
 	// Resolve containers an update left half-replaced when Sentinel last
 	// stopped, before the scheduler or the dashboard can start another one.
+	// After a reboot the daemon may still be coming up: wait for it a little.
+	// Whatever cannot be resolved now is retried at every scan.
+	if err := waitForDocker(ctx, client.Ping, 60*time.Second, sleepCtx); err != nil {
+		log.Warn("startup recovery: Docker is not answering yet, unfinished updates are retried at the next scan", "error", err)
+	}
 	updater.RecoverInterruptedUpdates(ctx)
 	// End (and undo) in-flight updates on shutdown, dashboard ones included.
 	updater.SetShutdownContext(ctx)
