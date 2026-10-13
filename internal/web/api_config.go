@@ -126,6 +126,9 @@ var validSettingKeys = map[string]bool{
 	"ha_discovery_enabled": true,
 	"ha_discovery_prefix":  true,
 
+	// Retention.
+	"history_retention_days": true,
+
 	// UI state.
 	"stack_order":             true,
 	"digest_banner_dismissed": true,

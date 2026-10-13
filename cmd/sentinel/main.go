@@ -180,7 +180,17 @@ func main() {
 
 	// Check if instance has been configured via the wizard.
 	instanceRole, _ := db.LoadSetting("instance_role")
-	needsWizard := instanceRole == ""
+	needsWizard := wizardRequired(instanceRole, cfg.WebEnabled)
+	if instanceRole == "" && !cfg.WebEnabled {
+		// Headless first run: there is no UI to run the wizard in, so
+		// default the role (server unless SENTINEL_MODE says otherwise).
+		instanceRole = cfg.Mode
+		if instanceRole == "" {
+			instanceRole = "server"
+		}
+		_ = db.SaveSetting("instance_role", instanceRole)
+		log.Info("web UI disabled: skipping the setup wizard", "role", instanceRole)
+	}
 
 	// Env var overrides: if SENTINEL_MODE is explicitly set AND auth_setup_complete is true,
 	// skip wizard (backwards compat for existing deployments).
@@ -302,7 +312,7 @@ func main() {
 	// Gate the initial scan: on fresh setup, wait until the user loads the
 	// dashboard so the scanner doesn't run wild before they've seen the UI.
 	scanGate := make(chan struct{})
-	if !freshSetup {
+	if scanGateOpensAtStart(freshSetup, cfg.WebEnabled) {
 		close(scanGate)
 	}
 
@@ -690,6 +700,15 @@ func main() {
 		backupSched.Start()
 	}
 
+	// The digest and retention loops do not need the web UI: a headless
+	// server still sends digests and prunes old records.
+	go func() {
+		if err := digestSched.Run(ctx); err != nil {
+			log.Error("digest scheduler error", "error", err)
+		}
+	}()
+	go runRetention(ctx, cfg, db, log)
+
 	if cfg.WebEnabled {
 		webDeps := web.Dependencies{
 			Store:               &storeAdapter{db},
@@ -860,12 +879,6 @@ func main() {
 			shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer shutCancel()
 			_ = srv.Shutdown(shutCtx)
-		}()
-
-		go func() {
-			if err := digestSched.Run(ctx); err != nil {
-				log.Error("digest scheduler error", "error", err)
-			}
 		}()
 
 		// Session cleanup goroutine — purge expired sessions hourly.
