@@ -101,8 +101,6 @@ type Server struct {
 	serverCert  *tls.Certificate
 	certRenewAt time.Time
 	certSANs    []string
-	// now is the clock for server certificate renewal (time.Now when nil).
-	now func() time.Time
 }
 
 // pendingRequest is a synchronous request waiting for an agent's reply.
@@ -260,8 +258,8 @@ func (s *Server) Start(addr string, extraSANs ...string) error {
 	return nil
 }
 
-// issueServerCertLocked issues a fresh server certificate and schedules its
-// renewal once two thirds of its life have passed. Caller holds certMu.
+// issueServerCertLocked issues a fresh server certificate and puts it in
+// use. Caller holds certMu.
 func (s *Server) issueServerCertLocked() error {
 	certPEM, keyPEM, err := s.ca.IssueServerCert(s.certSANs...)
 	if err != nil {
@@ -271,15 +269,27 @@ func (s *Server) issueServerCertLocked() error {
 	if err != nil {
 		return fmt.Errorf("parse server keypair: %w", err)
 	}
-	leaf := cert.Leaf
-	if leaf == nil {
-		if leaf, err = x509.ParseCertificate(cert.Certificate[0]); err != nil {
+	if err := s.installServerCertLocked(cert); err != nil {
+		return err
+	}
+	s.log.Info("issued cluster server certificate", "expires", cert.Leaf.NotAfter.Format(time.RFC3339))
+	return nil
+}
+
+// installServerCertLocked puts cert in use and schedules its renewal two
+// thirds of the way through its life, from its own dates. Caller holds
+// certMu.
+func (s *Server) installServerCertLocked(cert tls.Certificate) error {
+	if cert.Leaf == nil {
+		leaf, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
 			return fmt.Errorf("parse server cert: %w", err)
 		}
+		cert.Leaf = leaf
 	}
+	life := cert.Leaf.NotAfter.Sub(cert.Leaf.NotBefore)
 	s.serverCert = &cert
-	s.certRenewAt = s.clock().Add(leaf.NotAfter.Sub(leaf.NotBefore) * 2 / 3)
-	s.log.Info("issued cluster server certificate", "expires", leaf.NotAfter.Format(time.RFC3339))
+	s.certRenewAt = cert.Leaf.NotBefore.Add(life * 2 / 3)
 	return nil
 }
 
@@ -289,7 +299,7 @@ func (s *Server) issueServerCertLocked() error {
 func (s *Server) serverCertificate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	s.certMu.Lock()
 	defer s.certMu.Unlock()
-	if s.serverCert == nil || !s.clock().Before(s.certRenewAt) {
+	if s.serverCert == nil || !time.Now().Before(s.certRenewAt) {
 		if err := s.issueServerCertLocked(); err != nil {
 			if s.serverCert == nil {
 				return nil, err
@@ -298,13 +308,6 @@ func (s *Server) serverCertificate(*tls.ClientHelloInfo) (*tls.Certificate, erro
 		}
 	}
 	return s.serverCert, nil
-}
-
-func (s *Server) clock() time.Time {
-	if s.now != nil {
-		return s.now()
-	}
-	return time.Now()
 }
 
 // buildTLSConfig assembles the mTLS configuration for the gRPC listener.

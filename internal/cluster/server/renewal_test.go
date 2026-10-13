@@ -9,6 +9,10 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -223,25 +227,73 @@ func presentedServerSerial(t *testing.T, srv *Server, addr string) string {
 	return fmt.Sprintf("%x", conn.ConnectionState().PeerCertificates[0].SerialNumber)
 }
 
+// oldServerCert is a server certificate from srv's CA that was issued 300
+// days ago and runs out in 65.
+func oldServerCert(t *testing.T, srv *Server) tls.Certificate {
+	t.Helper()
+	readBlock := func(name string) []byte {
+		data, err := os.ReadFile(filepath.Join(srv.ca.Dir(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, _ := pem.Decode(data)
+		return block.Bytes
+	}
+	caCert, err := x509.ParseCertificate(readBlock("ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	caKey, err := x509.ParseECPrivateKey(readBlock("ca-key.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	now := time.Now()
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(now.UnixNano()),
+		Subject:      pkix.Name{CommonName: "sentinel-server"},
+		NotBefore:    now.Add(-300 * 24 * time.Hour),
+		NotAfter:     now.Add(65 * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+	}, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, _ := x509.MarshalECPrivateKey(key)
+	cert, err := tls.X509KeyPair(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
 // A hub that runs long enough must renew its own certificate before it
-// expires, or every agent fails to reconnect.
+// expires, or every agent fails to reconnect. The renewal point comes from
+// the certificate's own dates: two thirds of the way through its life.
 func TestServerCert_RenewedBeforeExpiry(t *testing.T) {
 	srv, addr, _, _ := testServer(t)
 	first := presentedServerSerial(t, srv, addr)
-
 	if again := presentedServerSerial(t, srv, addr); again != first {
 		t.Fatalf("server certificate changed between two handshakes with nothing near expiry (%s, %s)", first, again)
 	}
 
-	// 300 days on, the 365-day certificate has less than a third of its
-	// life left.
+	// The hub has been running on a certificate 300 days into a 365-day
+	// life.
+	old := oldServerCert(t, srv)
 	srv.certMu.Lock()
-	srv.now = func() time.Time { return time.Now().Add(300 * 24 * time.Hour) }
+	if err := srv.installServerCertLocked(old); err != nil {
+		srv.certMu.Unlock()
+		t.Fatal(err)
+	}
 	srv.certMu.Unlock()
+	oldSerial := fmt.Sprintf("%x", old.Leaf.SerialNumber)
 
 	renewed := presentedServerSerial(t, srv, addr)
-	if renewed == first {
-		t.Fatal("server kept presenting its old certificate 300 days into a 365-day life")
+	if renewed == oldSerial {
+		t.Fatal("server kept presenting a certificate 300 days into a 365-day life")
 	}
 	if again := presentedServerSerial(t, srv, addr); again != renewed {
 		t.Errorf("server certificate reissued again on the next handshake (%s, %s)", renewed, again)
