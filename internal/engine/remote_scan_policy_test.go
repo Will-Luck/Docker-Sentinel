@@ -262,3 +262,25 @@ func drainEvents(ch <-chan events.SSEEvent) []events.SSEEvent {
 		}
 	}
 }
+
+// Remote updates started from the dashboard or the API (approve, update
+// now, update to version) notify as scan-started ones do.
+func TestNotifyRemote(t *testing.T) {
+	u, _, _ := remotePolicyFixture(t, nil)
+	cn := &capturingNotifier{}
+	u.notifier = notify.NewMulti(u.log, cn)
+	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", nil)
+	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", &RemoteUpdateResult{Outcome: "success", NewImage: "nginx:2"})
+	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", &RemoteUpdateResult{Outcome: "failed", Error: "pull failed"})
+	u.NotifyRemote(context.Background(), "Agent One", "web", "nginx:1", &RemoteUpdateResult{Outcome: "skipped"})
+	got := cn.types()
+	want := []notify.EventType{notify.EventUpdateStarted, notify.EventUpdateSucceeded, notify.EventUpdateFailed}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Errorf("notifications = %v, want %v (none for a skip)", got, want)
+	}
+	cn.mu.Lock()
+	defer cn.mu.Unlock()
+	if cn.events[0].ContainerName != "web on Agent One" {
+		t.Errorf("named %q, want web on Agent One", cn.events[0].ContainerName)
+	}
+}

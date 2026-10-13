@@ -28,6 +28,9 @@ import (
 type clusterAdapter struct {
 	srv   *clusterserver.Server
 	store *store.Store
+	// updater sends the notifications of the remote updates the dashboard
+	// and the API start (nil: none).
+	updater *engine.Updater
 }
 
 func (a *clusterAdapter) AllHosts() []web.ClusterHost {
@@ -140,7 +143,28 @@ func (a *clusterAdapter) ResumeHost(id string) error {
 }
 
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
+	hostName, oldImage := hostID, ""
+	if hs, ok := a.srv.GetHost(hostID); ok {
+		hostName = hs.Info.Name
+		for _, c := range hs.Containers {
+			if c.Name == containerName {
+				oldImage = c.Image
+			}
+		}
+	}
+	if a.updater != nil {
+		a.updater.NotifyRemote(ctx, hostName, containerName, oldImage, nil)
+	}
 	ur, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
+	if a.updater != nil {
+		res := engine.RemoteUpdateResult{Outcome: "failed", NewImage: targetImage}
+		if err != nil {
+			res.Error = err.Error()
+		} else {
+			res = engine.RemoteUpdateResult{OldImage: ur.OldImage, NewImage: ur.NewImage, NewDigest: ur.NewDigest, Outcome: ur.Outcome, Error: ur.Error}
+		}
+		a.updater.NotifyRemote(context.WithoutCancel(ctx), hostName, containerName, oldImage, &res)
+	}
 	if err != nil {
 		return err
 	}
@@ -464,7 +488,7 @@ func (m *clusterManager) Start() error {
 	m.updater.SetClusterScanner(&clusterScannerAdapter{srv: m.srv})
 
 	// Swap provider in controller — handlers see it immediately.
-	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv, store: m.db})
+	m.ctrl.SetProvider(&clusterAdapter{srv: m.srv, store: m.db, updater: m.updater})
 
 	m.log.Info("cluster gRPC server started", "addr", addr)
 	return nil

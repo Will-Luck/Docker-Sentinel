@@ -400,6 +400,28 @@ func (u *Updater) announceRemoteUpdate(ctx context.Context, key, label string, c
 	}
 }
 
+// NotifyRemote sends the notification of a remote update that was not
+// started by a scan (the dashboard or the API): its start when ur is nil,
+// else its outcome. A skipped update sends nothing.
+func (u *Updater) NotifyRemote(ctx context.Context, hostName, name, oldImage string, ur *RemoteUpdateResult) {
+	if u.notifier == nil || u.clock == nil {
+		return
+	}
+	label := name + " on " + hostName
+	if ur == nil {
+		u.notifier.Notify(ctx, notify.Event{Type: notify.EventUpdateStarted, ContainerName: label, OldImage: oldImage, Timestamp: u.clock.Now()})
+		return
+	}
+	if ur.Outcome == "skipped" {
+		return
+	}
+	r := *ur
+	if r.OldImage == "" {
+		r.OldImage = oldImage
+	}
+	u.notifyRemoteResult(ctx, label, r)
+}
+
 // notifyRemoteResult notifies the outcome of a remote update.
 func (u *Updater) notifyRemoteResult(ctx context.Context, label string, ur RemoteUpdateResult) {
 	ev := notify.Event{ContainerName: label, OldImage: ur.OldImage, NewImage: ur.NewImage, NewDigest: ur.NewDigest, Timestamp: u.clock.Now()}
