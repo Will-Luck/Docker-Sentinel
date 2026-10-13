@@ -3677,12 +3677,27 @@
   }
   function setImageBackup(enabled) {
     updateToggleText("image-backup-text", enabled);
+    var revert = function() {
+      var box = document.getElementById("image-backup-toggle");
+      if (box) {
+        box.checked = !enabled;
+      }
+      updateToggleText("image-backup-text", !enabled);
+    };
     fetch("/api/settings/image-backup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
+      return r.json().then(function(data) {
+        return { ok: r.ok, data };
+      });
+    }).then(function(result) {
+      if (!result.ok) {
+        revert();
+        showToast(result.data.error || "Failed to update setting", "error");
+        return;
+      }
+      showToast(result.data.message || "Setting updated", "success");
       showSettingSource("image-backup-source", "saved", "SENTINEL_IMAGE_BACKUP");
     }).catch(function() {
+      revert();
       showToast("Network error -- could not update setting", "error");
     });
   }
@@ -3698,12 +3713,27 @@
   }
   function setRemoveVolumes(enabled) {
     updateToggleText("remove-volumes-text", enabled);
+    var revert = function() {
+      var box = document.getElementById("remove-volumes-toggle");
+      if (box) {
+        box.checked = !enabled;
+      }
+      updateToggleText("remove-volumes-text", !enabled);
+    };
     fetch("/api/settings/remove-volumes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }).then(function(r) {
-      return r.json();
-    }).then(function(data) {
-      showToast(data.message || "Setting updated", "success");
+      return r.json().then(function(data) {
+        return { ok: r.ok, data };
+      });
+    }).then(function(result) {
+      if (!result.ok) {
+        revert();
+        showToast(result.data.error || "Failed to update setting", "error");
+        return;
+      }
+      showToast(result.data.message || "Setting updated", "success");
       showSettingSource("remove-volumes-source", "saved", "SENTINEL_REMOVE_VOLUMES");
     }).catch(function() {
+      revert();
       showToast("Network error -- could not update setting", "error");
     });
   }
