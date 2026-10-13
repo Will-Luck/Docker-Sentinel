@@ -146,9 +146,10 @@ func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentServ
 }
 
 // handleUpdateContainer executes the full update lifecycle for a container.
-// For regular containers: inspect -> pull -> stop -> remove -> create -> start.
-// For self-containers (sentinel.self=true): uses rename-before-replace to
-// avoid killing the agent mid-update.
+// Regular containers go through recreateContainer, which parks the old
+// container and removes it only after the replacement has started. The
+// agent's own container (sentinel.self=true) uses selfUpdateContainer,
+// which keeps the old one running until the new agent takes over.
 func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentService_ChannelClient, req *proto.UpdateContainerRequest, requestID string) error {
 	name := req.GetContainerName()
 	targetImage := req.GetTargetImage()
@@ -178,7 +179,7 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 	}
 
 	start := time.Now()
-	var oldImage, oldDigest, newImage, newDigest string
+	var oldImage, oldDigest, newImage, newDigest, warning string
 	var oldContainerID string
 	var err error
 	if isSelf {
@@ -189,6 +190,7 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 	} else {
 		rr, recreateErr := a.recreateContainer(ctx, name, targetImage)
 		oldImage, oldDigest, newImage, newDigest = rr.oldImage, rr.oldDigest, rr.newImage, rr.newDigest
+		warning = rr.warning
 		err = recreateErr
 	}
 	dur := time.Since(start)
@@ -212,6 +214,7 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		a.log.Error("update failed", "name", name, "error", err, "duration", dur)
 	} else {
 		result.Outcome = "success"
+		result.Error = warning
 		a.log.Info("update succeeded", "name", name, "old_image", oldImage, "new_digest", newDigest, "duration", dur)
 	}
 

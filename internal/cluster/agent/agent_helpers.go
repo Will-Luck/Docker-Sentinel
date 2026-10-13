@@ -59,6 +59,8 @@ func (a *Agent) heartbeatLoop(ctx context.Context, stream proto.AgentService_Cha
 type recreateResult struct {
 	oldImage, oldDigest string
 	newImage, newDigest string
+	// warning is set when the update worked but left something behind.
+	warning string
 }
 
 // targetOrCurrent returns target, or the container's own image reference
@@ -71,10 +73,12 @@ func targetOrCurrent(target string, inspect *container.InspectResponse) string {
 	return inspect.Config.Image
 }
 
-// parkedName is the name a container is moved to while its replacement is
-// built. The local engine uses the same suffix.
+// parkedSuffix marks the name a container is moved to while its
+// replacement is built (parkedName).
+const parkedSuffix = "-sentinel-old"
+
 func parkedName(name string) string {
-	return name + "-sentinel-old"
+	return name + parkedSuffix
 }
 
 // recreateContainer replaces a container with one built from the same
@@ -128,8 +132,9 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 
 	parked := parkedName(name)
 	if id, err := a.findContainerID(ctx, parked); err == nil {
-		return r, fmt.Errorf("container %s (%s) is left over from an interrupted update; remove it, or rename it to %s if %s is missing, then retry",
-			parked, truncateID(id), name, name)
+		if err := a.clearLeftover(ctx, name, parked, id); err != nil {
+			return r, err
+		}
 	}
 	if err := a.docker.RenameContainer(ctx, cID, parked); err != nil {
 		return r, fmt.Errorf("rename %s to %s: %w", name, parked, err)
@@ -174,9 +179,27 @@ func (a *Agent) recreateContainer(ctx context.Context, name, targetImage string)
 	if err := a.docker.RemoveContainer(ctx, cID); err != nil && !autoRemoves(&inspect) {
 		a.log.Warn("container updated, but the old one could not be removed",
 			"container", name, "old_container", parked, "error", err)
+		r.warning = fmt.Sprintf("updated, but the old container %s could not be removed: %v", parked, err)
 	}
 
 	return r, nil
+}
+
+// clearLeftover deals with a container already under the parked name when
+// an update of name starts. A stopped one is the old copy from an update
+// that was interrupted after the replacement was made (name exists, so it
+// is not the only copy): it is removed. A running one is left alone and
+// the update refused.
+func (a *Agent) clearLeftover(ctx context.Context, name, parked, id string) error {
+	inspect, err := a.docker.InspectContainer(ctx, id)
+	if err == nil && !isRunning(&inspect) {
+		if err := a.docker.RemoveContainer(ctx, id); err == nil {
+			a.log.Info("removed a stopped container left by an interrupted update", "container", name, "leftover", parked, "id", truncateID(id))
+			return nil
+		}
+	}
+	return fmt.Errorf("container %s (%s) is left over from an interrupted update and is running or cannot be removed; remove it, or rename it to %s if %s is missing, then retry",
+		parked, truncateID(id), name, name)
 }
 
 // recreateSpec is everything needed to create a container like an existing
@@ -222,9 +245,10 @@ func autoRemoves(inspect *container.InspectResponse) bool {
 
 // restoreParked undoes a failed recreate: it removes the half-made
 // replacement (if any), gives the old container its name back and starts
-// it again if it was running. A --rm container is deleted by the daemon
-// when it stops, so it is created again from its inspected config on its
-// old image instead. Errors are logged: the caller is already returning
+// it again if it was running. A --rm container the agent stopped is being
+// deleted by the daemon, so it is created again from its inspected config
+// on its old image instead. A replacement that cannot be removed is
+// renamed aside so the old container can take its name back. Errors are logged: the caller is already returning
 // the failure that got us here. The rollback runs to the end even if ctx
 // has been cancelled.
 func (a *Agent) restoreParked(ctx context.Context, old parkedContainer, newID string) {
@@ -232,8 +256,28 @@ func (a *Agent) restoreParked(ctx context.Context, old parkedContainer, newID st
 
 	if newID != "" {
 		if err := a.docker.RemoveContainer(ctx, newID); err != nil {
-			a.log.Error("rollback: failed to remove the replacement container", "container", old.name, "id", truncateID(newID), "error", err)
+			// It still holds the real name: move it aside so the old
+			// container can have the name back.
+			a.log.Error("rollback: failed to remove the replacement container, moving it aside", "container", old.name, "id", truncateID(newID), "error", err)
+			aside := old.name + "-sentinel-failed"
+			if err := a.docker.RenameContainer(ctx, newID, aside); err != nil {
+				aside = fmt.Sprintf("%s-sentinel-failed-%d", old.name, time.Now().Unix())
+				if err := a.docker.RenameContainer(ctx, newID, aside); err != nil {
+					a.log.Error("rollback: failed to move the replacement aside", "container", old.name, "error", err)
+				}
+			}
 		}
+	}
+
+	// The daemon is deleting a --rm container the agent stopped, even if it
+	// is still visible: renaming it back would lose it. Make sure it is
+	// gone and create it again.
+	if autoRemoves(old.inspect) && old.stopped {
+		if err := a.docker.RemoveContainer(ctx, old.id); err != nil {
+			a.log.Debug("rollback: --rm container already being removed", "container", old.name, "error", err)
+		}
+		a.recreateRemoved(ctx, old)
+		return
 	}
 
 	if err := a.docker.RenameContainer(ctx, old.id, old.name); err != nil {
@@ -457,6 +501,10 @@ func (a *Agent) listLocalContainers(ctx context.Context) ([]*proto.ContainerInfo
 			continue
 		}
 		ci := containerInfoFromSummary(&summaries[i])
+		// A container parked mid-update is not one of the host's own.
+		if strings.HasSuffix(ci.Name, parkedSuffix) {
+			continue
+		}
 
 		// Populate the image digest so the server can compare against
 		// the registry without needing the image locally.

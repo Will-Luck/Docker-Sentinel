@@ -182,11 +182,11 @@ func TestRecreateContainer_AutoRemoveContainerKeptOnCreateFailure(t *testing.T) 
 	}
 }
 
-// A container left under the parked name by an interrupted update blocks
-// the protocol. The update must refuse with a clear error and touch nothing.
-func TestRecreateContainer_LeftoverParkedContainerFailsSafely(t *testing.T) {
+// A running container under the parked name is not a leftover the agent
+// may clear. The update must refuse with a clear error and touch nothing.
+func TestRecreateContainer_RunningParkedContainerFailsSafely(t *testing.T) {
 	h, old, a := recreateFixture(t)
-	leftover := h.addContainer("web-sentinel-old", "nginx:0", false)
+	leftover := h.addContainer("web-sentinel-old", "nginx:0", true)
 
 	_, err := a.recreateContainer(context.Background(), "web", "nginx:2")
 	if err == nil || !strings.Contains(err.Error(), "web-sentinel-old") {
@@ -403,5 +403,95 @@ func TestRecreateContainer_KeepsEveryNetworksSettings(t *testing.T) {
 		if fmt.Sprint(ep.Aliases) != fmt.Sprint(w.aliases) {
 			t.Errorf("network %s: aliases %v, want %v", name, ep.Aliases, w.aliases)
 		}
+	}
+}
+
+// --- Leftovers and failed cleanup ---
+
+// A stopped container left under the parked name by an interrupted update,
+// while the container itself exists, is that update's old copy: remove it
+// and carry on.
+func TestRecreateContainer_StoppedLeftoverRemovedAutomatically(t *testing.T) {
+	h, _, a := recreateFixture(t)
+	h.addContainer("web-sentinel-old", "nginx:0", false)
+
+	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err != nil {
+		t.Fatalf("recreateContainer: %v", err)
+	}
+	h.requireOnly(t, "web", "nginx:2", true)
+}
+
+// The update worked but the old container could not be removed: the hub
+// must hear about the leftover, not just a bare success.
+func TestHandleUpdateContainer_OldContainerLeftOverIsReported(t *testing.T) {
+	h, old, a := recreateFixture(t)
+	h.removeErr[old.id] = errors.New("device or resource busy")
+
+	ur := updateResult(t, a, "web", "nginx:2")
+	if ur.GetOutcome() != "success" {
+		t.Fatalf("outcome = %q (%s), want success", ur.GetOutcome(), ur.GetError())
+	}
+	if !strings.Contains(ur.GetError(), "web-sentinel-old") {
+		t.Errorf("result error = %q, want it to name the leftover web-sentinel-old", ur.GetError())
+	}
+}
+
+// The parked copy is an implementation detail of an update: it must not be
+// reported to the hub as a container of its own.
+func TestListLocalContainers_HidesParkedContainers(t *testing.T) {
+	h := newFakeHost()
+	h.addContainer("web", "nginx:2", true)
+	h.addContainer("web-sentinel-old", "nginx:1", false)
+	a := newTestAgent(t.TempDir(), h)
+
+	got, err := a.listLocalContainers(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].GetName() != "web" {
+		var names []string
+		for _, c := range got {
+			names = append(names, c.GetName())
+		}
+		t.Errorf("listed %v, want only web", names)
+	}
+}
+
+// A --rm container the agent stopped is being deleted by the daemon, even if
+// it is still visible a moment later. Renaming it back and starting it would
+// lose it; the rollback must recreate it instead.
+func TestRecreateContainer_StoppedAutoRemoveRecreatedNotRenamedBack(t *testing.T) {
+	h, old, a := recreateFixture(t)
+	old.autoRemove = true
+	h.lazyAutoRemove = true
+	h.startErr["nginx:2"] = errors.New("port is already allocated")
+
+	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err == nil {
+		t.Fatal("recreateContainer returned no error although start failed")
+	}
+	if got := h.names(); len(got) != 1 || got[0] != "web" {
+		t.Fatalf("containers on host = %v, want only web", got)
+	}
+	if c := h.byName("web"); !c.running || c.imageID != old.imageID {
+		t.Errorf("web running=%v on image %s, want running on the old image %s", c.running, c.imageID, old.imageID)
+	}
+}
+
+// When the broken replacement cannot be removed it still holds the real
+// name. Move it aside so the old container can have its name back.
+func TestRecreateContainer_UnremovableReplacementMovedAside(t *testing.T) {
+	h, old, a := recreateFixture(t)
+	h.startErr["nginx:2"] = errors.New("port is already allocated")
+	h.removeErr["c2"] = errors.New("device or resource busy") // the replacement
+
+	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err == nil {
+		t.Fatal("recreateContainer returned no error although start failed")
+	}
+	c := h.byName("web")
+	if c == nil || c.id != old.id || !c.running {
+		t.Fatalf("web = %+v, want the original container back and running", c)
+	}
+	if h.byName("web-sentinel-failed") == nil {
+		t.Errorf("replacement not moved aside; containers = %v", h.names())
 	}
 }

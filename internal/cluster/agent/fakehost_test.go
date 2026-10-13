@@ -25,12 +25,17 @@ type fakeHost struct {
 	registry   map[string]string         // pullable image ref -> image ID
 	nextID     int
 
-	createErr  map[string]error // by image ref of the container being created
-	startErr   map[string]error // by image ref of the container being started
-	stopErr    map[string]error // by container ID
-	renameErr  map[string]error // by requested new name
-	pullCalls  []string
-	startCalls []string
+	createErr map[string]error // by image ref of the container being created
+	startErr  map[string]error // by image ref of the container being started
+	stopErr   map[string]error // by container ID
+	renameErr map[string]error // by requested new name
+	removeErr map[string]error // by container ID
+
+	// lazyAutoRemove makes a stopped --rm container linger (as the daemon
+	// can take a moment to delete it): it is gone by the next start.
+	lazyAutoRemove bool
+	pullCalls      []string
+	startCalls     []string
 
 	// afterInspect, if set, runs after every inspect (outside the lock),
 	// so a test can change the host between the agent's steps.
@@ -52,6 +57,7 @@ type fakeContainer struct {
 	autoRemove bool
 	env        []string
 	labels     map[string]string
+	removing   bool // stopped --rm container the daemon is deleting
 }
 
 func newFakeHost() *fakeHost {
@@ -64,6 +70,7 @@ func newFakeHost() *fakeHost {
 		startErr:   map[string]error{},
 		stopErr:    map[string]error{},
 		renameErr:  map[string]error{},
+		removeErr:  map[string]error{},
 	}
 }
 
@@ -187,7 +194,11 @@ func (h *fakeHost) StopContainer(_ context.Context, id string, _ int) error {
 	}
 	c.running = false
 	if c.autoRemove {
-		delete(h.containers, id)
+		if h.lazyAutoRemove {
+			c.removing = true
+		} else {
+			delete(h.containers, id)
+		}
 	}
 	return nil
 }
@@ -198,6 +209,9 @@ func (h *fakeHost) RemoveContainer(_ context.Context, id string) error {
 	c, ok := h.containers[id]
 	if !ok {
 		return fmt.Errorf("No such container: %s", id)
+	}
+	if err := h.removeErr[id]; err != nil {
+		return err
 	}
 	if c.running {
 		h.removedRunning = append(h.removedRunning, c.name)
@@ -242,6 +256,11 @@ func (h *fakeHost) StartContainer(_ context.Context, id string) error {
 	h.startCalls = append(h.startCalls, id)
 	c, ok := h.containers[id]
 	if !ok {
+		return fmt.Errorf("No such container: %s", id)
+	}
+	if c.removing {
+		// The daemon finished deleting the stopped --rm container.
+		delete(h.containers, id)
 		return fmt.Errorf("No such container: %s", id)
 	}
 	if err := h.startErr[c.image]; err != nil {
