@@ -419,6 +419,16 @@ func (u *Updater) pruneRemoteNotifyStates(liveNames, listedHosts map[string]bool
 	}
 }
 
+// availableTarget is the image an "update available" notification names as
+// the new one: the newer tag for a version bump, otherwise the same tag (a
+// digest-only update re-pulls it).
+func availableTarget(imageRef string, check registry.CheckResult) string {
+	if len(check.NewerVersions) > 0 {
+		return replaceTag(imageRef, check.NewerVersions[0])
+	}
+	return imageRef
+}
+
 // filterIgnored drops ignored versions from check.NewerVersions and reports
 // whether nothing is left to act on. Updates without a version list are
 // checked against ignoreKey instead.
@@ -780,6 +790,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				Type:          notify.EventUpdateAvailable,
 				ContainerName: name,
 				OldImage:      imageRef,
+				NewImage:      availableTarget(imageRef, check),
 				OldDigest:     check.LocalDigest,
 				NewDigest:     check.RemoteDigest,
 				Timestamp:     u.clock.Now(),

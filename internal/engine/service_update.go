@@ -168,6 +168,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				Type:          notify.EventUpdateAvailable,
 				ContainerName: name,
 				OldImage:      imageRef,
+				NewImage:      availableTarget(imageRef, check),
 				OldDigest:     check.LocalDigest,
 				NewDigest:     check.RemoteDigest,
 				Timestamp:     u.clock.Now(),

@@ -397,6 +397,7 @@ func (u *Updater) announceRemoteUpdate(ctx context.Context, key, label string, c
 			Type:          notify.EventUpdateAvailable,
 			ContainerName: label,
 			OldImage:      c.Image,
+			NewImage:      availableTarget(c.Image, check),
 			OldDigest:     c.ImageDigest,
 			NewDigest:     check.RemoteDigest,
 			Timestamp:     now,
