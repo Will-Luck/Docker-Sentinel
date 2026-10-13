@@ -101,8 +101,9 @@ func runAgent(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		DataDir:            cfg.ClusterDataDir,
 		GracePeriodOffline: cfg.GracePeriodOffline,
 		DockerSock:         cfg.DockerSock,
-		RemoveVolumes:      cfg.RemoveVolumes(),
 		Version:            versionString(),
+		Store:              db,
+		Settings:           cfg,
 	}
 
 	a := agent.New(agentCfg, client, log.Logger)

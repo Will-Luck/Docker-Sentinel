@@ -35,9 +35,15 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/config"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
+	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // Supported agent features advertised during heartbeat and state reports.
@@ -80,9 +86,20 @@ type Config struct {
 	GracePeriodOffline time.Duration // time before autonomous mode activates
 	DockerSock         string        // Docker socket path (informational)
 	Version            string        // agent binary version
-	// RemoveVolumes starts updated containers on fresh anonymous volumes
-	// and removes the old ones (the agent host's SENTINEL_REMOVE_VOLUMES).
-	RemoveVolumes bool
+	// Store is the agent's own database, in its data directory. It holds
+	// the journal of the container swaps in progress, so an update the
+	// agent is killed in the middle of is finished or undone when it starts
+	// again.
+	Store *store.Store
+	// Settings are the update settings the agent follows (remove volumes,
+	// image cleanup, image backup, hooks, dependency awareness): its own
+	// environment, then what the hub sends for the ones its environment does
+	// not set (EnvSettings).
+	Settings *config.Config
+	// EnvSettings names the settings (by their hub setting key, such as
+	// "image_cleanup") that the agent's environment sets. The hub's values
+	// never replace them.
+	EnvSettings map[string]bool
 }
 
 // Agent connects to a Sentinel server and executes commands on the local
@@ -150,23 +167,56 @@ type Agent struct {
 	dedup    *dedup
 	policies *policyCache
 	journal  *journal
+
+	// settings is cfg.Settings (never nil). swaps runs every container
+	// replacement through the hub's journalled swap, journalled in
+	// cfg.Store; nil without a store, and updates are then refused.
+	settings *config.Config
+	swaps    *engine.HostSwaps
 }
 
 // New creates a new Agent. Call Run to start the main loop.
-func New(cfg Config, docker DockerAPI, log *slog.Logger) *Agent {
-	return &Agent{
+func New(cfg Config, d DockerAPI, log *slog.Logger) *Agent {
+	a := &Agent{
 		cfg:      cfg,
-		docker:   docker,
+		docker:   d,
 		log:      log,
 		certPath: filepath.Join(cfg.DataDir, "agent.pem"),
 		keyPath:  filepath.Join(cfg.DataDir, "agent-key.pem"),
 		caPath:   filepath.Join(cfg.DataDir, "ca.pem"),
 		dedup:    newDedup(1000),
 		policies: newPolicyCache(),
+		settings: cfg.Settings,
 
 		now:         time.Now,
 		certRenewed: make(chan struct{}, 1),
 	}
+	if a.settings == nil {
+		a.settings = config.Load()
+	}
+	a.useSwaps(d, cfg.Store, clock.Real{})
+	return a
+}
+
+// useSwaps sets up the journalled container swap on store, when there is a
+// store and the Docker client is a full docker.API (the real one is).
+func (a *Agent) useSwaps(d DockerAPI, s *store.Store, clk clock.Clock) {
+	full, ok := d.(docker.API)
+	if !ok || s == nil {
+		return
+	}
+	a.swaps = engine.NewHostSwaps(full, s, a.settings, &logging.Logger{Logger: a.log}, clk)
+}
+
+// recoverSwaps finishes or undoes the container swaps an earlier run of the
+// agent left half done (it was killed, or the host went down, part way
+// through an update). It runs at startup, before any update, and then every
+// minute for a swap whose recovery failed.
+func (a *Agent) recoverSwaps(ctx context.Context) {
+	if a.swaps == nil {
+		return
+	}
+	a.swaps.Recover(ctx)
 }
 
 // Run starts the agent. It handles enrollment (if not already enrolled),
@@ -183,6 +233,15 @@ func (a *Agent) Run(ctx context.Context) error {
 	// and remove what an earlier one left behind.
 	selfupdate.ReportOutcome(a.cfg.DataDir, a.log)
 	selfupdate.CleanupLeftovers(ctx, a.docker, a.log)
+
+	// Finish or undo any update an earlier run was killed in the middle
+	// of, before anything else can touch a container, then keep retrying
+	// one whose recovery fails.
+	if a.swaps != nil {
+		a.swaps.SetShutdownContext(ctx)
+		a.recoverSwaps(ctx)
+		go a.recoverLoop(ctx)
+	}
 
 	// Initialise the offline journal (loads any entries surviving a restart).
 	jrnl, err := newJournal(a.cfg.DataDir)
@@ -305,6 +364,24 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 			return ctx.Err()
 		case <-time.After(wait):
+		}
+	}
+}
+
+// swapRetryInterval is how often the agent retries the recovery of a swap
+// that could not be resolved.
+const swapRetryInterval = time.Minute
+
+// recoverLoop retries the recovery of unresolved swaps until ctx ends.
+func (a *Agent) recoverLoop(ctx context.Context) {
+	tick := time.NewTicker(swapRetryInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			a.recoverSwaps(ctx)
 		}
 	}
 }

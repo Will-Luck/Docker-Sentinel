@@ -265,6 +265,8 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 
 // beginUpdate claims name for an update, reporting false if another update
 // of it is already running. endUpdate releases it.
+// It also claims name in the swap journal's lock, which the journal's
+// recovery and the repair of network dependents respect.
 func (a *Agent) beginUpdate(name string) bool {
 	a.updatingMu.Lock()
 	defer a.updatingMu.Unlock()
@@ -274,21 +276,23 @@ func (a *Agent) beginUpdate(name string) bool {
 	if a.updating[name] {
 		return false
 	}
+	if a.swaps != nil && !a.swaps.Lock(name) {
+		return false
+	}
 	a.updating[name] = true
 	return true
-}
-
-// isUpdating reports whether an update of name is running.
-func (a *Agent) isUpdating(name string) bool {
-	a.updatingMu.Lock()
-	defer a.updatingMu.Unlock()
-	return a.updating[name]
 }
 
 func (a *Agent) endUpdate(name string) {
 	a.updatingMu.Lock()
 	defer a.updatingMu.Unlock()
+	if !a.updating[name] {
+		return
+	}
 	delete(a.updating, name)
+	if a.swaps != nil {
+		a.swaps.Unlock(name)
+	}
 }
 
 // handleContainerAction executes a stop, start, or restart action on a

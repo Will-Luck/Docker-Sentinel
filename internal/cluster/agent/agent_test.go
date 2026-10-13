@@ -17,6 +17,8 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/config"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,6 +28,10 @@ import (
 // mockDocker implements DockerAPI for agent tests. Intentionally minimal —
 // only the methods the agent actually exercises are wired up.
 type mockDocker struct {
+	// The calls the agent never makes are left to the nil interface (they
+	// panic); it makes mockDocker a docker.API, as the real client is.
+	docker.API
+
 	mu sync.Mutex
 
 	containers    []container.Summary
@@ -1111,6 +1117,7 @@ func newTestAgent(dataDir string, docker DockerAPI) *Agent {
 		log:      noopLogger(),
 		dedup:    newDedup(100),
 		policies: newPolicyCache(),
+		settings: config.NewTestConfig(),
 	}
 }
 

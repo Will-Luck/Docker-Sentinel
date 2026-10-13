@@ -13,7 +13,10 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // updateResult runs one UpdateContainer request through the agent's handler
@@ -49,7 +52,7 @@ func TestHandleUpdateContainer_EmptyTargetRepullsCurrentImage(t *testing.T) {
 	h := newFakeHost()
 	h.addContainer("web", "nginx:latest", true)
 	h.registry["nginx:latest"] = "sha256:nginx-latest-v2"
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	ur := updateResult(t, a, "web", "")
 
@@ -95,7 +98,7 @@ func recreateFixture(t *testing.T) (*fakeHost, *fakeContainer, *Agent) {
 	h := newFakeHost()
 	old := h.addContainer("web", "nginx:1", true)
 	h.registry["nginx:2"] = "sha256:nginx-2"
-	return h, old, newTestAgent(t.TempDir(), h)
+	return h, old, newSwapAgent(t, h)
 }
 
 func TestRecreateContainer_SuccessReplacesContainer(t *testing.T) {
@@ -212,8 +215,8 @@ func TestRecreateContainer_AutoRemoveSameTagRestoredOnOldImage(t *testing.T) {
 	old := h.addContainer("web", "nginx:latest", true)
 	old.autoRemove = true
 	h.registry["nginx:latest"] = "sha256:nginx-latest-v2"
-	h.startErr["nginx:latest"] = errors.New("exec format error")
-	a := newTestAgent(t.TempDir(), h)
+	h.startErrID["sha256:nginx-latest-v2"] = errors.New("exec format error")
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "web", ""); err == nil {
 		t.Fatal("recreateContainer returned no error although start failed")
@@ -234,7 +237,7 @@ func TestRecreateContainer_StoppedContainerStaysStopped(t *testing.T) {
 	h := newFakeHost()
 	h.addContainer("backup-job", "restic:1", false)
 	h.registry["restic:2"] = "sha256:restic-2"
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "backup-job", "restic:2"); err != nil {
 		t.Fatalf("recreateContainer: %v", err)
@@ -250,7 +253,7 @@ func TestRecreateContainer_StoppedContainerStaysStoppedOnRollback(t *testing.T) 
 	h.addContainer("backup-job", "restic:1", false)
 	h.registry["restic:2"] = "sha256:restic-2"
 	h.createErr["restic:2"] = errors.New("invalid mount config")
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "backup-job", "restic:2"); err == nil {
 		t.Fatal("recreateContainer returned no error although create failed")
@@ -263,7 +266,7 @@ func TestHandleUpdateContainer_StoppedContainerStaysStopped(t *testing.T) {
 	h := newFakeHost()
 	h.addContainer("maintenance", "nginx:1", false)
 	h.registry["nginx:2"] = "sha256:nginx-2"
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if ur := updateResult(t, a, "maintenance", "nginx:2"); ur.GetOutcome() != "success" {
 		t.Fatalf("outcome = %q (%s), want success", ur.GetOutcome(), ur.GetError())
@@ -286,7 +289,7 @@ func TestRecreateContainer_StartedDuringUpdateIsStoppedNotForceRemoved(t *testin
 			h.startByID(id)
 		}
 	}
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err != nil {
 		t.Fatalf("recreateContainer: %v", err)
@@ -306,7 +309,7 @@ func TestHandleUpdateContainer_SecondUpdateOfSameContainerFailsFast(t *testing.T
 	h.registry["nginx:2"] = "sha256:nginx-2"
 	h.pullGate = make(chan struct{})
 	h.pullWaiting = make(chan string, 4)
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	type res struct {
 		ur  *proto.UpdateResult
@@ -372,7 +375,7 @@ func TestRecreateContainer_KeepsEveryNetworksSettings(t *testing.T) {
 			},
 		}},
 	}
-	a := newTestAgent(t.TempDir(), mock)
+	a := newSwapAgent(t, mock)
 
 	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err != nil {
 		t.Fatalf("recreateContainer: %v", err)
@@ -451,29 +454,33 @@ func listedNames(t *testing.T, a *Agent) []string {
 	return names
 }
 
-// While its update runs, the parked copy is part of that update and is
-// not reported to the hub as a container of its own.
-func TestListLocalContainers_HidesParkedContainerDuringItsUpdate(t *testing.T) {
+// While a journalled swap of web is in progress (an update running, or one
+// interrupted and waiting for recovery), the copy it set aside is part of
+// that swap and is not reported to the hub as a container of its own.
+func TestListLocalContainers_HidesSetAsideContainerOfAJournalledSwap(t *testing.T) {
 	h := newFakeHost()
 	h.addContainer("web", "nginx:2", true)
-	h.addContainer("web-sentinel-old", "nginx:1", false)
-	a := newTestAgent(t.TempDir(), h)
-	a.beginUpdate("web")
-	defer a.endUpdate("web")
+	old := h.addContainer("web-sentinel-old", "nginx:1", false)
+	s := openTestStore(t)
+	if err := s.SaveSwap(store.SwapRecord{Name: "web", Kind: "update", OldID: old.id, OldRunning: true}); err != nil {
+		t.Fatal(err)
+	}
+	a := newSwapAgentOn(t, h, s, clock.Real{})
 
 	if got := listedNames(t, a); fmt.Sprint(got) != "[web]" {
-		t.Errorf("listed %v during the update of web, want [web]", got)
+		t.Errorf("listed %v during the swap of web, want [web]", got)
 	}
 }
 
-// A parked container with no update running is stranded (an interrupted
-// recreate, a reboot, a failed rename back): it may be the only copy of
-// the workload. Hiding it would make it vanish from Sentinel, and its
-// queued update would then be pruned. It is reported under its own name.
+// A container under the set-aside name that no journal record explains
+// (left by an agent from before the journal, or a container that just has
+// that name) may be the only copy of the workload. Hiding it would make it
+// vanish from Sentinel, and its queued update would then be pruned. It is
+// reported under its own name.
 func TestListLocalContainers_ReportsStrandedParkedContainer(t *testing.T) {
 	h := newFakeHost()
 	h.addContainer("web-sentinel-old", "nginx:1", false)
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if got := listedNames(t, a); fmt.Sprint(got) != "[web-sentinel-old]" {
 		t.Errorf("listed %v, want the stranded [web-sentinel-old]", got)
@@ -501,8 +508,11 @@ func TestRecreateContainer_StoppedAutoRemoveRecreatedNotRenamedBack(t *testing.T
 }
 
 // When the broken replacement cannot be removed it still holds the real
-// name. Move it aside so the old container can have its name back.
-func TestRecreateContainer_UnremovableReplacementMovedAside(t *testing.T) {
+// name, and the update's undo stops there (as the hub's does): the swap
+// stays in the journal and nothing else may change web. Once the daemon
+// lets go of the replacement, the agent's regular recovery removes it and
+// brings the original back, running.
+func TestRecreateContainer_UnremovableReplacementResolvedByRecovery(t *testing.T) {
 	h, old, a := recreateFixture(t)
 	h.startErr["nginx:2"] = errors.New("port is already allocated")
 	h.removeErr[fakeID(2)] = errors.New("device or resource busy") // the replacement
@@ -510,12 +520,18 @@ func TestRecreateContainer_UnremovableReplacementMovedAside(t *testing.T) {
 	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); err == nil {
 		t.Fatal("recreateContainer returned no error although start failed")
 	}
+	if _, err := a.recreateContainer(context.Background(), "web", "nginx:2"); !errors.Is(err, engine.ErrSwapPending) {
+		t.Fatalf("second update error = %v, want ErrSwapPending while the first is unresolved", err)
+	}
+
+	delete(h.removeErr, fakeID(2))
+	a.recoverSwaps(context.Background())
 	c := h.byName("web")
 	if c == nil || c.id != old.id || !c.running {
-		t.Fatalf("web = %+v, want the original container back and running", c)
+		t.Fatalf("web = %+v, want the original container back and running; containers = %v", c, h.names())
 	}
-	if h.byName("web-sentinel-failed") == nil {
-		t.Errorf("replacement not moved aside; containers = %v", h.names())
+	if got := h.names(); len(got) != 1 {
+		t.Errorf("containers on host = %v, want only web", got)
 	}
 }
 
@@ -528,7 +544,7 @@ func TestRecreateContainer_LeftoverKeptWhenRealContainerNeverRan(t *testing.T) {
 	leftover := h.addContainer("web-sentinel-old", "nginx:1", false)
 	leftover.started = true // the original, which ran until it was parked
 	h.registry["nginx:3"] = "sha256:nginx-3"
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	_, err := a.recreateContainer(context.Background(), "web", "nginx:3")
 	if err == nil || !strings.Contains(err.Error(), "web-sentinel-old") {

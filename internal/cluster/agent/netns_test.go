@@ -30,7 +30,7 @@ func netnsHost(t *testing.T, ref func(p *fakeContainer) string) (*fakeHost, *fak
 // it in the new provider's namespace, as the local engine does.
 func TestRecreateContainer_ProviderUpdateRecreatesItsConsumers(t *testing.T) {
 	h, oldProvider, oldConsumer := netnsHost(t, func(p *fakeContainer) string { return p.id })
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "vpn", "app:2"); err != nil {
 		t.Fatalf("recreateContainer: %v", err)
@@ -60,7 +60,7 @@ func TestRecreateContainer_ProviderUpdateRecreatesItsConsumers(t *testing.T) {
 // enough to join the new provider, and it keeps its own config.
 func TestRecreateContainer_ProviderUpdateRestartsConsumersThatUseItsName(t *testing.T) {
 	h, _, oldConsumer := netnsHost(t, func(*fakeContainer) string { return "vpn" })
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "vpn", "app:2"); err != nil {
 		t.Fatalf("recreateContainer: %v", err)
@@ -80,7 +80,7 @@ func TestRecreateContainer_ProviderUpdateRestartsConsumersThatUseItsName(t *test
 // A consumer whose own update is running is left to that update.
 func TestRecreateContainer_ProviderUpdateSkipsAConsumerBeingUpdated(t *testing.T) {
 	h, _, oldConsumer := netnsHost(t, func(p *fakeContainer) string { return p.id })
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 	a.beginUpdate("web")
 	defer a.endUpdate("web")
 
@@ -98,7 +98,7 @@ func TestRecreateContainer_ProviderUpdateSkipsAConsumerBeingUpdated(t *testing.T
 func TestRecreateContainer_RestoredProviderRestartsItsConsumers(t *testing.T) {
 	h, oldProvider, oldConsumer := netnsHost(t, func(p *fakeContainer) string { return p.id })
 	h.startErr["app:2"] = errors.New("port is already allocated")
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "vpn", "app:2"); err == nil {
 		t.Fatal("recreateContainer returned no error although start failed")

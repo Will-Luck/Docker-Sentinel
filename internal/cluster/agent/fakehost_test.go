@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"path"
@@ -11,9 +12,12 @@ import (
 	"sync"
 	"testing"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 )
 
 // fakeHost is a DockerAPI that keeps real container state, so recreate tests
@@ -27,7 +31,13 @@ import (
 // hostname gets its short ID, each anonymous volume gets a new volume, a
 // user network gets the short-ID alias, and network_mode container:X
 // refuses a hostname, ports or endpoints.
+//
+// It is a docker.API, as the agent's real client is, so the hub's swap code
+// can run on it; the calls the agent never makes are left to the embedded
+// nil interface and panic if made.
 type fakeHost struct {
+	docker.API
+
 	mu         sync.Mutex
 	containers map[string]*fakeContainer // by ID
 	images     map[string]string         // locally present image ref -> image ID
@@ -37,9 +47,12 @@ type fakeHost struct {
 
 	createErr map[string]error // by image ref of the container being created
 	startErr  map[string]error // by image ref of the container being started
-	stopErr   map[string]error // by container ID
-	renameErr map[string]error // by requested new name
-	removeErr map[string]error // by container ID
+	// startErrID fails the start of a container on the image with this ID,
+	// whatever reference it was created from.
+	startErrID map[string]error
+	stopErr    map[string]error // by container ID
+	renameErr  map[string]error // by requested new name
+	removeErr  map[string]error // by container ID
 
 	// lazyAutoRemove makes a stopped --rm container linger (as the daemon
 	// can take a moment to delete it): it is gone by the next start.
@@ -65,6 +78,98 @@ type fakeHost struct {
 	// imageConfigs holds each image's defaults, by image ID.
 	imageConfigs map[string]*container.Config
 	volumeSeq    int
+	// createHook, if set, runs once a create has taken effect.
+	createHook func()
+	// tags lists each TagImage call as "source target".
+	tags []string
+	// removedImages lists each image removed.
+	removedImages []string
+
+	// slowStop holds containers whose stop the daemon carries out late, as
+	// dockerd does when the agent is killed while it waits for a stop: the
+	// stop call takes the agent down (it panics with errCrash) and the stop
+	// only takes effect at finishSlowStops.
+	slowStop     map[string]bool
+	pendingStops []string
+
+	// Crash injection: once crashAfter Docker calls have been made, every
+	// later call panics with errCrash (crashPanics, the agent process dies)
+	// or returns errDaemonGone (the daemon went away). With crashLate the
+	// crash comes just after call crashAfter took effect, so its result is
+	// lost. 0 turns it off.
+	crashMu     sync.Mutex
+	crashAfter  int
+	crashPanics bool
+	crashLate   bool
+	calls       int
+}
+
+var (
+	errCrash      = errors.New("simulated crash")
+	errDaemonGone = errors.New("Cannot connect to the Docker daemon")
+)
+
+// tick counts a Docker call and applies crash injection before it.
+func (h *fakeHost) tick() error {
+	h.crashMu.Lock()
+	h.calls++
+	crashed := h.crashAfter > 0 && h.calls > h.crashAfter
+	panics := h.crashPanics
+	h.crashMu.Unlock()
+	if !crashed {
+		return nil
+	}
+	if panics {
+		panic(errCrash)
+	}
+	return errDaemonGone
+}
+
+// late crashes after the call that reached crashAfter took effect.
+func (h *fakeHost) late() {
+	h.crashMu.Lock()
+	hit := h.crashLate && h.crashAfter > 0 && h.calls == h.crashAfter
+	h.crashMu.Unlock()
+	if hit {
+		panic(errCrash)
+	}
+}
+
+// setCrash arms crash injection after n more Docker calls (0 disarms). late
+// makes the nth call take effect before the crash.
+func (h *fakeHost) setCrash(n int, panics, late bool) {
+	h.crashMu.Lock()
+	defer h.crashMu.Unlock()
+	h.calls = 0
+	h.crashAfter = n
+	h.crashPanics = panics || late
+	h.crashLate = late
+}
+
+func (h *fakeHost) callCount() int {
+	h.crashMu.Lock()
+	defer h.crashMu.Unlock()
+	return h.calls
+}
+
+// finishSlowStops carries out the stops slowStop held back: each container
+// still there stops, and a --rm one is deleted.
+func (h *fakeHost) finishSlowStops() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, id := range h.pendingStops {
+		if c, ok := h.containers[id]; ok {
+			c.running = false
+			if c.autoRemove {
+				delete(h.containers, id)
+			}
+		}
+	}
+	h.pendingStops = nil
+}
+
+func notFound(what string) error {
+	return cerrdefs.ErrNotFound.WithMessage("No such container: " + what)
 }
 
 type fakeContainer struct {
@@ -111,11 +216,13 @@ func newFakeHost() *fakeHost {
 		registry:   map[string]string{},
 		createErr:  map[string]error{},
 		startErr:   map[string]error{},
+		startErrID: map[string]error{},
 		stopErr:    map[string]error{},
 		renameErr:  map[string]error{},
 		removeErr:  map[string]error{},
 
 		imageConfigs: map[string]*container.Config{},
+		slowStop:     map[string]bool{},
 	}
 }
 
@@ -275,20 +382,39 @@ func (h *fakeHost) summaries(onlyRunning bool) []container.Summary {
 		if c.running {
 			state = container.StateRunning
 		}
-		out = append(out, container.Summary{ID: c.id, Names: []string{"/" + c.name}, Image: c.image, State: state, Labels: c.labels})
+		s := container.Summary{ID: c.id, Names: []string{"/" + c.name}, Image: c.image, ImageID: c.imageID, State: state, Labels: c.labels}
+		if c.hostCfg != nil {
+			s.HostConfig.NetworkMode = string(c.hostCfg.NetworkMode)
+		}
+		out = append(out, s)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
 func (h *fakeHost) ListContainers(context.Context) ([]container.Summary, error) {
+	if err := h.tick(); err != nil {
+		return nil, err
+	}
+	defer h.late()
 	return h.summaries(true), nil
 }
 
 func (h *fakeHost) ListAllContainers(context.Context) ([]container.Summary, error) {
+	if err := h.tick(); err != nil {
+		return nil, err
+	}
+	defer h.late()
 	return h.summaries(false), nil
 }
 
+// InspectContainer finds the container by ID, name or ID prefix, as the
+// daemon does.
 func (h *fakeHost) InspectContainer(_ context.Context, id string) (container.InspectResponse, error) {
+	if err := h.tick(); err != nil {
+		return container.InspectResponse{}, err
+	}
+	defer h.late()
 	if h.afterInspect != nil {
 		defer h.afterInspect(id)
 	}
@@ -296,7 +422,10 @@ func (h *fakeHost) InspectContainer(_ context.Context, id string) (container.Ins
 	defer h.mu.Unlock()
 	c, ok := h.containers[id]
 	if !ok {
-		return container.InspectResponse{}, fmt.Errorf("No such container: %s", id)
+		c = h.resolve(id)
+	}
+	if c == nil {
+		return container.InspectResponse{}, notFound(id)
 	}
 	cfg := &container.Config{Image: c.image, Env: slices.Clone(c.env), Labels: maps.Clone(c.labels)}
 	if c.cfg != nil {
@@ -323,11 +452,20 @@ func (h *fakeHost) InspectContainer(_ context.Context, id string) (container.Ins
 }
 
 func (h *fakeHost) StopContainer(_ context.Context, id string, _ int) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	c, ok := h.containers[id]
 	if !ok {
-		return fmt.Errorf("No such container: %s", id)
+		return notFound(id)
+	}
+	if h.slowStop[id] {
+		delete(h.slowStop, id)
+		h.pendingStops = append(h.pendingStops, id)
+		panic(errCrash)
 	}
 	if err := h.stopErr[id]; err != nil {
 		return err
@@ -346,25 +484,30 @@ func (h *fakeHost) StopContainer(_ context.Context, id string, _ int) error {
 	return nil
 }
 
-func (h *fakeHost) RemoveContainerWithVolumes(ctx context.Context, id string) error {
-	h.mu.Lock()
-	c, ok := h.containers[id]
-	name := ""
-	if ok {
-		name = c.name
-	}
-	h.mu.Unlock()
-	if err := h.RemoveContainer(ctx, id); err != nil {
+func (h *fakeHost) RemoveContainerWithVolumes(_ context.Context, id string) error {
+	if err := h.tick(); err != nil {
 		return err
 	}
+	defer h.late()
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	name := ""
+	if c, ok := h.containers[id]; ok {
+		name = c.name
+	}
+	if err := h.remove(id); err != nil {
+		return err
+	}
 	h.removedWithVolumes = append(h.removedWithVolumes, name)
-	h.mu.Unlock()
 	return nil
 }
 
 // ImageConfig returns an image's defaults, by reference or ID.
 func (h *fakeHost) ImageConfig(_ context.Context, ref string) (*container.Config, error) {
+	if err := h.tick(); err != nil {
+		return nil, err
+	}
+	defer h.late()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	id := ref
@@ -380,11 +523,20 @@ func (h *fakeHost) ImageConfig(_ context.Context, ref string) (*container.Config
 }
 
 func (h *fakeHost) RemoveContainer(_ context.Context, id string) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.remove(id)
+}
+
+// remove force-removes a container. Call it with h.mu held.
+func (h *fakeHost) remove(id string) error {
 	c, ok := h.containers[id]
 	if !ok {
-		return fmt.Errorf("No such container: %s", id)
+		return notFound(id)
 	}
 	if err := h.removeErr[id]; err != nil {
 		return err
@@ -397,6 +549,10 @@ func (h *fakeHost) RemoveContainer(_ context.Context, id string) error {
 }
 
 func (h *fakeHost) CreateContainer(_ context.Context, name string, cfg *container.Config, hostCfg *container.HostConfig, netCfg *network.NetworkingConfig) (string, error) {
+	if err := h.tick(); err != nil {
+		return "", err
+	}
+	defer h.late()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.byName(name) != nil {
@@ -425,11 +581,19 @@ func (h *fakeHost) CreateContainer(_ context.Context, name string, cfg *containe
 		imageID:    imageID,
 		autoRemove: hostCfg != nil && hostCfg.AutoRemove,
 		env:        append([]string(nil), cfg.Env...),
+		labels:     maps.Clone(cfg.Labels),
+	}
+	if hostCfg != nil {
+		hc := *hostCfg
+		c.hostCfg = &hc
 	}
 	if img, known := h.imageConfigs[imageID]; known {
 		h.materialise(c, cfg, hostCfg, netCfg, img)
 	}
 	h.containers[c.id] = c
+	if h.createHook != nil {
+		h.createHook()
+	}
 	return c.id, nil
 }
 
@@ -523,19 +687,31 @@ func (h *fakeHost) newVolume() string {
 }
 
 func (h *fakeHost) StartContainer(_ context.Context, id string) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.start(id)
+}
+
+// start starts a container. Call it with h.mu held.
+func (h *fakeHost) start(id string) error {
 	h.startCalls = append(h.startCalls, id)
 	c, ok := h.containers[id]
 	if !ok {
-		return fmt.Errorf("No such container: %s", id)
+		return notFound(id)
 	}
 	if c.removing {
 		// The daemon finished deleting the stopped --rm container.
 		delete(h.containers, id)
-		return fmt.Errorf("No such container: %s", id)
+		return notFound(id)
 	}
 	if err := h.startErr[c.image]; err != nil {
+		return err
+	}
+	if err := h.startErrID[c.imageID]; err != nil {
 		return err
 	}
 	if c.hostCfg != nil && c.hostCfg.NetworkMode.IsContainer() {
@@ -544,7 +720,7 @@ func (h *fakeHost) StartContainer(_ context.Context, id string) error {
 		ref := c.hostCfg.NetworkMode.ConnectedContainer()
 		p := h.resolve(ref)
 		if p == nil {
-			return fmt.Errorf("No such container: %s", ref)
+			return notFound(ref)
 		}
 		if !p.running {
 			return fmt.Errorf("cannot join network namespace of a non running container %s", ref)
@@ -578,22 +754,30 @@ func startedAt(started bool) string {
 	return "0001-01-01T00:00:00Z"
 }
 
-func (h *fakeHost) RestartContainer(ctx context.Context, id string) error {
+func (h *fakeHost) RestartContainer(_ context.Context, id string) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	if c, ok := h.containers[id]; ok {
 		c.running = false
 	}
 	h.restartCalls = append(h.restartCalls, id)
-	h.mu.Unlock()
-	return h.StartContainer(ctx, id)
+	return h.start(id)
 }
 
 func (h *fakeHost) RenameContainer(_ context.Context, id, newName string) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	c, ok := h.containers[id]
 	if !ok {
-		return fmt.Errorf("No such container: %s", id)
+		return notFound(id)
 	}
 	if err := h.renameErr[newName]; err != nil {
 		return err
@@ -607,7 +791,96 @@ func (h *fakeHost) RenameContainer(_ context.Context, id, newName string) error 
 
 func (h *fakeHost) NetworkConnect(context.Context, string, string) error { return nil }
 
+// UpdateRestartPolicy changes a container's restart policy.
+func (h *fakeHost) UpdateRestartPolicy(_ context.Context, id string, p container.RestartPolicy) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c, ok := h.containers[id]
+	if !ok {
+		return notFound(id)
+	}
+	if c.hostCfg == nil {
+		c.hostCfg = &container.HostConfig{}
+	}
+	c.hostCfg.RestartPolicy = p
+	return nil
+}
+
+// restartPolicy returns a container's restart policy.
+func (c *fakeContainer) restartPolicy() container.RestartPolicy {
+	if c.hostCfg == nil {
+		return container.RestartPolicy{}
+	}
+	return c.hostCfg.RestartPolicy
+}
+
+// ImageID resolves a local image reference or ID to the image ID.
+func (h *fakeHost) ImageID(_ context.Context, ref string) (string, error) {
+	if err := h.tick(); err != nil {
+		return "", err
+	}
+	defer h.late()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if id, ok := h.images[ref]; ok {
+		return id, nil
+	}
+	if h.imageIDs[ref] {
+		return ref, nil
+	}
+	return "", fmt.Errorf("No such image: %s", ref)
+}
+
+// TagImage points the tag target at the image src names.
+func (h *fakeHost) TagImage(_ context.Context, src, target string) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	id, ok := h.images[src]
+	if !ok && h.imageIDs[src] {
+		id, ok = src, true
+	}
+	if !ok {
+		return fmt.Errorf("No such image: %s", src)
+	}
+	h.images[target] = id
+	h.tags = append(h.tags, src+" "+target)
+	return nil
+}
+
+// RemoveImage removes an image by ID, with every tag naming it.
+func (h *fakeHost) RemoveImage(_ context.Context, id string) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.imageIDs[id] {
+		return fmt.Errorf("No such image: %s", id)
+	}
+	delete(h.imageIDs, id)
+	for ref, img := range h.images {
+		if img == id {
+			delete(h.images, ref)
+		}
+	}
+	h.removedImages = append(h.removedImages, id)
+	return nil
+}
+
 func (h *fakeHost) PullImage(_ context.Context, ref string) error {
+	if err := h.tick(); err != nil {
+		return err
+	}
+	defer h.late()
 	if h.pullGate != nil {
 		if h.pullWaiting != nil {
 			h.pullWaiting <- ref
@@ -630,6 +903,10 @@ func (h *fakeHost) PullImage(_ context.Context, ref string) error {
 }
 
 func (h *fakeHost) ImageDigest(_ context.Context, ref string) (string, error) {
+	if err := h.tick(); err != nil {
+		return "", err
+	}
+	defer h.late()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if id, ok := h.images[ref]; ok {

@@ -58,7 +58,7 @@ func hasEnv(env []string, e string) bool { return slices.Contains(env, e) }
 func TestRecreateContainer_TakesTheNewImagesDefaults(t *testing.T) {
 	h := fidelityHost(t)
 	old := webOnV1(t, h, nil)
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "web", "app:2"); err != nil {
 		t.Fatalf("recreateContainer: %v", err)
@@ -91,7 +91,7 @@ func TestRecreateContainer_CarriesAnonymousVolumes(t *testing.T) {
 	if vol == "" {
 		t.Fatal("test setup: no anonymous volume at /data")
 	}
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "web", "app:2"); err != nil {
 		t.Fatalf("recreateContainer: %v", err)
@@ -121,8 +121,8 @@ func TestRecreateContainer_FreshAnonymousVolumesWhenAsked(t *testing.T) {
 			}
 			old := h.addFromImage(t, "web", "app:1", &container.Config{Labels: labels}, &container.HostConfig{}, nil, true)
 			vol := old.volumeAt("/data")
-			a := newTestAgent(t.TempDir(), h)
-			a.cfg.RemoveVolumes = tc.setting
+			a := newSwapAgent(t, h)
+			a.settings.SetRemoveVolumes(tc.setting)
 
 			if _, err := a.recreateContainer(context.Background(), "web", "app:2"); err != nil {
 				t.Fatalf("recreateContainer: %v", err)
@@ -146,7 +146,7 @@ func TestRecreateContainer_ContainerNetworkMode(t *testing.T) {
 	h.addFromImage(t, "vpn", "app:1", nil, &container.HostConfig{}, nil, true)
 	old := h.addFromImage(t, "web", "app:1", nil, &container.HostConfig{NetworkMode: "container:vpn"}, nil, true)
 	old.cfg.Hostname = "vpn-host" // copied from the provider on start
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "web", "app:2"); err != nil {
 		t.Fatalf("recreateContainer of a container:vpn container: %v", err)
@@ -164,7 +164,7 @@ func TestRecreateContainer_ContainerNetworkMode(t *testing.T) {
 func TestRecreateContainer_DefaultBridgeAndUserNetwork(t *testing.T) {
 	h := fidelityHost(t)
 	old := webOnV1(t, h, &container.HostConfig{NetworkMode: "bridge"})
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "web", "app:2"); err != nil {
 		t.Fatalf("recreateContainer: %v", err)
@@ -185,7 +185,7 @@ func TestSelfUpdateContainer_TakesTheNewImagesDefaults(t *testing.T) {
 	old := h.addFromImage(t, "sentinel-agent", "app:1",
 		&container.Config{Labels: map[string]string{"sentinel.self": "true"}}, &container.HostConfig{}, nil, true)
 	vol := old.volumeAt("/data")
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.selfUpdateContainer(context.Background(), "sentinel-agent", "app:2"); err != nil {
 		t.Fatalf("selfUpdateContainer: %v", err)
@@ -208,7 +208,7 @@ func TestRecreateContainer_RestoredAutoRemoveContainerIsAsItWas(t *testing.T) {
 	old.autoRemove = true
 	vol := old.volumeAt("/data")
 	h.startErr["app:2"] = errors.New("port is already allocated")
-	a := newTestAgent(t.TempDir(), h)
+	a := newSwapAgent(t, h)
 
 	if _, err := a.recreateContainer(context.Background(), "web", "app:2"); err == nil {
 		t.Fatal("recreateContainer returned no error although start failed")
