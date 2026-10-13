@@ -667,24 +667,7 @@ func main() {
 	})
 
 	// NPM integration.
-	npmURL := cfg.NPMURL
-	npmEmail := cfg.NPMEmail
-	npmPassword := cfg.NPMPassword
-	if npmURL == "" {
-		if v, err := db.LoadSetting(store.SettingNPMURL); err == nil && v != "" {
-			npmURL = v
-		}
-	}
-	if npmEmail == "" {
-		if v, err := db.LoadSetting(store.SettingNPMEmail); err == nil && v != "" {
-			npmEmail = v
-		}
-	}
-	if npmPassword == "" {
-		if v, err := db.LoadSetting(store.SettingNPMPassword); err == nil && v != "" {
-			npmPassword = v
-		}
-	}
+	npmURL, npmEmail, npmPassword := npmSettings(cfg, db.LoadSetting)
 	npmEnabled, _ := db.LoadSetting(store.SettingNPMEnabled)
 	npmLocalAddrs := npm.DetectLocalAddrs(cfg.HostAddress)
 	log.Info("npm local address detection", "count", len(npmLocalAddrs), "sentinel_host", cfg.HostAddress)
@@ -692,8 +675,10 @@ func main() {
 	if npmURL != "" && npmEmail != "" && npmPassword != "" && npmEnabled == "true" {
 		npmClient := npm.NewClient(npmURL, npmEmail, npmPassword)
 		npmResolver := npm.NewResolver(npmClient, npmLocalAddrs, log.Logger)
-		go npmResolver.Run(ctx)
-		npmProvider = &npmAdapter{resolver: npmResolver}
+		// Its own cancel, so replacing or disabling the provider stops it syncing.
+		npmCtx, npmStop := context.WithCancel(ctx)
+		go npmResolver.Run(npmCtx)
+		npmProvider = &npmAdapter{resolver: npmResolver, stop: npmStop}
 		log.Info("npm integration enabled", "url", npmURL)
 	}
 
@@ -807,9 +792,8 @@ func main() {
 		}
 		// Factory to create NPM provider on demand (e.g. after first-time UI config).
 		webDeps.NPMInitFunc = func(initCtx context.Context) (web.NPMProvider, error) {
-			u, _ := db.LoadSetting(store.SettingNPMURL)
-			e, _ := db.LoadSetting(store.SettingNPMEmail)
-			p, _ := db.LoadSetting(store.SettingNPMPassword)
+			// The same rule as at startup: the environment, then saved settings.
+			u, e, p := npmSettings(cfg, db.LoadSetting)
 			if u == "" || e == "" || p == "" {
 				return nil, fmt.Errorf("save NPM URL, email, and password first")
 			}
