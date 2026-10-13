@@ -11,6 +11,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker/imageconfig"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
@@ -81,23 +82,24 @@ type Updater struct {
 	imgScanner       ImageScanner               // optional: trivy vulnerability scanner
 	scannerFactory   ScannerFactory             // optional: builds the scanner from the saved Trivy path
 	scanCache        scannerCache
-	imgVerifier      ImageVerifier      // optional: cosign signature verifier
-	scanMode         scanner.ScanMode   // disabled/pre-update/post-update
-	verifyMode       verify.Mode        // disabled/warn/enforce
-	severityThresh   scanner.Severity   // block threshold for pre-update scans
-	ghcrWg           sync.WaitGroup     // tracks background GHCR alternative checks
-	ghcrRunning      atomic.Bool        // prevents concurrent GHCR checks
-	ghcrCancel       context.CancelFunc // cancels the running GHCR check on shutdown
-	selfUpdateQueued atomic.Bool        // set when a self-update is queued during scan
-	selfUpdateKey    atomic.Value       // stores queue key (string) of the self-update entry
-	shutdownCtx      context.Context    // optional: ends every update and rollback on shutdown
-	watching         atomic.Bool        // the watch of restored containers is running (watchRestored)
-	watchers         sync.WaitGroup     // tracks that watch
+	imgVerifier      ImageVerifier        // optional: cosign signature verifier
+	scanMode         scanner.ScanMode     // disabled/pre-update/post-update
+	verifyMode       verify.Mode          // disabled/warn/enforce
+	severityThresh   scanner.Severity     // block threshold for pre-update scans
+	ghcrWg           sync.WaitGroup       // tracks background GHCR alternative checks
+	ghcrRunning      atomic.Bool          // prevents concurrent GHCR checks
+	ghcrCancel       context.CancelFunc   // cancels the running GHCR check on shutdown
+	selfUpdateQueued atomic.Bool          // set when a self-update is queued during scan
+	selfUpdateKey    atomic.Value         // stores queue key (string) of the self-update entry
+	shutdownCtx      context.Context      // optional: ends every update and rollback on shutdown
+	imageConfigs     *imageconfig.Fetcher // configs of images containers ran before (inheritedImages)
+	watching         atomic.Bool          // the watch of restored containers is running (watchRestored)
+	watchers         sync.WaitGroup       // tracks that watch
 }
 
 // NewUpdater creates an Updater with all dependencies.
 func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queue, cfg *config.Config, log *logging.Logger, clk clock.Clock, notifier *notify.Multi, bus *events.Bus) *Updater {
-	return &Updater{
+	u := &Updater{
 		docker:   d,
 		checker:  checker,
 		store:    s,
@@ -108,6 +110,9 @@ func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queu
 		notifier: notifier,
 		events:   bus,
 	}
+	local, _ := d.(docker.ImageConfigReader)
+	u.imageConfigs = imageconfig.New(local, u.registryCredentials)
+	return u
 }
 
 // SetSettingsReader attaches a settings reader for runtime filter checks.

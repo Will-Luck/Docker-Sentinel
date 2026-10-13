@@ -259,11 +259,15 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	// asks for fresh ones (the old ones are then removed with the old
 	// container, like `docker compose up -V`).
 	removeVolumes := docker.ContainerRemoveVolumes(inspect.Config.Labels) || u.isRemoveVolumes()
-	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{
+	opts := docker.RecreateOptions{
 		Image:                 targetImage,
 		OldImage:              u.imageDefaults(ctx, oldImageID, name),
 		FreshAnonymousVolumes: removeVolumes,
-	})
+	}
+	if opts.OldImage != nil {
+		opts.InheritedImages = u.inheritedImages(ctx, name, oldImage, oldImageID)
+	}
+	rc := docker.RecreateConfig(inspect, opts)
 	newConfig := rc.Config
 	u.writeBackHookLabels(name, newConfig)
 	addMaintenanceLabel(newConfig)

@@ -14,6 +14,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker/imageconfig"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
@@ -522,7 +523,9 @@ func newFakeUpdaterWith(t *testing.T, f *fakeDocker, s *store.Store, clk clock.C
 	cfg := config.NewTestConfig()
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetGracePeriod(time.Second)
-	return NewUpdater(f, registry.NewChecker(f, log), s, NewQueue(s, nil, nil), cfg, log, clk, notify.NewMulti(log), nil)
+	u := NewUpdater(f, registry.NewChecker(f, log), s, NewQueue(s, nil, nil), cfg, log, clk, notify.NewMulti(log), nil)
+	u.imageConfigs = imageconfig.NewLocal(f) // tests never reach a registry
+	return u
 }
 
 // stepClock is a clock that moves only with Advance. After fires once
