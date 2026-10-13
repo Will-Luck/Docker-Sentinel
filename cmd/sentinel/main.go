@@ -624,6 +624,8 @@ func main() {
 		ctrl:    clusterCtrl,
 		dataDir: cfg.ClusterDataDir,
 		envPort: os.Getenv("SENTINEL_CLUSTER_PORT"),
+		// Agents get the same logins as the hub's own pulls, cloud ones included.
+		registryAuth: checker.EncodedAuth,
 	}
 
 	// Env var takes precedence; fall back to DB setting.

@@ -18,7 +18,6 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
-	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -423,6 +422,9 @@ type clusterManager struct {
 	ctrl    *web.ClusterController // stable pointer in Dependencies
 	dataDir string                 // CA/cert storage directory
 	envPort string                 // SENTINEL_CLUSTER_PORT, when set
+	// registryAuth returns the X-Registry-Auth value for an image: the stored
+	// credential, or a cloud provider's (ECR, ACR, GCR).
+	registryAuth func(imageRef string) string
 }
 
 func (m *clusterManager) Start() error {
@@ -451,13 +453,7 @@ func (m *clusterManager) Start() error {
 	}
 	m.srv.SetHistoryRecorder(m.db)
 	// Updates carry the stored credentials of the target registry to the agent.
-	m.srv.SetRegistryAuth(func(ref string) string {
-		creds, err := m.db.GetRegistryCredentials()
-		if err != nil {
-			return ""
-		}
-		return registry.EncodedAuthFor(creds, ref)
-	})
+	m.srv.SetRegistryAuth(m.registryAuth)
 	prep := &remoteUpdatePrep{db: m.db, updater: m.updater, container: knownContainer(m.srv)}
 	m.srv.SetUpdatePrep(prep.prepare)
 	// Agents follow the hub's update settings (their own environment wins).
