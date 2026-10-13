@@ -439,6 +439,7 @@ func (a *Agent) runSession(ctx context.Context) error {
 		AgentVersion:      a.cfg.Version,
 		SupportedFeatures: supportedFeatures,
 		EngineId:          a.engineID,
+		HostName:          a.cfg.HostName,
 	})
 	if err != nil {
 		if status.Code(err) == codes.ResourceExhausted {

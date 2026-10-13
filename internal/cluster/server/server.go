@@ -82,6 +82,7 @@ type Server struct {
 	registry     *Registry
 	store        ClusterStore
 	history      HistoryRecorder
+	enrollMu     sync.Mutex // serialises the check and use of enrolment tokens
 	prep         atomic.Pointer[UpdatePrep]
 	settings     atomic.Pointer[func() *proto.SettingsSync]
 	bus          *events.Bus

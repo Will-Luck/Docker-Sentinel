@@ -213,3 +213,30 @@ func TestRegistry_SlowSaveDoesNotBlockOtherHosts(t *testing.T) {
 		t.Fatal("another host's state was blocked behind a slow save of h1")
 	}
 }
+
+// live-11: revoking a host cut its agent off only some 20 seconds later.
+// The agent's stream ends at once.
+func TestRevokeHost_DisconnectsTheAgentAtOnce(t *testing.T) {
+	srv, hostID, stream := connectAgent(t)
+	ended := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := stream.Recv(); err != nil {
+				ended <- err
+				return
+			}
+		}
+	}()
+	start := time.Now()
+	if err := srv.RevokeHost(hostID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ended:
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("the revoked agent's stream ended after %v", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the revoked agent's stream was still open 5s later")
+	}
+}

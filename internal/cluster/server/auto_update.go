@@ -31,9 +31,7 @@ func (s *Server) CheckAgentVersions(ctx context.Context, serverVersion string) {
 	s.mu.RUnlock()
 
 	for hostID, as := range agents {
-		as.mu.RLock()
-		agentVer := as.version
-		as.mu.RUnlock()
+		agentVer := s.agentVersion(hostID, as)
 
 		if !agentNeedsUpdate(agentVer, serverVersion) {
 			continue
@@ -184,9 +182,22 @@ func (s *Server) AgentVersions() map[string]string {
 
 	out := make(map[string]string, len(s.streams))
 	for id, as := range s.streams {
-		as.mu.RLock()
-		out[id] = as.version
-		as.mu.RUnlock()
+		out[id] = s.agentVersion(id, as)
 	}
 	return out
+}
+
+// agentVersion is the version of the agent on stream as: from its last
+// heartbeat, else from the state report it sent before opening the stream
+// (a hub that has just restarted hears that first).
+func (s *Server) agentVersion(hostID string, as *agentStream) string {
+	as.mu.RLock()
+	v := as.version
+	as.mu.RUnlock()
+	if v == "" {
+		if hs, ok := s.registry.Get(hostID); ok {
+			v = hs.Info.AgentVersion
+		}
+	}
+	return v
 }

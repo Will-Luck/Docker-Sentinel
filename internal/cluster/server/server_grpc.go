@@ -48,31 +48,8 @@ func (s *Server) Enroll(ctx context.Context, req *proto.EnrollRequest) (*proto.E
 		return nil, status.Error(codes.InvalidArgument, "token too short")
 	}
 	tokenID := req.Token[:8]
-
-	// Look up and validate the token.
-	tok, err := s.loadEnrollToken(tokenID)
-	if err != nil {
-		s.log.Warn("enrollment failed: token lookup", "tokenID", tokenID, "error", err)
-		return nil, status.Error(codes.PermissionDenied, "invalid enrollment token")
-	}
-	if tok.Used {
-		return nil, status.Error(codes.PermissionDenied, "token already used")
-	}
-	if time.Now().After(tok.ExpiresAt) {
-		return nil, status.Error(codes.PermissionDenied, "token expired")
-	}
-
-	// Verify HMAC: hash the provided plaintext and compare with stored hash.
-	expectedMAC := s.hmacToken(req.Token)
-	if !hmac.Equal(expectedMAC, tok.Hash) {
-		return nil, status.Error(codes.PermissionDenied, "invalid enrollment token")
-	}
-
-	// Mark token as used before issuing certs (prevent replay on error).
-	tok.Used = true
-	if err := s.saveEnrollToken(tok); err != nil {
-		s.log.Error("failed to mark token used", "tokenID", tokenID, "error", err)
-		return nil, status.Error(codes.Internal, "failed to consume token")
+	if err := s.consumeEnrollToken(ctx, tokenID, req); err != nil {
+		return nil, err
 	}
 
 	// Generate a unique host ID.
@@ -119,6 +96,48 @@ func (s *Server) Enroll(ctx context.Context, req *proto.EnrollRequest) (*proto.E
 		CaCert:    s.ca.CACertPEM(),
 		AgentCert: certPEM,
 	}, nil
+}
+
+// consumeEnrollToken checks the one-time enrolment token and marks it used,
+// in one step: concurrent enrolments with the same token cannot both pass
+// the check before either marks it. A refused token is logged with the
+// host that presented it.
+func (s *Server) consumeEnrollToken(ctx context.Context, tokenID string, req *proto.EnrollRequest) error {
+	s.enrollMu.Lock()
+	defer s.enrollMu.Unlock()
+
+	from := ""
+	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
+		from = p.Addr.String()
+	}
+	refuse := func(reason, msg string) error {
+		s.log.Warn("enrolment refused: "+reason, "tokenID", tokenID, "host_name", req.HostName, "from", from)
+		return status.Error(codes.PermissionDenied, msg)
+	}
+
+	tok, err := s.loadEnrollToken(tokenID)
+	if err != nil {
+		s.log.Warn("enrollment failed: token lookup", "tokenID", tokenID, "host_name", req.HostName, "from", from, "error", err)
+		return status.Error(codes.PermissionDenied, "invalid enrollment token")
+	}
+	// Verify HMAC: hash the provided plaintext and compare with stored hash.
+	if !hmac.Equal(s.hmacToken(req.Token), tok.Hash) {
+		return refuse("the token does not match", "invalid enrollment token")
+	}
+	if tok.Used {
+		return refuse("the token was already used; generate a new one for each agent", "token already used")
+	}
+	if time.Now().After(tok.ExpiresAt) {
+		return refuse("the token has expired", "token expired")
+	}
+
+	// Mark token as used before issuing certs (prevent replay on error).
+	tok.Used = true
+	if err := s.saveEnrollToken(tok); err != nil {
+		s.log.Error("failed to mark token used", "tokenID", tokenID, "error", err)
+		return status.Error(codes.Internal, "failed to consume token")
+	}
+	return nil
 }
 
 // GenerateEnrollToken creates a one-time enrollment token.
@@ -359,6 +378,9 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 
 	containers := protoToContainers(report.Containers)
 	s.registry.UpdateContainers(hostID, containers)
+	if err := s.registry.UpdateAgentInfo(hostID, report.AgentVersion, report.HostName); err != nil {
+		s.log.Warn("failed to store the agent's version", "hostID", hostID, "error", err)
+	}
 	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
 		s.log.Warn("failed to update last seen on state report", "hostID", hostID, "error", err)
 	}
@@ -436,6 +458,9 @@ func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heart
 	as.version = hb.AgentVersion
 	as.features = hb.SupportedFeatures
 	as.mu.Unlock()
+	if err := s.registry.UpdateAgentInfo(hostID, hb.AgentVersion, ""); err != nil {
+		s.log.Warn("failed to store the agent's version", "hostID", hostID, "error", err)
+	}
 
 	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
 		s.log.Warn("failed to update last seen on heartbeat", "hostID", hostID, "error", err)
