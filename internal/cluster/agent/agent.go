@@ -258,7 +258,14 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	// Report how a self-update that just replaced the previous agent ended,
 	// and remove what an earlier one left behind.
-	selfOutcome := selfupdate.ReportOutcome(a.cfg.DataDir, a.log)
+	// An agent a host restart left parked as "<name>-old-<ts>" puts itself back.
+	var selfOutcome *selfupdate.Outcome
+	if host, err := os.Hostname(); err == nil {
+		selfOutcome = selfupdate.Recover(ctx, a.docker, host, a.cfg.DataDir, a.log)
+	}
+	if selfOutcome == nil {
+		selfOutcome = selfupdate.ReportOutcome(a.cfg.DataDir, a.log)
+	}
 	selfupdate.CleanupLeftovers(ctx, a.docker, a.cfg.DataDir, a.log)
 
 	// Restore cached policies and the hub's last settings first: autonomous

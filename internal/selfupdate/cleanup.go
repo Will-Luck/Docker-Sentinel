@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 )
@@ -85,4 +86,22 @@ func CleanupLeftovers(ctx context.Context, d Docker, dataDir string, log Logger)
 		}
 		log.Info("removed a leftover container from an earlier self-update", "name", name)
 	}
+}
+
+func timeNow() time.Time { return time.Now().UTC() }
+
+// helperStaleAfter is how long a helper may sit in "created" (never started)
+// before it is taken for dead.
+const helperStaleAfter = 15 * time.Minute
+
+// helperDead reports whether a helper container can no longer be at work: it
+// has exited, or was created and never started for longer than helperStaleAfter.
+func helperDead(c container.Summary) bool {
+	switch c.State {
+	case container.StateExited:
+		return true
+	case container.StateCreated:
+		return c.Created > 0 && time.Since(time.Unix(c.Created, 0)) > helperStaleAfter
+	}
+	return false
 }

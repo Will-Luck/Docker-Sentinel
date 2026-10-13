@@ -297,3 +297,26 @@ func TestSelfUpdateWarnModeProceedsOnFailedVerification(t *testing.T) {
 		t.Errorf("update did not run: %v", ev.createCalls)
 	}
 }
+
+// A host restart between "stop old" and "start new" leaves this instance
+// parked under its -old- name with the replacement never started. At startup
+// it removes the replacement and takes its own name back.
+func TestStartupPutsAParkedInstanceBackAfterAnInterruptedSwap(t *testing.T) {
+	mock := newMockDocker()
+	self := map[string]string{"sentinel.self": "true"}
+	mock.containers = []container.Summary{
+		{ID: "abcdef1234567890", Names: []string{"/sentinel-old-1700000000"}, State: "running", Labels: self},
+		{ID: "new1", Names: []string{"/sentinel"}, State: "created", Labels: self},
+	}
+	su := NewSelfUpdater(mock, newTestSelfUpdater(mock).log)
+	su.hostname = func() (string, error) { return "abcdef123456", nil }
+
+	su.CleanupOldInstances(context.Background())
+
+	if !slices.Contains(mock.removeCalls, "new1") {
+		t.Errorf("replacement not removed: %v", mock.removeCalls)
+	}
+	if len(mock.renameCalls) != 1 || mock.renameCalls[0].id != "abcdef1234567890" || mock.renameCalls[0].newName != "sentinel" {
+		t.Errorf("renames = %+v, want this instance renamed back to sentinel", mock.renameCalls)
+	}
+}

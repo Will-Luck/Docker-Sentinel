@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/moby/moby/api/types/container"
 )
 
@@ -35,6 +36,12 @@ type Outcome struct {
 	OldImage      string    `json:"old_image"`
 	NewImage      string    `json:"new_image"`
 	FinishedAt    time.Time `json:"finished_at"`
+	// The fields below journal an in-progress swap, so an old instance that
+	// comes back after a restart can undo it (see Recover).
+	OldID      string                   `json:"old_id,omitempty"`
+	NewID      string                   `json:"new_id,omitempty"`
+	FinalName  string                   `json:"final_name,omitempty"`
+	OldRestart *container.RestartPolicy `json:"old_restart,omitempty"`
 }
 
 // Runner carries the helper's dependencies. Poll is how often the new
@@ -52,6 +59,7 @@ type Runner struct {
 func (r Runner) Run(ctx context.Context, spec Spec) Outcome {
 	if err := WriteOutcome(spec.OutcomeDir, Outcome{
 		Result: ResultInProgress, OldImage: spec.OldImage, NewImage: spec.NewImage, FinishedAt: time.Now().UTC(),
+		OldID: spec.OldID, NewID: spec.NewID, FinalName: spec.FinalName, OldRestart: &spec.OldRestart,
 	}); err != nil {
 		r.Log.Warn("self-update helper: could not mark the swap as in progress", "error", err)
 	}
@@ -75,11 +83,17 @@ func (r Runner) run(ctx context.Context, spec Spec) Outcome {
 		return Outcome{Result: ResultFailed, Error: ctx.Err().Error()}
 	}
 
+	// Between "stop old" and "start new" a daemon restart would leave no
+	// Sentinel: a container stopped by hand is not restarted by unless-stopped
+	// or on-failure. Under "always" it comes back with the daemon.
+	r.setRestart(ctx, spec.OldID, container.RestartPolicy{Name: container.RestartPolicyAlways})
+
 	r.Log.Info("self-update helper: stopping the old container", "id", spec.OldID)
 	if err := d.StopContainer(ctx, spec.OldID, spec.StopTimeout); err != nil {
 		r.Log.Error("self-update helper: could not stop the old container, giving up", "error", err)
 		r.removeNew(ctx, spec)
 		_ = d.RenameContainer(ctx, spec.OldID, spec.FinalName)
+		r.setRestart(ctx, spec.OldID, spec.OldRestart)
 		return Outcome{Result: ResultFailed, Error: fmt.Sprintf("stop the old container: %v", err)}
 	}
 
@@ -130,6 +144,17 @@ func (r Runner) settle(ctx context.Context, spec Spec, poll time.Duration) strin
 	}
 }
 
+// setRestart changes a container's restart policy, when the Docker client can.
+func (r Runner) setRestart(ctx context.Context, id string, p container.RestartPolicy) {
+	u, ok := r.Docker.(docker.RestartPolicyUpdater)
+	if !ok {
+		return
+	}
+	if err := u.UpdateRestartPolicy(ctx, id, p); err != nil {
+		r.Log.Warn("self-update helper: could not change the restart policy", "id", id, "policy", string(p.Name), "error", err)
+	}
+}
+
 // removeNew removes the not-yet-good replacement.
 func (r Runner) removeNew(ctx context.Context, spec Spec) {
 	_ = r.Docker.StopContainer(ctx, spec.NewID, 10)
@@ -148,6 +173,7 @@ func (r Runner) rollBack(ctx context.Context, spec Spec, reason string) Outcome 
 		r.Log.Error("self-update helper: could not start the old container again", "error", err)
 		return Outcome{Result: ResultFailed, Error: fmt.Sprintf("%s; and the old container would not start again: %v", reason, err)}
 	}
+	r.setRestart(ctx, spec.OldID, spec.OldRestart)
 	return Outcome{Result: ResultRolledBack, Error: reason}
 }
 

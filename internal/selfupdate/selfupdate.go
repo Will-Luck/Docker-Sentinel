@@ -85,6 +85,9 @@ type Spec struct {
 	// Settle is how long the new container must stay up (and healthy, if it
 	// has a health check) before the swap counts as done.
 	Settle time.Duration `json:"settle"`
+	// OldRestart is the old container's restart policy, which the helper
+	// changes during the swap and puts back if it rolls back.
+	OldRestart container.RestartPolicy `json:"old_restart"`
 	// StopTimeout is the grace period, in seconds, for stopping the old one.
 	StopTimeout int `json:"stop_timeout"`
 	// OutcomeDir is where the helper writes the outcome file ("" = nowhere).
@@ -255,6 +258,9 @@ func Begin(ctx context.Context, p Params) (*Handover, error) {
 		OldID: h.oldID, OldName: h.oldName, FinalName: p.Name, NewID: newID,
 		OldImage: p.Inspect.Config.Image, NewImage: p.Image,
 		Delay: p.Delay, Settle: p.Settle, StopTimeout: 30,
+	}
+	if p.Inspect.HostConfig != nil {
+		spec.OldRestart = p.Inspect.HostConfig.RestartPolicy
 	}
 	binds := []string{hostSocket + ":" + helperSocket}
 	if b, outDir, ok := dataBind(p.Inspect, p.DataDir); ok {

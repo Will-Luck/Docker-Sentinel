@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -26,10 +27,11 @@ type SelfUpdater struct {
 	docker docker.API
 	log    *logging.Logger
 
-	updater *Updater // supplies the signature-verification gate
-	socket  string   // Docker socket path in this container ("" = default)
-	dataDir string   // directory of the database, for the helper's outcome file
-	poll    time.Duration
+	updater  *Updater // supplies the signature-verification gate
+	socket   string   // Docker socket path in this container ("" = default)
+	dataDir  string   // directory of the database, for the helper's outcome file
+	poll     time.Duration
+	hostname func() (string, error) // test seam; os.Hostname when nil
 }
 
 // NewSelfUpdater creates a SelfUpdater.
@@ -207,8 +209,17 @@ func isPortConflict(err error) bool {
 	return strings.Contains(msg, "port is already allocated") || strings.Contains(msg, "address already in use")
 }
 
-// CleanupOldInstances removes containers left behind by earlier self-updates
-// (see selfupdate.CleanupLeftovers).
+// CleanupOldInstances is the self-update housekeeping done at startup. First,
+// an instance that a host restart left parked as "<name>-old-<ts>" puts itself
+// back (selfupdate.Recover); then containers left behind by earlier
+// self-updates are removed (selfupdate.CleanupLeftovers).
 func (su *SelfUpdater) CleanupOldInstances(ctx context.Context) {
+	hostname := os.Hostname
+	if su.hostname != nil {
+		hostname = su.hostname
+	}
+	if h, err := hostname(); err == nil {
+		selfupdate.Recover(ctx, su.docker, h, su.dataDir, su.log)
+	}
 	selfupdate.CleanupLeftovers(ctx, su.docker, su.dataDir, su.log)
 }

@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -284,7 +285,7 @@ func TestRunStopsOldBeforeStartingNewThenRemovesOld(t *testing.T) {
 	if out.Result != ResultSuccess {
 		t.Fatalf("outcome = %+v", out)
 	}
-	want := []string{"stop:old1", "start:new1", "remove:old1"}
+	want := []string{"policy:old1:always", "stop:old1", "start:new1", "remove:old1"}
 	if !slices.Equal(f.events, want) {
 		t.Errorf("order = %v, want %v (stop first frees the ports and the database lock)", f.events, want)
 	}
@@ -303,7 +304,7 @@ func TestRunRollsBackWhenNewContainerWillNotStart(t *testing.T) {
 	if out.Result != ResultRolledBack {
 		t.Fatalf("outcome = %+v", out)
 	}
-	if f.names["old1"] != "sentinel" || !slices.Contains(f.events, "remove:new1") || f.events[len(f.events)-1] != "start:old1" {
+	if f.names["old1"] != "sentinel" || !slices.Contains(f.events, "remove:new1") || !slices.Contains(f.events, "start:old1") {
 		t.Errorf("not restored: name=%q events=%v", f.names["old1"], f.events)
 	}
 }
@@ -546,4 +547,131 @@ func TestBeginRemovesAnExitedLeftoverHelper(t *testing.T) {
 	if !slices.Contains(f.events, "remove:stale") {
 		t.Errorf("leftover helper not removed: %v", f.events)
 	}
+}
+
+func (f *fake) UpdateRestartPolicy(_ context.Context, id string, p container.RestartPolicy) error {
+	f.note("policy:" + id + ":" + string(p.Name))
+	return nil
+}
+
+// Before the old container is stopped it is set to restart "always", so a
+// daemon restart between "stop old" and "start new" brings it back.
+func TestRunMakesTheOldContainerSurviveADaemonRestartWhileSwapping(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	s := spec()
+	s.OldRestart = container.RestartPolicy{Name: "unless-stopped"}
+	s.OutcomeDir = t.TempDir()
+
+	out := newRunner(f).Run(context.Background(), s)
+
+	if out.Result != ResultSuccess {
+		t.Fatalf("outcome = %+v", out)
+	}
+	if len(f.events) < 2 || f.events[0] != "policy:old1:always" || f.events[1] != "stop:old1" {
+		t.Errorf("events = %v, want the policy set to always before the stop", f.events)
+	}
+}
+
+func TestRunRestoresTheOldRestartPolicyOnRollback(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	f.startErr["new1"] = errors.New("boom")
+	s := spec()
+	s.OldRestart = container.RestartPolicy{Name: "unless-stopped"}
+
+	out := newRunner(f).Run(context.Background(), s)
+
+	if out.Result != ResultRolledBack {
+		t.Fatalf("outcome = %+v", out)
+	}
+	last := f.events[len(f.events)-1]
+	if last != "policy:old1:unless-stopped" {
+		t.Errorf("last event = %q, want the original policy restored (events %v)", last, f.events)
+	}
+}
+
+// The in-progress marker records what is needed to undo an interrupted swap.
+func TestRunJournalsTheSwapInTheInProgressMarker(t *testing.T) {
+	f := newFake()
+	f.state["old1"] = &container.State{Running: true}
+	s := spec()
+	s.OldRestart = container.RestartPolicy{Name: "on-failure", MaximumRetryCount: 3}
+	s.OutcomeDir = t.TempDir()
+	var marker Outcome
+	f.onStop = func() {
+		b, _ := os.ReadFile(filepath.Join(s.OutcomeDir, OutcomeFile))
+		_ = json.Unmarshal(b, &marker)
+	}
+	newRunner(f).Run(context.Background(), s)
+
+	if marker.Result != ResultInProgress || marker.OldID != "old1" || marker.NewID != "new1" || marker.FinalName != "sentinel" ||
+		marker.OldRestart == nil || marker.OldRestart.Name != "on-failure" || marker.OldRestart.MaximumRetryCount != 3 {
+		t.Errorf("marker = %+v", marker)
+	}
+}
+
+const selfHostname = "abcdef123456"
+
+func interruptedSwap() (*fake, string) {
+	f := newFake()
+	self := map[string]string{"sentinel.self": "true"}
+	f.list = []container.Summary{
+		{ID: selfHostname + "7890", Names: []string{"/sentinel-old-1700000000"}, State: "running", Labels: self},
+		{ID: "new1", Names: []string{"/sentinel"}, State: "created", Labels: self},
+	}
+	dir := ""
+	return f, dir
+}
+
+// A host that restarted between "stop old" and "start new" brings the old
+// instance back under its parked name, with the replacement never started. It
+// puts itself back: removes the replacement, takes its name and its policy.
+func TestRecoverPutsAParkedInstanceBackWhenTheReplacementNeverStarted(t *testing.T) {
+	for _, state := range []string{"created", "exited"} {
+		f, _ := interruptedSwap()
+		f.list[1].State = container.ContainerState(state)
+		dir := t.TempDir()
+		pol := container.RestartPolicy{Name: "unless-stopped"}
+		_ = WriteOutcome(dir, Outcome{Result: ResultInProgress, OldID: selfHostname + "7890", NewID: "new1", FinalName: "sentinel", OldRestart: &pol, FinishedAt: time.Now()})
+
+		out := Recover(context.Background(), f, selfHostname, dir, nopLog{})
+
+		if out == nil || out.Result != ResultRolledBack {
+			t.Fatalf("%s: outcome = %+v", state, out)
+		}
+		want := []string{"remove:new1", "rename:" + selfHostname + "7890>sentinel", "policy:" + selfHostname + "7890:unless-stopped"}
+		if !slices.Equal(f.events, want) {
+			t.Errorf("%s: events = %v, want %v", state, f.events, want)
+		}
+		if _, err := os.Stat(filepath.Join(dir, OutcomeFile)); err == nil {
+			t.Errorf("%s: the in-progress marker was left behind", state)
+		}
+	}
+}
+
+func TestRecoverLeavesAnUnfinishedSwapAloneWhenItIsStillRunning(t *testing.T) {
+	t.Run("helper active", func(t *testing.T) {
+		f, _ := interruptedSwap()
+		f.list = append(f.list, container.Summary{ID: "h", Names: []string{"/sentinel-self-update-helper"}, State: "running",
+			Labels: map[string]string{HelperLabel: "true"}, Created: time.Now().Unix()})
+		if out := Recover(context.Background(), f, selfHostname, "", nopLog{}); out != nil || len(f.events) != 0 {
+			t.Errorf("acted during a live swap: %+v %v", out, f.events)
+		}
+	})
+	t.Run("replacement running", func(t *testing.T) {
+		f, _ := interruptedSwap()
+		f.list[1].State = "running"
+		if out := Recover(context.Background(), f, selfHostname, "", nopLog{}); out != nil || len(f.events) != 0 {
+			t.Errorf("acted although the replacement runs: %+v %v", out, f.events)
+		}
+	})
+	t.Run("not parked", func(t *testing.T) {
+		f, _ := interruptedSwap()
+		f.list[0].Names = []string{"/sentinel"}
+		f.list = f.list[:1]
+		if out := Recover(context.Background(), f, selfHostname, "", nopLog{}); out != nil || len(f.events) != 0 {
+			t.Errorf("acted on an instance with its own name: %+v %v", out, f.events)
+		}
+	})
 }
