@@ -152,6 +152,24 @@ func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentServ
 func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentService_ChannelClient, req *proto.UpdateContainerRequest, requestID string) error {
 	name := req.GetContainerName()
 	targetImage := req.GetTargetImage()
+
+	// One update per container at a time. The hub retries an update it
+	// gave up waiting for, and two recreates of the same container would
+	// fight over its parked name.
+	if !a.beginUpdate(name) {
+		a.log.Warn("update already running for this container, refusing a second one", "name", name, "request_id", requestID)
+		return a.sendMsg(stream, &proto.AgentMessage{
+			Payload: &proto.AgentMessage_UpdateResult{UpdateResult: &proto.UpdateResult{
+				RequestId:     requestID,
+				ContainerName: name,
+				NewImage:      targetImage,
+				Outcome:       "failed",
+				Error:         fmt.Sprintf("an update of %s is already running on this host", name),
+			}},
+		})
+	}
+	defer a.endUpdate(name)
+
 	a.log.Info("updating container", "name", name, "target", targetImage, "request_id", requestID)
 
 	isSelf := a.isSelfContainer(ctx, name)
@@ -222,6 +240,27 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		},
 	}
 	return a.sendMsg(stream, msg)
+}
+
+// beginUpdate claims name for an update, reporting false if another update
+// of it is already running. endUpdate releases it.
+func (a *Agent) beginUpdate(name string) bool {
+	a.updatingMu.Lock()
+	defer a.updatingMu.Unlock()
+	if a.updating == nil {
+		a.updating = make(map[string]bool)
+	}
+	if a.updating[name] {
+		return false
+	}
+	a.updating[name] = true
+	return true
+}
+
+func (a *Agent) endUpdate(name string) {
+	a.updatingMu.Lock()
+	defer a.updatingMu.Unlock()
+	delete(a.updating, name)
 }
 
 // handleContainerAction executes a stop, start, or restart action on a

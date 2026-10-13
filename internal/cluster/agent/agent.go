@@ -122,6 +122,10 @@ type Agent struct {
 	// renewed certificate can wait for them.
 	inflight atomic.Int64
 
+	// updating holds the names of containers being updated (beginUpdate).
+	updatingMu sync.Mutex
+	updating   map[string]bool
+
 	dedup    *dedup
 	policies *policyCache
 	journal  *journal

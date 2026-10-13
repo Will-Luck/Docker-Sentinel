@@ -35,8 +35,10 @@ type fakeHost struct {
 	// afterInspect, if set, runs after every inspect (outside the lock),
 	// so a test can change the host between the agent's steps.
 	afterInspect func(id string)
-	// pullGate, if set, blocks every pull until it is closed.
-	pullGate chan struct{}
+	// pullGate, if set, blocks every pull until it is closed; pullWaiting
+	// (if set) gets the reference of each pull as it starts to wait.
+	pullGate    chan struct{}
+	pullWaiting chan string
 	// removedRunning lists containers removed while running: a forced
 	// remove that kills a live container.
 	removedRunning []string
@@ -273,6 +275,9 @@ func (h *fakeHost) NetworkConnect(context.Context, string, string) error { retur
 
 func (h *fakeHost) PullImage(_ context.Context, ref string) error {
 	if h.pullGate != nil {
+		if h.pullWaiting != nil {
+			h.pullWaiting <- ref
+		}
 		<-h.pullGate
 	}
 	h.mu.Lock()

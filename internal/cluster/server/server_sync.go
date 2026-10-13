@@ -37,7 +37,7 @@ var (
 // Non-blocking: if nobody is waiting (or the channel is already full), the
 // message is silently dropped (the fire-and-forget handlers already processed
 // the response above).
-func (s *Server) deliverPending(hostID, requestID string, msg *proto.AgentMessage) {
+func (s *Server) deliverPending(hostID, requestID string, msg *proto.AgentMessage) bool {
 	key := hostID + ":" + requestID
 	s.pendingMu.Lock()
 	pr, ok := s.pending[key]
@@ -54,6 +54,7 @@ func (s *Server) deliverPending(hostID, requestID string, msg *proto.AgentMessag
 		default:
 		}
 	}
+	return ok
 }
 
 // registerPending creates a response channel for the given host+request pair.

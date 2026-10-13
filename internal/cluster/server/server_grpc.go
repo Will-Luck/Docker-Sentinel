@@ -468,9 +468,43 @@ func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *
 		Timestamp:     time.Now(),
 	})
 
-	// Route to a pending synchronous caller if one is waiting.
-	if ur.RequestId != "" {
-		s.deliverPending(hostID, ur.RequestId, msg)
+	// Route to a pending synchronous caller if one is waiting. If the
+	// caller has given up (it timed out and recorded a failure), this is
+	// still what the agent did: keep it in the history.
+	if ur.RequestId != "" && !s.deliverPending(hostID, ur.RequestId, msg) {
+		s.recordLateUpdate(hostID, ur)
+	}
+}
+
+// recordLateUpdate writes an update result nobody was waiting for to the
+// history, under the key every remote history row uses.
+func (s *Server) recordLateUpdate(hostID string, ur *proto.UpdateResult) {
+	if s.history == nil {
+		return
+	}
+	var hostName string
+	if hs, ok := s.registry.Get(hostID); ok {
+		hostName = hs.Info.Name
+	}
+	var dur time.Duration
+	if ur.GetDuration() != nil {
+		dur = ur.GetDuration().AsDuration()
+	}
+	rec := store.UpdateRecord{
+		Timestamp:     time.Now(),
+		ContainerName: store.ScopedKey(hostID, ur.ContainerName),
+		OldImage:      ur.OldImage,
+		OldDigest:     ur.OldDigest,
+		NewImage:      ur.NewImage,
+		NewDigest:     ur.NewDigest,
+		Outcome:       ur.Outcome,
+		Error:         ur.Error,
+		Duration:      dur,
+		HostID:        hostID,
+		HostName:      hostName,
+	}
+	if err := s.history.RecordUpdate(rec); err != nil {
+		s.log.Warn("failed to record late update result", "hostID", hostID, "container", ur.ContainerName, "error", err)
 	}
 }
 

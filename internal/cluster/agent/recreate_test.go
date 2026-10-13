@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/container"
 
@@ -15,18 +17,26 @@ import (
 // and returns the UpdateResult it sent back.
 func updateResult(t *testing.T, a *Agent, name, target string) *proto.UpdateResult {
 	t.Helper()
+	ur, err := runUpdate(a, name, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ur
+}
+
+// runUpdate is updateResult for use off the test goroutine.
+func runUpdate(a *Agent, name, target string) (*proto.UpdateResult, error) {
 	st := &recStream{}
 	req := &proto.UpdateContainerRequest{ContainerName: name, TargetImage: target}
 	if err := a.handleUpdateContainer(context.Background(), st, req, "req-1"); err != nil {
-		t.Fatalf("handleUpdateContainer: %v", err)
+		return nil, fmt.Errorf("handleUpdateContainer: %w", err)
 	}
 	for _, m := range st.messages() {
 		if ur := m.GetUpdateResult(); ur != nil {
-			return ur
+			return ur, nil
 		}
 	}
-	t.Fatal("agent sent no UpdateResult")
-	return nil
+	return nil, errors.New("agent sent no UpdateResult")
 }
 
 // A digest-only update (same tag, new image behind it) has no newer tag to
@@ -280,6 +290,54 @@ func TestRecreateContainer_StartedDuringUpdateIsStoppedNotForceRemoved(t *testin
 	}
 	if len(h.removedRunning) != 0 {
 		t.Errorf("force-removed running containers %v", h.removedRunning)
+	}
+	h.requireOnly(t, "web", "nginx:2", true)
+}
+
+// When the hub gives up on a slow update and retries, the agent must not
+// run a second recreate of the same container alongside the first: the two
+// would fight over the parked name and can leave the live container parked.
+func TestHandleUpdateContainer_SecondUpdateOfSameContainerFailsFast(t *testing.T) {
+	h := newFakeHost()
+	h.addContainer("web", "nginx:1", true)
+	h.registry["nginx:2"] = "sha256:nginx-2"
+	h.pullGate = make(chan struct{})
+	h.pullWaiting = make(chan string, 4)
+	a := newTestAgent(t.TempDir(), h)
+
+	type res struct {
+		ur  *proto.UpdateResult
+		err error
+	}
+	run := func(out chan<- res) {
+		ur, err := runUpdate(a, "web", "nginx:2")
+		out <- res{ur, err}
+	}
+	first := make(chan res, 1)
+	go run(first)
+	<-h.pullWaiting // the first update is now pulling
+
+	second := make(chan res, 1)
+	go run(second)
+	select {
+	case r := <-second:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if ur := r.ur; ur.GetOutcome() == "success" || !strings.Contains(ur.GetError(), "already running") {
+			t.Errorf("second update: outcome %q, error %q; want a failure saying an update is already running", ur.GetOutcome(), ur.GetError())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second update of the same container did not answer while the first was still running")
+	}
+
+	close(h.pullGate)
+	r := <-first
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if r.ur.GetOutcome() != "success" {
+		t.Fatalf("first update: %q (%s)", r.ur.GetOutcome(), r.ur.GetError())
 	}
 	h.requireOnly(t, "web", "nginx:2", true)
 }
