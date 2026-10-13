@@ -71,8 +71,8 @@ func TestOIDCErrorTexts(t *testing.T) {
 	if got := oidcLoginErrorSlug(auth.ErrOIDCAccountExists); got != "sso_account_exists" {
 		t.Errorf("slug = %q", got)
 	}
-	if !strings.Contains(loginErrorText("sso_account_exists"), "already exists") {
-		t.Errorf("clash text does not say the account exists")
+	if loginErrorText("sso_account_exists") != auth.ErrOIDCAccountExists.Error() || !strings.Contains(loginErrorText("sso_account_exists"), "Ask an admin to allow linking") {
+		t.Errorf("clash text is not the how-to-link message")
 	}
 	if loginErrorText("sso_failed") == "sso_failed" {
 		t.Errorf("sso_failed shown as a raw slug")
@@ -102,5 +102,67 @@ func TestAccountPage_ShowsLinkButtonOnlyWhenUnlinked(t *testing.T) {
 	}
 	if o := out(true); strings.Contains(o, "sso-link-btn") {
 		t.Errorf("linked account should not offer the link button")
+	}
+}
+
+func TestApiOIDCAllowLink_AndListShowsPending(t *testing.T) {
+	srv := newMFATestServer()
+	admin := createTestUser(srv.deps.Auth, "root", "Str0ngP@ssword!")
+	other := createTestUser(srv.deps.Auth, "bob", "Str0ngP@ssword!")
+
+	r := reqWithAuthContext(httptest.NewRequest(http.MethodPost, "/x", nil), &admin)
+	r.SetPathValue("id", other.ID)
+	w := httptest.NewRecorder()
+	srv.apiOIDCAllowLink(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	srv.apiListUsers(w, reqWithAuthContext(httptest.NewRequest(http.MethodGet, "/api/auth/users", nil), &admin))
+	var rows []map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	pending := 0
+	for _, row := range rows {
+		if row["username"] == "bob" && row["sso_link_until"] != nil {
+			pending++
+		}
+		if row["username"] == "root" && row["sso_link_until"] != nil {
+			t.Errorf("a user with no window shows one")
+		}
+	}
+	if pending != 1 {
+		t.Errorf("pending window not shown on the user's row: %s", w.Body.String())
+	}
+
+	r = reqWithAuthContext(httptest.NewRequest(http.MethodPost, "/x", nil), &admin)
+	r.SetPathValue("id", "no-such-user")
+	w = httptest.NewRecorder()
+	srv.apiOIDCAllowLink(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("unknown user: status %d, want 400", w.Code)
+	}
+}
+
+func TestOIDCSettings_LinkExistingSavedWinsOverEnv(t *testing.T) {
+	ss := newMockSettingsStore()
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: &mockConfigReader{values: map[string]string{"SENTINEL_OIDC_LINK_EXISTING": "true"}}, Log: nopLogger()}}
+	read := func() map[string]any {
+		w := httptest.NewRecorder()
+		srv.apiGetOIDCSettings(w, httptest.NewRequest(http.MethodGet, "/api/settings/oidc", nil))
+		var got map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		return got
+	}
+	if got := read(); got["link_existing"] != true || got["link_existing_source"] != "env" {
+		t.Errorf("from env: %v", got)
+	}
+	ss.data["oidc_link_existing"] = "false"
+	if got := read(); got["link_existing"] != false || got["link_existing_source"] != "saved" {
+		t.Errorf("saved false: %v", got)
+	}
+	w := httptest.NewRecorder()
+	srv.apiSaveOIDCSettings(w, httptest.NewRequest(http.MethodPost, "/api/settings/oidc", strings.NewReader(`{"enabled":false,"link_existing":true}`)))
+	if w.Code != http.StatusOK || ss.data["oidc_link_existing"] != "true" {
+		t.Errorf("save: status %d, stored %q", w.Code, ss.data["oidc_link_existing"])
 	}
 }

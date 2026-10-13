@@ -170,6 +170,12 @@ func main() {
 	if cfg.WebAuthnEnabled() {
 		webAuthnCreds = db
 	}
+	linkExisting := func() bool {
+		if v := loadSettingStr(db, "oidc_link_existing"); v != "" {
+			return v == "true" // a value saved in Settings wins over the environment
+		}
+		return cfg.OIDCLinkExisting
+	}
 	authSvc := auth.NewService(auth.ServiceConfig{
 		Users:          db,
 		Sessions:       db,
@@ -183,6 +189,7 @@ func main() {
 		SessionExpiry:  cfg.SessionExpiry,
 		AuthEnabledEnv: cfg.AuthEnabled,
 	})
+	authSvc.LinkExisting = linkExisting
 
 	// Check if instance has been configured via the wizard.
 	instanceRole, _ := db.LoadSetting("instance_role")

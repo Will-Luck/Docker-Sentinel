@@ -298,7 +298,7 @@ func PKCEChallengeFromVerifier(verifier string) string {
 
 // ErrOIDCAccountExists is returned when an SSO identity has the same
 // username as an account it is not bound to. It is refused, never merged.
-var ErrOIDCAccountExists = errors.New("an account with this username already exists and is not linked to this single sign-on identity")
+var ErrOIDCAccountExists = errors.New("This account is not linked to your sign-in provider yet. Ask an admin to allow linking, or sign in with your password and link it from your Account page.")
 
 // ErrOIDCIdentityTaken is returned when an SSO identity is already bound to
 // another account.
@@ -319,20 +319,72 @@ func (s *Service) findByOIDC(issuer, subject string) (*User, error) {
 	return nil, nil
 }
 
-// canLinkLegacy reports whether an unbound account may be linked to an SSO
-// identity by username, once. That is only an account an older Sentinel
-// created for SSO: no password a person chose, no 2FA and no passkey.
-func (s *Service) canLinkLegacy(u *User) bool {
-	if u.OIDCSubject != "" || u.LocalPassword || u.TOTPEnabled {
-		return false
+// oidcLinkWindow is how long an admin's "allow the next SSO login to link"
+// stays open.
+const oidcLinkWindow = 24 * time.Hour
+
+// AllowOIDCLink lets the next SSO login whose username matches this account
+// link to it, within 24 hours, once.
+func (s *Service) AllowOIDCLink(userID string) error {
+	user, err := s.Users.GetUser(userID)
+	if err != nil || user == nil {
+		return fmt.Errorf("user not found")
 	}
-	return !s.HasPasskeys(u.ID)
+	if user.OIDCSubject != "" {
+		return fmt.Errorf("this account is already linked")
+	}
+	user.OIDCLinkUntil = time.Now().UTC().Add(oidcLinkWindow)
+	user.UpdatedAt = time.Now().UTC()
+	if err := s.Users.UpdateUser(*user); err != nil {
+		return err
+	}
+	s.audit("Allowed the next single sign-on login to link to account " + user.Username)
+	return nil
+}
+
+func (s *Service) audit(msg string) {
+	if s.AuditHook != nil {
+		s.AuditHook(msg)
+	}
+}
+
+// mayLinkByUsername reports whether an unlinked account may be linked to the
+// SSO identity logging in as its username: only inside an admin's window, or
+// with the opt-in on, and never an admin account through the opt-in.
+func (s *Service) mayLinkByUsername(u *User) (bool, string) {
+	if u.OIDCSubject != "" {
+		return false, ""
+	}
+	if time.Now().Before(u.OIDCLinkUntil) {
+		return true, "an administrator allowed it"
+	}
+	if s.LinkExisting != nil && s.LinkExisting() && !s.isAdminRole(u.RoleID) {
+		return true, "linking existing accounts is switched on"
+	}
+	return false, ""
+}
+
+// isAdminRole reports whether a role can change settings.
+func (s *Service) isAdminRole(roleID string) bool {
+	if roleID == RoleAdminID {
+		return true
+	}
+	role, err := s.Roles.GetRole(roleID)
+	if err != nil || role == nil {
+		return true // unknown role: treat as privileged
+	}
+	for _, p := range role.Permissions {
+		if p == PermSettingsModify {
+			return true
+		}
+	}
+	return false
 }
 
 // LoginWithOIDC finds or creates a user from OIDC claims and creates a session.
 // Accounts are matched on the identity provider's issuer and subject, never
-// on the username. A username clash with an unbound account is refused, except
-// for the one-off link of an account an earlier version created for SSO.
+// on the username. A username clash with an unlinked account is refused,
+// unless an admin allowed the link or the opt-in covers that account.
 // When groupMappings is non-empty, the user's role is resolved from their IdP
 // groups on every login, keeping Sentinel roles in sync with the provider.
 func (s *Service) LoginWithOIDC(ctx context.Context, info *OIDCUserInfo, autoCreate bool, defaultRole string, groupMappings map[string]string, ip, userAgent string) (*Session, error) {
@@ -349,16 +401,20 @@ func (s *Service) LoginWithOIDC(ctx context.Context, info *OIDCUserInfo, autoCre
 	if user == nil {
 		existing, _ := s.Users.GetUserByUsername(info.Username)
 		switch {
-		case existing != nil && s.canLinkLegacy(existing):
+		case existing != nil:
+			ok, why := s.mayLinkByUsername(existing)
+			if !ok {
+				return nil, ErrOIDCAccountExists
+			}
 			existing.OIDCIssuer = info.Issuer
 			existing.OIDCSubject = info.Subject
+			existing.OIDCLinkUntil = time.Time{}
 			existing.UpdatedAt = time.Now().UTC()
 			if err := s.Users.UpdateUser(*existing); err != nil {
 				return nil, fmt.Errorf("link SSO identity: %w", err)
 			}
+			s.audit("Linked account " + existing.Username + " to a single sign-on identity (" + why + ")")
 			user = existing
-		case existing != nil:
-			return nil, ErrOIDCAccountExists
 		case !autoCreate:
 			return nil, fmt.Errorf("user %q not found and auto-create is disabled", info.Username)
 		default:
@@ -454,12 +510,16 @@ func (s *Service) LinkOIDC(userID string, info *OIDCUserInfo) error {
 	}
 	user.OIDCIssuer = info.Issuer
 	user.OIDCSubject = info.Subject
+	user.OIDCLinkUntil = time.Time{}
 	user.UpdatedAt = time.Now().UTC()
-	return s.Users.UpdateUser(*user)
+	if err := s.Users.UpdateUser(*user); err != nil {
+		return err
+	}
+	s.audit("Account " + user.Username + " linked itself to a single sign-on identity")
+	return nil
 }
 
-// UnlinkOIDC removes an account's SSO binding. The account is then treated as
-// a local one, so it is never linked again by username.
+// UnlinkOIDC removes an account's SSO binding.
 func (s *Service) UnlinkOIDC(userID string) error {
 	user, err := s.Users.GetUser(userID)
 	if err != nil || user == nil {
@@ -467,7 +527,7 @@ func (s *Service) UnlinkOIDC(userID string) error {
 	}
 	user.OIDCIssuer = ""
 	user.OIDCSubject = ""
-	user.LocalPassword = true
+	user.OIDCLinkUntil = time.Time{}
 	user.UpdatedAt = time.Now().UTC()
 	return s.Users.UpdateUser(*user)
 }

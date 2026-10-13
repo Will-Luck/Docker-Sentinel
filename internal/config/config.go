@@ -76,6 +76,10 @@ type Config struct {
 	// separated) whose X-Forwarded-For is believed when working out the
 	// client address for login rate limiting. Empty trusts none.
 	TrustedProxies string
+	// OIDCLinkExisting lets an unlinked non-admin account be linked to a
+	// single sign-on identity by username (SENTINEL_OIDC_LINK_EXISTING). A
+	// value saved in Settings replaces it.
+	OIDCLinkExisting bool
 
 	// envProblems holds environment values that were set but could not be
 	// parsed; the default was used instead. See EnvProblems.
@@ -173,6 +177,7 @@ func Load() *Config {
 
 		HistoryRetentionDays: r.int("SENTINEL_HISTORY_RETENTION_DAYS", 90),
 		TrustedProxies:       envStr("SENTINEL_TRUSTED_PROXIES", ""),
+		OIDCLinkExisting:     r.bool("SENTINEL_OIDC_LINK_EXISTING", false),
 	}
 	c.envProblems = r.problems
 	return c
@@ -288,6 +293,7 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_REMOVE_VOLUMES":         fmt.Sprintf("%t", rv),
 		"SENTINEL_SCAN_CONCURRENCY":       fmt.Sprintf("%d", sc),
 		"SENTINEL_MAINTENANCE_WINDOW":     mw,
+		"SENTINEL_OIDC_LINK_EXISTING":     fmt.Sprintf("%t", c.OIDCLinkExisting),
 		"SENTINEL_HISTORY_RETENTION_DAYS": fmt.Sprintf("%d", c.HistoryRetentionDays),
 
 		// NPM

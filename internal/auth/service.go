@@ -81,6 +81,13 @@ type Service struct {
 	SessionExpiry  time.Duration
 	AuthEnabledEnv *bool // nil = use DB setting; non-nil = override
 
+	// AuditHook, when set, receives a line for security-relevant account
+	// events (allowing and making an SSO link).
+	AuditHook func(msg string)
+	// LinkExisting, when set and true, lets an unlinked non-admin account be
+	// linked to an SSO identity by username (SENTINEL_OIDC_LINK_EXISTING).
+	LinkExisting func() bool
+
 	rateLimiter *RateLimiter
 
 	totpMu       sync.Mutex
@@ -206,12 +213,10 @@ func (s *Service) Login(ctx context.Context, username, password, ip, userAgent s
 		return nil, nil, ErrInvalidCredentials
 	}
 
-	// Success: clear failure counters. A password login proves the account
-	// has a password a person holds, so SSO can no longer link it by username.
+	// Success: clear failure counters.
 	user.FailedLogins = 0
 	user.Locked = false
 	user.LockedUntil = time.Time{}
-	user.LocalPassword = true
 	_ = s.Users.UpdateUser(*user)
 	// With 2FA on, the password alone does not clear the IP's throttle: that
 	// would give a password holder a fresh set of code guesses each time.

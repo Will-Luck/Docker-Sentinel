@@ -318,6 +318,24 @@ function loadUsers() {
                 delBtn.addEventListener("click", function() {
                     deleteUser(this.getAttribute("data-user-id"));
                 });
+                if (u.sso_link_until) {
+                    var pend = document.createElement("span");
+                    pend.className = "badge badge-info";
+                    pend.style.marginRight = "6px";
+                    pend.textContent = "SSO link allowed until " + new Date(u.sso_link_until).toLocaleString();
+                    tdActions.appendChild(pend);
+                } else if (!u.sso_linked) {
+                    var allowBtn = document.createElement("button");
+                    allowBtn.className = "btn";
+                    allowBtn.style.marginRight = "6px";
+                    allowBtn.textContent = "Allow SSO link";
+                    allowBtn.title = "The next single sign-on login with this username links to the account (once, within 24 hours)";
+                    allowBtn.setAttribute("data-user-id", u.id);
+                    allowBtn.addEventListener("click", function() {
+                        allowSSOLink(this.getAttribute("data-user-id"));
+                    });
+                    tdActions.appendChild(allowBtn);
+                }
                 if (u.sso_linked) {
                     var unlinkBtn = document.createElement("button");
                     unlinkBtn.className = "btn";
@@ -357,6 +375,17 @@ function startSSOLink() {
             if (btn) btn.disabled = false;
             showToast("Network error", "error");
         });
+}
+
+function allowSSOLink(userID) {
+    authFetch("/api/auth/users/" + encodeURIComponent(userID) + "/oidc-allow-link", { method: "POST" })
+        .then(function(resp) { return resp.json().then(function(d) { return { ok: resp.ok, data: d }; }); })
+        .then(function(result) {
+            if (!result.ok) { showToast(result.data.error || "Could not allow linking", "error"); return; }
+            showToast("The next single sign-on login with this username will link to the account", "success");
+            loadUsers();
+        })
+        .catch(function() { showToast("Network error", "error"); });
 }
 
 function unlinkSSO(userID) {
@@ -786,6 +815,17 @@ function loadOIDCSettings() {
                 autoCreate.checked = !!data.auto_create;
                 updateToggleTextLocal("oidc-auto-create-text", !!data.auto_create);
             }
+            var linkEl = document.getElementById("oidc-link-existing");
+            if (linkEl) {
+                linkEl.checked = !!data.link_existing;
+                updateToggleTextLocal("oidc-link-existing-text", !!data.link_existing);
+            }
+            var linkSrc = document.getElementById("oidc-link-existing-source");
+            if (linkSrc) {
+                linkSrc.textContent = data.link_existing_source === "saved"
+                    ? "In effect: the value saved here (overrides SENTINEL_OIDC_LINK_EXISTING)"
+                    : "In effect: SENTINEL_OIDC_LINK_EXISTING or the default (off). Saving here overrides it.";
+            }
             if (defaultRole && data.default_role) {
                 for (var i = 0; i < defaultRole.options.length; i++) {
                     if (defaultRole.options[i].value === data.default_role) {
@@ -806,6 +846,7 @@ function saveOIDCSettings() {
     var redirectUrl = (document.getElementById("oidc-redirect-url") || {}).value || "";
     var autoCreate = (document.getElementById("oidc-auto-create") || {}).checked || false;
     var defaultRole = (document.getElementById("oidc-default-role") || {}).value || "viewer";
+    var linkExisting = (document.getElementById("oidc-link-existing") || {}).checked || false;
 
     // Auto-detect redirect URL if empty and enabled.
     if (enabled && !redirectUrl) {
@@ -822,7 +863,8 @@ function saveOIDCSettings() {
             client_secret: clientSecret,
             redirect_url: redirectUrl,
             auto_create: autoCreate,
-            default_role: defaultRole
+            default_role: defaultRole,
+            link_existing: linkExisting
         })
     })
     .then(function(resp) {

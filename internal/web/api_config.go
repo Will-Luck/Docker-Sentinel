@@ -129,6 +129,8 @@ var validSettingKeys = map[string]bool{
 	"oidc_auto_create":   true,
 	"oidc_default_role":  true,
 
+	"oidc_link_existing": true,
+
 	// Cloud registry logins.
 	"cloud_auth_ecr": true,
 	"cloud_auth_acr": true,

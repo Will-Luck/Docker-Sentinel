@@ -224,6 +224,16 @@ func (s *Server) apiOIDCLinkStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"url": authURL})
 }
 
+// apiOIDCAllowLink lets the next SSO login that matches a user's username
+// link to that account, for 24 hours, once (admin only).
+func (s *Server) apiOIDCAllowLink(w http.ResponseWriter, r *http.Request) {
+	if err := s.deps.Auth.AllowOIDCLink(r.PathValue("id")); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // apiOIDCUnlink removes a user's single sign-on binding (admin only).
 func (s *Server) apiOIDCUnlink(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

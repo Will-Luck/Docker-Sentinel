@@ -1364,6 +1364,17 @@
                             </div>
                             <div class="setting-row">
                                 <div class="setting-info">
+                                    <div class="setting-label">Link existing accounts by username</div>
+                                    <div class="setting-desc">Let a sign-in link itself to an existing account with the same username. Admin accounts are never linked this way: use "Allow SSO link" on the user list, or link from the Account page.</div>
+                                    <div class="setting-desc" id="oidc-link-existing-source"></div>
+                                </div>
+                                <label class="toggle-switch-label">
+                                    <input type="checkbox" id="oidc-link-existing" class="channel-toggle" onchange="updateToggleText('oidc-link-existing-text', this.checked)">
+                                    <span id="oidc-link-existing-text" class="toggle-switch-text">Off</span>
+                                </label>
+                            </div>
+                            <div class="setting-row">
+                                <div class="setting-info">
                                     <div class="setting-label">Default role for new users</div>
                                     <div class="setting-desc">Role assigned to auto-created OIDC users</div>
                                 </div>

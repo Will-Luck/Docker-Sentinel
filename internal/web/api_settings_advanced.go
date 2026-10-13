@@ -302,16 +302,28 @@ func (s *Server) apiGetOIDCSettings(w http.ResponseWriter, _ *http.Request) {
 		_ = json.Unmarshal([]byte(raw), &groupMappings)
 	}
 
+	// Linking existing accounts by username: a saved value wins over the
+	// environment.
+	linkExisting, linkSource := false, "env"
+	if s.deps.Config != nil {
+		linkExisting = s.deps.Config.Values()["SENTINEL_OIDC_LINK_EXISTING"] == "true"
+	}
+	if v := load("oidc_link_existing"); v != "" {
+		linkExisting, linkSource = v == "true", "saved"
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":        load("oidc_enabled") == "true",
-		"issuer_url":     load("oidc_issuer_url"),
-		"client_id":      load("oidc_client_id"),
-		"client_secret":  maskedSecret,
-		"redirect_url":   load("oidc_redirect_url"),
-		"auto_create":    load("oidc_auto_create") == "true",
-		"default_role":   load("oidc_default_role"),
-		"group_claim":    groupClaim,
-		"group_mappings": groupMappings,
+		"enabled":              load("oidc_enabled") == "true",
+		"issuer_url":           load("oidc_issuer_url"),
+		"client_id":            load("oidc_client_id"),
+		"client_secret":        maskedSecret,
+		"redirect_url":         load("oidc_redirect_url"),
+		"auto_create":          load("oidc_auto_create") == "true",
+		"default_role":         load("oidc_default_role"),
+		"group_claim":          groupClaim,
+		"group_mappings":       groupMappings,
+		"link_existing":        linkExisting,
+		"link_existing_source": linkSource,
 	})
 }
 
@@ -332,6 +344,7 @@ func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
 		DefaultRole   string            `json:"default_role"`
 		GroupClaim    string            `json:"group_claim"`
 		GroupMappings map[string]string `json:"group_mappings"`
+		LinkExisting  *bool             `json:"link_existing"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -386,6 +399,10 @@ func (s *Server) apiSaveOIDCSettings(w http.ResponseWriter, r *http.Request) {
 		{"oidc_default_role", req.DefaultRole},
 		{"oidc_group_claim", groupClaim},
 		{"oidc_group_mappings", groupMappingsJSON},
+	}
+
+	if req.LinkExisting != nil {
+		pairs = append(pairs, struct{ key, val string }{"oidc_link_existing", strconv.FormatBool(*req.LinkExisting)})
 	}
 
 	for _, p := range pairs {

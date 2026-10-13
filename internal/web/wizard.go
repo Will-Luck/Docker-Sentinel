@@ -153,13 +153,12 @@ func (ws *WizardServer) apiSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := auth.User{
-		ID:            userID,
-		Username:      req.Username,
-		PasswordHash:  hash,
-		LocalPassword: true,
-		RoleID:        auth.RoleAdminID,
-		CreatedAt:     time.Now().UTC(),
-		UpdatedAt:     time.Now().UTC(),
+		ID:           userID,
+		Username:     req.Username,
+		PasswordHash: hash,
+		RoleID:       auth.RoleAdminID,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
 	}
 	if err := ws.deps.Auth.Users.CreateFirstUser(user); err != nil {
 		if err == auth.ErrUsersExist {

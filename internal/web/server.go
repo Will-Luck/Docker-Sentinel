@@ -170,6 +170,12 @@ func (s *Server) getOIDCProvider() *auth.OIDCProvider {
 
 // NewServer creates a Server with all routes registered.
 func NewServer(deps Dependencies) *Server {
+	// Account events from the auth service (allowing and making an SSO link)
+	// go to the activity log.
+	if deps.Auth != nil && deps.Auth.AuditHook == nil && deps.EventLog != nil {
+		log := deps.EventLog
+		deps.Auth.AuditHook = func(msg string) { _ = log.AppendLog(LogEntry{Type: "auth", Message: msg}) }
+	}
 	// Read SENTINEL_HOST from config if available.
 	var hostAddr string
 	if deps.Config != nil {
@@ -529,6 +535,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /api/auth/users", perm(auth.PermUsersManage, s.apiListUsers))
 	s.mux.Handle("POST /api/auth/users", perm(auth.PermUsersManage, s.apiCreateUser))
 	s.mux.Handle("DELETE /api/auth/users/{id}", perm(auth.PermUsersManage, s.apiDeleteUser))
+	s.mux.Handle("POST /api/auth/users/{id}/oidc-allow-link", perm(auth.PermUsersManage, s.apiOIDCAllowLink))
 	s.mux.Handle("POST /api/auth/users/{id}/oidc-unlink", perm(auth.PermUsersManage, s.apiOIDCUnlink))
 	s.mux.Handle("POST /api/auth/settings", perm(auth.PermUsersManage, s.apiAuthSettings))
 

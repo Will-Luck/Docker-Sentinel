@@ -50,10 +50,9 @@ type User struct {
 	// identity provider. SSO login matches on this pair only.
 	OIDCIssuer  string `json:"oidc_issuer,omitempty"`
 	OIDCSubject string `json:"oidc_subject,omitempty"`
-	// LocalPassword is true once the account has a password a person chose
-	// (set by an admin, at setup, on a password change, or proven by a
-	// password login). Such an account is never linked to SSO by username.
-	LocalPassword bool `json:"local_password,omitempty"`
+	// OIDCLinkUntil, while in the future, lets the next SSO login whose
+	// username matches this account link to it. An admin sets it.
+	OIDCLinkUntil time.Time `json:"oidc_link_until,omitempty"`
 	// TOTPLastStep is the newest 30-second step of a TOTP code that was
 	// accepted. A code for that step or an earlier one is not accepted again.
 	TOTPLastStep int64 `json:"totp_last_step,omitempty"`

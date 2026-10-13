@@ -175,6 +175,9 @@ func (s *Server) apiListUsers(w http.ResponseWriter, r *http.Request) {
 		CreatedAt time.Time `json:"created_at"`
 		Locked    bool      `json:"locked"`
 		SSOLinked bool      `json:"sso_linked"`
+		// SSOLinkUntil is when an admin's "allow the next SSO login to link"
+		// ends, while it is open.
+		SSOLinkUntil *time.Time `json:"sso_link_until,omitempty"`
 	}
 	result := make([]safeUser, len(users))
 	for i, u := range users {
@@ -185,6 +188,10 @@ func (s *Server) apiListUsers(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: u.CreatedAt,
 			Locked:    u.Locked,
 			SSOLinked: u.OIDCSubject != "",
+		}
+		if time.Now().Before(u.OIDCLinkUntil) {
+			until := u.OIDCLinkUntil
+			result[i].SSOLinkUntil = &until
 		}
 	}
 
@@ -235,13 +242,12 @@ func (s *Server) apiCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := auth.User{
-		ID:            userID,
-		Username:      body.Username,
-		PasswordHash:  hash,
-		LocalPassword: true,
-		RoleID:        body.RoleID,
-		CreatedAt:     time.Now().UTC(),
-		UpdatedAt:     time.Now().UTC(),
+		ID:           userID,
+		Username:     body.Username,
+		PasswordHash: hash,
+		RoleID:       body.RoleID,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
 	}
 
 	if err := s.deps.Auth.Users.CreateUser(user); err != nil {
