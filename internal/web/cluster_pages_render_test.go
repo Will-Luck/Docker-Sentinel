@@ -192,3 +192,16 @@ func TestDetailPages_ShowTheQueueBadge(t *testing.T) {
 		t.Errorf("an empty queue should show no badge")
 	}
 }
+
+// With the secondary columns collapsed at phone width the Name column takes
+// the rest of the table instead of its fixed 20%.
+func TestResponsiveCSS_NameColumnGetsTheRestOnPhones(t *testing.T) {
+	css, _ := staticFS.ReadFile("static/style.css")
+	if !strings.Contains(string(css), "#container-table col.col-name") {
+		t.Error("stylesheet lacks the Name column rule for small screens")
+	}
+	out := renderPage(t, "index.html", pageData{Page: "dashboard", ColumnVisible: map[string]bool{"image": true, "policy": true, "status": true, "ports": true}})
+	if !strings.Contains(out, `<col class="col-name"`) {
+		t.Error("the Name <col> has no col-name class")
+	}
+}

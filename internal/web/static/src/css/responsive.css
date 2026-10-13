@@ -71,6 +71,11 @@
     #container-table .col-ports {
         display: none;
     }
+    /* With the secondary columns gone the name gets the rest of the width
+       (the <col> has an inline 20%, which left about 70 px at phone size). */
+    #container-table col.col-name {
+        width: auto !important;
+    }
 
     /* Queue table: hide Detected column */
     .queue-table th:nth-child(4),

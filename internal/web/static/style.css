@@ -4068,6 +4068,9 @@ body.settings-simple [data-advanced] {
   #container-table .col-ports {
     display: none;
   }
+  #container-table col.col-name {
+    width: auto !important;
+  }
   .queue-table th:nth-child(4),
   .queue-table td:nth-child(4) {
     display: none;
