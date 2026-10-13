@@ -53,6 +53,9 @@ type User struct {
 	// OIDCLinkUntil, while in the future, lets the next SSO login whose
 	// username matches this account link to it. An admin sets it.
 	OIDCLinkUntil time.Time `json:"oidc_link_until,omitempty"`
+	// OIDCLinkAdminUsed is set once SENTINEL_OIDC_LINK_ADMIN has linked this
+	// account, so that variable is never used for it again.
+	OIDCLinkAdminUsed bool `json:"oidc_link_admin_used,omitempty"`
 	// TOTPLastStep is the newest 30-second step of a TOTP code that was
 	// accepted. A code for that step or an earlier one is not accepted again.
 	TOTPLastStep int64 `json:"totp_last_step,omitempty"`

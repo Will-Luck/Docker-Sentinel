@@ -80,6 +80,9 @@ type Config struct {
 	// single sign-on identity by username (SENTINEL_OIDC_LINK_EXISTING). A
 	// value saved in Settings replaces it.
 	OIDCLinkExisting bool
+	// OIDCLinkAdmin names one account that the next SSO login with that
+	// username links to, once (SENTINEL_OIDC_LINK_ADMIN), admin or not.
+	OIDCLinkAdmin string
 
 	// envProblems holds environment values that were set but could not be
 	// parsed; the default was used instead. See EnvProblems.
@@ -178,6 +181,7 @@ func Load() *Config {
 		HistoryRetentionDays: r.int("SENTINEL_HISTORY_RETENTION_DAYS", 90),
 		TrustedProxies:       envStr("SENTINEL_TRUSTED_PROXIES", ""),
 		OIDCLinkExisting:     r.bool("SENTINEL_OIDC_LINK_EXISTING", false),
+		OIDCLinkAdmin:        envStr("SENTINEL_OIDC_LINK_ADMIN", ""),
 	}
 	c.envProblems = r.problems
 	return c

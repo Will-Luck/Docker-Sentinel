@@ -190,6 +190,7 @@ func main() {
 		AuthEnabledEnv: cfg.AuthEnabled,
 	})
 	authSvc.LinkExisting = linkExisting
+	authSvc.LinkAdminUsername = func() string { return cfg.OIDCLinkAdmin }
 
 	// Check if instance has been configured via the wizard.
 	instanceRole, _ := db.LoadSetting("instance_role")

@@ -87,6 +87,11 @@ type Service struct {
 	// LinkExisting, when set and true, lets an unlinked non-admin account be
 	// linked to an SSO identity by username (SENTINEL_OIDC_LINK_EXISTING).
 	LinkExisting func() bool
+	// LinkAdminUsername, when set, names one account that the next SSO login
+	// with that username links to, once, whatever its role or 2FA
+	// (SENTINEL_OIDC_LINK_ADMIN). It is the way back in for an instance
+	// whose admins only ever signed in with SSO.
+	LinkAdminUsername func() string
 
 	rateLimiter *RateLimiter
 

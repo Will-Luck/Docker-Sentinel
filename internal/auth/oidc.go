@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -358,7 +359,15 @@ func (s *Service) mayLinkByUsername(u *User) (bool, string) {
 	if time.Now().Before(u.OIDCLinkUntil) {
 		return true, "an administrator allowed it"
 	}
-	if s.LinkExisting != nil && s.LinkExisting() && !s.isAdminRole(u.RoleID) {
+	if s.LinkAdminUsername != nil && !u.OIDCLinkAdminUsed {
+		if name := s.LinkAdminUsername(); name != "" && name == u.Username {
+			return true, "SENTINEL_OIDC_LINK_ADMIN names it"
+		}
+	}
+	// The opt-in never covers an admin, or an account with 2FA or a passkey:
+	// those use the per-user action or link from the Account page.
+	if s.LinkExisting != nil && s.LinkExisting() && !s.isAdminRole(u.RoleID) &&
+		!u.TOTPEnabled && !s.HasPasskeys(u.ID) {
 		return true, "linking existing accounts is switched on"
 	}
 	return false, ""
@@ -409,6 +418,12 @@ func (s *Service) LoginWithOIDC(ctx context.Context, info *OIDCUserInfo, autoCre
 			existing.OIDCIssuer = info.Issuer
 			existing.OIDCSubject = info.Subject
 			existing.OIDCLinkUntil = time.Time{}
+			if strings.HasPrefix(why, "SENTINEL_OIDC_LINK_ADMIN") {
+				existing.OIDCLinkAdminUsed = true
+				if s.Log != nil {
+					s.Log.Warn("SENTINEL_OIDC_LINK_ADMIN linked an account to a single sign-on identity; remove the variable now", "account", existing.Username)
+				}
+			}
 			existing.UpdatedAt = time.Now().UTC()
 			if err := s.Users.UpdateUser(*existing); err != nil {
 				return nil, fmt.Errorf("link SSO identity: %w", err)
