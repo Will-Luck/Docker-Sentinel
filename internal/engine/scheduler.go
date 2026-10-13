@@ -238,16 +238,44 @@ func (s *Scheduler) isPaused() bool {
 	return val == "true"
 }
 
-// nextTick returns a channel that fires at the next scheduled time.
-// If a cron schedule is configured, it computes the next fire time from the expression.
-// Otherwise, it falls back to the poll interval.
+// nextTick returns a channel that fires at the next scheduled time: the
+// next cron time when a schedule is configured, else after the poll
+// interval, and earlier when a closed maintenance window opens before then
+// (auto-updates are deferred until it is open, so a scan must run in it).
 func (s *Scheduler) nextTick() <-chan time.Time {
+	return s.clock.After(s.untilWindowOpens(s.scheduledWait()))
+}
+
+// untilWindowOpens shortens wait to the opening of a closed maintenance
+// window, if that comes first.
+func (s *Scheduler) untilWindowOpens(wait time.Duration) time.Duration {
+	expr := s.updater.maintenanceWindow()
+	if expr == "" {
+		return wait
+	}
+	win, err := ParseWindow(expr)
+	if err != nil || win == nil {
+		return wait
+	}
+	now := s.clock.Now()
+	if win.IsOpen(now) {
+		return wait
+	}
+	if untilOpen := win.NextOpen(now).Sub(now); untilOpen < wait {
+		s.log.Debug("next scan at the maintenance window opening", "wait", untilOpen)
+		return untilOpen
+	}
+	return wait
+}
+
+// scheduledWait is the wait until the next cron time, or the poll interval.
+func (s *Scheduler) scheduledWait() time.Duration {
 	if sched := s.cfg.Schedule(); sched != "" {
 		parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 		schedule, err := parser.Parse(sched)
 		if err != nil {
 			s.log.Warn("invalid cron schedule, falling back to poll interval", "schedule", sched, "error", err)
-			return s.clock.After(s.cfg.PollInterval())
+			return s.cfg.PollInterval()
 		}
 		now := s.clock.Now()
 		next := schedule.Next(now)
@@ -256,9 +284,9 @@ func (s *Scheduler) nextTick() <-chan time.Time {
 			wait = 0
 		}
 		s.log.Debug("next cron tick", "schedule", sched, "next", next, "wait", wait)
-		return s.clock.After(wait)
+		return wait
 	}
-	return s.clock.After(s.cfg.PollInterval())
+	return s.cfg.PollInterval()
 }
 
 // SetSchedule updates the cron schedule at runtime and signals the scheduler to reset.

@@ -68,41 +68,71 @@ func (w *MaintenanceWindow) IsOpen(t time.Time) bool {
 	return false
 }
 
+const minutesPerWeek = 7 * 24 * 60
+
+// weekRange returns a weekly window's start and end as minutes of the week
+// (Sunday 00:00 is 0). Without an end day, or with the start day again, an
+// end at or before the start falls on the next day.
+func (s windowSpec) weekRange() (start, end int) {
+	start = s.weekday*1440 + s.startHour*60 + s.startMin
+	endMins := s.endHour*60 + s.endMin
+	if s.endWeekday >= 0 && s.endWeekday != s.weekday {
+		return start, s.endWeekday*1440 + endMins
+	}
+	end = s.weekday*1440 + endMins
+	if endMins <= s.startHour*60+s.startMin {
+		end += 1440
+	}
+	return start, end % minutesPerWeek
+}
+
 func (s windowSpec) matches(t time.Time) bool {
 	nowMins := t.Hour()*60 + t.Minute()
-	startMins := s.startHour*60 + s.startMin
-	endMins := s.endHour*60 + s.endMin
-	wd := int(t.Weekday())
 
 	// Daily window (no weekday constraint).
 	if s.weekday < 0 {
+		startMins := s.startHour*60 + s.startMin
+		endMins := s.endHour*60 + s.endMin
 		if startMins <= endMins {
 			return nowMins >= startMins && nowMins < endMins
 		}
 		return nowMins >= startMins || nowMins < endMins
 	}
 
-	// Weekly window that spans into a different weekday (e.g. "Sat 22:00-Sun 06:00").
-	if s.endWeekday >= 0 && s.endWeekday != s.weekday {
-		if wd == s.weekday {
-			// On the start day: must be at or after start time.
-			return nowMins >= startMins
-		}
-		if wd == s.endWeekday {
-			// On the end day: must be before end time.
-			return nowMins < endMins
-		}
-		return false
+	// Weekly window: test on the week's circle of minutes, so a window
+	// over several days is open on the days between, and one that runs
+	// past the end of the week wraps.
+	now := int(t.Weekday())*1440 + nowMins
+	start, end := s.weekRange()
+	if start <= end {
+		return now >= start && now < end
 	}
+	return now >= start || now < end
+}
 
-	// Weekly window within a single weekday (e.g. "Sat 02:00-Sat 06:00").
-	if wd != s.weekday {
-		return false
+// NextOpen returns the earliest time from t, to the minute, at which the
+// window is open: t itself when it is open now. A nil window is always open.
+// It looks a week ahead; a window that never opens gives t plus a week.
+func (w *MaintenanceWindow) NextOpen(t time.Time) time.Time {
+	t = t.Truncate(time.Minute)
+	if w.IsOpen(t) {
+		return t
 	}
-	if startMins <= endMins {
-		return nowMins >= startMins && nowMins < endMins
+	best := t.Add(7 * 24 * time.Hour)
+	for _, s := range w.windows {
+		for day := range 8 {
+			d := t.AddDate(0, 0, day)
+			if s.weekday >= 0 && int(d.Weekday()) != s.weekday {
+				continue
+			}
+			open := time.Date(d.Year(), d.Month(), d.Day(), s.startHour, s.startMin, 0, 0, t.Location())
+			if open.After(t) && open.Before(best) {
+				best = open
+				break
+			}
+		}
 	}
-	return nowMins >= startMins || nowMins < endMins
+	return best
 }
 
 var weekdayNames = map[string]int{
