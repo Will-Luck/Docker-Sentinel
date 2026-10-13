@@ -87,6 +87,7 @@ type Server struct {
 	webauthn             *webauthn.WebAuthn // nil when WebAuthn is not configured
 	oidcProvider         *auth.OIDCProvider // nil when OIDC is not configured
 	oidcMu               sync.RWMutex       // protects oidcProvider replacement
+	npmMu                sync.RWMutex       // protects deps.NPM replacement
 	tlsCert              string             // path to TLS certificate PEM (empty = plain HTTP)
 	tlsKey               string             // path to TLS private key PEM
 	clusterLifecycle     ClusterLifecycle   // nil until wired by main; enables dynamic start/stop

@@ -40,6 +40,9 @@ func (s *Server) apiSetNPMEnabled(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled {
 		label = "enabled"
 	}
+	if !body.Enabled {
+		s.swapNPM(nil)
+	}
 	s.logEvent(r, "settings", "", "NPM integration "+label)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -65,6 +68,7 @@ func (s *Server) apiSetNPMURL(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.swapNPM(nil) // Test connection builds a new one from the saved URL
 	s.logEvent(r, "settings", "", "NPM URL changed")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -88,17 +92,16 @@ func (s *Server) apiSetNPMCredentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.swapNPM(nil) // Test connection builds a new one from the saved login
 	s.logEvent(r, "settings", "", "NPM credentials updated")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) apiTestNPMConnection(w http.ResponseWriter, r *http.Request) {
-	// If NPM provider doesn't exist yet, try to create it from saved settings.
-	if s.deps.NPM == nil {
-		if s.deps.NPMInitFunc == nil {
-			writeError(w, http.StatusBadRequest, "NPM not available")
-			return
-		}
+	// Build the provider from the saved settings every time, so a changed URL
+	// or login takes effect and the test is against what is saved, not the
+	// target the running provider was built with.
+	if s.deps.NPMInitFunc != nil {
 		provider, err := s.deps.NPMInitFunc(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -107,9 +110,14 @@ func (s *Server) apiTestNPMConnection(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.deps.NPM = provider
+		s.swapNPM(provider)
 	}
-	if err := s.deps.NPM.TestConnection(r.Context()); err != nil {
+	npm := s.npmProvider()
+	if npm == nil {
+		writeError(w, http.StatusBadRequest, "NPM not available")
+		return
+	}
+	if err := npm.TestConnection(r.Context()); err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success": false,
 			"error":   err.Error(),
@@ -122,12 +130,31 @@ func (s *Server) apiTestNPMConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
+// npmProvider returns the running NPM provider, or nil.
+func (s *Server) npmProvider() NPMProvider {
+	s.npmMu.RLock()
+	defer s.npmMu.RUnlock()
+	return s.deps.NPM
+}
+
+// swapNPM replaces the NPM provider and stops the one it replaces.
+func (s *Server) swapNPM(p NPMProvider) {
+	s.npmMu.Lock()
+	old := s.deps.NPM
+	s.deps.NPM = p
+	s.npmMu.Unlock()
+	if st, ok := old.(interface{ Stop() }); ok && old != p {
+		st.Stop()
+	}
+}
+
 func (s *Server) apiSyncNPM(w http.ResponseWriter, r *http.Request) {
-	if s.deps.NPM == nil {
+	npm := s.npmProvider()
+	if npm == nil {
 		writeError(w, http.StatusBadRequest, "NPM not configured - test connection first")
 		return
 	}
-	if err := s.deps.NPM.Sync(r.Context()); err != nil {
+	if err := npm.Sync(r.Context()); err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success": false,
 			"error":   err.Error(),
@@ -136,12 +163,13 @@ func (s *Server) apiSyncNPM(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":  true,
-		"mappings": s.deps.NPM.AllMappings(),
+		"mappings": npm.AllMappings(),
 	})
 }
 
 func (s *Server) apiGetNPMMappings(w http.ResponseWriter, r *http.Request) {
-	if s.deps.NPM == nil {
+	npm := s.npmProvider()
+	if npm == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"mappings":  map[string]interface{}{},
 			"last_sync": nil,
@@ -151,14 +179,14 @@ func (s *Server) apiGetNPMMappings(w http.ResponseWriter, r *http.Request) {
 	// Grouped response: mappings keyed by ForwardHost, one table per host.
 	if r.URL.Query().Get("grouped") == "true" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"grouped":   s.deps.NPM.AllMappingsGrouped(),
-			"last_sync": s.deps.NPM.LastSync(),
+			"grouped":   npm.AllMappingsGrouped(),
+			"last_sync": npm.LastSync(),
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"mappings":  s.deps.NPM.AllMappings(),
-		"last_sync": s.deps.NPM.LastSync(),
+		"mappings":  npm.AllMappings(),
+		"last_sync": npm.LastSync(),
 	})
 }
 

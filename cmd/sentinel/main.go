@@ -806,9 +806,12 @@ func main() {
 				return nil, err
 			}
 			r := npm.NewResolver(c, npmLocalAddrs, log.Logger)
-			go r.Run(ctx) // use the app-level context, not the request context
+			// Run on the app-level context, not the request context, but with a
+			// cancel of its own so a replaced provider stops syncing.
+			runCtx, stop := context.WithCancel(ctx)
+			go r.Run(runCtx)
 			log.Info("npm integration enabled (hot)", "url", u)
-			return &npmAdapter{resolver: r}, nil
+			return &npmAdapter{resolver: r, stop: stop}, nil
 		}
 		webDeps.PortConfigs = &portConfigStoreAdapter{s: db}
 		srv := web.NewServer(webDeps)

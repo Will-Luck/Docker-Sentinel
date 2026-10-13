@@ -318,6 +318,14 @@ func (m *clusterManager) Stop() {
 
 type npmAdapter struct {
 	resolver *npm.Resolver
+	stop     context.CancelFunc // ends the resolver's sync loop; nil for the one built at startup
+}
+
+// Stop ends the resolver's background sync, when the provider is replaced.
+func (a *npmAdapter) Stop() {
+	if a.stop != nil {
+		a.stop()
+	}
 }
 
 func (a *npmAdapter) TestConnection(ctx context.Context) error {

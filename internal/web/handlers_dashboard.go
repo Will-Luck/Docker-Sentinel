@@ -312,14 +312,14 @@ func (s *Server) resolvePortURLs(name, hostAddr, hostID string, ports []PortMapp
 	// only match NPM proxies forwarding to this specific host (prevents
 	// cross-host port shadowing, e.g. port 8080 on .57 vs .64). Fall back to
 	// Lookup() when hostAddr is a domain (NPM stores ForwardHost as IPs).
-	if s.deps.NPM != nil {
+	if npm := s.npmProvider(); npm != nil {
 		localIP := hostID == "" && net.ParseIP(hostAddr) != nil
 		for _, p := range ports {
 			var r *NPMResolvedURL
 			if hostID != "" || localIP {
-				r = s.deps.NPM.LookupForHost(p.HostPort, hostAddr)
+				r = npm.LookupForHost(p.HostPort, hostAddr)
 			} else {
-				r = s.deps.NPM.Lookup(p.HostPort)
+				r = npm.Lookup(p.HostPort)
 			}
 			if r != nil {
 				urls[p.HostPort] = r.URL
