@@ -72,14 +72,24 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		}
 
 		result.Total++
+		scopedName := store.ScopedKey(hostID, c.Name)
+
+		// An update of it is running: leave it to that update, which would
+		// otherwise be queued or dispatched again from the old digest.
+		if tr, ok := u.cluster.(remoteUpdateTracker); ok && tr.UpdateInFlight(hostID, c.Name) {
+			u.log.Debug("remote update in progress, not checking", "host", host.HostName, "name", c.Name)
+			result.Skipped++
+			continue
+		}
 
 		// Skip based on policy (same resolution as local containers).
 		tag := registry.ExtractTag(c.Image)
-		resolved := ResolvePolicy(u.store, c.Labels, store.ScopedKey(hostID, c.Name), tag, remoteDefault, u.cfg.LatestAutoUpdate())
+		resolved := ResolvePolicy(u.store, c.Labels, scopedName, tag, remoteDefault, u.cfg.LatestAutoUpdate())
 		policy := docker.Policy(resolved.Policy)
 
 		if policy == docker.PolicyPinned {
 			u.log.Debug("skipping pinned remote container", "host", host.HostName, "name", c.Name)
+			u.dropQueued(scopedName, "pinned")
 			result.Skipped++
 			continue
 		}
@@ -90,6 +100,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		// Skip containers matching filter patterns.
 		if MatchesFilter(c.Name, filters) {
 			u.log.Debug("skipping filtered remote container", "host", host.HostName, "name", c.Name)
+			u.dropQueued(scopedName, "filtered out")
 			result.Skipped++
 			continue
 		}
@@ -120,6 +131,11 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		}
 
 		if check.IsLocal || !check.UpdateAvailable {
+			// An update queued earlier no longer applies.
+			u.dropQueued(scopedName, "now up to date")
+			if !check.IsLocal {
+				result.UpToDate++
+			}
 			continue
 		}
 
@@ -134,8 +150,6 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		if len(check.NewerVersions) > 0 {
 			scanTarget = replaceTag(c.Image, check.NewerVersions[0])
 		}
-
-		scopedName := store.ScopedKey(hostID, c.Name)
 
 		// Remote sentinel is always queued (never auto-updated via scan).
 		if remoteSelf {
@@ -265,6 +279,23 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			result.Queued++
 		}
 	}
+}
+
+// remoteUpdateTracker is implemented by a ClusterScanner that knows which
+// remote updates are in flight.
+type remoteUpdateTracker interface {
+	UpdateInFlight(hostID, name string) bool
+}
+
+// dropQueued removes the queued update of a remote container (by its
+// scoped key) that no longer applies, saying why.
+func (u *Updater) dropQueued(key, why string) {
+	if _, queued := u.queue.Get(key); !queued {
+		return
+	}
+	u.queue.Remove(key)
+	u.log.Info("removed stale queue entry ("+why+")", "name", key)
+	u.publishEvent(events.EventQueueChange, key, "removed: "+why)
 }
 
 // VerifyRemoteImage applies the signature gate of a local update (the

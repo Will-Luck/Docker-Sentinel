@@ -78,10 +78,12 @@ func queuedKeys(u *Updater) map[string]bool {
 // this scan. A host that has not reconnected yet (after a hub restart), is
 // partitioned, or whose list failed keeps its entries.
 func TestScanPrunesRemoteQueueOnlyForHostsItHeardFrom(t *testing.T) {
-	u, _ := newTestUpdater(t, newMockDocker())
+	mock := newMockDocker()
+	mock.distDigests["nginx:1"] = "sha256:new" // still-here's update still applies
+	u, _ := newTestUpdater(t, mock)
 	fc := &fakeCluster{
 		connected: []string{"listed", "failing"},
-		lists:     map[string][]RemoteContainer{"listed": {{Name: "still-here", Image: "nginx:1"}}},
+		lists:     map[string][]RemoteContainer{"listed": {{Name: "still-here", Image: "nginx:1", ImageDigest: "sha256:old"}}},
 		listErr:   map[string]error{"failing": errors.New("agent could not list its containers")},
 	}
 	u.SetClusterScanner(fc)
@@ -214,5 +216,87 @@ func TestScanRemoteHookSkipIsCountedAsSkipped(t *testing.T) {
 	}
 	if recs, _ := u.store.ListHistoryByContainer(store.ScopedKey("h1", "web"), 10); len(recs) != 0 {
 		t.Errorf("history = %+v, want no row for a skipped update", recs)
+	}
+}
+
+// fakeClusterInFlight is a fakeCluster that reports some updates in flight.
+type fakeClusterInFlight struct {
+	*fakeCluster
+	inFlight map[string]bool // "hostID/name"
+}
+
+func (f *fakeClusterInFlight) UpdateInFlight(hostID, name string) bool {
+	return f.inFlight[hostID+"/"+name]
+}
+
+// live-18: a scan that ran while an update of a remote container was in
+// flight saw its old digest and queued (or dispatched) the update again,
+// leaving a phantom queue row once it had finished. A container with an
+// update in flight is left to that update.
+func TestScanRemoteSkipsContainersWithAnUpdateInFlight(t *testing.T) {
+	for _, policy := range []string{"manual", "auto"} {
+		t.Run(policy, func(t *testing.T) {
+			mock := newMockDocker()
+			mock.distDigests["nginx:latest"] = "sha256:new"
+			u, _ := newTestUpdater(t, mock)
+			u.cfg.SetDefaultPolicy(policy)
+			u.cfg.SetLatestAutoUpdate(false) // :latest follows the policy
+			fc := &fakeCluster{
+				connected: []string{"h1"},
+				lists: map[string][]RemoteContainer{"h1": {
+					{Name: "web", Image: "nginx:latest", ImageDigest: "sha256:old", State: "running"},
+				}},
+			}
+			u.SetClusterScanner(&fakeClusterInFlight{fakeCluster: fc, inFlight: map[string]bool{"h1/web": true}})
+
+			u.Scan(context.Background(), ScanScheduled)
+
+			if len(fc.updates) != 0 {
+				t.Errorf("updates sent = %q, want none while one is in flight", fc.updates)
+			}
+			if queuedKeys(u)["h1::web"] {
+				t.Error("the container was queued again while its update was in flight")
+			}
+		})
+	}
+}
+
+// live-22 and remote-orchestration-11: a remote queue row stayed after its
+// container became up to date, or was filtered out or pinned since it was
+// queued. The scan removes it, as it does for a local container that is up
+// to date.
+func TestScanRemoteRemovesQueueRowsThatNoLongerApply(t *testing.T) {
+	mock := newMockDocker()
+	mock.distDigests["nginx:latest"] = "sha256:same"
+	mock.distDigests["redis:latest"] = "sha256:new"
+	mock.distDigests["pg:latest"] = "sha256:new"
+	u, _ := newTestUpdater(t, mock)
+	u.cfg.SetDefaultPolicy("manual")
+	if err := u.store.SaveSetting("filters", "cache"); err != nil {
+		t.Fatal(err)
+	}
+	u.SetSettingsReader(u.store)
+	u.SetClusterScanner(&fakeCluster{
+		connected: []string{"h1"},
+		lists: map[string][]RemoteContainer{"h1": {
+			{Name: "web", Image: "nginx:latest", ImageDigest: "sha256:same", State: "running"},
+			{Name: "cache", Image: "redis:latest", ImageDigest: "sha256:old", State: "running"},
+			{Name: "db", Image: "pg:latest", ImageDigest: "sha256:old", State: "running", Labels: map[string]string{"sentinel.policy": "pinned"}},
+		}},
+	})
+	for _, name := range []string{"web", "cache", "db"} {
+		u.queue.Add(PendingUpdate{HostID: "h1", ContainerName: name, CurrentImage: "x:latest"})
+	}
+
+	res := u.Scan(context.Background(), ScanScheduled)
+
+	got := queuedKeys(u)
+	for _, key := range []string{"h1::web", "h1::cache", "h1::db"} {
+		if got[key] {
+			t.Errorf("queue row %s survived although it no longer applies", key)
+		}
+	}
+	if res.UpToDate < 1 {
+		t.Errorf("up to date = %d, want the remote container counted", res.UpToDate)
 	}
 }

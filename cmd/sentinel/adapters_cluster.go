@@ -309,6 +309,12 @@ func settingsSyncFrom(st engine.AgentSettings) *proto.SettingsSync {
 	}
 }
 
+// UpdateInFlight reports whether the hub is waiting for an agent to update
+// a container, so a scan leaves that container to it.
+func (a *clusterScannerAdapter) UpdateInFlight(hostID, name string) bool {
+	return a.srv.UpdateInFlight(hostID, name)
+}
+
 // knownContainer returns what srv last heard about a remote container.
 func knownContainer(srv *clusterserver.Server) func(hostID, name string) (cluster.ContainerInfo, bool) {
 	return func(hostID, name string) (cluster.ContainerInfo, bool) {

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
@@ -267,6 +268,9 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 			return nil, err
 		}
 	}
+	key := hostID + "::" + containerName
+	s.inFlight.Add(key)
+	defer s.inFlight.Done(key)
 	resp, err := s.request(ctx, hostID, "update result", purpose, updateTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_UpdateContainer{UpdateContainer: req},
 	})
@@ -280,6 +284,41 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 	}
 
 	return ur.UpdateResult, nil
+}
+
+// UpdateInFlight reports whether the hub is waiting for an agent to update
+// (or roll back) the container name on hostID.
+func (s *Server) UpdateInFlight(hostID, name string) bool {
+	return s.inFlight.Has(hostID + "::" + name)
+}
+
+// keyCounter counts the operations in flight per key.
+type keyCounter struct {
+	mu sync.Mutex
+	n  map[string]int
+}
+
+func (c *keyCounter) Add(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n == nil {
+		c.n = make(map[string]int)
+	}
+	c.n[key]++
+}
+
+func (c *keyCounter) Done(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n[key]--; c.n[key] <= 0 {
+		delete(c.n, key)
+	}
+}
+
+func (c *keyCounter) Has(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n[key] > 0
 }
 
 // ContainerActionSync sends a ContainerActionRequest to the agent and blocks

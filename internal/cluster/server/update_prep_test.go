@@ -93,3 +93,49 @@ func TestRollbackContainerSync_PrepAddsToTheRequest(t *testing.T) {
 		t.Fatal("the agent got no update request")
 	}
 }
+
+// The hub knows which remote updates it is waiting for, so a scan can
+// leave those containers alone.
+func TestUpdateInFlight(t *testing.T) {
+	srv, hostID, stream := connectAgent(t)
+	got := make(chan string, 1)
+	release := make(chan struct{})
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if req := msg.GetUpdateContainer(); req != nil {
+				got <- msg.GetRequestId()
+				<-release
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{
+					UpdateResult: &proto.UpdateResult{RequestId: msg.GetRequestId(), ContainerName: "web", Outcome: "success"},
+				}})
+			}
+		}
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := srv.UpdateContainerSync(context.Background(), hostID, "web", "nginx:2", "")
+		done <- err
+	}()
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent got no update request")
+	}
+	if !srv.UpdateInFlight(hostID, "web") {
+		t.Error("the update the hub is waiting for is not reported in flight")
+	}
+	if srv.UpdateInFlight(hostID, "db") || srv.UpdateInFlight("other", "web") {
+		t.Error("another container reported in flight")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if srv.UpdateInFlight(hostID, "web") {
+		t.Error("the finished update is still reported in flight")
+	}
+}

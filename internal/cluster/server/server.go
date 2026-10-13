@@ -83,6 +83,7 @@ type Server struct {
 	store        ClusterStore
 	history      HistoryRecorder
 	enrollMu     sync.Mutex // serialises the check and use of enrolment tokens
+	inFlight     keyCounter // updates the hub is waiting for, by "hostID::name"
 	prep         atomic.Pointer[UpdatePrep]
 	settings     atomic.Pointer[func() *proto.SettingsSync]
 	bus          *events.Bus
