@@ -362,12 +362,18 @@ func (u *Updater) RecoverInterruptedUpdates(ctx context.Context) {
 	}
 	for _, rec := range recs {
 		u.log.Warn("startup recovery: resolving an interrupted container swap", "name", rec.Name, "kind", rec.Kind)
-		if err := u.recoverSwap(ctx, rec); err != nil {
+		changed, err := u.recoverSwap(ctx, rec)
+		if err != nil {
 			u.log.Error("startup recovery: could not resolve the swap, leaving it for the next start", "name", rec.Name, "error", err)
 			continue
 		}
 		if err := u.store.DeleteSwap(rec.Name); err != nil {
 			u.log.Warn("startup recovery: could not clear the swap journal", "name", rec.Name, "error", err)
+		}
+		if changed {
+			if current, err := u.docker.InspectContainer(ctx, rec.Name); err == nil {
+				u.afterProviderChange(ctx, rec.Name, current.ID, rec.OldID, rec.NewID)
+			}
 		}
 	}
 
@@ -385,19 +391,24 @@ func (u *Updater) RecoverInterruptedUpdates(ctx context.Context) {
 		}
 		if c.State == container.StateRunning && guardian.HasMaintenanceLabel(c.Labels) {
 			u.log.Warn("startup recovery: finishing an interrupted update (removing the maintenance label)", "name", name)
-			if _, err := u.finaliseContainer(ctx, c.ID, name); err != nil {
+			newID, err := u.finaliseContainer(ctx, c.ID, name)
+			if err != nil {
 				u.log.Error("startup recovery: could not finalise the container", "name", name, "error", err)
+				continue
 			}
+			u.afterProviderChange(ctx, name, newID, c.ID)
 		}
 	}
 }
 
 // recoverSwap resolves one journalled swap; see RecoverInterruptedUpdates.
-func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) error {
+// changed reports that the container running under the name was replaced
+// or (re)started, so the containers depending on it need repairing.
+func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) (changed bool, err error) {
 	old, err := u.docker.InspectContainer(ctx, rec.OldID)
 	oldGone := docker.IsNotFound(err)
 	if err != nil && !oldGone {
-		return fmt.Errorf("inspect the old container: %w", err)
+		return false, fmt.Errorf("inspect the old container: %w", err)
 	}
 	var replacement container.InspectResponse
 	newGone := true
@@ -407,7 +418,7 @@ func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) error {
 		case err == nil:
 			newGone = false
 		case !docker.IsNotFound(err):
-			return fmt.Errorf("inspect the replacement: %w", err)
+			return false, fmt.Errorf("inspect the replacement: %w", err)
 		}
 	}
 
@@ -420,9 +431,9 @@ func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) error {
 			err = u.docker.RemoveContainer(ctx, rec.OldID)
 		}
 		if err != nil && !docker.IsNotFound(err) {
-			return fmt.Errorf("remove the replaced container: %w", err)
+			return false, fmt.Errorf("remove the replaced container: %w", err)
 		}
-		return nil
+		return true, nil
 
 	case !oldGone:
 		u.log.Warn("startup recovery: the swap had not finished, restoring the old container", "name", rec.Name)
@@ -433,12 +444,12 @@ func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) error {
 				}
 			}
 			if err := u.docker.RemoveContainer(ctx, rec.NewID); err != nil && !docker.IsNotFound(err) {
-				return fmt.Errorf("remove the unfinished replacement: %w", err)
+				return false, fmt.Errorf("remove the unfinished replacement: %w", err)
 			}
 		}
 		if containerNameOf(old) != rec.Name {
 			if err := u.docker.RenameContainer(ctx, rec.OldID, rec.Name); err != nil {
-				return fmt.Errorf("give the old container its name back: %w", err)
+				return false, fmt.Errorf("give the old container its name back: %w", err)
 			}
 		}
 		if rec.RestartChanged {
@@ -451,27 +462,28 @@ func (u *Updater) recoverSwap(ctx context.Context, rec store.SwapRecord) error {
 		}
 		if rec.OldRunning && (old.State == nil || !old.State.Running) {
 			if err := u.docker.StartContainer(ctx, rec.OldID); err != nil {
-				return fmt.Errorf("start the restored container: %w", err)
+				return false, fmt.Errorf("start the restored container: %w", err)
 			}
+			return true, nil
 		}
-		return nil
+		return false, nil
 
 	case !newGone:
 		u.log.Warn("startup recovery: the old container is gone, keeping its replacement", "name", rec.Name)
 		if rec.OldRunning && (replacement.State == nil || !replacement.State.Running) {
 			if err := u.docker.StartContainer(ctx, rec.NewID); err != nil {
-				return fmt.Errorf("start the replacement: %w", err)
+				return false, fmt.Errorf("start the replacement: %w", err)
 			}
 		}
-		return nil
+		return true, nil
 
 	default:
 		if rec.Snapshot == nil {
-			return errors.New("both containers are gone and no snapshot was journalled")
+			return false, errors.New("both containers are gone and no snapshot was journalled")
 		}
 		u.log.Warn("startup recovery: both containers are gone, rebuilding from the snapshot", "name", rec.Name)
 		_, err := rollbackContainer(ctx, u.docker, nil, rec.Name, rec.Snapshot, u.log)
-		return err
+		return err == nil, err
 	}
 }
 

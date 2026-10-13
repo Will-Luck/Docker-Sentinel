@@ -246,7 +246,9 @@ func (u *Updater) RollbackContainer(ctx context.Context, name string) error {
 	}
 	defer u.unlock(name)
 
-	if err := RollbackFromStore(ctx, u.docker, u.store, name, u.log); err != nil {
+	liveID, _ := findContainerID(ctx, u.docker, name)
+	newID, err := u.rollbackFromStore(ctx, name)
+	if err != nil {
 		u.publishEvent(events.EventContainerUpdate, name, "rollback failed: "+err.Error())
 		u.notifier.Notify(context.WithoutCancel(ctx), notify.Event{
 			Type:          notify.EventRollbackFailed,
@@ -256,6 +258,20 @@ func (u *Updater) RollbackContainer(ctx context.Context, name string) error {
 		})
 		return err
 	}
+	u.afterProviderChange(ctx, name, newID, liveID)
 	u.publishEvent(events.EventContainerUpdate, name, "rollback succeeded")
 	return nil
+}
+
+// rollbackFromStore rolls name back to its latest snapshot and returns the
+// ID of the rollback container.
+func (u *Updater) rollbackFromStore(ctx context.Context, name string) (string, error) {
+	data, err := u.store.GetLatestSnapshot(name)
+	if err != nil {
+		return "", fmt.Errorf("get snapshot: %w", err)
+	}
+	if data == nil {
+		return "", fmt.Errorf("no snapshot found for %s", name)
+	}
+	return rollbackContainer(ctx, u.docker, u.store, name, data, u.log)
 }

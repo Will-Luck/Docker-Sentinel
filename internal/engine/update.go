@@ -396,6 +396,8 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			u.log.Warn("failed to persist finalise warning record", "name", name, "error", recErr)
 		}
 
+		// The provider changed even so: move its network dependents onto it.
+		u.afterProviderChange(ctx, name, newID, id)
 		u.publishEvent(events.EventContainerUpdate, name, "update complete with finalise warning")
 		return finaliseErr
 	}
@@ -492,17 +494,13 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 	}
 
-	// 10. Handle shared network namespaces. Consumers reference the provider
-	// by the ID it had before the update (the original or the step-5 one).
-	repaired := u.repairNetworkNamespace(ctx, finaliseNewID, name, id, newID)
+	// 10. Move the containers that share its network namespace onto it
+	// (they reference the original or the step-5 ID) and restart its
+	// dependents.
+	u.afterProviderChange(ctx, name, finaliseNewID, id, newID)
 
 	// 11. Clean up old image if enabled.
 	u.cleanupOldImage(ctx, oldImageID, name)
-
-	// 12. Restart dependents (dependency-aware).
-	if u.cfg.DependencyAware() {
-		u.restartDependents(ctx, name, repaired)
-	}
 
 	u.log.Info("update complete", "name", name, "duration", duration)
 	u.publishEvent(events.EventContainerUpdate, name, "update succeeded")
@@ -579,6 +577,20 @@ func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapsh
 	u.reportRollback(ctx, sw.name, u.restoreOld(ctx, sw, snapshotData), start, cause)
 }
 
+// restoreOld brings the old container back after a failed or interrupted
+// update and, when the old container had been stopped or had to be
+// rebuilt, repairs the containers that share its network namespace and
+// restarts its dependents, which lost their connection to it.
+func (u *Updater) restoreOld(ctx context.Context, sw *swap, snapshotData []byte) error {
+	ctx = context.WithoutCancel(ctx)
+	stopped, failedID := sw.stopped, sw.newID
+	currentID, err := u.undoUpdate(ctx, sw, snapshotData)
+	if err == nil && (stopped || currentID != sw.oldID) {
+		u.afterProviderChange(ctx, sw.name, currentID, sw.oldID, failedID)
+	}
+	return err
+}
+
 // abandonUpdate puts the old container back when an update is cancelled
 // part way, for example by a shutdown during the grace period. Like a
 // cancelled pre-update hook it records and notifies nothing.
@@ -592,23 +604,24 @@ func (u *Updater) abandonUpdate(ctx context.Context, sw *swap, snapshotData []by
 	}
 }
 
-// restoreOld undoes an update swap. Only when the old container no longer
-// exists (a --rm container) is it rebuilt from the snapshot; when it exists
-// but cannot be restored, the error is returned rather than rebuilding a
-// second copy next to it.
-func (u *Updater) restoreOld(ctx context.Context, sw *swap, snapshotData []byte) error {
-	ctx = context.WithoutCancel(ctx)
+// undoUpdate undoes an update swap and returns the ID of the container
+// then running under the name. Only when the old container no longer exists
+// (a --rm container) is it rebuilt from the snapshot; when it exists but
+// cannot be restored, the error is returned rather than rebuilding a second
+// copy next to it.
+func (u *Updater) undoUpdate(ctx context.Context, sw *swap, snapshotData []byte) (string, error) {
 	gone, err := sw.undoOrRetry(ctx)
 	switch {
 	case gone:
 		u.log.Warn("the old container is gone, rebuilding it from the snapshot", "name", sw.name, "error", err)
-		if _, err := rollbackContainer(ctx, u.docker, u.store, sw.name, snapshotData, u.log); err != nil {
-			return err
+		id, err := rollbackContainer(ctx, u.docker, u.store, sw.name, snapshotData, u.log)
+		if err != nil {
+			return "", err
 		}
 		sw.forget()
-		return nil
+		return id, nil
 	case err != nil:
-		return fmt.Errorf("the old container could not be restored: %w", err)
+		return "", fmt.Errorf("the old container could not be restored: %w", err)
 	}
 	u.log.Info("old container restored", "name", sw.name)
 	// A :latest pull moved the tag to the new image. Point it back at the
@@ -620,7 +633,7 @@ func (u *Updater) restoreOld(ctx context.Context, sw *swap, snapshotData []byte)
 			u.log.Warn("could not point the tag back at the old image", "name", sw.name, "error", err)
 		}
 	}
-	return nil
+	return sw.oldID, nil
 }
 
 // reportFailedUpdate records and notifies an update that failed before it
@@ -926,6 +939,25 @@ func (u *Updater) repairNetworkNamespace(ctx context.Context, id, name string, o
 		}
 	}
 	return repaired
+}
+
+// afterProviderChange is called whenever the container running as name was
+// replaced or restarted: after an update, a partial update, a restore, a
+// rollback or a recovery. It repairs the containers that share its network
+// namespace (currentID is the container now running, previousIDs the ones
+// it replaced) and, with dependency awareness on, restarts its dependents.
+func (u *Updater) afterProviderChange(ctx context.Context, name, currentID string, previousIDs ...string) {
+	ctx = context.WithoutCancel(ctx)
+	var previous []string
+	for _, id := range previousIDs {
+		if id != "" && id != currentID {
+			previous = append(previous, id)
+		}
+	}
+	repaired := u.repairNetworkNamespace(ctx, currentID, name, previous...)
+	if u.cfg.DependencyAware() {
+		u.restartDependents(ctx, name, repaired)
+	}
 }
 
 // restartDependents restarts the running containers that depend on name
