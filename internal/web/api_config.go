@@ -75,6 +75,11 @@ var validSettingKeys = map[string]bool{
 	"maintenance_window": true,
 	"show_stopped":       true,
 
+	// Signature verification (keyless identity).
+	"cosign_identity":        true,
+	"cosign_oidc_issuer":     true,
+	"cosign_identity_regexp": true,
+
 	// Hooks.
 	"hooks_enabled":      true,
 	"hooks_write_labels": true,

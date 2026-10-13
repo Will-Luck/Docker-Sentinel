@@ -3,8 +3,11 @@ package verify
 import (
 	"bytes"
 	"context"
+	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // Mode determines verification behaviour.
@@ -47,12 +50,49 @@ type Verifier struct {
 	cosignPath string // path to cosign binary (default: "cosign")
 	keyPath    string // path to public key PEM for keyed verification
 	keyless    bool   // use Sigstore keyless (Fulcio + Rekor)
-	// identity and issuer are the certificate identity and OIDC issuer a
-	// keyless signature must carry; identityRegexp matches them as
-	// regular expressions.
-	identity, issuer string
-	identityRegexp   bool
-	log              Logger
+	// identity returns the certificate identity and OIDC issuer a keyless
+	// signature must carry, read at each verification.
+	identity func() KeylessIdentity
+	log      Logger
+}
+
+// KeylessIdentity is what a keyless signature's certificate must show: the
+// identity (for GitHub Actions, the workflow URL with its ref) and the OIDC
+// issuer, matched exactly or, with Regexp, as regular expressions.
+type KeylessIdentity struct {
+	Identity, Issuer string
+	Regexp           bool
+}
+
+// MissingKeylessIdentity says what to set when keyless verification has no
+// identity to check.
+const MissingKeylessIdentity = "keyless verification needs the expected certificate identity and OIDC issuer: " +
+	"set cosign_identity and cosign_oidc_issuer in the settings " +
+	"(or SENTINEL_COSIGN_IDENTITY and SENTINEL_COSIGN_OIDC_ISSUER)"
+
+// Complete reports whether both the identity and the issuer are set.
+func (k KeylessIdentity) Complete() bool { return k.Identity != "" && k.Issuer != "" }
+
+// KeylessIdentityFrom returns a source that reads the keyless identity from
+// the saved settings (load) at each call. A setting never saved, or saved
+// empty, falls back to its environment variable: SENTINEL_COSIGN_IDENTITY,
+// SENTINEL_COSIGN_OIDC_ISSUER and SENTINEL_COSIGN_IDENTITY_REGEXP.
+func KeylessIdentityFrom(load func(key string) (string, error)) func() KeylessIdentity {
+	get := func(key, env string) string {
+		if load != nil {
+			if v, err := load(key); err == nil && v != "" {
+				return v
+			}
+		}
+		return os.Getenv(env)
+	}
+	return func() KeylessIdentity {
+		return KeylessIdentity{
+			Identity: get(store.SettingCosignIdentity, "SENTINEL_COSIGN_IDENTITY"),
+			Issuer:   get(store.SettingCosignOIDCIssuer, "SENTINEL_COSIGN_OIDC_ISSUER"),
+			Regexp:   get(store.SettingCosignIdentityRegexp, "SENTINEL_COSIGN_IDENTITY_REGEXP") == "true",
+		}
+	}
 }
 
 // Option configures a Verifier.
@@ -73,14 +113,18 @@ func WithKeyless() Option {
 	return func(v *Verifier) { v.keyless = true }
 }
 
-// WithKeylessIdentity sets the certificate identity (for GitHub Actions,
-// the workflow URL with its ref) and the OIDC issuer a keyless signature
-// must carry. With regexp they are matched as regular expressions. Keyless
-// verification is refused without them: any Sigstore certificate would do.
+// WithKeylessIdentity sets a fixed certificate identity and OIDC issuer a
+// keyless signature must carry (see KeylessIdentity). Keyless verification
+// is refused without them: any Sigstore certificate would do.
 func WithKeylessIdentity(identity, issuer string, regexp bool) Option {
-	return func(v *Verifier) {
-		v.identity, v.issuer, v.identityRegexp = identity, issuer, regexp
-	}
+	id := KeylessIdentity{Identity: identity, Issuer: issuer, Regexp: regexp}
+	return WithKeylessIdentitySource(func() KeylessIdentity { return id })
+}
+
+// WithKeylessIdentitySource reads the keyless identity from src at each
+// verification, so a change applies without a restart.
+func WithKeylessIdentitySource(src func() KeylessIdentity) Option {
+	return func(v *Verifier) { v.identity = src }
 }
 
 // New creates a Verifier with the given options.
@@ -116,14 +160,18 @@ func (v *Verifier) Verify(ctx context.Context, imageRef string) *Result {
 		// Keyless verification uses Sigstore's transparency log and proves
 		// only who signed: without the expected identity and issuer any
 		// Sigstore certificate would pass, so it is refused.
-		if v.identity == "" || v.issuer == "" {
-			return &Result{Error: "keyless verification needs the expected certificate identity and OIDC issuer"}
+		var id KeylessIdentity
+		if v.identity != nil {
+			id = v.identity()
+		}
+		if !id.Complete() {
+			return &Result{Error: MissingKeylessIdentity}
 		}
 		identityFlag, issuerFlag := "--certificate-identity", "--certificate-oidc-issuer"
-		if v.identityRegexp {
+		if id.Regexp {
 			identityFlag, issuerFlag = identityFlag+"-regexp", issuerFlag+"-regexp"
 		}
-		args = append(args, identityFlag, v.identity, issuerFlag, v.issuer)
+		args = append(args, identityFlag, id.Identity, issuerFlag, id.Issuer)
 	} else {
 		return &Result{Error: "no verification key or keyless mode configured"}
 	}

@@ -94,6 +94,11 @@ const (
 	SettingCosignPath    = "cosign_path"     // path to cosign binary (default: "cosign")
 	SettingCosignKeyless = "cosign_keyless"  // "true" / "false"
 	SettingCosignKeyPath = "cosign_key_path" // path to public key PEM
+	// Keyless verification: the certificate identity and OIDC issuer a
+	// signature must carry, and whether they are regular expressions.
+	SettingCosignIdentity       = "cosign_identity"
+	SettingCosignOIDCIssuer     = "cosign_oidc_issuer"
+	SettingCosignIdentityRegexp = "cosign_identity_regexp" // "true" / "false"
 )
 
 // Notification retry settings keys (stored in bucketSettings).

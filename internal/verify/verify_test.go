@@ -142,3 +142,55 @@ func TestKeylessChecksTheIdentity(t *testing.T) {
 		}
 	}
 }
+
+// The refusal says exactly which two settings to set.
+func TestKeylessRefusalNamesTheSettings(t *testing.T) {
+	path, _ := fakeCosign(t)
+	res := New(nil, WithCosignPath(path), WithKeyless()).Verify(context.Background(), "app@sha256:abc")
+	for _, want := range []string{"cosign_identity", "cosign_oidc_issuer", "SENTINEL_COSIGN_IDENTITY", "SENTINEL_COSIGN_OIDC_ISSUER"} {
+		if !strings.Contains(res.Error, want) {
+			t.Errorf("error %q does not name %s", res.Error, want)
+		}
+	}
+}
+
+// The identity is read at each verification, so a change saved in the
+// dashboard applies without a restart.
+func TestKeylessIdentityIsReadAtEachCheck(t *testing.T) {
+	path, argsFile := fakeCosign(t)
+	current := KeylessIdentity{}
+	v := New(nil, WithCosignPath(path), WithKeyless(), WithKeylessIdentitySource(func() KeylessIdentity { return current }))
+
+	if res := v.Verify(context.Background(), "app@sha256:abc"); res.Verified {
+		t.Fatal("verified without an identity")
+	}
+	current = KeylessIdentity{Identity: "me@example.com", Issuer: "https://accounts.example.com"}
+	if res := v.Verify(context.Background(), "app@sha256:abc"); !res.Verified {
+		t.Fatalf("result = %+v, want the saved identity used", res)
+	}
+	raw, _ := os.ReadFile(argsFile)
+	if !strings.Contains(string(raw), "me@example.com") {
+		t.Errorf("cosign args = %q, want the new identity", raw)
+	}
+}
+
+type settingsMap map[string]string
+
+func (m settingsMap) load(key string) (string, error) { return m[key], nil }
+
+// A saved setting wins; one never saved falls back to its environment
+// variable.
+func TestKeylessIdentityFromSettingsAndEnv(t *testing.T) {
+	t.Setenv("SENTINEL_COSIGN_IDENTITY", "env-id")
+	t.Setenv("SENTINEL_COSIGN_OIDC_ISSUER", "env-issuer")
+	t.Setenv("SENTINEL_COSIGN_IDENTITY_REGEXP", "true")
+
+	got := KeylessIdentityFrom(settingsMap{}.load)()
+	if got != (KeylessIdentity{Identity: "env-id", Issuer: "env-issuer", Regexp: true}) {
+		t.Errorf("from env = %+v", got)
+	}
+	got = KeylessIdentityFrom(settingsMap{"cosign_identity": "saved-id", "cosign_identity_regexp": "false"}.load)()
+	if got != (KeylessIdentity{Identity: "saved-id", Issuer: "env-issuer", Regexp: false}) {
+		t.Errorf("saved over env = %+v", got)
+	}
+}

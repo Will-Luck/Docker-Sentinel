@@ -521,7 +521,12 @@ func main() {
 		var verifyOpts []verify.Option
 		verifyOpts = append(verifyOpts, verify.WithCosignPath(cosignPath))
 		if loadSettingStr(db, store.SettingCosignKeyless) == "true" {
-			verifyOpts = append(verifyOpts, verify.WithKeyless())
+			// The identity is read at each check: a change applies without a restart.
+			keylessID := verify.KeylessIdentityFrom(db.LoadSetting)
+			verifyOpts = append(verifyOpts, verify.WithKeyless(), verify.WithKeylessIdentitySource(keylessID))
+			if loadSettingStr(db, store.SettingCosignKeyPath) == "" && !keylessID().Complete() {
+				log.Warn(verify.MissingKeylessIdentity + "; until then keyless signature checks fail")
+			}
 		}
 		if kp := loadSettingStr(db, store.SettingCosignKeyPath); kp != "" {
 			verifyOpts = append(verifyOpts, verify.WithKeyPath(kp))
