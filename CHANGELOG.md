@@ -189,7 +189,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for Docker, then finishes or undoes whatever the journal lists and
   clears stale maintenance flags. A container is never left as two copies:
   a failed restore is reported rather than rebuilt next to a container
-  that still exists.
+  that still exists. When Sentinel was killed while Docker was still
+  stopping the old container, Docker finished that stop after the old
+  container was put back and nothing started it again; Sentinel now
+  watches a container it put back until that stop has timed out, starts
+  it again if it stops, and notes this in the update history.
 - Containers started with `--rm` were deleted by an update, because the
   daemon removed them on stop and the update then gave up. They are now
   replaced like any other container.
@@ -325,6 +329,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data was left in a detached volume; they are now carried over and kept
   when the old container is removed. A container sharing another's
   network stack (`network_mode: container:X`) could not be updated at all.
+- Updating a container on an agent host that other containers share the
+  network of (`network_mode: container:<it>`, compose `service:<it>`) cut
+  those containers off: they were left with only loopback, still pointing
+  at the removed container, and could not even be restarted. As on the
+  server, a consumer that pointed at the old container is now recreated
+  on the new one, and one that names it is restarted; the same happens
+  when a failed update brings the old container back.
 - On an agent host, `sentinel.remove-volumes=true` on a container, or
   `SENTINEL_REMOVE_VOLUMES=true` on the agent itself, now starts the
   updated container on fresh anonymous volumes and removes the old ones
