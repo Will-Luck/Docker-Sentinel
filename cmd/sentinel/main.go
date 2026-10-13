@@ -487,15 +487,22 @@ func main() {
 		if trivyPath == "" {
 			trivyPath = "trivy"
 		}
-		var scanOpts []scanner.Option
-		scanOpts = append(scanOpts, scanner.WithTrivyPath(trivyPath))
-		imgScanner := scanner.New(log, scanOpts...)
+		imgScanner := scanner.New(log, scanner.WithTrivyPath(trivyPath))
 		if imgScanner.Available() {
 			updater.SetScanner(imgScanner)
 			log.Info("vulnerability scanner available", "path", trivyPath)
 		} else {
 			log.Info("trivy not found, vulnerability scanning disabled")
 		}
+		// Updates read the saved scanner settings (mode, threshold, Trivy
+		// path) when they run, so a change in the web UI needs no restart.
+		updater.SetScannerFactory(func(path string) engine.ImageScanner {
+			s := scanner.New(log, scanner.WithTrivyPath(path))
+			if !s.Available() {
+				return nil
+			}
+			return s
+		})
 		scanMode := scanner.ParseScanMode(loadSettingStr(db, store.SettingScannerMode))
 		updater.SetScanMode(scanMode)
 		thresh := loadSettingStr(db, store.SettingScannerThreshold)

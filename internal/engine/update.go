@@ -226,19 +226,25 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 	}
 
-	// 3.7 Pre-update vulnerability scan gate.
-	if u.imgScanner != nil && u.scanMode == scanner.ScanPreUpdate {
-		scanResult, scanErr := u.imgScanner.Scan(ctx, pullImage)
+	// 3.7 Pre-update vulnerability scan gate. Mode, threshold and the Trivy
+	// path are the saved settings, so a change applies to the next update.
+	imgScanner, scanMode, severityThresh := u.scanGate()
+	if scanMode == scanner.ScanPreUpdate && imgScanner == nil {
+		u.log.Warn("pre-update vulnerability scanning is set but Trivy is not available, updating without a scan",
+			"name", name, "image", pullImage)
+	}
+	if imgScanner != nil && scanMode == scanner.ScanPreUpdate {
+		scanResult, scanErr := imgScanner.Scan(ctx, pullImage)
 		if scanErr != nil {
 			// Scan tool failure should not block updates.
 			u.log.Warn("pre-update scan failed, proceeding",
 				"name", name, "image", pullImage, "error", scanErr)
-		} else if scanResult.ExceedsThreshold(u.severityThresh) {
+		} else if scanResult.ExceedsThreshold(severityThresh) {
 			u.log.Warn("pre-update scan found vulnerabilities above threshold, blocking update",
 				"name", name, "image", pullImage,
 				"critical", scanResult.Summary.Critical,
 				"high", scanResult.Summary.High,
-				"threshold", string(u.severityThresh))
+				"threshold", string(severityThresh))
 			_ = u.store.SetMaintenance(name, false)
 			return fmt.Errorf("pre-update scan blocked %s: %d critical, %d high vulnerabilities",
 				name, scanResult.Summary.Critical, scanResult.Summary.High)
@@ -479,9 +485,9 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	}
 
 	// Post-update vulnerability scan (informational, async).
-	if u.imgScanner != nil && u.scanMode == scanner.ScanPostUpdate {
+	if postScanner, postMode, _ := u.scanGate(); postScanner != nil && postMode == scanner.ScanPostUpdate {
 		go func() {
-			scanResult, scanErr := u.imgScanner.Scan(context.Background(), pullImage)
+			scanResult, scanErr := postScanner.Scan(context.Background(), pullImage)
 			if scanErr != nil {
 				u.log.Warn("post-update scan failed", "name", name, "image", pullImage, "error", scanErr)
 				return

@@ -79,18 +79,20 @@ type Updater struct {
 	cluster          ClusterScanner             // optional: nil = single-host mode
 	haDiscovery      *notify.HADiscovery        // optional: HA MQTT auto-discovery publisher
 	imgScanner       ImageScanner               // optional: trivy vulnerability scanner
-	imgVerifier      ImageVerifier              // optional: cosign signature verifier
-	scanMode         scanner.ScanMode           // disabled/pre-update/post-update
-	verifyMode       verify.Mode                // disabled/warn/enforce
-	severityThresh   scanner.Severity           // block threshold for pre-update scans
-	ghcrWg           sync.WaitGroup             // tracks background GHCR alternative checks
-	ghcrRunning      atomic.Bool                // prevents concurrent GHCR checks
-	ghcrCancel       context.CancelFunc         // cancels the running GHCR check on shutdown
-	selfUpdateQueued atomic.Bool                // set when a self-update is queued during scan
-	selfUpdateKey    atomic.Value               // stores queue key (string) of the self-update entry
-	shutdownCtx      context.Context            // optional: ends every update and rollback on shutdown
-	watching         atomic.Bool                // the watch of restored containers is running (watchRestored)
-	watchers         sync.WaitGroup             // tracks that watch
+	scannerFactory   ScannerFactory             // optional: builds the scanner from the saved Trivy path
+	scanCache        scannerCache
+	imgVerifier      ImageVerifier      // optional: cosign signature verifier
+	scanMode         scanner.ScanMode   // disabled/pre-update/post-update
+	verifyMode       verify.Mode        // disabled/warn/enforce
+	severityThresh   scanner.Severity   // block threshold for pre-update scans
+	ghcrWg           sync.WaitGroup     // tracks background GHCR alternative checks
+	ghcrRunning      atomic.Bool        // prevents concurrent GHCR checks
+	ghcrCancel       context.CancelFunc // cancels the running GHCR check on shutdown
+	selfUpdateQueued atomic.Bool        // set when a self-update is queued during scan
+	selfUpdateKey    atomic.Value       // stores queue key (string) of the self-update entry
+	shutdownCtx      context.Context    // optional: ends every update and rollback on shutdown
+	watching         atomic.Bool        // the watch of restored containers is running (watchRestored)
+	watchers         sync.WaitGroup     // tracks that watch
 }
 
 // NewUpdater creates an Updater with all dependencies.
