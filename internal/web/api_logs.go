@@ -161,7 +161,11 @@ func (s *Server) streamTTYLogs(w http.ResponseWriter, flusher http.Flusher, ctx 
 		defer close(lines)
 		scanner := bufio.NewScanner(reader)
 		for scanner.Scan() {
-			lines <- scanner.Text()
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
@@ -193,12 +197,21 @@ func (s *Server) streamMuxLogs(w http.ResponseWriter, flusher http.Flusher, ctx 
 		err   error
 	}
 	frames := make(chan frame)
+	// send hands a frame to the loop below, or gives up when the client has gone.
+	send := func(f frame) bool {
+		select {
+		case frames <- f:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
 	go func() {
 		defer close(frames)
 		hdr := make([]byte, 8)
 		for {
 			if _, err := io.ReadFull(reader, hdr); err != nil {
-				frames <- frame{err: err}
+				send(frame{err: err})
 				return
 			}
 			size := binary.BigEndian.Uint32(hdr[4:8])
@@ -210,11 +223,13 @@ func (s *Server) streamMuxLogs(w http.ResponseWriter, flusher http.Flusher, ctx 
 			}
 			payload := make([]byte, size)
 			if _, err := io.ReadFull(reader, payload); err != nil {
-				frames <- frame{err: err}
+				send(frame{err: err})
 				return
 			}
 			text := strings.TrimRight(string(payload), "\n")
-			frames <- frame{lines: strings.Split(text, "\n")}
+			if !send(frame{lines: strings.Split(text, "\n")}) {
+				return
+			}
 		}
 	}()
 
