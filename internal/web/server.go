@@ -290,6 +290,7 @@ func (s *Server) parseTemplates() {
 		"classifySev":  classifySeverity,
 		"sub":          func(a, b int) int { return a - b },
 		"plainName":    plainName,
+		"agentVersion": agentVersion,
 		"serviceOrContainer": func(kind, name string, hostID ...string) string {
 			base := "/container/" + name
 			if kind == "service" {
@@ -880,4 +881,14 @@ func plainName(name, hostID string) string {
 		return name
 	}
 	return strings.TrimPrefix(name, hostID+"::")
+}
+
+// agentVersion shows an agent's version once with a leading v ("v3.0.0-rc4"),
+// whether or not it already had one, and without the commit part, which is in
+// the tooltip.
+func agentVersion(v string) string {
+	if i := strings.Index(v, " "); i >= 0 {
+		v = v[:i]
+	}
+	return "v" + strings.TrimPrefix(v, "v")
 }

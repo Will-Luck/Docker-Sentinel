@@ -3750,6 +3750,14 @@ body.settings-simple [data-advanced] {
   gap: var(--sp-2);
   margin-left: var(--sp-3);
 }
+.agent-version {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 
 /* internal/web/static/src/css/auth.css */
 .nav-user {

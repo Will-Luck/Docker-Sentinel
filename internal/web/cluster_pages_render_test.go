@@ -112,3 +112,21 @@ func TestResponsiveCSS_DashboardColumnsCollapseByClass(t *testing.T) {
 		}
 	}
 }
+
+// An agent version that already starts with v is not shown as "vv3.0.0", and a
+// long commit part stays inside the card.
+func TestClusterPage_AgentVersionShownOnce(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"v3.0.0-rc4 (5c0ffee1234567890abcdef)", ">v3.0.0-rc4<"},
+		{"3.0.0", ">v3.0.0<"},
+	} {
+		host := ClusterHost{ID: "a", Name: "alpha", State: "active", Connected: true, AgentVersion: tc.in}
+		out := renderPage(t, "cluster.html", pageData{Page: "cluster", ClusterEnabled: true, ClusterHosts: []ClusterHost{host}})
+		if strings.Contains(out, "vv3") || !strings.Contains(out, tc.want) {
+			t.Errorf("%q: want %s and no double v", tc.in, tc.want)
+		}
+		if !strings.Contains(out, `title="`+tc.in+`"`) {
+			t.Errorf("%q: the full version should be in a tooltip", tc.in)
+		}
+	}
+}

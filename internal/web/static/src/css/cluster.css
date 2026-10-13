@@ -263,3 +263,13 @@
     gap: var(--sp-2);
     margin-left: var(--sp-3);
 }
+
+/* A long agent version (with its commit) stays inside the host card. */
+.agent-version {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+}

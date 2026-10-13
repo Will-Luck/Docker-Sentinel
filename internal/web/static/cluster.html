@@ -99,7 +99,7 @@
                 </div>
                 <div class="host-card-meta">
                     <span>{{.Address}}</span>
-                    {{if .AgentVersion}}<span>v{{.AgentVersion}}</span>{{end}}
+                    {{if .AgentVersion}}<span class="agent-version" title="{{.AgentVersion}}">{{agentVersion .AgentVersion}}</span>{{end}}
                 </div>
                 <div class="host-card-stats">
                     <span>{{.Containers}} containers</span>
