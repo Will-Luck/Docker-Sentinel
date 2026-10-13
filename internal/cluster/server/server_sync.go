@@ -299,6 +299,13 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 			return nil, fmt.Errorf("unexpected response type %T (wanted UpdateResult)", resp.Payload)
 		}
 		result = ur.UpdateResult
+		if result.GetOutcome() == cluster.OutcomePending {
+			// The agent's helper does its update of itself: the hub records
+			// it, and notifies it for a caller that notifies, when the
+			// outcome is known.
+			s.awaitSelfUpdate(hostID, result, time.Time{}, callerRecords(ctx))
+			return result, nil
+		}
 	}
 	if !callerRecords(ctx) {
 		s.recordForCaller(hostID, containerName, targetImage, purpose, result, err)

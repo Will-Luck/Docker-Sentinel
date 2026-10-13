@@ -71,6 +71,22 @@ const FeatureCertRenewal = "cert-renewal"
 // Servers before v3.0.0 count any outcome but "success" as a failure.
 const FeatureUpdateSkipped = "update-skipped"
 
+// FeatureSelfUpdatePending is the server feature that says the server
+// takes an OutcomePending result for an agent's update of itself, and
+// waits for the outcome the agent reports when it comes back. Servers
+// before v3.0.0 are told "success" when the helper takes over.
+const FeatureSelfUpdatePending = "self-update-pending"
+
+// FeatureSelfUpdateOutcome is the agent feature that says it reports the
+// outcome of its update of itself to a server that waits for it (agents
+// since v3.0.0).
+const FeatureSelfUpdateOutcome = "self-update-outcome"
+
+// OutcomePending is the update outcome of an agent's update of itself that
+// its helper has taken over: the swap is under way, and its outcome comes
+// later, in the offline journal, under the request's ID.
+const OutcomePending = "pending"
+
 // FeatureKeepalive is the server feature that says the server accepts
 // keepalive pings every 30 seconds. gRPC's default, which servers before
 // v3.0.0 run, cuts off a client that pings more often than every five

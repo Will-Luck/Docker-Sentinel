@@ -107,6 +107,12 @@ type Server struct {
 	lateMu sync.Mutex
 	late   map[string]lateRequest
 
+	// selfMu guards selfWaits: agent self-updates whose outcome the hub
+	// waits for, by "hostID:requestID". selfNotify notifies them.
+	selfMu     sync.Mutex
+	selfWaits  map[string]*selfUpdateWait
+	selfNotify atomic.Pointer[SelfUpdateNotify]
+
 	// renewMu guards lastRenewal: when the hub last signed a renewal for
 	// each host.
 	renewMu     sync.Mutex
@@ -439,6 +445,7 @@ func (s *Server) Stop() {
 		as.cancel(errServerStopping)
 	}
 	s.mu.Unlock()
+	s.stopSelfUpdateWaits()
 
 	done := make(chan struct{})
 	go func() {

@@ -236,6 +236,10 @@ type RemoteUpdated struct {
 	OldDigest     string
 	NewImage      string
 	NewDigest     string
+	// Pending is set for an agent's update of itself that its helper does
+	// after the agent answered: the hub records and notifies it when its
+	// outcome is known, so the caller records nothing.
+	Pending bool
 }
 
 // RemoteContainer represents a container on a remote host.

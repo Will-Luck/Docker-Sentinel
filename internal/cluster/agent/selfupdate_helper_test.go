@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"slices"
@@ -57,7 +58,7 @@ func TestSelfUpdateContainerHandsOverToHelperWhenSocketIsMounted(t *testing.T) {
 	}
 }
 
-// The agent reports success to the hub as soon as the helper starts. If the
+// A hub before v3.0.0 is told success as soon as the helper starts. If the
 // swap is then rolled back, the new instance tells the hub, so its history and
 // notifications do not keep saying the agent was updated.
 func TestAgentJournalsARolledBackSelfUpdateForTheHub(t *testing.T) {
@@ -199,6 +200,84 @@ func TestAgentSelfUpdateRefusesWhenItCannotTellWhichContainerItIs(t *testing.T) 
 		}
 		if len(mock.renameCalls) != 0 || len(mock.createConfigs) != 0 || len(mock.pullCalls) != 0 {
 			t.Errorf("id %q: something changed: renames=%v creates=%v pulls=%v", id, mock.renameCalls, mock.createConfigs, mock.pullCalls)
+		}
+	}
+}
+
+// helperSelfUpdateAgent is an agent whose own container (s-1, named
+// sentinel-agent) has the Docker socket and its data directory mounted, so
+// its update of itself goes to the helper.
+func helperSelfUpdateAgent(t *testing.T) *Agent {
+	t.Helper()
+	dir := t.TempDir()
+	mock := newMockDocker()
+	mock.containers = []container.Summary{sentinelSummary("s-1", "sentinel-agent", "sentinel:v1")}
+	inspect := sentinelInspect("sentinel:v1")
+	inspect.ID = "s-1"
+	inspect.HostConfig.NetworkMode = "bridge"
+	inspect.Mounts = []container.MountPoint{
+		{Type: mount.TypeBind, Source: "/run/docker.sock", Destination: "/var/run/docker.sock"},
+		{Type: mount.TypeVolume, Name: "agent-data", Destination: dir},
+	}
+	mock.inspectResults["s-1"] = inspect
+	a := newTestAgent(dir, mock)
+	a.cfg.DockerSock = "/var/run/docker.sock"
+	a.selfID = func() string { return "s-1" }
+	j, err := newJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.journal = j
+	return a
+}
+
+// smoke F2: an agent told the hub its update of itself succeeded as soon as
+// the helper took over, before the swap. A hub that waits for the outcome
+// (FeatureSelfUpdatePending) is told it is under way; one before v3.0.0
+// still gets "success".
+func TestAgentSelfUpdateTellsAWaitingHubItIsUnderWay(t *testing.T) {
+	for _, waits := range []bool{true, false} {
+		a := helperSelfUpdateAgent(t)
+		a.hubPending.Store(waits)
+		res := updateResultOf(t, a, "sentinel-agent")
+		want := "success"
+		if waits {
+			want = cluster.OutcomePending
+		}
+		if res.GetOutcome() != want {
+			t.Errorf("hub waits %v: outcome %q (%s), want %q", waits, res.GetOutcome(), res.GetError(), want)
+		}
+	}
+}
+
+// The agent that comes back, the new version or the old one put back,
+// reports the outcome to a hub that waits for it under the request's ID,
+// success included.
+func TestAgentReportsTheSelfUpdateOutcomeTheHubWaitsFor(t *testing.T) {
+	for _, tc := range []struct {
+		result, outcome, errPart string
+	}{
+		{selfupdate.ResultSuccess, "success", ""},
+		{selfupdate.ResultRolledBack, "failed", "rolled back: the new container stopped"},
+	} {
+		a := helperSelfUpdateAgent(t)
+		a.hubPending.Store(true)
+		updateResultOf(t, a, "sentinel-agent")
+
+		out := &selfupdate.Outcome{Result: tc.result, ContainerName: "sentinel-agent", OldImage: "sentinel:v1", NewImage: "sentinel:v2", FinishedAt: time.Now()}
+		if tc.result == selfupdate.ResultRolledBack {
+			out.Error = "the new container stopped or is restarting"
+		}
+		a.reportSelfUpdateOutcome(out)
+
+		entries := a.journal.Entries()
+		if len(entries) != 1 {
+			t.Fatalf("%s: journal = %+v, want one entry", tc.result, entries)
+		}
+		e := entries[0]
+		if e.ID != "req-1" || e.Outcome != tc.outcome || e.Container != "sentinel-agent" ||
+			e.OldImage != "sentinel:v1" || e.NewImage != "sentinel:v2" || !strings.Contains(e.Error, tc.errPart) {
+			t.Errorf("%s: entry = %+v, want %s under the request's ID", tc.result, e, tc.outcome)
 		}
 	}
 }

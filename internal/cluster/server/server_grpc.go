@@ -450,6 +450,10 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 		}
 	}
 
+	// An agent that came back from its update of itself without reporting
+	// the outcome (one older than v3.0.0) is done when it runs the new image.
+	s.selfUpdateReported(hostID, containers, report.SupportedFeatures)
+
 	s.log.Info("state report received",
 		"hostID", hostID,
 		"containers", len(containers),
@@ -460,7 +464,7 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 	return &proto.StateAck{
 		Accepted:       true,
 		Message:        "state received",
-		ServerFeatures: []string{cluster.FeatureCertRenewal, cluster.FeatureKeepalive, cluster.FeatureUpdateSkipped},
+		ServerFeatures: []string{cluster.FeatureCertRenewal, cluster.FeatureKeepalive, cluster.FeatureUpdateSkipped, cluster.FeatureSelfUpdatePending},
 	}, nil
 }
 
@@ -573,6 +577,13 @@ func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *
 	// still what the agent did: keep it in the history.
 	// A skipped update changed nothing and leaves no history, as locally.
 	if ur.RequestId != "" && !s.deliverPending(hostID, ur.RequestId, msg) && ur.Outcome != "skipped" {
+		if ur.Outcome == cluster.OutcomePending {
+			// A self-update under way, answered late: its outcome, when
+			// it comes, replaces the failure the caller recorded (and
+			// notified).
+			s.awaitSelfUpdate(hostID, ur, s.takeLate(hostID, ur.RequestId).recordAt, false)
+			return
+		}
 		s.recordLateUpdate(hostID, ur)
 	}
 }
@@ -714,6 +725,9 @@ func (s *Server) handleOfflineJournal(hostID string, oj *proto.OfflineJournal) {
 	for _, e := range oj.Entries {
 		if e.Outcome == "skipped" {
 			continue // nothing changed; no history row, as locally
+		}
+		if s.selfUpdateJournalled(hostID, e) {
+			continue
 		}
 		ts := time.Now()
 		if e.GetTimestamp() != nil {

@@ -234,6 +234,9 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 				HostID:        update.HostID,
 				HostName:      update.HostName,
 			})
+		} else if res.Pending {
+			// An agent's update of itself, under way: the hub records it.
+			s.deps.Log.Info("remote self-update under way", "name", name, "host", update.HostID)
 		} else if update.HostID != "" {
 			// Record success for remote updates (cluster agent, swarm).
 			// Local updates record their own history inside UpdateContainer().

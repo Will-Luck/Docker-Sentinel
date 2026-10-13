@@ -54,10 +54,11 @@ func (s *sentEvents) all() []notify.Event {
 }
 
 // hubWithAgent starts a hub and connects one agent, named edge, to it. The
-// agent answers each update request with answer(request). It returns a
-// cluster adapter over the hub, the agent's host ID, the database and the
-// notifications sent.
-func hubWithAgent(t *testing.T, answer func(*proto.UpdateContainerRequest) *proto.UpdateResult) (*clusterAdapter, string, *store.Store, *sentEvents) {
+// agent answers each update request with answer(request), then sends what
+// each of then returns for the request's ID. It returns a cluster adapter
+// over the hub, the agent's host ID, the database and the notifications
+// sent.
+func hubWithAgent(t *testing.T, answer func(*proto.UpdateContainerRequest) *proto.UpdateResult, then ...func(requestID string) *proto.AgentMessage) (*clusterAdapter, string, *store.Store, *sentEvents) {
 	t.Helper()
 	db, err := store.Open(t.TempDir() + "/sentinel.db")
 	if err != nil {
@@ -145,6 +146,9 @@ func hubWithAgent(t *testing.T, answer func(*proto.UpdateContainerRequest) *prot
 				ur := answer(req)
 				ur.RequestId = msg.RequestId
 				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{UpdateResult: ur}})
+				for _, next := range then {
+					_ = stream.Send(next(msg.RequestId))
+				}
 			}
 		}
 	}()
@@ -158,6 +162,7 @@ func hubWithAgent(t *testing.T, answer func(*proto.UpdateContainerRequest) *prot
 	sent := &sentEvents{}
 	log := logging.New(false)
 	u := engine.NewUpdater(nil, nil, db, nil, config.NewTestConfig(), log, clock.Real{}, notify.NewMulti(log, sent), nil)
+	wireSelfUpdateNotify(srv, u) // as clusterManager.Start does
 	return &clusterAdapter{srv: srv, store: db, updater: u}, enrolled.HostId, db, sent
 }
 
@@ -245,5 +250,43 @@ func TestRecordRemoteRollback_LateResultFirstStays(t *testing.T) {
 	recs, _ := db.ListHistoryByContainer(key, 10)
 	if len(recs) != 1 || recs[0].Outcome != "rollback" {
 		t.Errorf("history = %+v, want only the late result", recs)
+	}
+}
+
+// smoke F2: "Update now" on an agent's own container sent update_succeeded
+// and recorded a success as soon as the agent's helper took over, before a
+// swap that was then rolled back. The dashboard now records and notifies
+// nothing for it; the hub does, once, with the outcome the agent reports.
+func TestUpdateRemoteContainer_SelfUpdateNotifiedOnceWithItsOutcome(t *testing.T) {
+	a, hostID, db, sent := hubWithAgent(t, func(req *proto.UpdateContainerRequest) *proto.UpdateResult {
+		return &proto.UpdateResult{ContainerName: "sentinel-agent", OldImage: "sentinel:3.0.0", NewImage: req.TargetImage, Outcome: cluster.OutcomePending}
+	}, func(id string) *proto.AgentMessage {
+		return &proto.AgentMessage{Payload: &proto.AgentMessage_OfflineJournal{OfflineJournal: &proto.OfflineJournal{
+			Entries: []*proto.JournalEntry{{Id: id, Action: "update", Container: "sentinel-agent", OldImage: "sentinel:3.0.0",
+				NewImage: "sentinel:3.0.1", Outcome: "failed", Error: "self-update rolled back: the new container stopped or is restarting"}},
+		}}}
+	})
+
+	res, err := a.UpdateRemoteContainer(context.Background(), hostID, "sentinel-agent", "sentinel:3.0.1", "")
+	if err != nil || !res.Pending {
+		t.Fatalf("UpdateRemoteContainer = %+v, %v; want it reported as under way", res, err)
+	}
+	key := store.ScopedKey(hostID, "sentinel-agent")
+	waitUntil(t, 3*time.Second, func() bool { recs, _ := db.ListHistoryByContainer(key, 10); return len(recs) > 0 }, "the outcome should be recorded")
+	time.Sleep(100 * time.Millisecond)
+	if recs, _ := db.ListHistoryByContainer(key, 10); len(recs) != 1 || recs[0].Outcome != "failed" {
+		t.Errorf("history = %+v, want one failed row", recs)
+	}
+	var started, ended []notify.Event
+	for _, e := range sent.all() {
+		switch e.Type {
+		case notify.EventUpdateStarted:
+			started = append(started, e)
+		case notify.EventUpdateSucceeded, notify.EventUpdateFailed:
+			ended = append(ended, e)
+		}
+	}
+	if len(started) != 1 || len(ended) != 1 || ended[0].Type != notify.EventUpdateFailed || ended[0].ContainerName != "sentinel-agent on edge" {
+		t.Errorf("started %+v, ended %+v; want one start and one failure for sentinel-agent on edge", started, ended)
 	}
 }

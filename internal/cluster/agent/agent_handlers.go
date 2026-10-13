@@ -248,6 +248,11 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		Duration:      durationpb.New(dur),
 	}
 
+	// With a helper doing the swap after this agent stops, a hub that waits
+	// for the outcome is told the update is under way; the agent that
+	// comes back reports the outcome.
+	pending := err == nil && handover != nil && a.awaitedSelfUpdate(requestID, result, start)
+
 	switch {
 	case errors.Is(err, errSkippedByHook):
 		// A hub before v3.0.0 counts anything but "success" as a failure:
@@ -269,6 +274,9 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		result.Outcome = "failed"
 		result.Error = err.Error()
 		a.log.Error("update failed", "name", name, "error", err, "duration", dur)
+	case pending:
+		result.Outcome = cluster.OutcomePending
+		a.log.Info("self-update handed over to the helper; its outcome is reported when it is known", "name", changed)
 	default:
 		result.Outcome = "success"
 		result.Error = warning
@@ -295,6 +303,7 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		go func() {
 			if waitErr := handover.Wait(context.Background()); waitErr != nil {
 				a.log.Error("self-update did not take effect", "error", waitErr)
+				a.selfUpdateStayed(waitErr)
 			}
 		}()
 	}
@@ -592,17 +601,38 @@ func (a *Agent) sendHookResult(stream proto.AgentService_ChannelClient, requestI
 	return a.sendMsg(stream, msg)
 }
 
-// reportSelfUpdateOutcome tells the hub how a self-update ended when it did not
-// succeed. The hub got "success" when the helper started, before the swap, so
-// a rollback or failure is sent afterwards, through the offline journal, which
-// is replayed to the hub on connecting and recorded in its history.
+// reportSelfUpdateOutcome tells the hub how a self-update ended, through the
+// offline journal, which is replayed to the hub on connecting and recorded in
+// its history. A hub that waits for the outcome (the request was answered
+// OutcomePending) gets it under the request's ID, success included. An older
+// hub got "success" when the helper started, before the swap, so it is told
+// only of a rollback or failure.
 func (a *Agent) reportSelfUpdateOutcome(out *selfupdate.Outcome) {
-	if out == nil || out.Result == selfupdate.ResultSuccess || a.journal == nil {
+	if out == nil || a.journal == nil {
 		return
 	}
 	reason := "self-update failed: " + out.Error
 	if out.Result == selfupdate.ResultRolledBack {
 		reason = "self-update rolled back: " + out.Error
+	}
+	if req := a.takeSelfUpdateRequest(out.NewImage); req != nil {
+		e := cluster.JournalEntry{
+			ID: req.RequestID, Timestamp: req.Started.UTC(), Action: "update", Container: req.Container,
+			OldImage: req.OldImage, OldDigest: req.OldDigest, NewImage: req.NewImage,
+			Outcome: "success", Duration: time.Since(req.Started),
+		}
+		if out.Result == selfupdate.ResultSuccess {
+			e.NewDigest = req.NewDigest
+		} else {
+			e.Outcome, e.Error = "failed", reason
+		}
+		if err := a.journal.Add(e); err != nil {
+			a.log.Error("could not keep the self-update outcome for the hub", "error", err)
+		}
+		return
+	}
+	if out.Result == selfupdate.ResultSuccess {
+		return
 	}
 	name := out.ContainerName
 	if name == "" {

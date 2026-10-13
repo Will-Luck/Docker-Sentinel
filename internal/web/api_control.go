@@ -911,8 +911,9 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 // recordRemoteUpdate writes the history row for an "Update now" on a remote
 // container, under the scoped key every remote history row uses.
 func (s *Server) recordRemoteUpdate(start time.Time, hostID, hostName, name, oldImage, newImage string, res RemoteUpdated, updateErr error) {
-	// A skipped update changed nothing and leaves no row, as locally.
-	if s.deps.Store == nil || errors.Is(updateErr, cluster.ErrUpdateSkipped) {
+	// A skipped update changed nothing and leaves no row, as locally. An
+	// agent's update of itself under way is recorded by the hub.
+	if s.deps.Store == nil || errors.Is(updateErr, cluster.ErrUpdateSkipped) || res.Pending {
 		return
 	}
 	name, oldImage, _ = changedContainer(name, oldImage, "", res)

@@ -57,6 +57,7 @@ var supportedFeatures = []string{
 	"logs",
 	cluster.FeatureDiscardSwap,
 	cluster.FeaturePullResult,
+	cluster.FeatureSelfUpdateOutcome,
 }
 
 // DockerAPI defines the subset of Docker operations the agent needs.
@@ -167,6 +168,11 @@ type Agent struct {
 	// hubSkips is whether the hub said it takes a "skipped" update outcome
 	// (FeatureUpdateSkipped); an older hub is told "success" instead.
 	hubSkips atomic.Bool
+
+	// hubPending is whether the hub said it waits for the outcome of this
+	// agent's update of itself (FeatureSelfUpdatePending); an older hub is
+	// told "success" when the helper takes over.
+	hubPending atomic.Bool
 
 	// hubKeepalive is whether the last hub said it accepts frequent
 	// keepalive pings; the next connection is dialled to match.
@@ -493,6 +499,7 @@ func (a *Agent) runSession(ctx context.Context) error {
 	a.log.Info("state report accepted", "message", ack.Message)
 	a.hubRenews.Store(slices.Contains(ack.GetServerFeatures(), cluster.FeatureCertRenewal))
 	a.hubSkips.Store(slices.Contains(ack.GetServerFeatures(), cluster.FeatureUpdateSkipped))
+	a.hubPending.Store(slices.Contains(ack.GetServerFeatures(), cluster.FeatureSelfUpdatePending))
 
 	// Match the keepalive interval to what this server accepts: a server
 	// before v3.0.0 cuts off a client that pings every 30 seconds. If the

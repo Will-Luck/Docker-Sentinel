@@ -118,6 +118,13 @@ func (s *Server) updateAgentContainer(ctx context.Context, hostID, targetTag str
 		return
 	}
 
+	if result.Outcome == cluster.OutcomePending {
+		s.log.Info("auto-update: the agent's helper is updating it; its outcome is recorded when the agent reports it",
+			"hostID", hostID,
+			"container", result.ContainerName,
+		)
+		return
+	}
 	if result.Outcome != "success" {
 		s.log.Warn("auto-update: update did not succeed",
 			"hostID", hostID,

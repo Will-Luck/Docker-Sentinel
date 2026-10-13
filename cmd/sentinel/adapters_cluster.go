@@ -167,6 +167,11 @@ func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, cont
 	}
 	// The dashboard and the API record the history row themselves.
 	ur, err := a.srv.UpdateContainerSync(clusterserver.WithCallerRecords(ctx), hostID, containerName, targetImage, targetDigest)
+	if err == nil && ur.GetOutcome() == cluster.OutcomePending {
+		// The agent's helper does its update of itself; the hub records and
+		// notifies it when the outcome is known.
+		return web.RemoteUpdated{ContainerName: ur.GetContainerName(), OldImage: ur.GetOldImage(), NewImage: ur.GetNewImage(), Pending: true}, nil
+	}
 	if announce {
 		res := engine.RemoteUpdateResult{Outcome: "failed", NewImage: targetImage}
 		if err != nil {
@@ -452,6 +457,21 @@ func (a *registryCheckerAdapter) CheckRemoteForUpdate(ctx context.Context, image
 	}, nil
 }
 
+// wireSelfUpdateNotify has srv notify the outcome of an agent's update of
+// itself through u, as the dashboard notifies other remote updates: the hub
+// learns the outcome only after the agent comes back.
+func wireSelfUpdateNotify(srv *clusterserver.Server, u *engine.Updater) {
+	if u == nil {
+		return
+	}
+	srv.SetSelfUpdateNotify(func(hostName, name string, rec store.UpdateRecord) {
+		u.NotifyRemote(context.Background(), hostName, name, rec.OldImage, &engine.RemoteUpdateResult{
+			ContainerName: name, OldImage: rec.OldImage, OldDigest: rec.OldDigest, NewImage: rec.NewImage,
+			NewDigest: rec.NewDigest, Outcome: rec.Outcome, Error: rec.Error, Duration: rec.Duration,
+		})
+	})
+}
+
 // knownContainer returns what srv last heard about a remote container.
 func knownContainer(srv *clusterserver.Server) func(hostID, name string) (cluster.ContainerInfo, bool) {
 	return func(hostID, name string) (cluster.ContainerInfo, bool) {
@@ -536,6 +556,7 @@ func (m *clusterManager) Start() error {
 	// Agents follow the hub's update settings (their own environment wins).
 	updater := m.updater
 	m.srv.SetSettingsSource(func() *proto.SettingsSync { return settingsSyncFrom(updater.AgentSettings()) })
+	wireSelfUpdateNotify(m.srv, m.updater)
 
 	// Read advertise addresses for TLS cert SANs. Inside Docker, the container
 	// only sees its bridge network IPs, but agents connect via the host's

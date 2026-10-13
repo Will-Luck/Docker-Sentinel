@@ -300,3 +300,35 @@ func TestApiUpdate_RemoteRecordsTheContainerThatChanged(t *testing.T) {
 		t.Errorf("history row = %+v, want sentinel-agent from sentinel:3.0.0 to sentinel:3.0.1", rec)
 	}
 }
+
+type pendingCluster struct {
+	mockClusterProviderWithContainers
+	done chan struct{}
+}
+
+func (p *pendingCluster) UpdateRemoteContainer(context.Context, string, string, string, string) (RemoteUpdated, error) {
+	defer close(p.done)
+	return RemoteUpdated{ContainerName: "sentinel-agent", Pending: true}, nil
+}
+
+// smoke F2: an agent's update of itself is under way when the agent
+// answers (its helper does the swap); the hub records it when the outcome
+// is known. The dashboard records no row for it.
+func TestApiUpdate_RemoteSelfUpdateUnderWayRecordsNothing(t *testing.T) {
+	hist := &recordingHistory{}
+	cp := &pendingCluster{mockClusterProviderWithContainers: mockClusterProviderWithContainers{
+		hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"},
+		containers: []RemoteContainer{{Name: "sentinel-agent", Image: "sentinel:3.0.0", HostID: "h1", HostName: "Agent One"}},
+	}, done: make(chan struct{})}
+	srv := remoteUpdateServer(cp, hist)
+	r := httptest.NewRequest(http.MethodPost, "/api/containers/sentinel-agent/update?host=h1", nil)
+	r.SetPathValue("name", "sentinel-agent")
+	srv.apiUpdate(httptest.NewRecorder(), r)
+	<-cp.done
+	time.Sleep(100 * time.Millisecond)
+	hist.mu.Lock()
+	defer hist.mu.Unlock()
+	if len(hist.recs) != 0 {
+		t.Errorf("history = %+v, want no row while the update is under way", hist.recs)
+	}
+}
