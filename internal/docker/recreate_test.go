@@ -384,3 +384,79 @@ func TestNetworkingConfigFromKeepsUserFieldsOnly(t *testing.T) {
 		t.Error("want nil for no networks")
 	}
 }
+
+// A container an older Sentinel updated was created with the full config of
+// the image it ran first: that image's env, labels and command stayed in
+// it, and the images after it only added their own new keys. Stripping only
+// the current image's values keeps the first image's. Values equal to a
+// default of any image the container ran are taken as image-inherited.
+func TestRecreateConfigStripsDefaultsOfEarlierImages(t *testing.T) {
+	v100 := &container.Config{
+		Env:    []string{"PATH=/usr/bin", "APP_VERSION=1.0.0", "IMG_ONLY_V1_0_0=1"},
+		Labels: map[string]string{"org.opencontainers.image.version": "1.0.0"},
+		Cmd:    []string{"start-v1.0.0"},
+	}
+	v101 := &container.Config{
+		Env:    []string{"PATH=/usr/bin", "APP_VERSION=1.0.1", "IMG_ONLY_V1_0_1=1"},
+		Labels: map[string]string{"org.opencontainers.image.version": "1.0.1"},
+		Cmd:    []string{"start-v1.0.1"},
+	}
+	inspect := container.InspectResponse{
+		Config: &container.Config{
+			Image:  "app:edge",
+			Env:    []string{"PATH=/usr/bin", "APP_VERSION=1.0.0", "IMG_ONLY_V1_0_0=1", "IMG_ONLY_V1_0_1=1", "TOKEN=x"},
+			Labels: map[string]string{"org.opencontainers.image.version": "1.0.0", "mine": "1"},
+			Cmd:    []string{"start-v1.0.0"},
+		},
+		HostConfig: &container.HostConfig{},
+	}
+
+	rc := RecreateConfig(inspect, RecreateOptions{OldImage: v101, InheritedImages: []*container.Config{v100, nil}})
+
+	if !slices.Equal(rc.Config.Env, []string{"TOKEN=x"}) {
+		t.Errorf("Env = %v, want only the user's TOKEN", rc.Config.Env)
+	}
+	if !maps.Equal(rc.Config.Labels, map[string]string{"mine": "1"}) {
+		t.Errorf("Labels = %v, want only the user's label", rc.Config.Labels)
+	}
+	if rc.Config.Cmd != nil {
+		t.Errorf("Cmd = %v, want the first image's command dropped", rc.Config.Cmd)
+	}
+}
+
+// Earlier images count only alongside the current one: without OldImage (a
+// rollback, or its config could not be read) nothing is stripped.
+func TestRecreateConfigInheritedImagesNeedOldImage(t *testing.T) {
+	inspect := container.InspectResponse{
+		Config:     &container.Config{Image: "app:1", Env: []string{"APP_VERSION=1.0.0"}},
+		HostConfig: &container.HostConfig{},
+	}
+	v100 := &container.Config{Env: []string{"APP_VERSION=1.0.0"}}
+
+	rc := RecreateConfig(inspect, RecreateOptions{InheritedImages: []*container.Config{v100}})
+
+	if !slices.Equal(rc.Config.Env, []string{"APP_VERSION=1.0.0"}) {
+		t.Errorf("Env = %v, want it kept without OldImage", rc.Config.Env)
+	}
+}
+
+// The entrypoint and cmd are dropped together when both match one image;
+// matching the entrypoint of one image and the cmd of another drops only
+// the entrypoint, as with a single image.
+func TestStripImageDefaultsMatchesCommandPerImage(t *testing.T) {
+	a := &container.Config{Entrypoint: []string{"/entry"}, Cmd: []string{"v2"}}
+	b := &container.Config{Entrypoint: []string{"/other"}, Cmd: []string{"v1"}}
+	c := &container.Config{Entrypoint: []string{"/entry"}, Cmd: []string{"v1"}}
+
+	cfg := &container.Config{Entrypoint: []string{"/entry"}, Cmd: []string{"v1"}}
+	StripImageDefaults(cfg, nil, a, b)
+	if cfg.Entrypoint != nil || !slices.Equal(cfg.Cmd, []string{"v1"}) {
+		t.Errorf("Entrypoint = %v Cmd = %v, want the entrypoint dropped and the cmd kept", cfg.Entrypoint, cfg.Cmd)
+	}
+
+	cfg = &container.Config{Entrypoint: []string{"/entry"}, Cmd: []string{"v1"}}
+	StripImageDefaults(cfg, nil, a, c)
+	if cfg.Entrypoint != nil || cfg.Cmd != nil {
+		t.Errorf("Entrypoint = %v Cmd = %v, want both dropped (they match image c)", cfg.Entrypoint, cfg.Cmd)
+	}
+}

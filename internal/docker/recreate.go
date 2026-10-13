@@ -33,6 +33,12 @@ type RecreateOptions struct {
 	// daemon fills them from the new image. Leave it nil to recreate the
 	// container as it was, as a rollback does.
 	OldImage *container.Config
+	// InheritedImages are the configs of images the container ran before
+	// OldImage (from Sentinel's update history). A container an older
+	// Sentinel updated kept the config of the first image it ran, so a value
+	// equal to a default of any of these images is taken as image-inherited
+	// too. They are used only with OldImage; nil entries are skipped.
+	InheritedImages []*container.Config
 	// FreshAnonymousVolumes starts the replacement on new, empty anonymous
 	// volumes instead of the old container's, like `docker compose up -V`
 	// (Sentinel's remove_volumes setting). The caller then removes the old
@@ -57,7 +63,7 @@ func RecreateConfig(inspect container.InspectResponse, opts RecreateOptions) Rec
 		cfg.Image = opts.Image
 	}
 	if opts.OldImage != nil {
-		StripImageDefaults(cfg, hostCfg, opts.OldImage)
+		StripImageDefaults(cfg, hostCfg, append([]*container.Config{opts.OldImage}, opts.InheritedImages...)...)
 	}
 	netCfg := NetworkingConfigFrom(inspect.NetworkSettings)
 	dropShortIDNames(cfg, netCfg, inspect.ID)
@@ -161,9 +167,9 @@ func CarryAnonymousVolumes(cfg *container.Config, hostCfg *container.HostConfig,
 	return carried
 }
 
-// StripImageDefaults removes from cfg the values that came from the image
-// the container was created from (img) rather than from the user, the way
-// Watchtower does.
+// StripImageDefaults removes from cfg the values that came from the images
+// the container was created from (imgs: the image it runs, and any it ran
+// before) rather than from the user, the way Watchtower does.
 //
 // The daemon merges an image's defaults into the container config at create
 // time, filling a field only where the request leaves it empty. A container's
@@ -171,52 +177,52 @@ func CarryAnonymousVolumes(cfg *container.Config, hostCfg *container.HostConfig,
 // would keep the old image's values and the new image's would never apply:
 // a stale PATH, the old version label, the old entrypoint and healthcheck.
 // After stripping, the daemon fills those fields from the new image. A value
-// the user set that happens to equal the old image's default is dropped too;
-// the two cannot be told apart.
+// the user set that happens to equal a default of one of the images is
+// dropped too; the two cannot be told apart.
 //
-// Dropped: env entries equal to an image entry, labels with the image's key
-// and value, the entrypoint (and then the cmd) when equal to the image's,
-// an equal healthcheck, working dir, user and stop signal, and the image's
-// exposed ports and volumes. Ports that are published stay exposed.
-func StripImageDefaults(cfg *container.Config, hostCfg *container.HostConfig, img *container.Config) {
-	if cfg == nil || img == nil {
+// Dropped: env entries equal to an image entry, labels with an image's key
+// and value, the entrypoint (and then the cmd) when equal to an image's, an
+// equal healthcheck, working dir, user and stop signal, and the images'
+// exposed ports and volumes. Ports that are published stay exposed. Nil
+// images are skipped.
+func StripImageDefaults(cfg *container.Config, hostCfg *container.HostConfig, imgs ...*container.Config) {
+	imgs = slices.DeleteFunc(slices.Clone(imgs), func(img *container.Config) bool { return img == nil })
+	if cfg == nil || len(imgs) == 0 {
 		return
 	}
-	cfg.Env = slices.DeleteFunc(cfg.Env, func(e string) bool { return slices.Contains(img.Env, e) })
+	cfg.Env = slices.DeleteFunc(cfg.Env, func(e string) bool {
+		return slices.ContainsFunc(imgs, func(img *container.Config) bool { return slices.Contains(img.Env, e) })
+	})
 	if len(cfg.Env) == 0 {
 		cfg.Env = nil
 	}
-	for k, v := range img.Labels {
-		if cv, ok := cfg.Labels[k]; ok && cv == v {
-			delete(cfg.Labels, k)
+	for _, img := range imgs {
+		for k, v := range img.Labels {
+			if cv, ok := cfg.Labels[k]; ok && cv == v {
+				delete(cfg.Labels, k)
+			}
 		}
 	}
-	// The daemon fills Cmd from the image only when Entrypoint is empty, so
-	// Cmd can come from the image only if Entrypoint did. An entrypoint equal
-	// to the image's but with no cmd while the image has one was set on
-	// purpose (`--entrypoint` clears the image CMD): dropping it would let
-	// the daemon add the CMD back.
-	clearedCmd := len(cfg.Cmd) == 0 && len(img.Cmd) > 0
-	if slices.Equal(cfg.Entrypoint, img.Entrypoint) && !clearedCmd {
-		cfg.Entrypoint = nil
-		if slices.Equal(cfg.Cmd, img.Cmd) {
-			cfg.Cmd = nil
+	stripImageCommand(cfg, imgs)
+	for _, img := range imgs {
+		if cfg.Healthcheck != nil && img.Healthcheck != nil && reflect.DeepEqual(*cfg.Healthcheck, *img.Healthcheck) {
+			cfg.Healthcheck = nil
 		}
-	}
-	if cfg.Healthcheck != nil && img.Healthcheck != nil && reflect.DeepEqual(*cfg.Healthcheck, *img.Healthcheck) {
-		cfg.Healthcheck = nil
-	}
-	if cfg.WorkingDir == img.WorkingDir {
-		cfg.WorkingDir = ""
-	}
-	if cfg.User == img.User {
-		cfg.User = ""
-	}
-	if cfg.StopSignal == img.StopSignal {
-		cfg.StopSignal = ""
-	}
-	for p := range img.ExposedPorts {
-		delete(cfg.ExposedPorts, p)
+		if cfg.WorkingDir == img.WorkingDir {
+			cfg.WorkingDir = ""
+		}
+		if cfg.User == img.User {
+			cfg.User = ""
+		}
+		if cfg.StopSignal == img.StopSignal {
+			cfg.StopSignal = ""
+		}
+		for p := range img.ExposedPorts {
+			delete(cfg.ExposedPorts, p)
+		}
+		for v := range img.Volumes {
+			delete(cfg.Volumes, v)
+		}
 	}
 	if hostCfg != nil {
 		for p := range hostCfg.PortBindings {
@@ -229,11 +235,31 @@ func StripImageDefaults(cfg *container.Config, hostCfg *container.HostConfig, im
 	if len(cfg.ExposedPorts) == 0 {
 		cfg.ExposedPorts = nil
 	}
-	for v := range img.Volumes {
-		delete(cfg.Volumes, v)
-	}
 	if len(cfg.Volumes) == 0 {
 		cfg.Volumes = nil
+	}
+}
+
+// stripImageCommand drops the entrypoint, and the cmd with it, when they
+// came from one of the images: both when they equal one image's, else the
+// entrypoint alone when it equals an image's.
+//
+// The daemon fills Cmd from the image only when Entrypoint is empty, so Cmd
+// can come from the image only if Entrypoint did. An entrypoint equal to an
+// image's but with no cmd while that image has one was set on purpose
+// (`--entrypoint` clears the image CMD): dropping it would let the daemon
+// add the CMD back.
+func stripImageCommand(cfg *container.Config, imgs []*container.Config) {
+	fromImage := func(img *container.Config) bool {
+		clearedCmd := len(cfg.Cmd) == 0 && len(img.Cmd) > 0
+		return slices.Equal(cfg.Entrypoint, img.Entrypoint) && !clearedCmd
+	}
+	if slices.ContainsFunc(imgs, func(img *container.Config) bool { return fromImage(img) && slices.Equal(cfg.Cmd, img.Cmd) }) {
+		cfg.Entrypoint, cfg.Cmd = nil, nil
+		return
+	}
+	if slices.ContainsFunc(imgs, fromImage) {
+		cfg.Entrypoint = nil
 	}
 }
 
