@@ -188,10 +188,11 @@ func (s *Server) apiGetWebhookInfo(w http.ResponseWriter, _ *http.Request) {
 	enabled, _ := s.deps.SettingsStore.LoadSetting(store.SettingWebhookEnabled)
 	secret, _ := s.deps.SettingsStore.LoadSetting(store.SettingWebhookSecret)
 
-	// Mask secret for display — full secret is only shown once at generation time.
-	masked := secret
-	if len(secret) > 12 {
-		masked = secret[:8] + "****" + secret[len(secret)-4:]
+	// The full secret is only shown once, at generation. Never return more
+	// than a short prefix, whatever the length.
+	masked := ""
+	if secret != "" {
+		masked = secret[:min(4, len(secret)/3)] + "****"
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{

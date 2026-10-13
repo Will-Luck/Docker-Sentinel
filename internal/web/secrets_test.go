@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/config"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
@@ -157,9 +158,57 @@ func TestConfigImportOfDefaultExportKeepsChannelSecrets(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	srv.apiConfigImport(w2, httptest.NewRequest(http.MethodPost, "/api/config/import", bytes.NewReader(w.Body.Bytes())))
 
+	if w2.Code != http.StatusOK || !strings.Contains(w2.Body.String(), `"notifications_imported":1`) {
+		t.Fatalf("import status %d, body %s: the channel must be imported, not skipped", w2.Code, w2.Body.String())
+	}
 	var gs notify.GotifySettings
 	_ = json.Unmarshal(ns.ch[0].Settings, &gs)
 	if gs.Token != "RealSecretToken123" {
 		t.Errorf("stored Gotify token = %q after importing a default export (status %d)", gs.Token, w2.Code)
+	}
+}
+
+// Environment-sourced values reach GET /api/settings through Config.Values().
+// A secret in a URL (userinfo, path or query) must not be returned, and a
+// future Values() key that looks like a credential fails here.
+func TestApiSettingsDoesNotLeakEnvSecrets(t *testing.T) {
+	const planted = "PLANTEDSECRET"
+	withSecret := "https://user:" + planted + "@hooks.example/" + planted + "/x?token=" + planted
+	// A path is plain on an NPM address, so it is left out of that one.
+	t.Setenv("SENTINEL_NPM_URL", "https://user:"+planted+"@npm.example:81?token="+planted)
+	for _, k := range []string{"SENTINEL_WEBHOOK_URL", "SENTINEL_GOTIFY_URL", "SENTINEL_SERVER_ADDR", "SENTINEL_HOST", "SENTINEL_CLUSTER_ADVERTISE", "SENTINEL_WEBAUTHN_ORIGINS"} {
+		t.Setenv(k, withSecret)
+	}
+	cfg := config.Load()
+	for k := range cfg.Values() {
+		for _, suf := range []string{"_SECRET", "_PASSWORD", "_TOKEN"} {
+			if strings.HasSuffix(k, suf) {
+				t.Errorf("Config.Values() exposes credential-like key %q", k)
+			}
+		}
+	}
+	srv := &Server{deps: Dependencies{SettingsStore: newMockSettingsStore(), Config: cfg, Log: slog.Default()}}
+	w := httptest.NewRecorder()
+	srv.apiSettings(w, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if strings.Contains(w.Body.String(), planted) {
+		t.Errorf("GET /api/settings returns a secret from an environment value: %s", w.Body.String())
+	}
+}
+
+func TestApiWebhookInfoNeverReturnsMoreThanAPrefix(t *testing.T) {
+	for _, secret := range []string{"short", "exactly12chr", strings.Repeat("a", 64)} {
+		ss := newMockSettingsStore()
+		ss.data[store.SettingWebhookSecret] = secret
+		srv := &Server{deps: Dependencies{SettingsStore: ss}}
+		w := httptest.NewRecorder()
+		srv.apiGetWebhookInfo(w, httptest.NewRequest(http.MethodGet, "/api/settings/webhook-info", nil))
+		var got map[string]string
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		shown := strings.ReplaceAll(got["secret"], "*", "")
+		if len(shown) > 4 || (len(secret) > 0 && strings.Contains(got["secret"], secret)) {
+			t.Errorf("webhook-info returned %q for a %d-char secret, want at most a 4-char prefix", got["secret"], len(secret))
+		}
 	}
 }

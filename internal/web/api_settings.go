@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,11 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			dbValues = dbSettings
 		}
+	}
+
+	// Environment values can carry credentials inside URLs.
+	for k, v := range values {
+		values[k] = sanitiseEnvValue(k, v)
 	}
 
 	// Never return a credential: the Viewer role and settings.view tokens can
@@ -696,4 +702,27 @@ func (s *Server) apiSaveGeneralSetting(w http.ResponseWriter, r *http.Request) {
 
 	s.logEvent(r, "settings", "", "General setting changed: "+body.Key+"="+body.Value)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "restart_required": "true"})
+}
+
+// sanitiseEnvValue removes credentials from an environment-sourced value
+// that is a URL: userinfo, query and fragment always, and the path too
+// unless the setting is a plain service address (SENTINEL_NPM_URL). Webhook
+// and Gotify URLs often carry the secret in the path, so they keep only the
+// scheme and host.
+func sanitiseEnvValue(key, v string) string {
+	if !strings.HasPrefix(key, "SENTINEL_") || !strings.Contains(v, "://") {
+		return v
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Host == "" {
+		return "****"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	if key != "SENTINEL_NPM_URL" {
+		u.Path = ""
+		u.RawPath = ""
+	}
+	return u.String()
 }
