@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
 )
 
@@ -121,6 +123,10 @@ type Agent struct {
 	// inflight counts running command handlers, so a reconnect for a
 	// renewed certificate can wait for them.
 	inflight atomic.Int64
+
+	// hubRenews is whether the hub said (in its StateAck) that it renews
+	// certificates safely. Hubs before v2.17.0 do not.
+	hubRenews atomic.Bool
 
 	// updating holds the names of containers being updated (beginUpdate).
 	updatingMu sync.Mutex
@@ -312,6 +318,7 @@ func (a *Agent) runSession(ctx context.Context) error {
 		return fmt.Errorf("state report rejected: %s", ack.Message)
 	}
 	a.log.Info("state report accepted", "message", ack.Message)
+	a.hubRenews.Store(slices.Contains(ack.GetServerFeatures(), cluster.FeatureCertRenewal))
 
 	// Open bidirectional channel.
 	stream, err := a.service.Channel(ctx)

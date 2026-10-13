@@ -1733,11 +1733,15 @@ func (x *StateReport) GetEngineId() string {
 }
 
 type StateAck struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Accepted      bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"` // e.g. "state received" or error detail
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Accepted bool                   `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	Message  string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"` // e.g. "state received" or error detail
+	// Capabilities of the server. "cert-renewal": the server handles
+	// CertRenewalCSR safely (keeps the old certificate valid until the new
+	// one is in use). Servers older than v2.17.0 send none.
+	ServerFeatures []string `protobuf:"bytes,3,rep,name=server_features,json=serverFeatures,proto3" json:"server_features,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *StateAck) Reset() {
@@ -1782,6 +1786,13 @@ func (x *StateAck) GetMessage() string {
 		return x.Message
 	}
 	return ""
+}
+
+func (x *StateAck) GetServerFeatures() []string {
+	if x != nil {
+		return x.ServerFeatures
+	}
+	return nil
 }
 
 type PolicySync struct {
@@ -2331,10 +2342,11 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"\ttimestamp\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12#\n" +
 	"\ragent_version\x18\x04 \x01(\tR\fagentVersion\x12-\n" +
 	"\x12supported_features\x18\x05 \x03(\tR\x11supportedFeatures\x12\x1b\n" +
-	"\tengine_id\x18\x06 \x01(\tR\bengineId\"@\n" +
+	"\tengine_id\x18\x06 \x01(\tR\bengineId\"i\n" +
 	"\bStateAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xb8\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12'\n" +
+	"\x0fserver_features\x18\x03 \x03(\tR\x0eserverFeatures\"\xb8\x01\n" +
 	"\n" +
 	"PolicySync\x12F\n" +
 	"\bpolicies\x18\x01 \x03(\v2*.sentinel.cluster.PolicySync.PoliciesEntryR\bpolicies\x12%\n" +

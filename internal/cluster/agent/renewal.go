@@ -103,6 +103,14 @@ func (a *Agent) requestRenewalIfDue(stream proto.AgentService_ChannelClient) err
 	if !renewalDue(leaf, now) {
 		return nil
 	}
+	if !a.hubRenews.Load() {
+		// A hub before v2.17.0 revokes the old certificate as soon as it
+		// signs a new one and can drop the reply, which would lock this
+		// agent out. Keep the working certificate and say why.
+		a.log.Warn("agent certificate expires soon, but the server does not renew certificates; upgrade the server to v2.17.0 or later before it expires",
+			"expires", leaf.NotAfter.Format(time.RFC3339))
+		return nil
+	}
 
 	a.renewMu.Lock()
 	outstanding := a.renewal != nil && now.Sub(a.renewal.sentAt) < renewalRetryAfter

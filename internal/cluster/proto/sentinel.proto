@@ -213,6 +213,10 @@ message StateReport {
 message StateAck {
   bool accepted = 1;
   string message = 2;   // e.g. "state received" or error detail
+  // Capabilities of the server. "cert-renewal": the server handles
+  // CertRenewalCSR safely (keeps the old certificate valid until the new
+  // one is in use). Servers older than v2.17.0 send none.
+  repeated string server_features = 3;
 }
 
 // --- Policy + settings sync ---

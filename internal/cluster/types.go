@@ -2,6 +2,11 @@ package cluster
 
 import "time"
 
+// FeatureCertRenewal is the server feature (StateAck.server_features) that
+// says the server renews agent certificates safely: it keeps the old one
+// valid until the agent connects with the new one.
+const FeatureCertRenewal = "cert-renewal"
+
 // HostState represents the lifecycle state of a registered agent host.
 type HostState string
 

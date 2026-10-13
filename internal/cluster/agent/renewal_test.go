@@ -296,6 +296,7 @@ func renewalAgent(t *testing.T) (*Agent, string) {
 	provisionAgent(t, caDir, dataDir, "host-a", time.Now())
 	a := New(Config{DataDir: dataDir}, newFakeHost(), noopLogger())
 	a.hostID = "host-a"
+	a.hubRenews.Store(true)
 	return a, caDir
 }
 
