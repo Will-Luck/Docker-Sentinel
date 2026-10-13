@@ -88,26 +88,26 @@ func (r *Registry) LoadFromStore() error {
 	return nil
 }
 
+// Locking: r.mu guards the map and is never held across a store call, so
+// one slow database write cannot hold up other hosts. Writes go through
+// persist, which checks inside the write transaction that the host is
+// still registered, so a save racing with Remove never writes a removed
+// host back.
+
 // Register adds a newly enrolled host to the registry and persists it.
-//
-// Every write of a host to the store happens under r.mu, and only for a
-// host still in the map, so a save that races with Remove can never write
-// a removed host back.
 func (r *Registry) Register(info cluster.HostInfo) error {
-	data, err := json.Marshal(info)
-	if err != nil {
-		return fmt.Errorf("marshal host info: %w", err)
-	}
-
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if err := r.store.SaveClusterHost(info.ID, data); err != nil {
-		return fmt.Errorf("persist host %s: %w", info.ID, err)
-	}
 	r.hosts[info.ID] = &HostState{
 		Info:      info,
 		Connected: false,
+	}
+	r.mu.Unlock()
+
+	if err := r.persist(info.ID); err != nil {
+		r.mu.Lock()
+		delete(r.hosts, info.ID)
+		r.mu.Unlock()
+		return fmt.Errorf("persist host %s: %w", info.ID, err)
 	}
 
 	r.log.Info("registered new host", "id", info.ID, "name", info.Name)
@@ -118,13 +118,15 @@ func (r *Registry) Register(info cluster.HostInfo) error {
 // to the correct host. Called on each Channel() connection.
 func (r *Registry) UpdateAddress(hostID, addr string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
+	if ok {
+		hs.Info.Address = addr
+	}
+	r.mu.Unlock()
 	if !ok {
 		return
 	}
-	hs.Info.Address = addr
-	if err := r.persistLocked(hostID, hs); err != nil {
+	if err := r.persist(hostID); err != nil {
 		r.log.Warn("persist host address", "error", err)
 	}
 }
@@ -134,31 +136,37 @@ func (r *Registry) UpdateAddress(hostID, addr string) {
 // since the last write. Use PersistLastSeen for forced writes (e.g. on disconnect).
 func (r *Registry) UpdateLastSeen(hostID string, t time.Time) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf("host %s not found", hostID)
 	}
 	hs.Info.LastSeen = t
+	due := time.Since(hs.lastPersist) >= persistInterval
+	if due {
+		hs.lastPersist = t
+	}
+	r.mu.Unlock()
 
-	if time.Since(hs.lastPersist) < persistInterval {
+	if !due {
 		return nil
 	}
-	hs.lastPersist = t
-	return r.persistLocked(hostID, hs)
+	return r.persist(hostID)
 }
 
 // PersistLastSeen forces a BoltDB write of the host's current LastSeen.
 // Called on disconnect so the timestamp survives a server restart.
 func (r *Registry) PersistLastSeen(hostID string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
+	if ok {
+		hs.lastPersist = hs.Info.LastSeen
+	}
+	r.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("host %s not found", hostID)
 	}
-	hs.lastPersist = hs.Info.LastSeen
-	return r.persistLocked(hostID, hs)
+	return r.persist(hostID)
 }
 
 // SetConnected marks a host as connected or disconnected.
@@ -226,16 +234,19 @@ func (r *Registry) SetDisconnected(hostID string, err error) {
 // Persisted to BoltDB so the cluster page can show it.
 func (r *Registry) UpdateEngineID(hostID, engineID string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf("host %s not found", hostID)
 	}
 	if hs.Info.EngineID == engineID {
+		r.mu.Unlock()
 		return nil // no change
 	}
 	hs.Info.EngineID = engineID
-	if err := r.persistLocked(hostID, hs); err != nil {
+	r.mu.Unlock()
+
+	if err := r.persist(hostID); err != nil {
 		return fmt.Errorf("persist engine ID: %w", err)
 	}
 	r.log.Info("stored engine ID", "hostID", hostID, "engine_id", engineID)
@@ -336,55 +347,75 @@ func (r *Registry) Get(hostID string) (*HostState, bool) {
 // newer renewal has replaced it before the agent ever connected with it.
 func (r *Registry) SetPendingCertSerial(hostID, serial string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	hs, ok := r.hosts[hostID]
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf("host %s not found", hostID)
 	}
-	if prev := hs.Info.PendingCertSerial; prev != "" && prev != serial {
+	prev := hs.Info.PendingCertSerial
+	hs.Info.PendingCertSerial = serial
+	r.mu.Unlock()
+
+	if prev != "" && prev != serial {
 		if err := r.store.AddRevokedCert(prev); err != nil {
 			return fmt.Errorf("revoke superseded renewal: %w", err)
 		}
 	}
-	hs.Info.PendingCertSerial = serial
-	return r.persistLocked(hostID, hs)
+	return r.persist(hostID)
 }
 
 // ClearPendingCertSerial forgets serial if it is still the host's pending
 // renewal (the caller has revoked it).
 func (r *Registry) ClearPendingCertSerial(hostID, serial string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	hs, ok := r.hosts[hostID]
-	if !ok || hs.Info.PendingCertSerial != serial {
+	cleared := ok && hs.Info.PendingCertSerial == serial
+	if cleared {
+		hs.Info.PendingCertSerial = ""
+	}
+	r.mu.Unlock()
+
+	if !cleared {
 		return nil
 	}
-	hs.Info.PendingCertSerial = ""
-	return r.persistLocked(hostID, hs)
+	return r.persist(hostID)
 }
 
 // PromoteCertSerial is called with the serial an agent presented on
 // connect. When that is the host's pending renewal it becomes the current
 // serial, and the serial it replaces is revoked and returned.
 func (r *Registry) PromoteCertSerial(hostID, presented string) (replaced string, promoted bool, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	r.mu.RLock()
 	hs, ok := r.hosts[hostID]
-	if !ok || presented == "" || hs.Info.PendingCertSerial != presented {
+	if ok {
+		replaced = hs.Info.CertSerial
+	}
+	pending := ok && presented != "" && hs.Info.PendingCertSerial == presented
+	r.mu.RUnlock()
+	if !pending {
 		return "", false, nil
 	}
-	replaced = hs.Info.CertSerial
+
+	// Revoke first: if that fails nothing has changed, and the swap is
+	// tried again on the next connect.
 	if replaced != "" && replaced != presented {
 		if err := r.store.AddRevokedCert(replaced); err != nil {
 			return "", false, fmt.Errorf("revoke replaced cert: %w", err)
 		}
 	}
-	hs.Info.CertSerial = presented
-	hs.Info.PendingCertSerial = ""
-	if err := r.persistLocked(hostID, hs); err != nil {
+
+	r.mu.Lock()
+	hs, ok = r.hosts[hostID]
+	swap := ok && hs.Info.PendingCertSerial == presented && hs.Info.CertSerial == replaced
+	if swap {
+		hs.Info.CertSerial = presented
+		hs.Info.PendingCertSerial = ""
+	}
+	r.mu.Unlock()
+	if !swap {
+		return "", false, nil
+	}
+	if err := r.persist(hostID); err != nil {
 		return "", false, err
 	}
 	return replaced, true, nil
@@ -404,60 +435,82 @@ const (
 // serial as current.
 func (r *Registry) MatchCertSerial(hostID, presented string) (certMatch, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	hs, ok := r.hosts[hostID]
 	if !ok || presented == "" {
+		r.mu.Unlock()
 		return certUnknown, nil
 	}
 	switch presented {
 	case hs.Info.CertSerial:
+		r.mu.Unlock()
 		return certCurrent, nil
 	case hs.Info.PendingCertSerial:
+		r.mu.Unlock()
 		return certPending, nil
 	}
-	if hs.Info.CertSerial == "" {
+	adopt := hs.Info.CertSerial == ""
+	if adopt {
 		hs.Info.CertSerial = presented
-		r.log.Info("recorded the certificate serial of a host enrolled before serials were tracked", "id", hostID, "serial", presented)
-		return certCurrent, r.persistLocked(hostID, hs)
 	}
-	return certUnknown, nil
+	r.mu.Unlock()
+
+	if !adopt {
+		return certUnknown, nil
+	}
+	r.log.Info("recorded the certificate serial of a host enrolled before serials were tracked", "id", hostID, "serial", presented)
+	return certCurrent, r.persist(hostID)
 }
 
-// RevokeAndRemove revokes every certificate the host holds (its current
-// one and any pending renewal) and removes the host, all under one hold of
-// the registry lock. A renewal racing with it either lands first, and its
-// serial is revoked here, or finds the host gone and revokes its own cert.
+// RevokeAndRemove removes the host and revokes every certificate it holds
+// (its current one and any pending renewal). The host leaves the map and
+// its serials are read in one hold of the registry lock, so a renewal
+// racing with it either lands first, and its serial is revoked here, or
+// finds the host gone and revokes its own certificate. A removed host can
+// no longer connect even if a revocation write fails.
 func (r *Registry) RevokeAndRemove(hostID string) (revoked []string, err error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
+	var serials []string
 	if hs, ok := r.hosts[hostID]; ok {
-		for _, serial := range []string{hs.Info.CertSerial, hs.Info.PendingCertSerial} {
-			if serial == "" {
-				continue
-			}
-			if err := r.store.AddRevokedCert(serial); err != nil {
-				return revoked, fmt.Errorf("revoke cert: %w", err)
-			}
-			revoked = append(revoked, serial)
-		}
+		serials = []string{hs.Info.CertSerial, hs.Info.PendingCertSerial}
 	}
 	delete(r.hosts, hostID)
+	r.mu.Unlock()
+
+	var revokeErr error
+	for _, serial := range serials {
+		if serial == "" {
+			continue
+		}
+		if err := r.store.AddRevokedCert(serial); err != nil {
+			revokeErr = fmt.Errorf("revoke cert %s: %w", serial, err)
+			continue
+		}
+		revoked = append(revoked, serial)
+	}
 	if err := r.store.DeleteClusterHost(hostID); err != nil {
 		return revoked, fmt.Errorf("delete host %s from store: %w", hostID, err)
 	}
 	r.log.Info("revoked and removed host", "id", hostID)
-	return revoked, nil
+	return revoked, revokeErr
 }
 
-// persistLocked writes hs to the store. Caller holds r.mu.
-func (r *Registry) persistLocked(hostID string, hs *HostState) error {
-	data, err := json.Marshal(hs.Info)
-	if err != nil {
-		return fmt.Errorf("marshal host info: %w", err)
-	}
-	return r.store.SaveClusterHost(hostID, data)
+// persist writes the host's current record to the store, in a write
+// transaction that first checks the host is still registered. Callers do
+// not hold r.mu.
+func (r *Registry) persist(hostID string) error {
+	return r.store.SaveClusterHostWith(hostID, func() ([]byte, error) {
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		hs, ok := r.hosts[hostID]
+		if !ok {
+			return nil, nil
+		}
+		data, err := json.Marshal(hs.Info)
+		if err != nil {
+			return nil, fmt.Errorf("marshal host info: %w", err)
+		}
+		return data, nil
+	})
 }
 
 // GetCertSerial returns the current cert serial for a host, read under lock.
@@ -487,15 +540,16 @@ func (r *Registry) AllHosts() []cluster.HostInfo {
 // Valid transitions: active -> paused -> decommissioned.
 func (r *Registry) SetState(hostID string, state cluster.HostState) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	hs, ok := r.hosts[hostID]
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf("host %s not found", hostID)
 	}
-
 	old := hs.Info.State
 	hs.Info.State = state
-	if err := r.persistLocked(hostID, hs); err != nil {
+	r.mu.Unlock()
+
+	if err := r.persist(hostID); err != nil {
 		return fmt.Errorf("persist host state: %w", err)
 	}
 
@@ -507,8 +561,8 @@ func (r *Registry) SetState(hostID string, state cluster.HostState) error {
 // Typically called after decommissioning (certs revoked, data cleaned up).
 func (r *Registry) Remove(hostID string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	delete(r.hosts, hostID)
+	r.mu.Unlock()
 	if err := r.store.DeleteClusterHost(hostID); err != nil {
 		return fmt.Errorf("delete host %s from store: %w", hostID, err)
 	}

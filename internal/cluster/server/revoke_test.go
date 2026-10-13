@@ -121,12 +121,21 @@ type slowSaveStore struct {
 	release chan struct{}
 }
 
-func (s *slowSaveStore) SaveClusterHost(id string, data []byte) error {
+func (s *slowSaveStore) pause() {
 	s.once.Do(func() {
 		close(s.started)
 		<-s.release
 	})
+}
+
+func (s *slowSaveStore) SaveClusterHost(id string, data []byte) error {
+	s.pause()
 	return s.Store.SaveClusterHost(id, data)
+}
+
+func (s *slowSaveStore) SaveClusterHostWith(id string, fn func() ([]byte, error)) error {
+	s.pause()
+	return s.Store.SaveClusterHostWith(id, fn)
 }
 
 // A save that was already under way when the host was removed (a late
@@ -168,5 +177,39 @@ func TestRegistry_LateSaveDoesNotResurrectRemovedHost(t *testing.T) {
 
 	if data, _ := db.GetClusterHost("h1"); data != nil {
 		t.Error("removed host was written back to the store by a late save")
+	}
+}
+
+// One host's slow database write must not hold up every other host: their
+// heartbeats only touch memory.
+func TestRegistry_SlowSaveDoesNotBlockOtherHosts(t *testing.T) {
+	db, err := store.Open(t.TempDir() + "/hub.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	reg := NewRegistry(db, slog.Default())
+	for _, id := range []string{"h1", "h2"} {
+		if err := reg.Register(cluster.HostInfo{ID: id, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st := &slowSaveStore{Store: db, started: make(chan struct{}), release: make(chan struct{})}
+	reg.store = st
+	defer close(st.release)
+
+	go func() { _ = reg.PersistLastSeen("h1") }()
+	<-st.started
+
+	done := make(chan struct{})
+	go func() {
+		reg.SetConnected("h2", true)
+		_, _ = reg.Get("h2")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("another host's state was blocked behind a slow save of h1")
 	}
 }

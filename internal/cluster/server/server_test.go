@@ -1343,7 +1343,10 @@ func TestRegisterPending_AllowsConcurrentPerHost(t *testing.T) {
 // errStore is a minimal ClusterStore stub whose IsRevokedCert always errors.
 type errStore struct{ err error }
 
-func (e *errStore) SaveClusterHost(string, []byte) error         { return nil }
+func (e *errStore) SaveClusterHost(string, []byte) error { return nil }
+func (e *errStore) SaveClusterHostWith(string, func() ([]byte, error)) error {
+	return nil
+}
 func (e *errStore) GetClusterHost(string) ([]byte, error)        { return nil, nil }
 func (e *errStore) ListClusterHosts() (map[string][]byte, error) { return nil, nil }
 func (e *errStore) DeleteClusterHost(string) error               { return nil }

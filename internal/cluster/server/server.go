@@ -38,6 +38,9 @@ type HistoryRecorder interface {
 // store package directly, matching the pattern used by the web package.
 type ClusterStore interface {
 	SaveClusterHost(id string, data []byte) error
+	// SaveClusterHostWith writes the record fn returns inside one write
+	// transaction; a nil record writes nothing.
+	SaveClusterHostWith(id string, fn func() ([]byte, error)) error
 	GetClusterHost(id string) ([]byte, error)
 	ListClusterHosts() (map[string][]byte, error)
 	DeleteClusterHost(id string) error

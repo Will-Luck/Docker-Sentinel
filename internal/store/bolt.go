@@ -757,6 +757,23 @@ func (s *Store) SaveClusterHost(id string, data []byte) error {
 	})
 }
 
+// SaveClusterHostWith writes the host record fn returns, inside one write
+// transaction, so whatever fn checks still holds when the record is
+// written. fn returning a nil record writes nothing.
+func (s *Store) SaveClusterHostWith(id string, fn func() ([]byte, error)) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		data, err := fn()
+		if err != nil || data == nil {
+			return err
+		}
+		b, err := bucket(tx, bucketClusterHosts)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), data)
+	})
+}
+
 // GetClusterHost retrieves a host registration by ID.
 func (s *Store) GetClusterHost(id string) ([]byte, error) {
 	var data []byte
