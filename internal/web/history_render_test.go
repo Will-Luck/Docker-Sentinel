@@ -2,6 +2,8 @@ package web
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -53,5 +55,35 @@ func TestLoginPage_ErrorElementHasAnID(t *testing.T) {
 	}
 	if out := render(""); !strings.Contains(out, `id="login-error" class="login-error" style="display: none;"`) {
 		t.Errorf("without an error, #login-error should exist and be hidden")
+	}
+}
+
+// The CSP only allows fonts from this origin, so no page may link Google
+// Fonts, and the font files the stylesheet names must be served.
+func TestFontsAreSelfHosted(t *testing.T) {
+	entries, err := staticFS.ReadDir("static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".html") {
+			continue
+		}
+		b, _ := staticFS.ReadFile("static/" + e.Name())
+		if strings.Contains(string(b), "fonts.googleapis.com") || strings.Contains(string(b), "fonts.gstatic.com") {
+			t.Errorf("%s still links Google Fonts, which the CSP blocks", e.Name())
+		}
+	}
+	css, _ := staticFS.ReadFile("static/style.css")
+	for _, f := range []string{"/static/fonts/roboto-latin.woff2", "/static/fonts/roboto-mono-latin.woff2"} {
+		if !strings.Contains(string(css), f) {
+			t.Errorf("style.css has no @font-face for %s", f)
+		}
+		srv := &Server{}
+		w := httptest.NewRecorder()
+		srv.serveStaticFile(w, httptest.NewRequest(http.MethodGet, f, nil))
+		if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "font/woff2" || w.Body.Len() < 1000 {
+			t.Errorf("%s: status %d, type %q, %d bytes", f, w.Code, w.Header().Get("Content-Type"), w.Body.Len())
+		}
 	}
 }

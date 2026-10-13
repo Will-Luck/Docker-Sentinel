@@ -1,3 +1,19 @@
+/* Fonts are served from this origin: the CSP allows no other font source. */
+@font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url(/static/fonts/roboto-latin.woff2) format('woff2');
+}
+@font-face {
+    font-family: 'Roboto Mono';
+    font-style: normal;
+    font-weight: 400 500;
+    font-display: swap;
+    src: url(/static/fonts/roboto-mono-latin.woff2) format('woff2');
+}
+
 /* ==========================================================================
    Docker-Sentinel Dashboard v3 — Style Sheet
    Material Design 3 — Purple baseline, tinted surfaces, light-dark() theming

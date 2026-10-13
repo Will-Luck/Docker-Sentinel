@@ -23,7 +23,7 @@ js: $(ESBUILD)
 	$(ESBUILD) $(JS_ENTRY) --bundle --format=iife --sourcemap --outfile=$(JS_OUT)
 
 css: $(ESBUILD)
-	$(ESBUILD) $(CSS_ENTRY) --bundle --sourcemap --outfile=$(CSS_OUT)
+	$(ESBUILD) $(CSS_ENTRY) --bundle --sourcemap --external:/static/fonts/* --outfile=$(CSS_OUT)
 
 frontend: js css
 

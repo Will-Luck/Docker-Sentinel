@@ -1,4 +1,18 @@
 /* internal/web/static/src/css/variables.css */
+@font-face {
+  font-family: "Roboto";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url(/static/fonts/roboto-latin.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Roboto Mono";
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url(/static/fonts/roboto-mono-latin.woff2) format("woff2");
+}
 :root {
   color-scheme: dark light;
   --md-primary: light-dark(#6750A4, #D0BCFF);
