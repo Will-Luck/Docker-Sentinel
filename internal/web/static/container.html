@@ -418,8 +418,15 @@
         "pinned": "badge-error"
     };
 
+    // notifyPrefURL is the notification preference endpoint for this page's
+    // container; a remote container's preference is kept under its host.
+    function notifyPrefURL() {
+        return "/api/containers/" + encodeURIComponent(_containerName) + "/notify-pref" +
+            (_containerHostId ? "?host=" + encodeURIComponent(_containerHostId) : "");
+    }
+
     function changeNotifyPref(mode) {
-        fetch("/api/containers/" + encodeURIComponent(_containerName) + "/notify-pref", {
+        fetch(notifyPrefURL(), {
             method: "POST",
             credentials: "same-origin",
             headers: {"Content-Type": "application/json"},
@@ -431,6 +438,8 @@
                 showToast("Notification mode updated", "success");
                 var preview = document.getElementById("notify-preview");
                 if (preview) preview.textContent = notifyLabels[mode] || mode;
+            } else {
+                showToast(data.error || "Failed to update notification mode", "error");
             }
         })
         .catch(function () { showToast("Failed to update notification mode", "error"); });
@@ -504,7 +513,7 @@
 
     (function() {
         // Load current notification preference
-        fetch("/api/containers/" + encodeURIComponent(_containerName) + "/notify-pref", {credentials: "same-origin"})
+        fetch(notifyPrefURL(), {credentials: "same-origin"})
             .then(function (res) { return res.json(); })
             .then(function (data) {
                 if (data.mode) {

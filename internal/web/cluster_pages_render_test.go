@@ -51,3 +51,26 @@ func TestClusterPage_ServerCardValueIsTextSized(t *testing.T) {
 		t.Errorf("stylesheet lacks the wrap and text-size rules")
 	}
 }
+
+// A remote container's notification preference is read and written under
+// its host, not under the hub's container of the same name.
+func TestContainerPage_NotifyPrefIsHostScoped(t *testing.T) {
+	out := renderAny(t, "container.html", containerDetailData{Container: containerView{Name: "whoami", HostID: "h1"}})
+	if strings.Contains(out, `"/notify-pref", {`) {
+		t.Errorf("a notify-pref request is built without the host")
+	}
+	if !strings.Contains(out, `"?host=" + encodeURIComponent(_containerHostId)`) || strings.Count(out, "notifyPrefURL()") < 2 {
+		t.Errorf("both notify-pref requests should use the host-scoped URL")
+	}
+}
+
+func renderAny(t *testing.T, name string, data any) string {
+	t.Helper()
+	s := &Server{}
+	s.parseTemplates()
+	var buf bytes.Buffer
+	if err := s.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		t.Fatalf("render %s: %v", name, err)
+	}
+	return buf.String()
+}
