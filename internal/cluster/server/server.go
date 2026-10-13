@@ -504,6 +504,11 @@ func (s *Server) PauseHost(id string) error {
 	return s.registry.SetState(id, cluster.HostPaused)
 }
 
+// ResumeHost ends a pause: the host gets updates again.
+func (s *Server) ResumeHost(id string) error {
+	return s.registry.SetState(id, cluster.HostActive)
+}
+
 // RevokeHost revokes the host's certificate, disconnects its stream, and
 // removes it from the registry. The cert serial is added to the CRL so
 // the agent can no longer authenticate.

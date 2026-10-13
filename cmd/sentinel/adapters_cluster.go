@@ -133,6 +133,10 @@ func (a *clusterAdapter) PauseHost(id string) error {
 	return a.srv.PauseHost(id)
 }
 
+func (a *clusterAdapter) ResumeHost(id string) error {
+	return a.srv.ResumeHost(id)
+}
+
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
 	ur, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
 	if err != nil {
@@ -313,6 +317,16 @@ func settingsSyncFrom(st engine.AgentSettings) *proto.SettingsSync {
 // a container, so a scan leaves that container to it.
 func (a *clusterScannerAdapter) UpdateInFlight(hostID, name string) bool {
 	return a.srv.UpdateInFlight(hostID, name)
+}
+
+// HostPaused reports whether a host is paused (no new updates).
+func (a *clusterScannerAdapter) HostPaused(hostID string) bool {
+	return a.srv.HostPaused(hostID)
+}
+
+// PullImage asks an agent to pull an image (a pull-only update).
+func (a *clusterScannerAdapter) PullImage(_ context.Context, hostID, ref string) error {
+	return a.srv.PullImage(hostID, ref)
 }
 
 // knownContainer returns what srv last heard about a remote container.

@@ -139,3 +139,67 @@ func TestUpdateInFlight(t *testing.T) {
 		t.Error("the finished update is still reported in flight")
 	}
 }
+
+// A pull-only update asks the agent to pull the image; nothing else.
+func TestPullImage_SendsAPullRequest(t *testing.T) {
+	srv, hostID, stream := connectAgent(t)
+	got := make(chan string, 1)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if p := msg.GetPullImage(); p != nil {
+				got <- p.GetImageRef()
+			}
+		}
+	}()
+	if err := srv.PullImage(hostID, "nginx:2"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ref := <-got:
+		if ref != "nginx:2" {
+			t.Errorf("agent asked to pull %q, want nginx:2", ref)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent got no pull request")
+	}
+}
+
+// A paused host gets no new updates, whatever starts them; a rollback
+// still goes through.
+func TestUpdateContainerSync_RefusedForAPausedHost(t *testing.T) {
+	srv, hostID, stream := connectAgent(t)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if msg.GetUpdateContainer() != nil {
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{
+					UpdateResult: &proto.UpdateResult{RequestId: msg.GetRequestId(), ContainerName: "web", Outcome: "success"},
+				}})
+			}
+		}
+	}()
+	if err := srv.PauseHost(hostID); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := srv.UpdateContainerSync(ctx, hostID, "web", "nginx:2", ""); err == nil {
+		t.Error("an update went to a paused host")
+	}
+	if _, err := srv.RollbackContainerSync(ctx, hostID, "web", "nginx:1"); err != nil {
+		t.Errorf("rollback on a paused host refused: %v", err)
+	}
+	if err := srv.ResumeHost(hostID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.UpdateContainerSync(ctx, hostID, "web", "nginx:2", ""); err != nil {
+		t.Errorf("update after resuming: %v", err)
+	}
+}

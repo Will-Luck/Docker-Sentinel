@@ -20,6 +20,7 @@ type fakeCluster struct {
 	listErr   map[string]error
 	updates   []string // "hostID/name -> target"
 	outcome   string   // the agents' answer to an update; "success" when empty
+	updateErr string   // when set, every update fails to reach the agent
 }
 
 // tickingClock moves on a millisecond every time it is read.
@@ -58,6 +59,9 @@ func (f *fakeCluster) UpdateContainer(_ context.Context, hostID, name, target, _
 	f.mu.Lock()
 	f.updates = append(f.updates, hostID+"/"+name+" -> "+target)
 	f.mu.Unlock()
+	if f.updateErr != "" {
+		return RemoteUpdateResult{}, errors.New(f.updateErr)
+	}
 	outcome := f.outcome
 	if outcome == "" {
 		outcome = "success"

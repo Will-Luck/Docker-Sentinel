@@ -263,6 +263,11 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 		TargetDigest:  targetDigest,
 		RegistryAuth:  registryAuth,
 	}
+	if purpose != "rollback" {
+		if hs, ok := s.registry.Get(hostID); ok && hs.Info.State == cluster.HostPaused {
+			return nil, fmt.Errorf("host %s is paused: no new updates are sent to it", hs.Info.Name)
+		}
+	}
 	if prep := s.prep.Load(); prep != nil {
 		if err := (*prep)(ctx, hostID, req, purpose == "rollback"); err != nil {
 			return nil, err
@@ -284,6 +289,22 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 	}
 
 	return ur.UpdateResult, nil
+}
+
+// PullImage asks the agent on hostID to pull ref (a pull-only update). The
+// agent does not answer: a pull that fails shows at the next scan, which
+// finds the container still behind.
+func (s *Server) PullImage(hostID, ref string) error {
+	return s.SendCommand(hostID, &proto.ServerMessage{
+		RequestId: generateRequestID(),
+		Payload:   &proto.ServerMessage_PullImage{PullImage: &proto.PullImageRequest{ImageRef: ref}},
+	})
+}
+
+// HostPaused reports whether hostID is paused: it gets no new updates.
+func (s *Server) HostPaused(hostID string) bool {
+	hs, ok := s.registry.Get(hostID)
+	return ok && hs.Info.State == cluster.HostPaused
 }
 
 // UpdateInFlight reports whether the hub is waiting for an agent to update

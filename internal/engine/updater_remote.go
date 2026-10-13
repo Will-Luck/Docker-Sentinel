@@ -7,10 +7,12 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/moby/moby/api/types/container"
+	"github.com/robfig/cron/v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -105,6 +107,12 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			continue
 		}
 
+		// Per-container schedule (sentinel.schedule), as for a local one.
+		if !u.scheduleDue(scopedName, c.Labels) {
+			result.Skipped++
+			continue
+		}
+
 		// Rate limit check (shared server-side pool).
 		// Skip this container but keep scanning — other registries may be available.
 		if u.rateTracker != nil {
@@ -129,6 +137,10 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				"host", host.HostName, "name", c.Name, "error", check.Error)
 			continue
 		}
+		if !check.IsLocal {
+			// Record scan time for per-container schedule tracking.
+			_ = u.store.SetLastContainerScan(scopedName, u.clock.Now())
+		}
 
 		if check.IsLocal || !check.UpdateAvailable {
 			// An update queued earlier no longer applies.
@@ -139,9 +151,19 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 			continue
 		}
 
+		// "Ignore version" on a remote queue row saves under the scoped key.
+		if u.filterIgnored(scopedName, &check) {
+			u.log.Debug("all newer versions ignored", "host", host.HostName, "name", c.Name)
+			u.dropQueued(scopedName, "version ignored")
+			continue
+		}
+
 		u.log.Info("remote update available",
 			"host", host.HostName, "name", c.Name, "image", c.Image,
 			"remote_digest", check.RemoteDigest)
+		u.publishEvent(events.EventContainerUpdate, scopedName, "update available")
+		label := c.Name + " on " + host.HostName
+		u.announceRemoteUpdate(ctx, scopedName, label, c, check)
 
 		// Target image: the newer tag for a version bump, otherwise (a
 		// same-tag update) the container's own image, which the agent
@@ -187,6 +209,18 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				})
 				continue
 			}
+			// A paused host gets no new updates.
+			if p, ok := u.cluster.(remoteHostPauser); ok && p.HostPaused(hostID) {
+				u.log.Info("host is paused, not updating", "host", host.HostName, "name", c.Name)
+				result.Skipped++
+				continue
+			}
+			// Pull-only (global setting or sentinel.pull-only): the agent
+			// pulls the image and the container is left as it is.
+			if docker.ContainerPullOnly(c.Labels) || u.isPullOnly() {
+				u.remotePullOnly(ctx, hostID, host, c, scanTarget, result)
+				continue
+			}
 			// Delay check using the scoped name for remote containers.
 			delay := docker.ContainerUpdateDelay(c.Labels)
 			if delay == 0 {
@@ -210,14 +244,31 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				}
 			}
 
+			// Maintenance window: outside it, auto updates wait.
+			if windowExpr := u.maintenanceWindow(); windowExpr != "" {
+				win, err := ParseWindow(windowExpr)
+				if err != nil {
+					u.log.Warn("invalid maintenance window, proceeding with update (fail-open)", "name", scopedName, "window", windowExpr, "error", err)
+				} else if win != nil && !win.IsOpen(u.clock.Now()) {
+					u.log.Info("outside maintenance window, deferring remote auto-update", "host", host.HostName, "name", c.Name, "window", windowExpr)
+					result.Skipped++
+					continue
+				}
+			}
+
 			// Dispatch update to the remote agent.
+			start := u.clock.Now()
+			u.notifier.Notify(ctx, notify.Event{
+				Type: notify.EventUpdateStarted, ContainerName: label, OldImage: c.Image, Timestamp: start,
+			})
 			ur, updateErr := u.cluster.UpdateContainer(ctx, hostID, c.Name, scanTarget, check.RemoteDigest)
 			if updateErr != nil {
 				u.log.Error("remote update failed",
 					"host", host.HostName, "name", c.Name, "error", updateErr)
 				result.Errors = append(result.Errors, fmt.Errorf("%s/%s: %w", host.HostName, c.Name, updateErr))
 				result.Failed++
-				continue
+				ur = RemoteUpdateResult{OldImage: c.Image, OldDigest: c.ImageDigest, NewImage: scanTarget,
+					Outcome: "failed", Error: updateErr.Error(), Duration: u.clock.Since(start)}
 			}
 			if ur.Outcome == "skipped" {
 				// A pre-update hook asked to skip it: nothing changed.
@@ -226,7 +277,8 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				continue
 			}
 
-			// Record update in host-scoped history.
+			// Record update in host-scoped history. (The cluster server
+			// publishes the result to the dashboard, with the host.)
 			if err := u.store.RecordUpdate(store.UpdateRecord{
 				Timestamp:     u.clock.Now(),
 				ContainerName: scopedName,
@@ -235,26 +287,22 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 				NewImage:      ur.NewImage,
 				NewDigest:     ur.NewDigest,
 				Outcome:       ur.Outcome,
+				Error:         ur.Error,
 				Duration:      ur.Duration,
 				HostID:        hostID,
 				HostName:      host.HostName,
 			}); err != nil {
 				u.log.Warn("failed to record remote update history", "name", scopedName, "error", err)
 			}
-
-			// SSE event with host context.
-			if u.events != nil {
-				u.events.Publish(events.SSEEvent{
-					Type:          events.EventContainerUpdate,
-					ContainerName: c.Name,
-					HostName:      host.HostName,
-					Message:       fmt.Sprintf("updated %s on %s: %s", c.Name, host.HostName, ur.Outcome),
-					Timestamp:     u.clock.Now(),
-				})
+			u.notifyRemoteResult(ctx, label, ur)
+			if updateErr != nil {
+				continue // counted as failed above
 			}
-
 			if ur.Outcome == "success" {
 				result.Updated++
+				if err := u.store.ClearNotifyState(scopedName); err != nil {
+					u.log.Warn("failed to clear notify state after update", "name", scopedName, "error", err)
+				}
 			} else {
 				result.Failed++
 			}
@@ -285,6 +333,113 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 // remote updates are in flight.
 type remoteUpdateTracker interface {
 	UpdateInFlight(hostID, name string) bool
+}
+
+// remoteHostPauser is implemented by a ClusterScanner that knows which
+// hosts are paused (no new updates).
+type remoteHostPauser interface {
+	HostPaused(hostID string) bool
+}
+
+// remotePuller is implemented by a ClusterScanner that can ask an agent to
+// pull an image.
+type remotePuller interface {
+	PullImage(ctx context.Context, hostID, ref string) error
+}
+
+// scheduleDue reports whether a container with a sentinel.schedule label
+// is due a check (key is its store key); one without the label always is.
+func (u *Updater) scheduleDue(key string, labels map[string]string) bool {
+	sched := docker.ContainerSchedule(labels)
+	if sched == "" {
+		return true
+	}
+	schedule, err := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow).Parse(sched)
+	if err != nil {
+		u.log.Warn("invalid schedule", "name", key, "schedule", sched, "error", err)
+		return true
+	}
+	lastChecked, _ := u.store.GetLastContainerScan(key)
+	return lastChecked.IsZero() || !u.clock.Now().Before(schedule.Next(lastChecked))
+}
+
+// announceRemoteUpdate notifies that an update of a remote container (key
+// is its scoped key, label how notifications name it) is available, with
+// the notify mode, dedup and snooze of a local container, and keeps its
+// notify state: FirstSeen is what the update delay counts from.
+func (u *Updater) announceRemoteUpdate(ctx context.Context, key, label string, c RemoteContainer, check registry.CheckResult) {
+	now := u.clock.Now()
+	existing, _ := u.store.GetNotifyState(key)
+	notifyOK := false
+	if shouldNotifyUpdate(u.effectiveNotifyMode(key), existing, check.RemoteDigest, now) {
+		notifyOK = u.notifier.Notify(ctx, notify.Event{
+			Type:          notify.EventUpdateAvailable,
+			ContainerName: label,
+			OldImage:      c.Image,
+			OldDigest:     c.ImageDigest,
+			NewDigest:     check.RemoteDigest,
+			Timestamp:     now,
+		})
+	}
+	state := &store.NotifyState{LastDigest: check.RemoteDigest, FirstSeen: now}
+	if existing != nil {
+		if !existing.FirstSeen.IsZero() {
+			state.FirstSeen = existing.FirstSeen
+		}
+		state.LastNotified = existing.LastNotified
+		state.SnoozedUntil = existing.SnoozedUntil
+	}
+	if notifyOK {
+		state.LastNotified = now
+		if d := docker.ContainerNotifySnooze(c.Labels); d > 0 {
+			state.SnoozedUntil = now.Add(d)
+		}
+	}
+	if err := u.store.SetNotifyState(key, state); err != nil {
+		u.log.Warn("failed to persist notify state", "name", key, "error", err)
+	}
+}
+
+// notifyRemoteResult notifies the outcome of a remote update.
+func (u *Updater) notifyRemoteResult(ctx context.Context, label string, ur RemoteUpdateResult) {
+	ev := notify.Event{ContainerName: label, OldImage: ur.OldImage, NewImage: ur.NewImage, NewDigest: ur.NewDigest, Timestamp: u.clock.Now()}
+	switch ur.Outcome {
+	case "success":
+		ev.Type = notify.EventUpdateSucceeded
+	case "rollback":
+		ev.Type, ev.Error = notify.EventRollbackOK, ur.Error
+	default:
+		ev.Type, ev.Error = notify.EventUpdateFailed, ur.Error
+	}
+	u.notifier.Notify(ctx, ev)
+}
+
+// remotePullOnly asks the agent to pull target for a pull-only container,
+// as a local pull-only update pulls and leaves the container alone.
+func (u *Updater) remotePullOnly(ctx context.Context, hostID string, host HostContext, c RemoteContainer, target string, result *ScanResult) {
+	key := store.ScopedKey(hostID, c.Name)
+	p, ok := u.cluster.(remotePuller)
+	if !ok {
+		u.log.Warn("pull-only: this cluster cannot ask agents to pull, leaving the container alone", "host", host.HostName, "name", c.Name)
+		result.Skipped++
+		return
+	}
+	if err := p.PullImage(ctx, hostID, target); err != nil {
+		u.log.Error("pull-only failed", "host", host.HostName, "name", c.Name, "error", err)
+		result.Failed++
+		result.Errors = append(result.Errors, fmt.Errorf("%s/%s: pull-only: %w", host.HostName, c.Name, err))
+		return
+	}
+	_ = u.store.RecordUpdate(store.UpdateRecord{
+		Timestamp:     u.clock.Now(),
+		ContainerName: key,
+		OldImage:      c.Image,
+		NewImage:      target,
+		Outcome:       "pull_only",
+		HostID:        hostID,
+		HostName:      host.HostName,
+	})
+	result.Updated++
 }
 
 // dropQueued removes the queued update of a remote container (by its
