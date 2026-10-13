@@ -32,6 +32,25 @@ import (
 // "dxflrs/garage:v2.2.0"). When empty, the current image tag is re-pulled
 // (correct for :latest-style updates where the tag is mutable).
 func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage string) error {
+	err := u.updateContainer(ctx, id, name, targetImage)
+	if errors.Is(err, errSkippedByHook) || errors.Is(err, errSameImage) {
+		return nil
+	}
+	return err
+}
+
+// errSkippedByHook and errSameImage end an update that changed nothing:
+// a pre-update hook exited 75, or the pull resolved to the image already
+// running. UpdateContainer returns nil for them; a scan counts them as
+// skipped and up to date.
+var (
+	errSkippedByHook = errors.New("a pre-update hook asked to skip the update")
+	errSameImage     = errors.New("the pulled image is the one already running")
+)
+
+// updateContainer is UpdateContainer, telling a skipped or unchanged update
+// apart (errSkippedByHook, errSameImage).
+func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage string) error {
 	if u.setAside(name) {
 		return fmt.Errorf("%s was set aside while Sentinel replaced it and is not updated itself", name)
 	}
@@ -104,7 +123,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 			if errors.Is(err, hooks.ErrSkipUpdate) {
 				u.log.Info("pre-update hook requested skip", "name", name)
 				_ = u.store.SetMaintenance(name, false)
-				return nil
+				return errSkippedByHook
 			}
 			u.log.Warn("pre-update hook failed, aborting update", "name", name, "error", err)
 			if mErr := u.store.SetMaintenance(name, false); mErr != nil {
@@ -198,7 +217,7 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 		u.queue.Remove(name)
 		u.publishEvent(events.EventContainerUpdate, name, "no change detected")
-		return nil
+		return errSameImage
 	}
 
 	// 3.6 Signature verification gate. The mode was resolved above, where

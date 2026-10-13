@@ -854,7 +854,13 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			if cur, err := u.docker.InspectContainer(ctx, name); err == nil && cur.ID != "" {
 				c.ID = cur.ID
 			}
-			if err := u.UpdateContainer(ctx, c.ID, name, scanTarget); err != nil {
+			err := u.updateContainer(ctx, c.ID, name, scanTarget)
+			switch {
+			case errors.Is(err, errSkippedByHook):
+				result.Skipped++
+			case errors.Is(err, errSameImage):
+				result.UpToDate++
+			case err != nil:
 				u.log.Error("auto-update failed", "name", name, "error", err)
 				result.Failed++
 				result.Errors = append(result.Errors, err)
@@ -865,7 +871,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 						}
 					}
 				}
-			} else {
+			default:
 				result.Updated++
 			}
 
@@ -939,8 +945,8 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		Timestamp: u.clock.Now(),
 		Outcome:   "scan_summary",
 		Type:      "scan",
-		Error: fmt.Sprintf("%d checked, %d up to date, %d updated, %d queued, %d skipped, %d failed",
-			result.Total-result.Skipped, result.UpToDate, result.Updated, result.Queued, result.RateLimited, result.Failed),
+		Error: fmt.Sprintf("%d checked, %d up to date, %d updated, %d queued, %d skipped, %d rate limited, %d failed",
+			result.Total-result.Skipped, result.UpToDate, result.Updated, result.Queued, result.Skipped, result.RateLimited, result.Failed),
 		Duration: time.Since(scanStart),
 	})
 
