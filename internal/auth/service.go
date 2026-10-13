@@ -505,15 +505,22 @@ func (s *Service) ConfirmTOTP(ctx context.Context, userID, code string) ([]strin
 		return nil, ErrTOTPInvalidCode
 	}
 
+	// Only hashes are stored, so the plain codes from EnableTOTP are gone.
+	// Generate the set the user will actually be shown, and store its hashes.
+	plain, stored, err := GenerateRecoveryCodes()
+	if err != nil {
+		return nil, fmt.Errorf("generate recovery codes: %w", err)
+	}
+
 	// Activate 2FA.
 	user.TOTPEnabled = true
+	user.RecoveryCodes = stored
 	user.UpdatedAt = time.Now().UTC()
 	if err := s.Users.UpdateUser(*user); err != nil {
 		return nil, fmt.Errorf("save user: %w", err)
 	}
 
-	// Return the recovery codes (already stored during EnableTOTP).
-	return user.RecoveryCodes, nil
+	return plain, nil
 }
 
 // DisableTOTP removes 2FA from a user's account after verifying the password.

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -137,5 +138,31 @@ func TestValidateRecoveryCode(t *testing.T) {
 	idx = ValidateRecoveryCode("aabbccdd", nil)
 	if idx != -1 {
 		t.Errorf("ValidateRecoveryCode nil stored: idx = %d, want -1", idx)
+	}
+}
+
+func TestConfirmTOTPReturnsUsableRecoveryCodes(t *testing.T) {
+	s := newTestService(true)
+	u := User{ID: "u1", Username: "alice", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := s.Users.CreateUser(u); err != nil {
+		t.Fatal(err)
+	}
+	key, _, err := s.EnableTOTP(context.Background(), "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ := totp.GenerateCode(key.Secret(), time.Now())
+	shown, err := s.ConfirmTOTP(context.Background(), "u1", code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, _ := s.Users.GetUser("u1")
+	for _, c := range shown {
+		if len(c) != recoveryCodeLen {
+			t.Fatalf("recovery code shown to the user has length %d, want %d (a hash?): %q", len(c), recoveryCodeLen, c)
+		}
+		if ValidateRecoveryCode(c, stored.RecoveryCodes) < 0 {
+			t.Fatalf("code shown to the user does not validate: %q", c)
+		}
 	}
 }
