@@ -126,14 +126,14 @@ func (d *DigestScheduler) fire(ctx context.Context) {
 	// Collect containers with pending updates, excluding muted ones.
 	seen := make(map[string]bool)
 	for name := range states {
-		if d.effectiveMode(name, prefs) != "muted" {
+		if inScheduledDigest(d.effectiveMode(name, prefs)) {
 			seen[name] = true
 		}
 	}
 
 	// Also include manual queue entries.
 	for _, item := range d.queue.List() {
-		if d.effectiveMode(item.ContainerName, prefs) != "muted" {
+		if inScheduledDigest(d.effectiveMode(item.ContainerName, prefs)) {
 			seen[item.ContainerName] = true
 		}
 	}
@@ -247,4 +247,11 @@ func (d *DigestScheduler) effectiveMode(name string, prefs map[string]*store.Not
 		}
 	}
 	return "default"
+}
+
+// inScheduledDigest reports whether a container in the given notification
+// mode appears in the scheduled digest. Muted containers never do, and
+// every_scan containers are alerted on every scan instead of being summarised.
+func inScheduledDigest(mode string) bool {
+	return mode != "muted" && mode != "every_scan"
 }

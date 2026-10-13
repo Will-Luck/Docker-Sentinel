@@ -700,26 +700,11 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		u.publishEvent(events.EventContainerUpdate, name, "update available")
 
 		// Notification dedup: skip if we already notified about this exact digest.
-		shouldNotify := true
 		notifyMode := u.effectiveNotifyMode(name)
-		switch notifyMode {
-		case "muted":
-			shouldNotify = false
-		case "digest_only":
-			shouldNotify = false // digest scheduler handles it
-		default:
-			state, _ := u.store.GetNotifyState(name)
-			if state != nil && state.LastDigest == check.RemoteDigest && !state.LastNotified.IsZero() {
-				if !state.SnoozedUntil.IsZero() && u.clock.Now().Before(state.SnoozedUntil) {
-					shouldNotify = false
-					u.log.Debug("notification snoozed", "name", name, "until", state.SnoozedUntil)
-				} else if state.SnoozedUntil.IsZero() {
-					// No snooze configured: suppress forever for same digest.
-					shouldNotify = false
-					u.log.Debug("skipping duplicate notification", "name", name, "digest", check.RemoteDigest)
-				}
-				// If snooze expired, shouldNotify stays true — re-notify.
-			}
+		state, _ := u.store.GetNotifyState(name)
+		shouldNotify := shouldNotifyUpdate(notifyMode, state, check.RemoteDigest, u.clock.Now())
+		if !shouldNotify && notifyMode != "muted" && notifyMode != "digest_only" {
+			u.log.Debug("skipping duplicate or snoozed notification", "name", name, "digest", check.RemoteDigest)
 		}
 
 		notifyOK := false
@@ -973,4 +958,28 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 
 	return result
+}
+
+// shouldNotifyUpdate decides whether an "update available" notification goes
+// out now for a container in the given notification mode.
+//
+//   - muted: never; digest_only: left to the digest scheduler.
+//   - every_scan: every scan that finds the update, however often it was
+//     notified before.
+//   - default: once per digest, then silent, unless a snooze was set and has
+//     expired.
+func shouldNotifyUpdate(mode string, state *store.NotifyState, remoteDigest string, now time.Time) bool {
+	switch mode {
+	case "muted", "digest_only":
+		return false
+	case "every_scan":
+		return true
+	}
+	if state == nil || state.LastDigest != remoteDigest || state.LastNotified.IsZero() {
+		return true
+	}
+	if state.SnoozedUntil.IsZero() {
+		return false // no snooze configured: suppress the same digest for good
+	}
+	return !now.Before(state.SnoozedUntil)
 }
