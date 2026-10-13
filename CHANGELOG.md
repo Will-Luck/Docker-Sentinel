@@ -7,15 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed
+### Security
 
-- The Portainer connector. Sentinel no longer scans or updates containers
-  through the Portainer API, and the Portainer pages, settings and
-  `/api/portainer/*` endpoints are gone. To keep monitoring those hosts, run
-  a Sentinel agent on each one (see Cluster Mode). Saved Portainer settings
-  stay in the database untouched, so downgrading restores them; queued
-  Portainer updates are dropped at startup, and `SENTINEL_PORTAINER_URL` /
-  `SENTINEL_PORTAINER_TOKEN` are ignored with a warning.
+- A cluster host being revoked could keep a valid certificate: a
+  certificate renewal arriving during the revoke was recorded just before
+  the host was removed, and its certificate was never revoked. Revoking
+  now revokes the current and any pending certificate and removes the
+  host in one step. The server also accepted any certificate its CA had
+  signed for a host's ID, including superseded renewals; agents must now
+  present the host's current certificate or its pending renewal.
+- The server signed certificate renewals whenever an agent asked, for any
+  key. It now signs one only when the agent's certificate has less than
+  half its life left, only for a new key, at most once per host every
+  five minutes, and only for ECDSA P-256 or P-384 keys.
+- One connection to the cluster port could open any number of streams,
+  each allowed a 64 MB message before any certificate was checked. The
+  server now allows 64 streams per connection.
+- `GET /api/settings` returned the OIDC client secret, the Nginx Proxy
+  Manager password, the inbound webhook secret and the agent enrolment
+  token in plaintext to the Viewer role and to tokens with `settings.view`.
+  They are now left out, and the response carries `<key>_set: "true"` for
+  each one that is configured. The same secret list now drives the settings
+  read and the config export, so an export made without secrets no longer
+  contains the NPM password. A test fails if a stored setting that ends in
+  `_secret`, `_password` or `_token` is missing from the list.
+- `GET /api/settings` also returned environment-sourced URLs unmasked, such
+  as `SENTINEL_WEBHOOK_URL` and `SENTINEL_GOTIFY_URL`, which often carry a
+  token in the path or query. URL values now lose their credentials (the
+  webhook and Gotify URLs keep only scheme and host), and a test fails if a
+  configuration value exposes a credential. `GET /api/settings/webhook-info`
+  returned the whole inbound webhook secret when it was 12 characters or
+  shorter; it now returns at most a four-character prefix.
+- Webhook notification channels now mask every header that looks like a
+  credential (Basic auth, cookies, passwords as well as tokens and keys) and
+  the secret path of the webhook URL when channels are shown to the Viewer
+  role or exported without secrets.
+
+### Added
+
+- `DELETE /api/swaps/{name}` (admin only) discards the record of an update
+  Sentinel could not finish on its own, once you have fixed the containers
+  by hand. Sentinel tells you when that is needed, after three failed
+  attempts. There is no dashboard button for it yet.
 
 ### Changed
 
@@ -26,6 +59,343 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `asynctimerchan`, `x509sha1`). Remove such a setting before upgrading.
   Building from source still works with Go 1.26 or later, which fetches
   go1.27.2 through `GOTOOLCHAIN=auto`.
+- Sentinel now keeps a journal of every container it is replacing, so
+  that after a crash, a shutdown or a reboot it can finish or undo the
+  replacement exactly; each scan retries anything still unfinished. Give
+  the Sentinel container time to finish an update when it is stopped:
+  `stop_grace_period: 2m` in compose, or `--stop-timeout 120` with
+  `docker run` (it waits up to two minutes for updates in flight).
+  Replacement containers carry a `sentinel.swap` label so Sentinel can
+  recognise its own replacement after a crash; it is safe to ignore.
+- An update that was tried and rolled back (its new container would not
+  start or failed validation) is not tried again, under auto policy,
+  until a newer version or a different image digest appears, so a fixed
+  build pushed under the same tag or version is picked up. Manual
+  containers still see the update.
+- `remove_volumes` (and the `sentinel.remove-volumes=true` label) now
+  works like `docker compose up -V`: the updated container starts on
+  fresh, empty anonymous volumes and the old ones are deleted with the old
+  container once the new one passes validation. With it off (the default)
+  the new container keeps the old anonymous volumes and their data. Named
+  volumes and bind mounts are never touched.
+- A container that had no hostname of its own now gets a new one when it
+  is updated (its own short ID, as with docker compose) instead of keeping
+  the first container's ID for good. Apps that key data on the hostname
+  see it change once.
+- Compose `depends_on` dependents are restarted after their dependency is
+  updated only when the entry has `restart: true`, as compose does. The
+  dependency graph still shows every edge.
+- The cluster wire format gains two optional fields: an error on the
+  container list an agent sends, and a list of server features
+  ("cert-renewal", "keepalive") in the reply to an agent's state report.
+  Servers and agents on v2.16.x ignore them, so either side keeps working
+  with the other.
+- One precedence rule for image backup, remove volumes and the rollback
+  policy: a value saved on the Settings page overrides the environment
+  (`SENTINEL_IMAGE_BACKUP`, `SENTINEL_REMOVE_VOLUMES`,
+  `SENTINEL_ROLLBACK_POLICY`), at startup and as soon as it is saved; with
+  nothing saved, the environment value applies. A saved rollback policy of
+  "No change" also overrides the environment. Settings shows the value in
+  effect and whether it comes from the saved setting or the environment.
+  The UI rollback now applies the same policy as the engine. If saving the
+  Image backup or Remove volumes toggle fails, the toggle now flips back and
+  shows the server's error instead of reporting success.
+- `POST /api/bulk/policy` accepts `targets`, a list of `{name, host}` pairs
+  (empty host means this instance). The `containers` list of bare names
+  still works.
+- Ignore now works on updates for `:latest` and other tags with no version
+  list. It previously failed with "digest-only update". It stores the
+  version the tag resolves to, or the new digest when none is known, so the
+  ignore covers that one update only. The queue and dashboard rows show the
+  resolved version, or a "new digest" label, instead of "build".
+- History showed `hostID::name` for a container on another host and linked
+  it to a page that returned 404. Rows now show the container's own name next
+  to the host badge and link to its page on that host.
+- "Update now" on a container on another host left no history row. The
+  result, success or failure, is now recorded.
+- The Cluster page warns on a host card when the same Docker engine is also
+  enrolled as another host, so double-counted containers have a visible
+  cause.
+
+### Removed
+
+- The Portainer connector. Sentinel no longer scans or updates containers
+  through the Portainer API, and the Portainer pages, settings and
+  `/api/portainer/*` endpoints are gone. To keep monitoring those hosts, run
+  a Sentinel agent on each one (see Cluster Mode). Saved Portainer settings
+  stay in the database untouched, so downgrading restores them; queued
+  Portainer updates are dropped at startup, and `SENTINEL_PORTAINER_URL` /
+  `SENTINEL_PORTAINER_TOKEN` are ignored with a warning.
+
+### Fixed
+
+- Updating a container could delete it. Sentinel stopped and removed the
+  old container before it knew the new one could be created, so a create
+  the daemon rejected (or a missing image) left the service gone when the
+  rollback failed the same way. Updates now swap containers: the old one
+  is renamed to `<name>-sentinel-old`, the new one is created under the
+  real name while the old one still runs, the old one is stopped and the
+  new one started. The old container is removed only after the new one
+  passes validation; on any failure it gets its name back and is started
+  again, with its own image and volumes. A stop that fails while the old
+  container keeps running fails the update rather than starting a second
+  copy next to it, and the old container's restart policy is set to `no`
+  while it is stopped so a reboot cannot start both.
+- Updating or rolling back a container that shares another container's
+  network (`network_mode: container:X` or `service:X`, for example
+  qbittorrent behind gluetun) deleted it: the daemon rejected the create
+  because Sentinel sent back the provider's hostname and the image's
+  exposed ports. Those fields are now dropped for that network mode.
+- After a network provider such as gluetun was updated, rolled back or
+  restored after a failed update, the containers sharing its network were
+  left with no network while the update reported success. They are now
+  recreated on (or restarted with) the provider container.
+- Containers that keep their data in an image `VOLUME` or a bare
+  `-v /path` came back from an update on an empty volume (postgres re-ran
+  initdb) and the old data was orphaned, or deleted with `remove_volumes`
+  on. The new container now takes over the old anonymous volumes, as
+  docker compose does.
+- After an update the container kept the old image's environment, labels,
+  entrypoint, healthcheck and similar defaults, so the new image's values
+  never applied and the dashboard kept showing the old image version.
+  Values that came from the old image are now dropped so the new image's
+  apply; values you set yourself are kept, including an `--entrypoint`
+  that clears the image's command. One limit: an environment variable or
+  label you set to exactly the old image's value cannot be told apart from
+  the image's own and follows the new image. Rollbacks still restore the
+  snapshot exactly, and post-update hooks declared as image labels now
+  run.
+- A dashboard rollback stopped and deleted the running container before
+  checking that the old image was still there; with image cleanup on, a
+  rollback after a version update failed and left the container deleted.
+  After a `:latest` update the rollback recreated the new image and
+  reported success. Rollbacks now check the snapshot's image first (it
+  must be on the host, or its tag must pull back to the same image),
+  recreate exactly that image on the running container's current
+  volumes, and keep the running container if anything fails. A rollback
+  that would have to move a tag another running container uses refuses
+  and says which container. A failed dashboard rollback is now shown on
+  the dashboard and notified instead of only being logged.
+- A broken `:latest` update was pulled, started, failed and rolled back
+  again on every scan, with a notification each time. It is now tried
+  once (see Changed).
+- A dashboard rollback after a later failed update attempt restored the
+  version already running, because every attempt replaced the rollback
+  snapshot. The snapshot is now saved only when an update succeeds.
+- Stopping Sentinel or rebooting the host during an update could leave
+  the container stopped, deleted, doubled or stuck with the maintenance
+  label. An interrupted update (including one started from the dashboard)
+  now puts the old container back, and at startup Sentinel waits briefly
+  for Docker, then finishes or undoes whatever the journal lists and
+  clears stale maintenance flags. A container is never left as two copies:
+  a failed restore is reported rather than rebuilt next to a container
+  that still exists.
+- Containers started with `--rm` were deleted by an update, because the
+  daemon removed them on stop and the update then gave up. They are now
+  replaced like any other container.
+- Containers that depend on an updated container (`sentinel.depends-on`
+  or compose `depends_on`) were never restarted after it, whatever
+  `SENTINEL_DEPS` said. They are now restarted, compose `depends_on`
+  entries are matched to their service in the same project (every
+  container of a scaled service), and a dependent that is being updated
+  itself is left alone.
+- Containers on `:latest` or another mutable tag such as `:alpine` were
+  recreated pinned to the version the tag pointed at (`nginx:latest`
+  became `nginx:1.29.2`), so they quietly stopped following the tag.
+  Updates to a mutable tag now re-pull the same tag. The version the tag
+  resolves to is still shown for information.
+- A container on a stable tag (`gitea:1.24`, `app:1.2.3`) was offered a
+  release candidate such as `1.25.0-rc0` as its update, and on the auto
+  policy was moved onto it. Pre-release tags (rc, beta, alpha, dev and
+  similar) are now only offered to a container that is itself on a
+  pre-release.
+- Pre-release tags were ordered as text, so `rc10` counted as older than
+  `rc9`. They are now compared by number.
+- Containers pinned to a build-counter tag such as `4.3.3-ls190` or
+  `7.2.4-debian-12-r9` were shown as up to date forever, because the
+  trailing counter made every tag its own variant. Trailing `ls` and `r`
+  counters are now ignored when matching variants and used to order tags
+  within one.
+- When two containers ran the same mutable tag and one was updated, the
+  other was reported up to date, and from the next scan Docker reported
+  its image as an ID, so it was skipped as a local image for good. Pull-only
+  mode dropped every container the same way after its first pull. The scan
+  now follows the image a container was created with, reports a container
+  that runs an older image than its tag as having an update, and pull-only
+  no longer pulls a tag it has already pulled.
+- Swarm services on a mutable tag never rolled out a digest-only update:
+  the old digest pin was resubmitted, so Sentinel reported a false success
+  or waited ten minutes and reported a timeout, on every scan. The update
+  now drops the old pin, re-pins to the digest the registry serves and
+  forces a rollout, and the rollout check ignores a status left over from
+  an earlier rollout.
+- Self-update on a hub or standalone install never took effect, because
+  the old Sentinel container was left running: the replacement either could
+  not open the locked database and crash-looped, or never started. The old
+  container is now stopped once the replacement is running, a replacement
+  that cannot start is removed and the old container gets its name back
+  (with a hint when published ports are the cause), a failed pull no longer
+  blocks an update to an image already on the host, and leftover exited
+  `-old-<timestamp>` containers are removed at startup. The replacement
+  waits up to a minute for the database lock instead of exiting after five
+  seconds, and if the old container cannot be stopped the replacement is
+  removed and the old one gets its name back.
+- A Swarm digest-only update now fails with a clear error, leaving the
+  service unchanged, when the new digest cannot be looked up (private
+  registry or outage), instead of resubmitting it without its digest pin.
+- An ignored update on `:latest` or another mutable tag was notified and
+  auto-applied again on the next scan. It now stays ignored until the tag
+  moves to a new version or digest.
+- A pull-only container that was already pulled but still behind its tag
+  showed as an update and counted as automatic on every scan. It is now
+  skipped.
+- Cluster agents dropped out of the cluster for good a year after they
+  enrolled: an agent certificate lasts 365 days and nothing renewed it, so
+  the only way back was a re-enrolment that gave the host a new ID. Once
+  less than a third of its certificate's life is left, an agent now asks
+  the server for a new one over its live connection and switches to it.
+  The server keeps the old certificate valid until the agent connects with
+  the new one, and never drops the reply. Agents ask only a server that
+  says it renews safely, so a v2.17.0 agent keeps its working certificate
+  (and warns) when its server is older. The server also renews its own
+  certificate before it expires, so a server left running for a year
+  keeps accepting agents. Agents older than v2.17.0 do not renew; update
+  them before their first year is up (with "Auto-update agents" on, the
+  server does this for you).
+- An agent whose clock ran more than an hour behind the server could not
+  connect after a server restart, and was then told to re-enrol, which
+  would not have helped. Certificates are now valid from 24 hours back,
+  and an expired or not-yet-valid certificate gets its own explanation
+  in the agent log, pointing at the clocks where that is the cause.
+- Turning Cluster Mode off while any agent was connected left the settings
+  request hanging for ever, cluster mode could not be turned back on until
+  a restart, and every shutdown of the server ran into Docker's stop
+  timeout and was killed. The server now ends the agents' connections
+  itself when it stops; agents go back to reconnecting.
+- When a connected agent could not list its containers (its Docker daemon
+  restarting, a socket proxy down), it sent no reply and the server's
+  scheduled scan waited on that host for ever, so no host was updated
+  again until a restart. The agent now always replies, with the error, and
+  every call the server makes to an agent has a time limit. A server
+  older than v2.17.0 shows such a host with no containers until its next
+  successful list.
+- A host with many containers or large labels sends a container list over
+  gRPC's 4 MB default; the server refused it, so the host dropped out of
+  the cluster. The limit is now 64 MB, and the server log names a host
+  that goes over it.
+- A network partition took about a minute and a half to notice. Both ends
+  now send keepalive pings on a quiet connection and drop it after 40
+  seconds without an answer. An agent pings that often only a server that
+  says it accepts it; with an older server it pings every five minutes,
+  which gRPC's default policy allows.
+- A remote update whose new container could not be created or started (a
+  bad mount, a port clash, a broken image) deleted the container. The agent
+  now builds the replacement while the old container is parked under
+  `<name>-sentinel-old`, removes the old one only after the new one has
+  started, and puts the old one back on any failure. A `--rm` container is
+  recreated from its old configuration and image.
+- Remote updates could leave work for the user: a stopped
+  `<name>-sentinel-old` from an interrupted update blocked later updates
+  (it is now removed when the container under the real name has run;
+  otherwise the update still stops and names it), a replacement that
+  could not be removed kept the container's name (it is now moved aside
+  to `<name>-sentinel-failed`), a failed removal of the old container was
+  reported as plain success, and parked containers showed on the
+  dashboard as containers of their own while their update ran. A parked
+  container left behind with no update running is still listed, under
+  its own name, since it may be the only copy.
+- A stopped remote container that was started during its update could be
+  force-removed while running. The agent now checks the container's state
+  once it has parked it and only removes a container it stopped itself.
+- When the server retried a slow remote update, the agent could run two
+  recreates of the same container at once and leave the live container
+  parked. A second update of the same container is now refused while the
+  first runs, and a result that arrives after the server stopped waiting
+  is saved to the history.
+- Containers on several networks came back from a remote update with
+  their static IP, aliases and MAC address on one network only, chosen at
+  random. Every network now keeps its settings.
+- Remote updates now build the replacement container exactly as local
+  updates do. Before, an updated container on an agent host kept the old
+  image's command, environment and labels (a new release's defaults never
+  applied), kept the old container's short ID as its hostname, and
+  collected old IDs in its network aliases. Anonymous volumes (an image
+  VOLUME or a bare `-v /path`) were replaced by new, empty ones on every
+  update, so a database without a named volume came back empty and its
+  data was left in a detached volume; they are now carried over and kept
+  when the old container is removed. A container sharing another's
+  network stack (`network_mode: container:X`) could not be updated at all.
+- On an agent host, `sentinel.remove-volumes=true` on a container, or
+  `SENTINEL_REMOVE_VOLUMES=true` on the agent itself, now starts the
+  updated container on fresh anonymous volumes and removes the old ones
+  with the old container, as on the server. The server's own Remove
+  volumes setting does not reach agents yet.
+- Same-tag updates (a new image behind the tag a remote container already
+  uses) always failed on the agent with "invalid reference format", both
+  when approved and when applied by the scheduled scan.
+- Remote updates started containers that had been stopped, or one-shot
+  jobs that had exited. A stopped container now stays stopped.
+- Queued updates for a remote host were deleted whenever the host was not
+  connected at scan time, for example just after a server restart. They
+  are now kept while the host is still in the cluster, and pruned once it
+  lists without them, once it is removed, or when cluster mode is off.
+  Approving a remote update whose host is gone (or with cluster mode off)
+  is refused instead of being run against the local Docker host.
+- A queued update for a remote Sentinel agent could never be applied: its
+  row offered "Update Sentinel", which updated the server instead, and
+  approving it was refused. The row now sends the update to that agent.
+  Restart, stop, start, update, rollback, policy and GHCR actions also
+  protect only the server's own Sentinel container now, not any remote
+  container with the same name.
+- Remote update history was stored under three different keys, so
+  History showed a raw host ID for scheduled updates and Rollback found
+  no history after an approved update. All remote history now carries the
+  host; rows saved before this release are moved to the same key when the
+  cluster starts. A rollback that finished after the server stopped
+  waiting is saved as a rollback, so the next Rollback does not undo it.
+- After an agent host crashed or lost its network and reconnected quickly,
+  the dashboard showed the host offline while it was working, and remote
+  actions in flight at that moment failed with "agent disconnected".
+- A removed or revoked cluster host could reappear after a restart, when a
+  save that was already under way wrote it back to the database. One
+  slow save also no longer holds up every other host.
+- "Auto-update agents" never updated an agent: it asked for an image tag
+  such as `:v2.16.1`, but releases publish `:2.16.1`.
+- Enrolling the same Docker daemon twice gave two hosts with the same
+  containers and racing approvals, unnoticed. The server now logs a
+  warning naming both hosts (it does not remove either).
+- An agent whose certificate the server did not recognise (for example a
+  server restored from a backup taken before the agent renewed) logged
+  only a bare error. It now explains the cause and that re-enrolling is
+  the fix.
+- Saving Settings > Notifications overwrote a webhook channel's real header
+  (for example `Authorization: Bearer ...`) with its masked form, so the
+  channel started failing with 401. Masked values, including those inside
+  webhook headers, now keep the stored secret.
+- Importing a configuration exported without secrets replaced every
+  notification channel's real token with a masked value and still reported
+  success. The import now keeps the stored secret for channels that already
+  exist, and skips (and reports) imported channels that only hold masked
+  values.
+- Turning on 2FA showed eight 64-character hashes as recovery codes, and none
+  of them could sign in. Confirming 2FA now generates the recovery codes,
+  stores their hashes and shows the plain codes once. If you turned on 2FA
+  before this release, your codes are unusable: turn 2FA off and on again
+  to get working ones.
+- A wrong password at login reloaded the login page with no message, a wrong
+  2FA code dropped you back to the username step, and a wrong current
+  password on the account page navigated away. Sentinel now redirects to the
+  login page only when the session is gone.
+- With authentication disabled, saving Web Port, TLS mode, Log Format or
+  Self-update mode, or switching role, always showed "Failed to save".
+- In cluster mode, ticking an agent's container in Manage mode and choosing
+  Restart, Stop or Start acted on the hub's container with the same name.
+  Bulk policy changes had the same problem. Selections are now keyed by host
+  and name, the confirm dialogs show the host, and a ticked row stays ticked
+  only on its own host.
+- Settings showed Remove volumes and Image backup as Off while the engine
+  had them On from the environment, and the UI rollback ignored
+  `SENTINEL_ROLLBACK_POLICY`.
 
 ## [2.16.1] - 2026-10-13
 
