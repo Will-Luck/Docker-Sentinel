@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -130,10 +131,36 @@ func bucket(tx *bolt.Tx, name []byte) (*bolt.Bucket, error) {
 	return b, nil
 }
 
+// SelfUpdateReplacementEnv is set on the container a self-update creates. Such
+// an instance starts while the previous one is still shutting down and holding
+// the database lock, so it waits for the lock instead of failing after seconds.
+const SelfUpdateReplacementEnv = "SENTINEL_SELF_UPDATE_REPLACEMENT"
+
+const (
+	openTimeout      = 5 * time.Second
+	openFirstAttempt = time.Second
+	openWaitTimeout  = 60 * time.Second
+)
+
+// openBolt opens the database file. Normally a held lock fails after five
+// seconds. For a self-update replacement it retries for up to a minute, which
+// outlasts the previous instance's graceful shutdown.
+func openBolt(path string) (*bolt.DB, error) {
+	if os.Getenv(SelfUpdateReplacementEnv) == "" {
+		return bolt.Open(path, 0600, &bolt.Options{Timeout: openTimeout})
+	}
+	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: openFirstAttempt})
+	if err == nil {
+		return db, nil
+	}
+	slog.Info("waiting for the database lock held by the previous instance", "path", path)
+	return bolt.Open(path, 0600, &bolt.Options{Timeout: openWaitTimeout})
+}
+
 // Open creates or opens a BoltDB database at the given path and ensures
 // all required buckets exist.
 func Open(path string) (*Store, error) {
-	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 5 * time.Second})
+	db, err := openBolt(path)
 	if err != nil {
 		return nil, fmt.Errorf("open bolt db: %w", err)
 	}

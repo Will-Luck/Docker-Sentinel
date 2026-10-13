@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 )
@@ -92,6 +94,11 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	// Override the image to the target version.
 	newConfig := *inspect.Config
 	newConfig.Image = imageRef
+	// Tell the replacement it starts while this instance still holds the
+	// database lock, so it waits for the lock instead of exiting after 5s.
+	newConfig.Env = append(slices.DeleteFunc(slices.Clone(inspect.Config.Env), func(e string) bool {
+		return strings.HasPrefix(e, store.SelfUpdateReplacementEnv+"=")
+	}), store.SelfUpdateReplacementEnv+"=1")
 
 	// Collect extra networks (all non-bridge, after the first which goes in NetworkingConfig).
 	var primaryNetwork string
@@ -156,8 +163,11 @@ func (su *SelfUpdater) Update(ctx context.Context, targetImage string) error {
 	// request that triggered the update.
 	su.log.Info("self-update: new container running, stopping old container to release the database lock", "id", selfID)
 	if err := su.docker.StopContainer(context.Background(), selfID, 10); err != nil {
-		su.log.Error("self-update: failed to stop old container", "error", err)
-		return fmt.Errorf("replacement started but old container %s could not be stopped: %w", oldName, err)
+		// Two instances would fight over the database; put things back.
+		su.log.Error("self-update: failed to stop old container, rolling back", "error", err)
+		_ = su.docker.RemoveContainer(context.Background(), newID)
+		_ = su.docker.RenameContainer(context.Background(), selfID, selfName)
+		return fmt.Errorf("replacement started but old container %s could not be stopped, rolled back: %w", oldName, err)
 	}
 	return nil
 }

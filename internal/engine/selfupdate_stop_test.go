@@ -162,3 +162,37 @@ func TestSchedulerStartupRemovesOldInstances(t *testing.T) {
 		t.Errorf("removeCalls = %v, want the leftover container removed at startup", mock.removeCalls)
 	}
 }
+
+// The replacement must be told it is a self-update replacement so it waits for
+// the previous instance to release the database lock.
+func TestSelfUpdateMarksReplacementForLockWait(t *testing.T) {
+	ev, su := newSelfUpdateFixture("img:1.0")
+	if err := su.Update(context.Background(), "img:2.0"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := ev.createConfigs["sentinel"]
+	if !slices.Contains(cfg.Env, "SENTINEL_SELF_UPDATE_REPLACEMENT=1") {
+		t.Errorf("replacement env = %v, want SENTINEL_SELF_UPDATE_REPLACEMENT=1", cfg.Env)
+	}
+	if !slices.Contains(cfg.Env, "SENTINEL_WEB_PORT=8080") {
+		t.Errorf("original env lost: %v", cfg.Env)
+	}
+}
+
+// If the old instance cannot be stopped, the replacement is removed and the
+// old one gets its name back instead of leaving two half-working instances.
+func TestSelfUpdateStopFailureRollsBack(t *testing.T) {
+	ev, su := newSelfUpdateFixture("img:1.0")
+	ev.stopErr = map[string]error{"abc123": fmt.Errorf("daemon busy")}
+
+	if err := su.Update(context.Background(), "img:2.0"); err == nil {
+		t.Fatal("expected an error when the old instance cannot be stopped")
+	}
+	if !slices.Contains(ev.events, "remove:new-sentinel") {
+		t.Errorf("replacement not removed: %v", ev.events)
+	}
+	last := ev.renameCalls[len(ev.renameCalls)-1]
+	if last.id != "abc123" || last.newName != "sentinel" {
+		t.Errorf("old container not renamed back, last rename = %+v", last)
+	}
+}
