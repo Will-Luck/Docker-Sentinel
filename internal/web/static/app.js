@@ -3136,7 +3136,11 @@
         ["cron-schedule", "schedule", "SENTINEL_SCHEDULE"],
         ["show-stopped-toggle", "show_stopped", "SENTINEL_SHOW_STOPPED"],
         ["scan-concurrency-input", "scan_concurrency", "SENTINEL_SCAN_CONCURRENCY"],
-        ["maintenance-window", "maintenance_window", "SENTINEL_MAINTENANCE_WINDOW"]
+        ["maintenance-window", "maintenance_window", "SENTINEL_MAINTENANCE_WINDOW"],
+        ["image-cleanup-toggle", "image_cleanup", "SENTINEL_IMAGE_CLEANUP"],
+        ["dep-aware-toggle", "dependency_aware", "SENTINEL_DEPS"],
+        ["hooks-toggle", "hooks_enabled", "SENTINEL_HOOKS"],
+        ["hooks-labels-toggle", "hooks_write_labels", "SENTINEL_HOOKS_WRITE_LABELS"]
       ].forEach(function(f) {
         annotateSource(f[0], settings[f[1] + "_source"], f[2]);
       });
@@ -3290,6 +3294,7 @@
         haPrefixInput.value = settings["ha_discovery_prefix"] || "homeassistant";
       }
       updateScanPreviews();
+      captureBaseline();
     }).catch(function() {
     });
     loadScannerSettings();
@@ -3470,6 +3475,7 @@
     var unit = document.getElementById("poll-custom-unit");
     var val = document.getElementById("poll-custom-value");
     if (!unit || !val || !unit.value || !val.value) return;
+    if (unchanged("poll")) return;
     setPollInterval(val.value + unit.value);
     updateScanPreviews();
   }
@@ -3485,6 +3491,7 @@
     }).then(function(result) {
       if (result.ok) {
         showToast(result.data.message || "Poll interval updated", "success");
+        noteSaved("poll");
       } else {
         showToast(result.data.error || "Failed to update poll interval", "error");
       }
@@ -3566,6 +3573,7 @@
     var unit = document.getElementById("grace-custom-unit");
     var val = document.getElementById("grace-custom-value");
     if (!unit || !val || !unit.value || !val.value) return;
+    if (unchanged("grace")) return;
     setGracePeriod(val.value + unit.value);
     updateScanPreviews();
   }
@@ -3581,6 +3589,7 @@
     }).then(function(result) {
       if (result.ok) {
         showToast(result.data.message || "Grace period updated", "success");
+        noteSaved("grace");
       } else {
         showToast(result.data.error || "Failed to update grace period", "error");
       }
@@ -3615,6 +3624,13 @@
       text.textContent = enabled ? "On" : "Off";
     }
   }
+  var TOGGLE_ENV = {
+    "image-cleanup-toggle": "SENTINEL_IMAGE_CLEANUP",
+    "dep-aware-toggle": "SENTINEL_DEPS",
+    "hooks-toggle": "SENTINEL_HOOKS",
+    "hooks-labels-toggle": "SENTINEL_HOOKS_WRITE_LABELS",
+    "show-stopped-toggle": "SENTINEL_SHOW_STOPPED"
+  };
   function postToggle(path, enabled, textId, checkboxId, onOk) {
     updateToggleText(textId, enabled);
     var revert = function() {
@@ -3635,6 +3651,9 @@
         return;
       }
       showToast(result.data.message || "Setting updated", "success");
+      if (TOGGLE_ENV[checkboxId]) {
+        annotateSource(checkboxId, "saved", TOGGLE_ENV[checkboxId]);
+      }
       if (onOk) {
         onOk();
       }
@@ -3649,6 +3668,7 @@
   function saveFilters() {
     var textarea = document.getElementById("container-filters");
     if (!textarea) return;
+    if (unchanged("filters")) return;
     var lines = textarea.value.split("\n");
     var patterns = [];
     for (var i = 0; i < lines.length; i++) {
@@ -3668,6 +3688,7 @@
     }).then(function(result) {
       if (result.ok) {
         showToast(result.data.message || "Filters saved", "success");
+        noteSaved("filters");
       } else {
         showToast(result.data.error || "Failed to save filters", "error");
       }
@@ -3687,6 +3708,7 @@
   function saveCronSchedule() {
     var input = document.getElementById("cron-schedule");
     if (!input) return;
+    if (unchanged("cron")) return;
     updateScanPreviews();
     fetch("/api/settings/schedule", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ schedule: input.value }) }).then(function(resp) {
       return resp.json().then(function(data) {
@@ -3695,6 +3717,7 @@
     }).then(function(result) {
       if (result.ok) {
         showToast(result.data.message || "Schedule updated", "success");
+        noteSaved("cron");
       } else {
         showToast(result.data.error || "Failed to update schedule", "error");
       }
@@ -3719,6 +3742,65 @@
   }
   function setComposeSync(enabled) {
     postToggle("/api/settings/compose-sync", enabled, "compose-sync-text", "compose-sync-toggle");
+  }
+  var loadedBaseline = {};
+  var baselineGetters = {
+    poll: function() {
+      return customOrSelected("poll-interval", "poll");
+    },
+    grace: function() {
+      return customOrSelected("grace-period", "grace");
+    },
+    cron: function() {
+      return valueOf("cron-schedule");
+    },
+    scanConcurrency: function() {
+      return valueOf("scan-concurrency-input").trim();
+    },
+    updateDelay: function() {
+      return valueOf("update-delay");
+    },
+    maintenance: function() {
+      return valueOf("maintenance-window").trim();
+    },
+    filters: function() {
+      return valueOf("container-filters").split("\n").map(function(l) {
+        return l.trim();
+      }).filter(Boolean).join("\n");
+    },
+    retention: function() {
+      return valueOf("history-retention-input").trim();
+    },
+    haPrefix: function() {
+      return valueOf("ha-discovery-prefix");
+    },
+    dockerTLS: function() {
+      return [valueOf("docker-tls-ca"), valueOf("docker-tls-cert"), valueOf("docker-tls-key")].join("|");
+    }
+  };
+  function valueOf(id) {
+    var el = document.getElementById(id);
+    return el ? String(el.value || "") : "";
+  }
+  function customOrSelected(selectId, prefix) {
+    var sel = document.getElementById(selectId);
+    if (!sel) return "";
+    if (sel.value !== "custom") return sel.value;
+    return normaliseDuration(valueOf(prefix + "-custom-value") + valueOf(prefix + "-custom-unit"));
+  }
+  function captureBaseline() {
+    Object.keys(baselineGetters).forEach(function(k) {
+      loadedBaseline[k] = baselineGetters[k]();
+    });
+  }
+  function unchanged(key) {
+    if (!Object.prototype.hasOwnProperty.call(loadedBaseline, key)) return false;
+    if (baselineGetters[key]() !== loadedBaseline[key]) return false;
+    showToast("Nothing changed", "info");
+    return true;
+  }
+  function noteSaved(key) {
+    loadedBaseline[key] = baselineGetters[key]();
   }
   function markLoaded(id) {
     var el = document.getElementById(id);
@@ -3773,6 +3855,7 @@
       showToast("Concurrency must be between 1 and 20", "error");
       return;
     }
+    if (unchanged("scanConcurrency")) return;
     fetch("/api/settings/scan-concurrency", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ concurrency: n }) }).then(function(r) {
       return r.json().then(function(data) {
         return { ok: r.ok, data };
@@ -3783,6 +3866,8 @@
         return;
       }
       showToast(result.data.message || "Setting updated", "success");
+      noteSaved("scanConcurrency");
+      annotateSource("scan-concurrency-input", "saved", "SENTINEL_SCAN_CONCURRENCY");
     }).catch(function() {
       showToast("Network error -- could not update setting", "error");
     });
@@ -3794,6 +3879,7 @@
       showToast("Days must be between 0 and 3650", "error");
       return;
     }
+    if (unchanged("retention")) return;
     fetch("/api/settings/history-retention", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: n }) }).then(function(r) {
       return r.json().then(function(data) {
         return { ok: r.ok, data };
@@ -3805,6 +3891,7 @@
       }
       showToast(result.data.message || "Setting updated", "success");
       showSettingSource("history-retention-source", "saved", "SENTINEL_HISTORY_RETENTION_DAYS");
+      noteSaved("retention");
     }).catch(function() {
       showToast("Network error -- could not update setting", "error");
     });
@@ -3825,11 +3912,13 @@
     });
   }
   function saveHADiscoveryPrefix() {
+    if (unchanged("haPrefix")) return;
     var prefix = (document.getElementById("ha-discovery-prefix") || {}).value || "";
     var enabled = (document.getElementById("ha-discovery-toggle") || {}).checked || false;
     fetch("/api/settings/ha-discovery", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled, prefix }) }).then(function(r) {
       if (r.status === 204) {
         showToast("Discovery prefix saved", "success");
+        noteSaved("haPrefix");
         return;
       }
       return r.json().then(function(d) {
@@ -3842,6 +3931,7 @@
   function setUpdateDelay() {
     var input = document.getElementById("update-delay");
     if (!input) return;
+    if (unchanged("updateDelay")) return;
     updateScanPreviews();
     fetch("/api/settings/update-delay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ duration: input.value }) }).then(function(resp) {
       return resp.json().then(function(data) {
@@ -3850,6 +3940,7 @@
     }).then(function(result) {
       if (result.ok) {
         showToast(result.data.message || "Update delay saved", "success");
+        noteSaved("updateDelay");
       } else {
         showToast(result.data.error || "Failed to save update delay", "error");
       }
@@ -3866,6 +3957,7 @@
     }
   }
   function saveDockerTLS() {
+    if (unchanged("dockerTLS")) return;
     var ca = (document.getElementById("docker-tls-ca") || {}).value || "";
     var cert = (document.getElementById("docker-tls-cert") || {}).value || "";
     var key = (document.getElementById("docker-tls-key") || {}).value || "";
@@ -3880,6 +3972,7 @@
     }).then(function(result) {
       if (result.ok) {
         showToast(result.data.message || "Docker TLS settings saved", "success");
+        noteSaved("dockerTLS");
         var banner = document.getElementById("general-restart-banner");
         if (banner) banner.style.display = "block";
       } else {
@@ -4022,6 +4115,7 @@
   function saveMaintenanceWindow() {
     var input = document.getElementById("maintenance-window");
     if (!input) return;
+    if (unchanged("maintenance")) return;
     updateScanPreviews();
     fetch("/api/settings/maintenance-window", {
       method: "POST",
@@ -4034,6 +4128,8 @@
     }).then(function(result) {
       if (result.ok) {
         showToast(result.data.message || "Maintenance window saved", "success");
+        noteSaved("maintenance");
+        annotateSource("maintenance-window", "saved", "SENTINEL_MAINTENANCE_WINDOW");
       } else {
         showToast(result.data.error || "Failed to save maintenance window", "error");
       }

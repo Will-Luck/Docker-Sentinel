@@ -107,6 +107,15 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 	values["history_retention_days"] = retention
 	values["history_retention_days_source"] = retentionSource
 
+	// Which of these toggles is a saved value rather than the environment's.
+	for _, k := range []string{"image_cleanup", "dependency_aware", "hooks_enabled", "hooks_write_labels"} {
+		source := "env"
+		if _, saved := dbValues[k]; saved {
+			source = "saved"
+		}
+		values[k+"_source"] = source
+	}
+
 	// These toggles are only stored once saved in the UI, so the stored key
 	// alone cannot show an env-var value. Report what the engine uses.
 	cfg := s.deps.Config

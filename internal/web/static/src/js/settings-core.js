@@ -86,7 +86,11 @@ function initSettingsPage() {
                 ["cron-schedule", "schedule", "SENTINEL_SCHEDULE"],
                 ["show-stopped-toggle", "show_stopped", "SENTINEL_SHOW_STOPPED"],
                 ["scan-concurrency-input", "scan_concurrency", "SENTINEL_SCAN_CONCURRENCY"],
-                ["maintenance-window", "maintenance_window", "SENTINEL_MAINTENANCE_WINDOW"]
+                ["maintenance-window", "maintenance_window", "SENTINEL_MAINTENANCE_WINDOW"],
+                ["image-cleanup-toggle", "image_cleanup", "SENTINEL_IMAGE_CLEANUP"],
+                ["dep-aware-toggle", "dependency_aware", "SENTINEL_DEPS"],
+                ["hooks-toggle", "hooks_enabled", "SENTINEL_HOOKS"],
+                ["hooks-labels-toggle", "hooks_write_labels", "SENTINEL_HOOKS_WRITE_LABELS"]
             ].forEach(function(f) {
                 annotateSource(f[0], settings[f[1] + "_source"], f[2]);
             });
@@ -286,6 +290,7 @@ function initSettingsPage() {
             }
 
             updateScanPreviews();
+            captureBaseline();
         })
         .catch(function() { /* ignore -- falls back to defaults */ });
 
@@ -514,6 +519,7 @@ function applyCustomPollInterval() {
     var unit = document.getElementById("poll-custom-unit");
     var val = document.getElementById("poll-custom-value");
     if (!unit || !val || !unit.value || !val.value) return;
+    if (unchanged("poll")) return;
     setPollInterval(val.value + unit.value);
     updateScanPreviews();
 }
@@ -532,6 +538,7 @@ function setPollInterval(interval) {
         .then(function (result) {
             if (result.ok) {
                 showToast(result.data.message || "Poll interval updated", "success");
+                noteSaved("poll");
             } else {
                 showToast(result.data.error || "Failed to update poll interval", "error");
             }
@@ -628,6 +635,7 @@ function applyCustomGracePeriod() {
     var unit = document.getElementById("grace-custom-unit");
     var val = document.getElementById("grace-custom-value");
     if (!unit || !val || !unit.value || !val.value) return;
+    if (unchanged("grace")) return;
     setGracePeriod(val.value + unit.value);
     updateScanPreviews();
 }
@@ -646,6 +654,7 @@ function setGracePeriod(duration) {
         .then(function(result) {
             if (result.ok) {
                 showToast(result.data.message || "Grace period updated", "success");
+                noteSaved("grace");
             } else {
                 showToast(result.data.error || "Failed to update grace period", "error");
             }
@@ -687,6 +696,14 @@ function updateLatestAutoText(enabled) {
     }
 }
 
+var TOGGLE_ENV = {
+    "image-cleanup-toggle": "SENTINEL_IMAGE_CLEANUP",
+    "dep-aware-toggle": "SENTINEL_DEPS",
+    "hooks-toggle": "SENTINEL_HOOKS",
+    "hooks-labels-toggle": "SENTINEL_HOOKS_WRITE_LABELS",
+    "show-stopped-toggle": "SENTINEL_SHOW_STOPPED"
+};
+
 // postToggle saves a boolean setting. It checks the response: on failure it
 // shows the server's error and puts the toggle and its label back, instead of
 // reporting success for a change that did not happen.
@@ -708,6 +725,8 @@ function postToggle(path, enabled, textId, checkboxId, onOk) {
                 return;
             }
             showToast(result.data.message || "Setting updated", "success");
+            // A toggle the environment can also set now overrides it.
+            if (TOGGLE_ENV[checkboxId]) { annotateSource(checkboxId, "saved", TOGGLE_ENV[checkboxId]); }
             if (onOk) { onOk(); }
         })
         .catch(function() { revert(); showToast("Network error -- could not update setting", "error"); });
@@ -720,6 +739,7 @@ function setLatestAutoUpdate(enabled) {
 function saveFilters() {
     var textarea = document.getElementById("container-filters");
     if (!textarea) return;
+    if (unchanged("filters")) return;
 
     var lines = textarea.value.split("\n");
     var patterns = [];
@@ -743,6 +763,7 @@ function saveFilters() {
         .then(function(result) {
             if (result.ok) {
                 showToast(result.data.message || "Filters saved", "success");
+                noteSaved("filters");
             } else {
                 showToast(result.data.error || "Failed to save filters", "error");
             }
@@ -766,11 +787,12 @@ function setImageCleanup(enabled) {
 function saveCronSchedule() {
     var input = document.getElementById("cron-schedule");
     if (!input) return;
+    if (unchanged("cron")) return;
     updateScanPreviews();
     fetch("/api/settings/schedule", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ schedule: input.value }) })
         .then(function(resp) { return resp.json().then(function(data) { return { ok: resp.ok, data: data }; }); })
         .then(function(result) {
-            if (result.ok) { showToast(result.data.message || "Schedule updated", "success"); }
+            if (result.ok) { showToast(result.data.message || "Schedule updated", "success"); noteSaved("cron"); }
             else { showToast(result.data.error || "Failed to update schedule", "error"); }
         })
         .catch(function() { showToast("Network error -- could not update schedule", "error"); });
@@ -798,6 +820,54 @@ function setPullOnly(enabled) {
 
 function setComposeSync(enabled) {
     postToggle("/api/settings/compose-sync", enabled, "compose-sync-text", "compose-sync-toggle");
+}
+
+// What each Save or Apply control showed when the page loaded. A control that
+// still shows that sends nothing, so an untouched Apply cannot turn an
+// environment-set value into a saved override.
+var loadedBaseline = {};
+var baselineGetters = {
+    poll: function() { return customOrSelected("poll-interval", "poll"); },
+    grace: function() { return customOrSelected("grace-period", "grace"); },
+    cron: function() { return valueOf("cron-schedule"); },
+    scanConcurrency: function() { return valueOf("scan-concurrency-input").trim(); },
+    updateDelay: function() { return valueOf("update-delay"); },
+    maintenance: function() { return valueOf("maintenance-window").trim(); },
+    filters: function() { return valueOf("container-filters").split("\n").map(function(l) { return l.trim(); }).filter(Boolean).join("\n"); },
+    retention: function() { return valueOf("history-retention-input").trim(); },
+    haPrefix: function() { return valueOf("ha-discovery-prefix"); },
+    dockerTLS: function() { return [valueOf("docker-tls-ca"), valueOf("docker-tls-cert"), valueOf("docker-tls-key")].join("|"); }
+};
+
+function valueOf(id) {
+    var el = document.getElementById(id);
+    return el ? String(el.value || "") : "";
+}
+
+// customOrSelected is a duration control's value: the preset chosen, or the
+// custom number and unit, in the normalised form.
+function customOrSelected(selectId, prefix) {
+    var sel = document.getElementById(selectId);
+    if (!sel) return "";
+    if (sel.value !== "custom") return sel.value;
+    return normaliseDuration(valueOf(prefix + "-custom-value") + valueOf(prefix + "-custom-unit"));
+}
+
+function captureBaseline() {
+    Object.keys(baselineGetters).forEach(function(k) { loadedBaseline[k] = baselineGetters[k](); });
+}
+
+// unchanged reports whether a control still shows what was loaded into it.
+function unchanged(key) {
+    if (!Object.prototype.hasOwnProperty.call(loadedBaseline, key)) return false;
+    if (baselineGetters[key]() !== loadedBaseline[key]) return false;
+    showToast("Nothing changed", "info");
+    return true;
+}
+
+// noteSaved makes the value just saved the new baseline.
+function noteSaved(key) {
+    loadedBaseline[key] = baselineGetters[key]();
 }
 
 // markLoaded remembers what a control showed when the page loaded it, so a
@@ -866,11 +936,14 @@ function setScanConcurrency() {
         showToast("Concurrency must be between 1 and 20", "error");
         return;
     }
+    if (unchanged("scanConcurrency")) return;
     fetch("/api/settings/scan-concurrency", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ concurrency: n }) })
         .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
         .then(function(result) {
             if (!result.ok) { showToast(result.data.error || "Failed to update setting", "error"); return; }
             showToast(result.data.message || "Setting updated", "success");
+            noteSaved("scanConcurrency");
+            annotateSource("scan-concurrency-input", "saved", "SENTINEL_SCAN_CONCURRENCY");
         })
         .catch(function() { showToast("Network error -- could not update setting", "error"); });
 }
@@ -882,12 +955,14 @@ function setHistoryRetention() {
         showToast("Days must be between 0 and 3650", "error");
         return;
     }
+    if (unchanged("retention")) return;
     fetch("/api/settings/history-retention", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ days: n }) })
         .then(function(r) { return r.json().then(function(data) { return { ok: r.ok, data: data }; }); })
         .then(function(result) {
             if (!result.ok) { showToast(result.data.error || "Failed to update setting", "error"); return; }
             showToast(result.data.message || "Setting updated", "success");
             showSettingSource("history-retention-source", "saved", "SENTINEL_HISTORY_RETENTION_DAYS");
+            noteSaved("retention");
         })
         .catch(function() { showToast("Network error -- could not update setting", "error"); });
 }
@@ -904,11 +979,12 @@ function setHADiscovery(enabled) {
 }
 
 function saveHADiscoveryPrefix() {
+    if (unchanged("haPrefix")) return;
     var prefix = (document.getElementById("ha-discovery-prefix") || {}).value || "";
     var enabled = (document.getElementById("ha-discovery-toggle") || {}).checked || false;
     fetch("/api/settings/ha-discovery", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: enabled, prefix: prefix }) })
         .then(function(r) {
-            if (r.status === 204) { showToast("Discovery prefix saved", "success"); return; }
+            if (r.status === 204) { showToast("Discovery prefix saved", "success"); noteSaved("haPrefix"); return; }
             return r.json().then(function(d) { if (d.error) showToast(d.error, "error"); });
         })
         .catch(function() { showToast("Network error -- could not save prefix", "error"); });
@@ -917,11 +993,12 @@ function saveHADiscoveryPrefix() {
 function setUpdateDelay() {
     var input = document.getElementById("update-delay");
     if (!input) return;
+    if (unchanged("updateDelay")) return;
     updateScanPreviews();
     fetch("/api/settings/update-delay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ duration: input.value }) })
         .then(function(resp) { return resp.json().then(function(data) { return { ok: resp.ok, data: data }; }); })
         .then(function(result) {
-            if (result.ok) { showToast(result.data.message || "Update delay saved", "success"); }
+            if (result.ok) { showToast(result.data.message || "Update delay saved", "success"); noteSaved("updateDelay"); }
             else { showToast(result.data.error || "Failed to save update delay", "error"); }
         })
         .catch(function() { showToast("Network error -- could not save update delay", "error"); });
@@ -937,6 +1014,7 @@ function toggleCollapsible(headerEl) {
 }
 
 function saveDockerTLS() {
+    if (unchanged("dockerTLS")) return;
     var ca = (document.getElementById("docker-tls-ca") || {}).value || "";
     var cert = (document.getElementById("docker-tls-cert") || {}).value || "";
     var key = (document.getElementById("docker-tls-key") || {}).value || "";
@@ -954,6 +1032,7 @@ function saveDockerTLS() {
         .then(function(result) {
             if (result.ok) {
                 showToast(result.data.message || "Docker TLS settings saved", "success");
+                noteSaved("dockerTLS");
                 var banner = document.getElementById("general-restart-banner");
                 if (banner) banner.style.display = "block";
             } else {
@@ -1131,6 +1210,7 @@ function copyWebhookSecret() {
 function saveMaintenanceWindow() {
     var input = document.getElementById("maintenance-window");
     if (!input) return;
+    if (unchanged("maintenance")) return;
     updateScanPreviews();
     fetch("/api/settings/maintenance-window", {
         method: "POST",
@@ -1145,6 +1225,8 @@ function saveMaintenanceWindow() {
         .then(function(result) {
             if (result.ok) {
                 showToast(result.data.message || "Maintenance window saved", "success");
+                noteSaved("maintenance");
+                annotateSource("maintenance-window", "saved", "SENTINEL_MAINTENANCE_WINDOW");
             } else {
                 showToast(result.data.error || "Failed to save maintenance window", "error");
             }

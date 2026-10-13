@@ -1218,3 +1218,13 @@ func TestApiSettings_EnvOnlyValuesAreReported(t *testing.T) {
 		t.Errorf("saved poll interval = %q (%s)", got["poll_interval"], got["poll_interval_source"])
 	}
 }
+
+func TestApiSettings_ReportsToggleSources(t *testing.T) {
+	ss := newMockSettingsStore()
+	ss.data["hooks_enabled"] = "true"
+	srv := &Server{deps: Dependencies{SettingsStore: ss, Config: &mockConfigReader{values: map[string]string{}}, Log: slog.Default()}}
+	got := getSettings(t, srv)
+	if got["hooks_enabled_source"] != "saved" || got["image_cleanup_source"] != "env" {
+		t.Errorf("sources = hooks %q, cleanup %q, want saved and env", got["hooks_enabled_source"], got["image_cleanup_source"])
+	}
+}
