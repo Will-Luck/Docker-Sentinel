@@ -293,6 +293,46 @@ func (u *Updater) containerBehindTag(ctx context.Context, c container.Summary, i
 	return strings.TrimPrefix(tagID, "sha256:") != strings.TrimPrefix(c.ImageID, "sha256:")
 }
 
+// ignoreKey returns the key under which an update with no version list (a
+// container on a mutable tag such as latest) is ignored: the version the tag
+// resolves to when known, otherwise the remote digest ("sha256:..."). A new
+// release or digest gives a new key, so an ignore covers one update only.
+func ignoreKey(check registry.CheckResult) string {
+	if check.ResolvedTargetVersion != "" {
+		return check.ResolvedTargetVersion
+	}
+	return check.RemoteDigest
+}
+
+// filterIgnored drops ignored versions from check.NewerVersions and reports
+// whether nothing is left to act on. Updates without a version list are
+// checked against ignoreKey instead.
+func (u *Updater) filterIgnored(name string, check *registry.CheckResult) (allIgnored bool) {
+	ignored, _ := u.store.GetIgnoredVersions(name)
+	if len(ignored) == 0 {
+		return false
+	}
+	ignoredSet := make(map[string]bool, len(ignored))
+	for _, v := range ignored {
+		ignoredSet[v] = true
+	}
+	if len(check.NewerVersions) == 0 {
+		key := ignoreKey(*check)
+		return key != "" && ignoredSet[key]
+	}
+	var filtered []string
+	for _, v := range check.NewerVersions {
+		if !ignoredSet[v] {
+			filtered = append(filtered, v)
+		}
+	}
+	if len(filtered) == 0 {
+		return true
+	}
+	check.NewerVersions = filtered
+	return false
+}
+
 // Scan lists running containers, checks for updates, and processes them
 // according to each container's policy. The mode controls rate limit headroom.
 func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
@@ -544,25 +584,9 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		}
 
 		// Filter out ignored versions so they don't trigger notifications or queuing.
-		if len(check.NewerVersions) > 0 {
-			ignored, _ := u.store.GetIgnoredVersions(name)
-			if len(ignored) > 0 {
-				ignoredSet := make(map[string]bool, len(ignored))
-				for _, v := range ignored {
-					ignoredSet[v] = true
-				}
-				var filtered []string
-				for _, v := range check.NewerVersions {
-					if !ignoredSet[v] {
-						filtered = append(filtered, v)
-					}
-				}
-				if len(filtered) == 0 {
-					u.log.Debug("all newer versions ignored", "name", name, "ignored", ignored)
-					continue
-				}
-				check.NewerVersions = filtered
-			}
+		if u.filterIgnored(name, &check) {
+			u.log.Debug("all newer versions ignored", "name", name)
+			continue
 		}
 
 		u.log.Info("update available", "name", name, "image", imageRef,

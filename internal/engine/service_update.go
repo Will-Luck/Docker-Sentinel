@@ -130,24 +130,8 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		}
 
 		// Filter ignored versions.
-		if len(check.NewerVersions) > 0 {
-			ignored, _ := u.store.GetIgnoredVersions(name)
-			if len(ignored) > 0 {
-				ignoredSet := make(map[string]bool, len(ignored))
-				for _, v := range ignored {
-					ignoredSet[v] = true
-				}
-				var filtered []string
-				for _, v := range check.NewerVersions {
-					if !ignoredSet[v] {
-						filtered = append(filtered, v)
-					}
-				}
-				if len(filtered) == 0 {
-					continue
-				}
-				check.NewerVersions = filtered
-			}
+		if u.filterIgnored(name, &check) {
+			continue
 		}
 
 		u.log.Info("service update available", "name", name, "image", imageRef,
