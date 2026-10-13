@@ -225,12 +225,20 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 		}
 	}
 
+	// The replacement mounts the old container's anonymous volumes, so
+	// remove_volumes must not delete them with the old container.
+	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{Image: targetImage})
+
 	// 4. Stop and remove the old container.
 	u.log.Info("stopping old container", "name", name)
 	if err := u.docker.StopContainer(ctx, id, 30); err != nil {
 		u.log.Warn("stop failed, proceeding with force remove", "name", name, "error", err)
 	}
 	removeVolumes := docker.ContainerRemoveVolumes(inspect.Config.Labels) || u.isRemoveVolumes()
+	if removeVolumes && len(rc.CarriedVolumes) > 0 {
+		u.log.Info("keeping the anonymous volumes the new container takes over", "name", name, "volumes", len(rc.CarriedVolumes))
+		removeVolumes = false
+	}
 	var removeErr error
 	if removeVolumes {
 		removeErr = u.docker.RemoveContainerWithVolumes(ctx, id)
@@ -245,7 +253,6 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	}
 
 	// 5. Create and start the new container.
-	rc := docker.RecreateConfig(inspect, docker.RecreateOptions{Image: targetImage})
 	newConfig, hostConfig, netConfig := rc.Config, rc.HostConfig, rc.NetworkingConfig
 	u.writeBackHookLabels(name, newConfig)
 	addMaintenanceLabel(newConfig)

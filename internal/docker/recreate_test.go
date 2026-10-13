@@ -2,9 +2,11 @@ package docker
 
 import (
 	"net/netip"
+	"slices"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 )
 
@@ -100,6 +102,118 @@ func TestRecreateConfigNilHostConfig(t *testing.T) {
 	rc := RecreateConfig(container.InspectResponse{Config: &container.Config{Image: "app:1"}}, RecreateOptions{})
 	if rc.HostConfig == nil || rc.Config.Image != "app:1" {
 		t.Fatalf("RecreateConfig with nil HostConfig = %+v", rc)
+	}
+}
+
+func volumeMount(name, dest string, rw bool) container.MountPoint {
+	return container.MountPoint{Type: mount.TypeVolume, Name: name, Destination: dest, RW: rw}
+}
+
+func TestCarryAnonymousVolumesImageVolume(t *testing.T) {
+	cfg := &container.Config{Volumes: map[string]struct{}{"/var/lib/postgresql/data/": {}}}
+	hc := &container.HostConfig{}
+
+	got := CarryAnonymousVolumes(cfg, hc, []container.MountPoint{volumeMount("anon1", "/var/lib/postgresql/data", true)})
+
+	if !slices.Equal(got, []string{"anon1"}) {
+		t.Fatalf("carried = %v, want [anon1]", got)
+	}
+	want := mount.Mount{Type: mount.TypeVolume, Source: "anon1", Target: "/var/lib/postgresql/data"}
+	if len(hc.Mounts) != 1 || hc.Mounts[0] != want {
+		t.Errorf("mounts = %+v, want [%+v]", hc.Mounts, want)
+	}
+}
+
+func TestCarryAnonymousVolumesKeepsReadOnly(t *testing.T) {
+	cfg := &container.Config{Volumes: map[string]struct{}{"/cache": {}}}
+	hc := &container.HostConfig{}
+
+	CarryAnonymousVolumes(cfg, hc, []container.MountPoint{volumeMount("anon1", "/cache", false)})
+
+	if len(hc.Mounts) != 1 || !hc.Mounts[0].ReadOnly {
+		t.Errorf("mounts = %+v, want one read-only mount", hc.Mounts)
+	}
+}
+
+func TestCarryAnonymousVolumesNamesSourcelessMount(t *testing.T) {
+	cfg := &container.Config{}
+	hc := &container.HostConfig{Mounts: []mount.Mount{{Type: mount.TypeVolume, Target: "/data"}}}
+
+	got := CarryAnonymousVolumes(cfg, hc, []container.MountPoint{volumeMount("anon1", "/data", true)})
+
+	if !slices.Equal(got, []string{"anon1"}) || len(hc.Mounts) != 1 || hc.Mounts[0].Source != "anon1" {
+		t.Errorf("carried = %v, mounts = %+v, want the existing mount named anon1", got, hc.Mounts)
+	}
+}
+
+func TestCarryAnonymousVolumesReplacesBareBind(t *testing.T) {
+	cfg := &container.Config{}
+	hc := &container.HostConfig{Binds: []string{"/data", "/srv:/srv:ro"}}
+
+	got := CarryAnonymousVolumes(cfg, hc, []container.MountPoint{
+		volumeMount("anon1", "/data", true),
+		{Type: mount.TypeBind, Source: "/srv", Destination: "/srv"},
+	})
+
+	if !slices.Equal(got, []string{"anon1"}) {
+		t.Fatalf("carried = %v, want [anon1]", got)
+	}
+	if !slices.Equal(hc.Binds, []string{"/srv:/srv:ro"}) {
+		t.Errorf("binds = %v, want the bare /data entry replaced by a mount", hc.Binds)
+	}
+	if len(hc.Mounts) != 1 || hc.Mounts[0].Source != "anon1" || hc.Mounts[0].Target != "/data" {
+		t.Errorf("mounts = %+v", hc.Mounts)
+	}
+}
+
+func TestCarryAnonymousVolumesLeavesCoveredDestinations(t *testing.T) {
+	cfg := &container.Config{Volumes: map[string]struct{}{"/a": {}, "/b": {}, "/c": {}, "/d": {}}}
+	hc := &container.HostConfig{
+		Binds:  []string{"named:/a"},
+		Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: "other", Target: "/b"}},
+		Tmpfs:  map[string]string{"/c": ""},
+	}
+
+	got := CarryAnonymousVolumes(cfg, hc, []container.MountPoint{
+		volumeMount("named", "/a", true),
+		volumeMount("other", "/b", true),
+		volumeMount("anon-d", "/d", true),
+	})
+
+	if !slices.Equal(got, []string{"anon-d"}) {
+		t.Errorf("carried = %v, want only the uncovered /d", got)
+	}
+	if len(hc.Mounts) != 2 || hc.Mounts[1].Source != "anon-d" {
+		t.Errorf("mounts = %+v", hc.Mounts)
+	}
+	if !slices.Equal(hc.Binds, []string{"named:/a"}) {
+		t.Errorf("binds changed: %v", hc.Binds)
+	}
+}
+
+func TestCarryAnonymousVolumesNothingToCarry(t *testing.T) {
+	cfg := &container.Config{Volumes: map[string]struct{}{"/data": {}}}
+	hc := &container.HostConfig{}
+
+	if got := CarryAnonymousVolumes(cfg, hc, nil); got != nil || hc.Mounts != nil {
+		t.Errorf("carried = %v, mounts = %v, want nothing without inspect mounts", got, hc.Mounts)
+	}
+}
+
+func TestRecreateConfigReportsCarriedVolumes(t *testing.T) {
+	inspect := container.InspectResponse{
+		Config:     &container.Config{Volumes: map[string]struct{}{"/data": {}}},
+		HostConfig: &container.HostConfig{},
+		Mounts:     []container.MountPoint{volumeMount("anon1", "/data", true)},
+	}
+
+	rc := RecreateConfig(inspect, RecreateOptions{})
+
+	if !slices.Equal(rc.CarriedVolumes, []string{"anon1"}) || len(rc.HostConfig.Mounts) != 1 {
+		t.Errorf("recreate = %+v", rc)
+	}
+	if len(inspect.HostConfig.Mounts) != 0 {
+		t.Errorf("inspect host config modified: %+v", inspect.HostConfig.Mounts)
 	}
 }
 
