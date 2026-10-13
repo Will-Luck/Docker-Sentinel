@@ -214,7 +214,7 @@ function initSSE() {
     if (typeof EventSource === "undefined") return;
 
     var es = new EventSource("/api/events");
-    // Expose for page-specific inline scripts (cluster.html, portainer.html)
+    // Expose for page-specific inline scripts (cluster.html)
     // so they can add listeners without opening a duplicate SSE connection.
     window.sseSource = es;
     var _sseHasConnected = false;
