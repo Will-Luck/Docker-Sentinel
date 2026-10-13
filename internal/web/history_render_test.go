@@ -87,3 +87,23 @@ func TestFontsAreSelfHosted(t *testing.T) {
 		}
 	}
 }
+
+// Clicking a history row opens its details; it used to navigate to
+// /container/history-N, which does not exist.
+func TestHistoryPage_RowClickTogglesDetails(t *testing.T) {
+	out := renderPage(t, "history.html", pageData{Page: "history", History: []UpdateRecord{
+		{Timestamp: time.Now(), ContainerName: "nginx", Outcome: "failed", Error: "pull failed"},
+	}})
+	if strings.Contains(out, "onRowClick(event, 'history-") {
+		t.Errorf("history rows still use the dashboard row click")
+	}
+	if !strings.Contains(out, "toggleHistoryDetail(event,  0 )") || !strings.Contains(out, `id="accordion-history-0"`) {
+		t.Errorf("history row should toggle its own detail panel")
+	}
+	if strings.Contains(out, "existingCount") {
+		t.Errorf("loaded rows must not reuse server-rendered panel ids")
+	}
+	if !strings.Contains(out, "r.host_id") {
+		t.Errorf("loaded rows should link to the host's container page")
+	}
+}

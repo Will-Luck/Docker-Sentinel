@@ -107,7 +107,7 @@
                                 <td class="mono">{{fmtDuration $r.Duration}}</td>
                             </tr>
                             {{else}}
-                            <tr class="container-row history-row" data-outcome="{{$r.Outcome}}" onclick="onRowClick(event, 'history-{{$i}}')">
+                            <tr class="container-row history-row" data-outcome="{{$r.Outcome}}" onclick="toggleHistoryDetail(event, {{$i}})">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
                                 <td><a href="{{serviceOrContainer $r.Type (plainName $r.ContainerName $r.HostID) $r.HostID}}" class="container-link">{{plainName $r.ContainerName $r.HostID}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td class="cell-image mono">
@@ -210,6 +210,14 @@
     <script>
     var lastHistoryTimestamp = '{{.NextCursor}}';
     var _historyFilter = 'all';
+    var _loadedRows = 0;
+
+    // toggleHistoryDetail shows or hides a row's Error and digest panel.
+    function toggleHistoryDetail(event, idx) {
+        if (event && event.target && event.target.closest('a, button')) return;
+        var panel = document.getElementById('accordion-history-' + idx);
+        if (panel) panel.style.display = panel.style.display === 'none' ? '' : 'none';
+    }
 
     var OUTCOME_GROUPS = {
         success:  ['success'],
@@ -264,15 +272,15 @@
                     return;
                 }
                 var tbody = document.querySelector('.table-history tbody');
-                var existingCount = document.querySelectorAll('.container-row').length;
-                records.forEach(function(r, i) {
-                    var idx = existingCount + i;
+                records.forEach(function(r) {
+                    // Ids for loaded rows cannot clash with the server-rendered ones.
+                    var idx = 'm' + (_loadedRows++);
                     var isScanSummary = r.outcome === 'scan_summary';
                     var tr = document.createElement('tr');
                     tr.className = isScanSummary ? 'history-row scan-summary-row' : 'container-row history-row';
                     tr.setAttribute('data-outcome', r.outcome || '');
                     if (!isScanSummary) {
-                        tr.setAttribute('onclick', "onRowClick(event, 'history-" + idx + "')");
+                        tr.setAttribute('onclick', "toggleHistoryDetail(event, '" + idx + "')");
                     }
                     // Respect active filter.
                     if (_historyFilter !== 'all') {
@@ -293,11 +301,21 @@
                         tdName.className = 'scan-summary-text';
                         tdName.textContent = r.error || '\u2014';
                     } else {
+                        var plain = r.container_name;
+                        if (r.host_id && plain.indexOf(r.host_id + '::') === 0) plain = plain.slice(r.host_id.length + 2);
                         var link = document.createElement('a');
-                        link.href = '/container/' + encodeURIComponent(r.container_name);
+                        link.href = (r.type === 'service' ? '/service/' : '/container/') + encodeURIComponent(plain) +
+                            (r.host_id ? '?host=' + encodeURIComponent(r.host_id) : '');
                         link.className = 'container-link';
-                        link.textContent = r.container_name;
+                        link.textContent = plain;
                         tdName.appendChild(link);
+                        if (r.host_name) {
+                            var badge = document.createElement('span');
+                            badge.className = 'host-badge';
+                            badge.title = 'Host: ' + r.host_name;
+                            badge.textContent = r.host_name;
+                            tdName.appendChild(badge);
+                        }
                     }
 
                     var tdVersion = document.createElement('td');
