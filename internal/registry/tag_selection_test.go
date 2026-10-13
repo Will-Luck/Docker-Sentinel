@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -155,5 +156,65 @@ func TestNewerVersionsScoped_BuildCounters(t *testing.T) {
 				t.Errorf("got %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// Pagination follows the Link header, so a registry whose pages hold fewer than
+// 1000 tags is read to the end.
+func TestListTags_FollowsLinkHeader(t *testing.T) {
+	withFakeRegistry(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/tags/list") {
+			http.NotFound(w, r)
+			return
+		}
+		var tags []string
+		if r.URL.Query().Get("last") == "" {
+			for i := 0; i < 100; i++ {
+				tags = append(tags, fmt.Sprintf("0.0.%d", i))
+			}
+			w.Header().Set("Link", `</v2/org/app/tags/list?last=0.0.99&n=100>; rel="next"`)
+		} else {
+			tags = []string{"9.9.9"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string][]string{"tags": tags})
+	}))
+	res, err := ListTags(context.Background(), "quay.example/org/app:0.0.1", "", "quay.example", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Tags) != 101 {
+		t.Errorf("ListTags returned %d tags, want 101 (second page behind the Link header)", len(res.Tags))
+	}
+}
+
+// An image with more than the old 10,000-tag ceiling (linuxserver/* on GHCR)
+// is listed in full, so its newest versions are not missed.
+func TestListTags_ReadsMoreThanTenThousandTags(t *testing.T) {
+	const pages, perPage = 13, 1000
+	withFakeRegistry(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/tags/list") {
+			http.NotFound(w, r)
+			return
+		}
+		page := 0
+		if last := r.URL.Query().Get("last"); last != "" {
+			_, _ = fmt.Sscanf(last, "p%d-", &page)
+			page++
+		}
+		tags := make([]string, perPage)
+		for i := range tags {
+			tags[i] = fmt.Sprintf("p%02d-%04d", page, i)
+		}
+		if page < pages-1 {
+			w.Header().Set("Link", fmt.Sprintf(`</v2/org/app/tags/list?last=%s>; rel="next"`, tags[perPage-1]))
+		}
+		_ = json.NewEncoder(w).Encode(map[string][]string{"tags": tags})
+	}))
+	res, err := ListTags(context.Background(), "quay.example/org/app:1", "", "quay.example", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Tags) != pages*perPage {
+		t.Errorf("ListTags returned %d tags, want %d", len(res.Tags), pages*perPage)
 	}
 }

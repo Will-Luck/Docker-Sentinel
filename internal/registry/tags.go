@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -36,9 +37,9 @@ type TagsResult struct {
 
 // maxTagPages is the maximum number of pagination requests when fetching tags.
 // GHCR caps responses at 1000 tags per page regardless of the n= parameter,
-// and some images (e.g. linuxserver/*) have 5000+ tags with arch-specific and
-// build-variant suffixes. 10 pages × 1000 = 10000 tags max.
-const maxTagPages = 10
+// and some images (e.g. linuxserver/*) have tens of thousands of tags with
+// arch-specific and build-variant suffixes. 100 pages × 1000 = 100000 tags max.
+const maxTagPages = 100
 
 // ListTags fetches all tags for the given image reference from a container registry.
 // For Docker Hub, it uses registry-1.docker.io. For other registries, it uses
@@ -57,6 +58,7 @@ func ListTags(ctx context.Context, imageRef string, token string, host string, c
 	var allTags []string
 	var lastHeaders http.Header
 	pageURL := baseURL
+	usesLink := false
 
 	for page := 0; page < maxTagPages; page++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
@@ -89,13 +91,22 @@ func ListTags(ctx context.Context, imageRef string, token string, host string, c
 
 		allTags = append(allTags, tagList.Tags...)
 
-		// If we got fewer than 1000 tags, there are no more pages.
-		if len(tagList.Tags) < 1000 {
+		// The Link header (RFC 5988) says where the next page is, whatever
+		// the page size. Without one, a full page of 1000 means there may
+		// be more and the next page starts after the last tag.
+		if next := nextPageURL(resp.Header.Get("Link"), pageURL); next != "" {
+			pageURL = next
+			usesLink = true
+			continue
+		}
+		// A registry that has sent Link headers ends the list by leaving the
+		// header out; one that never has is paged by the last tag.
+		if usesLink || resp.Header.Get("Link") != "" || len(tagList.Tags) < 1000 {
 			break
 		}
 
 		// Build next page URL using last= parameter.
-		last := tagList.Tags[len(tagList.Tags)-1]
+		last := neturl.QueryEscape(tagList.Tags[len(tagList.Tags)-1])
 		if strings.Contains(baseURL, "?") {
 			pageURL = baseURL + "&last=" + last
 		} else {
@@ -104,6 +115,31 @@ func ListTags(ctx context.Context, imageRef string, token string, host string, c
 	}
 
 	return TagsResult{Tags: allTags, Headers: lastHeaders}, nil
+}
+
+// nextPageURL returns the rel="next" target of a Link header resolved against
+// the URL of the page that carried it, or "" when there is none or it points
+// at another host (the request carries credentials).
+func nextPageURL(link, current string) string {
+	if link == "" {
+		return ""
+	}
+	for _, part := range strings.Split(link, ",") {
+		target, params, ok := strings.Cut(strings.TrimSpace(part), ">")
+		if !ok || !strings.HasPrefix(target, "<") || !strings.Contains(params, `rel="next"`) {
+			continue
+		}
+		base, err := neturl.Parse(current)
+		if err != nil {
+			return ""
+		}
+		ref, err := base.Parse(strings.TrimPrefix(target, "<"))
+		if err != nil || ref.Host != base.Host {
+			return ""
+		}
+		return ref.String()
+	}
+	return ""
 }
 
 // ParseSemVer attempts to parse a tag string as a semantic version.
