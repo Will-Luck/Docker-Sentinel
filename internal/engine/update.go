@@ -29,6 +29,9 @@ import (
 // "dxflrs/garage:v2.2.0"). When empty, the current image tag is re-pulled
 // (correct for :latest-style updates where the tag is mutable).
 func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage string) error {
+	if strings.HasSuffix(name, replacedSuffix) {
+		return fmt.Errorf("%s was set aside while Sentinel replaced it and is not updated itself", name)
+	}
 	if !u.tryLock(name) {
 		return ErrUpdateInProgress
 	}
@@ -262,10 +265,15 @@ func (u *Updater) UpdateContainer(ctx context.Context, id, name, targetImage str
 	select {
 	case <-u.clock.After(gracePeriod):
 	case <-ctx.Done():
+		u.abandonUpdate(ctx, sw, snapshotData)
 		return ctx.Err()
 	}
 
 	healthy, err := u.validateContainer(ctx, newID)
+	if ctx.Err() != nil {
+		u.abandonUpdate(ctx, sw, snapshotData)
+		return ctx.Err()
+	}
 	if err != nil || !healthy {
 		u.log.Error("validation failed, rolling back", "name", name, "error", err)
 		u.publishEvent(events.EventContainerUpdate, name, "update failed")
@@ -551,23 +559,42 @@ func (u *Updater) waitForHealthy(ctx context.Context, id string) (bool, error) {
 // on stop, or the rename back fails) it recreates the container from the
 // snapshot instead. Either way the outcome is recorded as a rollback.
 func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapshotData []byte, start time.Time, cause error) {
-	err := sw.undo(ctx)
-	if err == nil {
-		u.log.Info("old container restored", "name", sw.name)
-		// A :latest pull moved the tag to the new image. Point it back at
-		// the image the restored container runs, or the dashboard shows a
-		// bare image ID and the next scan cannot resolve the container.
-		var old container.InspectResponse
-		if json.Unmarshal(snapshotData, &old) == nil && old.Config != nil && old.Image != "" {
-			if _, tagErr := retag(context.WithoutCancel(ctx), u.docker, old.Config.Image, old.Image, u.log); tagErr != nil {
-				u.log.Warn("could not point the tag back at the old image", "name", sw.name, "error", tagErr)
-			}
-		}
-	} else {
-		u.log.Warn("could not restore the old container, recreating it from the snapshot", "name", sw.name, "error", err)
-		err = rollback(ctx, u.docker, sw.name, snapshotData, u.log)
+	u.reportRollback(ctx, sw.name, u.restoreOld(ctx, sw, snapshotData), start, cause)
+}
+
+// abandonUpdate puts the old container back when an update is cancelled
+// part way, for example by a shutdown during the grace period. Like a
+// cancelled pre-update hook it records and notifies nothing.
+func (u *Updater) abandonUpdate(ctx context.Context, sw *swap, snapshotData []byte) {
+	u.log.Warn("update interrupted, restoring the old container", "name", sw.name)
+	if err := u.restoreOld(ctx, sw, snapshotData); err != nil {
+		u.log.Error("could not restore the old container after an interrupted update", "name", sw.name, "error", err)
 	}
-	u.reportRollback(ctx, sw.name, err, start, cause)
+	if err := u.store.SetMaintenance(sw.name, false); err != nil {
+		u.log.Warn("failed to clear maintenance flag", "name", sw.name, "error", err)
+	}
+}
+
+// restoreOld undoes an update swap. When the old container cannot be
+// brought back it is recreated from the snapshot; the error is that of the
+// last attempt.
+func (u *Updater) restoreOld(ctx context.Context, sw *swap, snapshotData []byte) error {
+	ctx = context.WithoutCancel(ctx)
+	if err := sw.undo(ctx); err != nil {
+		u.log.Warn("could not restore the old container, recreating it from the snapshot", "name", sw.name, "error", err)
+		return rollback(ctx, u.docker, sw.name, snapshotData, u.log)
+	}
+	u.log.Info("old container restored", "name", sw.name)
+	// A :latest pull moved the tag to the new image. Point it back at the
+	// image the restored container runs, or the dashboard shows a bare
+	// image ID and the next scan cannot resolve the container.
+	var old container.InspectResponse
+	if json.Unmarshal(snapshotData, &old) == nil && old.Config != nil && old.Image != "" {
+		if _, err := retag(ctx, u.docker, old.Config.Image, old.Image, u.log); err != nil {
+			u.log.Warn("could not point the tag back at the old image", "name", sw.name, "error", err)
+		}
+	}
+	return nil
 }
 
 // reportRollback records and notifies the result of rolling a failed update

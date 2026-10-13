@@ -552,6 +552,10 @@ func main() {
 		log.Info("swarm mode detected — service monitoring enabled")
 	}
 
+	// Resolve containers an update left half-replaced when Sentinel last
+	// stopped, before the scheduler or the dashboard can start another one.
+	updater.RecoverInterruptedUpdates(ctx)
+
 	selfUpdater := engine.NewSelfUpdater(client, log)
 	scheduler := engine.NewScheduler(updater, cfg, log, clk)
 	scheduler.SetSettingsReader(db)

@@ -3,9 +3,13 @@ package engine
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
+	"github.com/Will-Luck/Docker-Sentinel/internal/guardian"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/moby/moby/api/types/container"
 )
@@ -170,4 +174,104 @@ func (s *swap) commit(ctx context.Context, removeVolumes bool) {
 	}
 	s.renamed = false
 	s.stopped = false
+}
+
+// RecoverInterruptedUpdates resolves the containers an update, rollback or
+// finalise left half-replaced because Sentinel stopped part way (a
+// shutdown, a crash, a host reboot). Call it once at startup, before any
+// scan or update can run. For each container named <name>-sentinel-old:
+//
+//   - no container holds <name>: the old container gets its name back and
+//     is started if it is not running;
+//   - <name> is running without the maintenance label: the swap had
+//     finished, so the old container is removed;
+//   - otherwise (<name> is not running, or carries the maintenance label of
+//     an update that was never validated): <name> is removed and the old
+//     container is restored.
+//
+// It then finalises any running container still carrying the maintenance
+// label, so Docker-Guardian sees it again, and clears maintenance flags left
+// set in the store.
+func (u *Updater) RecoverInterruptedUpdates(ctx context.Context) {
+	all, err := u.docker.ListAllContainers(ctx)
+	if err != nil {
+		u.log.Warn("startup recovery: could not list containers", "error", err)
+		return
+	}
+	byName := make(map[string]container.Summary, len(all))
+	for _, c := range all {
+		byName[containerName(c)] = c
+	}
+
+	handled := make(map[string]bool)
+	for _, oldName := range slices.Sorted(maps.Keys(byName)) {
+		name, ok := strings.CutSuffix(oldName, replacedSuffix)
+		if !ok || name == "" {
+			continue
+		}
+		old := byName[oldName]
+		cur, exists := byName[name]
+		u.recoverSwap(ctx, name, old, cur, exists)
+		handled[old.ID] = true
+		if exists {
+			handled[cur.ID] = true
+		}
+	}
+
+	if len(handled) > 0 {
+		if all, err = u.docker.ListAllContainers(ctx); err != nil {
+			u.log.Warn("startup recovery: could not list containers", "error", err)
+			return
+		}
+	}
+	for _, c := range all {
+		name := containerName(c)
+		if handled[c.ID] || strings.HasSuffix(name, replacedSuffix) {
+			continue
+		}
+		if on, err := u.store.GetMaintenance(name); err == nil && on {
+			if err := u.store.SetMaintenance(name, false); err != nil {
+				u.log.Warn("startup recovery: could not clear the maintenance flag", "name", name, "error", err)
+			}
+		}
+		if c.State == container.StateRunning && guardian.HasMaintenanceLabel(c.Labels) {
+			u.log.Warn("startup recovery: finishing an interrupted update (removing the maintenance label)", "name", name)
+			if _, err := u.finaliseContainer(ctx, c.ID, name); err != nil {
+				u.log.Error("startup recovery: could not finalise the container", "name", name, "error", err)
+			}
+		}
+	}
+}
+
+// recoverSwap resolves one container left under its replaced name; see
+// RecoverInterruptedUpdates.
+func (u *Updater) recoverSwap(ctx context.Context, name string, old, cur container.Summary, curExists bool) {
+	oldName := name + replacedSuffix
+	if curExists {
+		if cur.State == container.StateRunning && !guardian.HasMaintenanceLabel(cur.Labels) {
+			u.log.Warn("startup recovery: an interrupted update had finished, removing the replaced container",
+				"name", name, "removed", oldName)
+			if err := u.docker.RemoveContainer(ctx, old.ID); err != nil {
+				u.log.Error("startup recovery: could not remove the replaced container", "name", oldName, "error", err)
+			}
+			return
+		}
+		u.log.Warn("startup recovery: an interrupted update had not finished, restoring the old container",
+			"name", name, "removed", truncateID(cur.ID))
+		if err := u.docker.RemoveContainer(ctx, cur.ID); err != nil {
+			u.log.Error("startup recovery: could not remove the unfinished replacement", "name", name, "error", err)
+			return
+		}
+	} else {
+		u.log.Warn("startup recovery: restoring a container an interrupted update left renamed", "name", name, "from", oldName)
+	}
+	if err := u.docker.RenameContainer(ctx, old.ID, name); err != nil {
+		u.log.Error("startup recovery: could not give the old container its name back", "name", name, "error", err)
+		return
+	}
+	if old.State != container.StateRunning {
+		if err := u.docker.StartContainer(ctx, old.ID); err != nil {
+			u.log.Error("startup recovery: could not start the restored container", "name", name, "error", err)
+		}
+	}
 }
