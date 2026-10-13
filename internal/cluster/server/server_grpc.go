@@ -42,13 +42,16 @@ func (s *Server) Enroll(ctx context.Context, req *proto.EnrollRequest) (*proto.E
 		return nil, status.Error(codes.InvalidArgument, "CSR is required")
 	}
 
-	// Token ID is the first 8 hex characters (4 bytes) of the plaintext token.
-	// This lets us look up the token record without storing the full value.
-	if len(req.Token) < 8 {
+	// The token is "<secret>[.<CA fingerprint>]": the fingerprint is for
+	// the agent. Token ID is the first 8 hex characters (4 bytes) of the
+	// secret. This lets us look up the token record without storing the
+	// full value.
+	secret, _, _ := strings.Cut(req.Token, ".")
+	if len(secret) < 8 {
 		return nil, status.Error(codes.InvalidArgument, "token too short")
 	}
-	tokenID := req.Token[:8]
-	if err := s.consumeEnrollToken(ctx, tokenID, req); err != nil {
+	tokenID := secret[:8]
+	if err := s.consumeEnrollToken(ctx, tokenID, secret, req); err != nil {
 		return nil, err
 	}
 
@@ -102,7 +105,7 @@ func (s *Server) Enroll(ctx context.Context, req *proto.EnrollRequest) (*proto.E
 // in one step: concurrent enrolments with the same token cannot both pass
 // the check before either marks it. A refused token is logged with the
 // host that presented it.
-func (s *Server) consumeEnrollToken(ctx context.Context, tokenID string, req *proto.EnrollRequest) error {
+func (s *Server) consumeEnrollToken(ctx context.Context, tokenID, secret string, req *proto.EnrollRequest) error {
 	s.enrollMu.Lock()
 	defer s.enrollMu.Unlock()
 
@@ -121,7 +124,7 @@ func (s *Server) consumeEnrollToken(ctx context.Context, tokenID string, req *pr
 		return status.Error(codes.PermissionDenied, "invalid enrollment token")
 	}
 	// Verify HMAC: hash the provided plaintext and compare with stored hash.
-	if !hmac.Equal(s.hmacToken(req.Token), tok.Hash) {
+	if !hmac.Equal(s.hmacToken(secret), tok.Hash) {
 		return refuse("the token does not match", "invalid enrollment token")
 	}
 	if tok.Used {
@@ -150,13 +153,17 @@ func (s *Server) GenerateEnrollToken(expiry time.Duration) (token string, id str
 		return "", "", fmt.Errorf("generate random token: %w", err)
 	}
 
-	token = hex.EncodeToString(raw)
-	id = token[:8]
+	secret := hex.EncodeToString(raw)
+	id = secret[:8]
+	// The token names its hub: "<secret>.<CA fingerprint>". The agent
+	// checks the server it enrols with against the fingerprint before it
+	// sends the token; the hub checks the secret.
+	token = secret + "." + s.ca.Fingerprint()
 
 	now := time.Now()
 	tok := &cluster.EnrollToken{
 		ID:        id,
-		Hash:      s.hmacToken(token),
+		Hash:      s.hmacToken(secret),
 		CreatedAt: now,
 		ExpiresAt: now.Add(expiry),
 		Used:      false,

@@ -522,11 +522,27 @@ func (a *Agent) enroll(ctx context.Context) error {
 
 	// Connect with TLS but no client cert for enrollment. The server
 	// uses TLS on the gRPC port (VerifyClientCertIfGiven), so we must
-	// speak TLS — but we skip server verification because we don't have
-	// the CA cert yet (it comes back in the enrollment response).
+	// speak TLS. The agent has no CA yet (it comes back in the enrollment
+	// response), so the usual verification is off; instead, a token that
+	// names its hub ("<secret>.<CA fingerprint>", from servers since
+	// v3.0.0) is checked against the CA the server presents, before the
+	// token is sent.
+	_, pin, pinned := strings.Cut(a.cfg.EnrollToken, ".")
 	enrollTLS := &tls.Config{
-		InsecureSkipVerify: true, //nolint:gosec // bootstrapping — no CA yet
+		InsecureSkipVerify: true, //nolint:gosec // bootstrapping: checked against the token's fingerprint below
 		MinVersion:         tls.VersionTLS13,
+	}
+	if pinned {
+		// VerifyConnection runs on every handshake, resumed ones included.
+		enrollTLS.VerifyConnection = func(cs tls.ConnectionState) error {
+			raw := make([][]byte, len(cs.PeerCertificates))
+			for i, c := range cs.PeerCertificates {
+				raw[i] = c.Raw
+			}
+			return verifyHubChain(raw, pin)
+		}
+	} else {
+		a.log.Warn("the enrolment token names no server (made by a server before v3.0.0): the agent cannot check that it enrols with the right one")
 	}
 	conn, err := grpc.NewClient(
 		a.cfg.ServerAddr,
@@ -546,6 +562,14 @@ func (a *Agent) enroll(ctx context.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("enroll rpc: %w", err)
+	}
+
+	// The CA the hub hands over must be the one the token names.
+	if pinned {
+		block, _ := pem.Decode(resp.CaCert)
+		if block == nil || cluster.CertFingerprint(block.Bytes) != pin {
+			return errNotTheHub
+		}
 	}
 
 	a.hostID = resp.HostId
@@ -574,6 +598,37 @@ func (a *Agent) enroll(ctx context.Context) error {
 		return fmt.Errorf("write agent key: %w", err)
 	}
 	return nil
+}
+
+// errNotTheHub refuses enrolment with a server the token does not name.
+var errNotTheHub = errors.New("this is not the server the enrolment token was made by (its CA does not match the token): check SENTINEL_SERVER_ADDR, " +
+	"or copy the whole token, including the part after the dot, from the server's cluster page")
+
+// verifyHubChain checks that the server's certificate chain (rawCerts, as
+// presented in the TLS handshake) holds the CA with fingerprint pin and
+// that the server's certificate was issued by it.
+func verifyHubChain(rawCerts [][]byte, pin string) error {
+	if len(rawCerts) < 2 {
+		return errNotTheHub
+	}
+	leaf, err := x509.ParseCertificate(rawCerts[0])
+	if err != nil {
+		return fmt.Errorf("parse the server's certificate: %w", err)
+	}
+	for _, raw := range rawCerts[1:] {
+		if cluster.CertFingerprint(raw) != pin {
+			continue
+		}
+		ca, err := x509.ParseCertificate(raw)
+		if err != nil {
+			return fmt.Errorf("parse the server's CA: %w", err)
+		}
+		if err := leaf.CheckSignatureFrom(ca); err != nil {
+			return errNotTheHub
+		}
+		return nil
+	}
+	return errNotTheHub
 }
 
 // loadHostID returns the host ID the hub gave this agent: from the host-id

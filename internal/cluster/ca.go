@@ -5,8 +5,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"log/slog"
@@ -296,6 +298,25 @@ func (ca *CA) SignCSR(csrDER []byte, hostID string) (certPEM []byte, serial stri
 // Other cluster components (e.g. the HMAC key) can store files alongside them.
 func (ca *CA) Dir() string {
 	return filepath.Dir(ca.certPath)
+}
+
+// Fingerprint identifies the CA: the first 16 bytes of the SHA-256 of its
+// certificate, in hex. Enrolment tokens carry it, so an agent can tell its
+// hub from anything else answering at the server address.
+func (ca *CA) Fingerprint() string {
+	return CertFingerprint(ca.cert.Raw)
+}
+
+// CertDER returns the CA certificate, DER-encoded.
+func (ca *CA) CertDER() []byte {
+	return ca.cert.Raw
+}
+
+// CertFingerprint is the fingerprint (see CA.Fingerprint) of the
+// DER-encoded certificate der.
+func CertFingerprint(der []byte) string {
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:16])
 }
 
 // CACertPEM returns the CA certificate in PEM format. This is distributed to

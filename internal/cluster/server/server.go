@@ -354,6 +354,9 @@ func (s *Server) issueServerCertLocked() error {
 	if err != nil {
 		return fmt.Errorf("parse server keypair: %w", err)
 	}
+	// Send the CA with the server certificate, so an enrolling agent can
+	// check it against the fingerprint in its token.
+	cert.Certificate = append(cert.Certificate, s.ca.CertDER())
 	if err := s.installServerCertLocked(cert); err != nil {
 		return err
 	}
