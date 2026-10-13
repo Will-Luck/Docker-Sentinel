@@ -1408,7 +1408,7 @@
 function saveGeneralSetting(key, value) {
     fetch('/api/settings/general', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({key: key, value: value})
     })
     .then(function(r) { return r.json(); })
@@ -1426,7 +1426,7 @@ function switchRole() {
     if (!confirm('Switch this instance to ' + target + ' mode? This will take effect after a container restart.')) return;
     fetch('/api/settings/switch-role', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken()},
         body: JSON.stringify({role: target})
     })
     .then(function(r) { return r.json(); })

@@ -26,12 +26,28 @@ window.fetch = function (url, opts) {
         }
     }
     return originalFetch.call(window, url, opts).then(function (resp) {
-        // Auto-redirect to login on 401 (session expired).
-        if (resp.status === 401 && url.indexOf("/api/auth/me") === -1) {
-            window.location.href = "/login";
+        // Redirect to login only when the session is gone. The server also
+        // answers 401 for a wrong password or code, and the page must show
+        // that error instead of reloading.
+        if (resp.status === 401 && String(url).indexOf("/api/auth/me") === -1) {
+            return isSessionGone(resp).then(function (gone) {
+                if (gone) {
+                    window.location.href = "/login";
+                }
+                return resp;
+            });
         }
         return resp;
     });
 };
 
-export { getCSRFToken };
+// isSessionGone resolves true when a 401 response means "not signed in".
+function isSessionGone(resp) {
+    return resp.clone().json().then(function (body) {
+        return !!body && body.error === "authentication required";
+    }, function () {
+        return false;
+    });
+}
+
+export { getCSRFToken, isSessionGone };

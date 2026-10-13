@@ -33,12 +33,23 @@ function authFetch(url, options) {
     }
 
     return fetch(url, options).then(function(resp) {
-        // Handle 401 — redirect to login.
-        if (resp.status === 401) {
-            window.location.href = "/login";
-            return Promise.reject(new Error("Unauthorized"));
+        // A 401 means the session is gone only when the server says so. It
+        // also answers 401 for a wrong password or code, which the caller
+        // shows. The global fetch wrapper has already started the redirect.
+        if (resp.status !== 401) {
+            return resp;
         }
-        return resp;
+        return resp.clone().json().then(function(body) {
+            return !!body && body.error === "authentication required";
+        }, function() {
+            return false;
+        }).then(function(gone) {
+            if (gone) {
+                window.location.href = "/login";
+                return Promise.reject(new Error("Unauthorized"));
+            }
+            return resp;
+        });
     });
 }
 

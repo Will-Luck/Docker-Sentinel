@@ -20,12 +20,24 @@
       }
     }
     return originalFetch.call(window, url, opts).then(function(resp) {
-      if (resp.status === 401 && url.indexOf("/api/auth/me") === -1) {
-        window.location.href = "/login";
+      if (resp.status === 401 && String(url).indexOf("/api/auth/me") === -1) {
+        return isSessionGone(resp).then(function(gone) {
+          if (gone) {
+            window.location.href = "/login";
+          }
+          return resp;
+        });
       }
       return resp;
     });
   };
+  function isSessionGone(resp) {
+    return resp.clone().json().then(function(body) {
+      return !!body && body.error === "authentication required";
+    }, function() {
+      return false;
+    });
+  }
 
   // internal/web/static/src/js/utils.js
   var _toastBatch = [];
