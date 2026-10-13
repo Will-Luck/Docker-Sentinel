@@ -404,6 +404,7 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("DELETE /api/cluster/hosts/{id}", perm(auth.PermSettingsModify, s.handleRemoveHost))
 	s.mux.Handle("POST /api/cluster/hosts/{id}/revoke", perm(auth.PermSettingsModify, s.handleRevokeHost))
 	s.mux.Handle("POST /api/cluster/hosts/{id}/pause", perm(auth.PermSettingsModify, s.handlePauseHost))
+	s.mux.Handle("POST /api/cluster/hosts/{id}/resume", perm(auth.PermSettingsModify, s.handleResumeHost))
 
 	// containers.manage
 	s.mux.Handle("POST /api/containers/{name}/restart", perm(auth.PermContainersManage, s.apiRestart))
@@ -724,6 +725,20 @@ func (s *Server) handlePauseHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "paused"})
+}
+
+// handleResumeHost ends the pause of a host: it gets updates again.
+func (s *Server) handleResumeHost(w http.ResponseWriter, r *http.Request) {
+	if !s.deps.Cluster.Enabled() {
+		writeError(w, http.StatusServiceUnavailable, "cluster not enabled")
+		return
+	}
+	id := r.PathValue("id")
+	if err := s.deps.Cluster.ResumeHost(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
 }
 
 // writeJSON encodes v as JSON and writes it to the response.

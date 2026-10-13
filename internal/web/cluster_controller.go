@@ -112,6 +112,16 @@ func (c *ClusterController) PauseHost(id string) error {
 	return c.provider.PauseHost(id)
 }
 
+// ResumeHost ends the pause of a host: it gets updates again. Returns an
+// error when clustering is disabled or the provider cannot resume.
+func (c *ClusterController) ResumeHost(id string) error {
+	r, ok := c.current().(interface{ ResumeHost(id string) error })
+	if !ok {
+		return fmt.Errorf("cluster not enabled")
+	}
+	return r.ResumeHost(id)
+}
+
 // AllHostContainers returns containers from all connected hosts.
 // Returns nil when clustering is disabled.
 func (c *ClusterController) AllHostContainers() []RemoteContainer {
@@ -125,35 +135,41 @@ func (c *ClusterController) AllHostContainers() []RemoteContainer {
 
 // UpdateRemoteContainer dispatches a container update to a remote agent.
 // Returns an error when clustering is disabled.
+// The call runs outside the lock: it can take minutes, and SetProvider must
+// not wait for it.
 func (c *ClusterController) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.provider == nil {
+	p := c.current()
+	if p == nil {
 		return fmt.Errorf("cluster not enabled")
 	}
-	return c.provider.UpdateRemoteContainer(ctx, hostID, containerName, targetImage, targetDigest)
+	return p.UpdateRemoteContainer(ctx, hostID, containerName, targetImage, targetDigest)
+}
+
+// current returns the provider, nil when clustering is disabled.
+func (c *ClusterController) current() ClusterProvider {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.provider
 }
 
 // RemoteContainerAction dispatches a lifecycle action to a container on a remote agent.
 // Returns an error when clustering is disabled.
 func (c *ClusterController) RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.provider == nil {
+	p := c.current()
+	if p == nil {
 		return fmt.Errorf("cluster not enabled")
 	}
-	return c.provider.RemoteContainerAction(ctx, hostID, containerName, action)
+	return p.RemoteContainerAction(ctx, hostID, containerName, action)
 }
 
 // RemoteContainerLogs fetches the last N lines of logs from a remote container.
 // Returns an error when clustering is disabled.
 func (c *ClusterController) RemoteContainerLogs(ctx context.Context, hostID, containerName string, lines int) (string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.provider == nil {
+	p := c.current()
+	if p == nil {
 		return "", fmt.Errorf("cluster not enabled")
 	}
-	return c.provider.RemoteContainerLogs(ctx, hostID, containerName, lines)
+	return p.RemoteContainerLogs(ctx, hostID, containerName, lines)
 }
 
 // RollbackRemoteContainer triggers a rollback on a remote agent.

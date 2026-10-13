@@ -270,7 +270,9 @@ func (s *Server) apiIgnoreVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.deps.IgnoredVersions != nil {
-		if err := s.deps.IgnoredVersions.AddIgnoredVersion(name, ignoredVersion); err != nil {
+		// A remote row's versions are kept under its host-scoped key, which
+		// the remote scan reads; a local row's key is the name.
+		if err := s.deps.IgnoredVersions.AddIgnoredVersion(update.Key(), ignoredVersion); err != nil {
 			s.deps.Log.Error("failed to save ignored version", "name", name, "version", ignoredVersion, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to save ignored version")
 			return
