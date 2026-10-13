@@ -12,6 +12,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 var validTag = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
@@ -338,7 +339,10 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 					s.deps.Log.Error("panic in remote update goroutine", "name", name, "host", hostID, "panic", rec)
 				}
 			}()
-			if err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, ""); err != nil {
+			start := time.Now()
+			err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, "")
+			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, targetImage, err)
+			if err != nil {
 				s.deps.Log.Error("remote update failed", "name", name, "host", hostID, "error", err)
 				s.deps.EventBus.Publish(events.SSEEvent{
 					Type:          events.EventContainerUpdate,
@@ -908,4 +912,29 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 		"name":    name,
 		"message": "Updating " + name + " to " + targetImage,
 	})
+}
+
+// recordRemoteUpdate writes the history row for an "Update now" on a remote
+// container, under the scoped key every remote history row uses.
+func (s *Server) recordRemoteUpdate(start time.Time, hostID, hostName, name, oldImage, newImage string, updateErr error) {
+	if s.deps.Store == nil {
+		return
+	}
+	rec := UpdateRecord{
+		Timestamp:     start,
+		ContainerName: store.ScopedKey(hostID, name),
+		OldImage:      oldImage,
+		NewImage:      newImage,
+		Outcome:       "success",
+		Duration:      time.Since(start),
+		HostID:        hostID,
+		HostName:      hostName,
+	}
+	if updateErr != nil {
+		rec.Outcome = "failed"
+		rec.Error = updateErr.Error()
+	}
+	if err := s.deps.Store.RecordUpdate(rec); err != nil {
+		s.deps.Log.Warn("failed to record remote update", "name", name, "host", hostID, "error", err)
+	}
 }
