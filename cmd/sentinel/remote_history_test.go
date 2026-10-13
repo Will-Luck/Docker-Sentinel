@@ -33,7 +33,7 @@ func historyAdapter(t *testing.T) (*clusterAdapter, *store.Store) {
 }
 
 // Remote rollback needs the last successful update of that container on
-// that host. Rows written before v2.17.0 by an approved update or the
+// that host. Rows written before v3.0.0 by an approved update or the
 // offline journal carry the plain name plus the host ID; after the startup
 // migration they must count. (The host is not connected here, so a
 // rollback that found its history fails at the dispatch step instead.)

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Rows written before v2.17.0 for a remote host used the plain container
+// Rows written before v3.0.0 for a remote host used the plain container
 // name. The migration moves them to "hostID::name" and leaves local rows
 // and rows already keyed that way alone; a second run changes nothing.
 func TestMigrateRemoteHistoryKeys(t *testing.T) {

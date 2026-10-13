@@ -46,7 +46,7 @@ func runUpdate(a *Agent, name, target string) (*proto.UpdateResult, error) {
 }
 
 // A digest-only update (same tag, new image behind it) has no newer tag to
-// send. Hubs before v2.17.0 send an empty target for it; the agent must
+// send. Hubs before v3.0.0 send an empty target for it; the agent must
 // re-pull the container's own image rather than fail on an empty reference.
 func TestHandleUpdateContainer_EmptyTargetRepullsCurrentImage(t *testing.T) {
 	h := newFakeHost()

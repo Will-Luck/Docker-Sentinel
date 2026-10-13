@@ -814,7 +814,7 @@ type ContainerList struct {
 	RequestId  string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // echoes the server's request_id
 	Containers []*ContainerInfo       `protobuf:"bytes,2,rep,name=containers,proto3" json:"containers,omitempty"`
 	// Set when the agent could not list its containers. containers is then
-	// empty and does not describe the host. Hubs older than v2.17.0 ignore
+	// empty and does not describe the host. Hubs older than v3.0.0 ignore
 	// this field.
 	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1917,7 +1917,7 @@ type StateAck struct {
 	Message  string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"` // e.g. "state received" or error detail
 	// Capabilities of the server. "cert-renewal": the server handles
 	// CertRenewalCSR safely (keeps the old certificate valid until the new
-	// one is in use). Servers older than v2.17.0 send none.
+	// one is in use). Servers older than v3.0.0 send none.
 	ServerFeatures []string `protobuf:"bytes,3,rep,name=server_features,json=serverFeatures,proto3" json:"server_features,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache

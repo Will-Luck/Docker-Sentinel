@@ -788,7 +788,7 @@ func ScopedKey(hostID, name string) string {
 }
 
 // MigrateRemoteHistoryKeys rewrites remote history rows saved before
-// v2.17.0 under the plain container name (host ID set, no "::" in the
+// v3.0.0 under the plain container name (host ID set, no "::" in the
 // name) to the "hostID::name" key that every remote row now uses. It
 // returns how many rows it changed; running it again changes none.
 func (s *Store) MigrateRemoteHistoryKeys() (int, error) {

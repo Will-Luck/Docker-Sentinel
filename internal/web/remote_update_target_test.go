@@ -3,7 +3,7 @@ package web
 import "testing"
 
 // Approving a digest-only update for a remote container must send the
-// agent a real image reference: agents before v2.17.0 fail on an empty one.
+// agent a real image reference: agents before v3.0.0 fail on an empty one.
 func TestRemoteUpdateTarget(t *testing.T) {
 	tests := []struct {
 		current, newer, want string

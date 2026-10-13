@@ -121,7 +121,7 @@ func TestScanPrunesRemoteQueueOnlyForHostsItHeardFrom(t *testing.T) {
 
 // A same-tag update (a new image behind the tag a remote container runs)
 // has no newer tag. The scan must still send the agent a real image
-// reference: agents before v2.17.0 fail on an empty one.
+// reference: agents before v3.0.0 fail on an empty one.
 func TestScanRemoteSameTagUpdateSendsCurrentImage(t *testing.T) {
 	mock := newMockDocker()
 	mock.distDigests["nginx:latest"] = "sha256:new"

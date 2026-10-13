@@ -55,7 +55,7 @@ const FeatureUpdateSkipped = "update-skipped"
 
 // FeatureKeepalive is the server feature that says the server accepts
 // keepalive pings every 30 seconds. gRPC's default, which servers before
-// v2.17.0 run, cuts off a client that pings more often than every five
+// v3.0.0 run, cuts off a client that pings more often than every five
 // minutes.
 const FeatureKeepalive = "keepalive"
 

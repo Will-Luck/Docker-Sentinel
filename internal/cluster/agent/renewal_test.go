@@ -393,7 +393,7 @@ func TestHandleCertRenewal_InstallsRequestedCert(t *testing.T) {
 	}
 }
 
-// Agents before v2.17.0 wrote any renewal reply over their certificate,
+// Agents before v3.0.0 wrote any renewal reply over their certificate,
 // leaving a certificate that did not match their key.
 func TestHandleCertRenewal_IgnoresUnrequestedOrMismatchedCert(t *testing.T) {
 	a, caDir := renewalAgent(t)

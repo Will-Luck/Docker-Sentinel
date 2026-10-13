@@ -20,7 +20,7 @@ import (
 )
 
 // fakeHub is a bare AgentService that records what an agent sends. With no
-// features it answers like a hub before v2.17.0.
+// features it answers like a hub before v3.0.0.
 type fakeHub struct {
 	proto.UnimplementedAgentServiceServer
 	features []string
@@ -125,7 +125,7 @@ func renewalRequests(t *testing.T, features []string) int {
 	}
 }
 
-// A hub before v2.17.0 revokes the old certificate the moment it signs a
+// A hub before v3.0.0 revokes the old certificate the moment it signs a
 // new one and may drop the reply, which would lock the agent out. The
 // agent only asks a hub that says it renews safely.
 func TestCertRenewal_NotRequestedFromOldHub(t *testing.T) {
@@ -185,7 +185,7 @@ func runAgentAgainst(t *testing.T, addr, caDir string) *Agent {
 	return a
 }
 
-// A hub before v2.17.0 runs gRPC's default ping policy: a client may ping
+// A hub before v3.0.0 runs gRPC's default ping policy: a client may ping
 // at most every five minutes, and one that pings more often is cut off
 // with "too_many_pings". The agent must not ping such a hub every 30
 // seconds, or it is disconnected over and over (after a hub rollback, say).

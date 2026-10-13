@@ -169,7 +169,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 
 		// Target image: the newer tag for a version bump, otherwise (a
 		// same-tag update) the container's own image, which the agent
-		// re-pulls. Agents before v2.17.0 fail on an empty target.
+		// re-pulls. Agents before v3.0.0 fail on an empty target.
 		scanTarget := c.Image
 		if len(check.NewerVersions) > 0 {
 			scanTarget = replaceTag(c.Image, check.NewerVersions[0])

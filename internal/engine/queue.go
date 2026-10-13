@@ -29,7 +29,7 @@ type PendingUpdate struct {
 }
 
 // removedHostPrefix marks host IDs from the Portainer connector, which was
-// removed in v2.17.0. Queue entries carrying it can no longer be acted on.
+// removed in v3.0.0. Queue entries carrying it can no longer be acted on.
 const removedHostPrefix = "portainer:"
 
 // Queue manages pending updates with BoltDB persistence.

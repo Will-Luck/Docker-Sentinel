@@ -131,7 +131,7 @@ func (a *Agent) handleListContainers(ctx context.Context, stream proto.AgentServ
 	if err != nil {
 		if requestID != "" {
 			// The hub is waiting on this request ID: answer with the
-			// error. Hubs before v2.17.0 ignore the error field and see
+			// error. Hubs before v3.0.0 ignore the error field and see
 			// an empty list, which still releases the waiting scan.
 			if sendErr := a.sendMsg(stream, &proto.AgentMessage{
 				Payload: &proto.AgentMessage_ContainerList{

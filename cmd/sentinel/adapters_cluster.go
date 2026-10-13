@@ -218,7 +218,7 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 
 // lastRemoteOldImage returns the old image of the most recent successful
 // update of containerName on hostID, or "" if there is none. Remote history
-// rows are keyed "hostID::name" (rows from before v2.17.0 are moved to that
+// rows are keyed "hostID::name" (rows from before v3.0.0 are moved to that
 // key when the cluster starts, migrateRemoteHistory). Rollback rows are not
 // updates to undo and are skipped.
 func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, error) {
@@ -396,7 +396,7 @@ func knownContainer(srv *clusterserver.Server) func(hostID, name string) (cluste
 	}
 }
 
-// migrateRemoteHistory moves remote history rows written before v2.17.0
+// migrateRemoteHistory moves remote history rows written before v3.0.0
 // (plain container name with the host ID set) to the "hostID::name" key.
 // It is cheap and safe to run on every cluster start.
 func migrateRemoteHistory(db *store.Store, log *slog.Logger) {

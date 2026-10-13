@@ -117,7 +117,7 @@ func queueKeyName(r *http.Request) (key, name string) {
 
 // remoteUpdateTarget is the image a remote agent is asked to update to. A
 // digest-only update (same tag, new image behind it) has no newer tag, so
-// the agent re-pulls the container's current image; agents before v2.17.0
+// the agent re-pulls the container's current image; agents before v3.0.0
 // fail on an empty target.
 func remoteUpdateTarget(currentImage, newerTarget string) string {
 	if newerTarget != "" {

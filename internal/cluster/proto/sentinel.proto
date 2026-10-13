@@ -108,7 +108,7 @@ message ContainerList {
   string request_id = 1;  // echoes the server's request_id
   repeated ContainerInfo containers = 2;
   // Set when the agent could not list its containers. containers is then
-  // empty and does not describe the host. Hubs older than v2.17.0 ignore
+  // empty and does not describe the host. Hubs older than v3.0.0 ignore
   // this field.
   string error = 3;
 }
@@ -251,7 +251,7 @@ message StateAck {
   string message = 2;   // e.g. "state received" or error detail
   // Capabilities of the server. "cert-renewal": the server handles
   // CertRenewalCSR safely (keeps the old certificate valid until the new
-  // one is in use). Servers older than v2.17.0 send none.
+  // one is in use). Servers older than v3.0.0 send none.
   repeated string server_features = 3;
 }
 

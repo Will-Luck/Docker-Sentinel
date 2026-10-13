@@ -11,5 +11,5 @@ func warnRemovedEnv(log *slog.Logger) {
 	if os.Getenv("SENTINEL_PORTAINER_URL") == "" && os.Getenv("SENTINEL_PORTAINER_TOKEN") == "" {
 		return
 	}
-	log.Warn("Portainer support was removed in v2.17.0; SENTINEL_PORTAINER_URL and SENTINEL_PORTAINER_TOKEN are ignored")
+	log.Warn("Portainer support was removed in v3.0.0; SENTINEL_PORTAINER_URL and SENTINEL_PORTAINER_TOKEN are ignored")
 }
