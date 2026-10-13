@@ -147,7 +147,7 @@ func (a *clusterAdapter) DiscardRemoteSwap(ctx context.Context, hostID, name str
 	return a.srv.DiscardSwapSync(ctx, hostID, name)
 }
 
-func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
+func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (web.RemoteUpdated, error) {
 	hostName, oldImage := hostID, ""
 	var labels map[string]string
 	if hs, ok := a.srv.GetHost(hostID); ok {
@@ -177,9 +177,13 @@ func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, cont
 		a.updater.NotifyRemote(context.WithoutCancel(ctx), hostName, containerName, oldImage, &res)
 	}
 	if err != nil {
-		return err
+		return web.RemoteUpdated{}, err
 	}
-	return remoteResultErr(ur, "update")
+	changed := web.RemoteUpdated{
+		ContainerName: ur.GetContainerName(), OldImage: ur.GetOldImage(), OldDigest: ur.GetOldDigest(),
+		NewImage: ur.GetNewImage(), NewDigest: ur.GetNewDigest(),
+	}
+	return changed, remoteResultErr(ur, "update")
 }
 
 // remoteResultErr turns an agent's answer to an update or rollback (what)

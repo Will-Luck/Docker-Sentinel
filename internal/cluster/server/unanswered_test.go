@@ -168,3 +168,42 @@ func TestUpdateContainerSync_RecordsWhatNoCallerRecords(t *testing.T) {
 		t.Errorf("history for a caller that records = %+v, want none from the hub", recs)
 	}
 }
+
+// smoke NEW-1: a request naming another Sentinel container on the host
+// updates the agent's own container instead. The hub records the container
+// that changed, which the agent's result names, not the one requested.
+func TestUpdateContainerSync_RecordsTheContainerThatChanged(t *testing.T) {
+	srv, addr, st, _ := testServer(t)
+	srv.SetHistoryRecorder(st)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	t.Cleanup(closeConn)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if req := msg.GetUpdateContainer(); req != nil {
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{UpdateResult: &proto.UpdateResult{
+					RequestId: msg.GetRequestId(), ContainerName: "sentinel-agent", Outcome: "success",
+					OldImage: "sentinel:3.0.0", NewImage: req.GetTargetImage(),
+				}}})
+			}
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := srv.UpdateContainerSync(ctx, hostID, "other-sentinel", "sentinel:3.0.1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := st.ListHistoryByContainer(store.ScopedKey(hostID, "other-sentinel"), 10); len(recs) != 0 {
+		t.Errorf("history of the container requested = %+v, want none: it did not change", recs)
+	}
+	recs, _ := st.ListHistoryByContainer(store.ScopedKey(hostID, "sentinel-agent"), 10)
+	if len(recs) != 1 || recs[0].OldImage != "sentinel:3.0.0" || recs[0].NewImage != "sentinel:3.0.1" {
+		t.Errorf("history of the agent's own container = %+v, want its update", recs)
+	}
+}

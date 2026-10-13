@@ -12,6 +12,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 )
 
 // queueResponse wraps a PendingUpdate with additional display fields.
@@ -177,10 +178,11 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		ctx := context.Background()
 		start := time.Now()
 		var err error
+		var res RemoteUpdated
 		if update.HostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 			// Remote container — dispatch to the agent via cluster.
 			s.markRemoteUpdating(update.HostID, update.ContainerName)
-			err = s.deps.Cluster.UpdateRemoteContainer(ctx, update.HostID, update.ContainerName, remoteUpdateTarget(update.CurrentImage, approveTarget), update.RemoteDigest)
+			res, err = s.deps.Cluster.UpdateRemoteContainer(ctx, update.HostID, update.ContainerName, remoteUpdateTarget(update.CurrentImage, approveTarget), update.RemoteDigest)
 			s.finishRemoteUpdating(update.HostID, update.ContainerName)
 		} else if update.Type == "service" && s.deps.Swarm != nil {
 			err = s.deps.Swarm.UpdateService(ctx, update.ContainerID, update.ContainerName, approveTarget)
@@ -196,6 +198,13 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 			// Nothing changed; like a local skip, no history row.
 			s.deps.Log.Info("remote update skipped by a pre-update hook", "name", name, "host", update.HostID)
 			return
+		}
+		// The container the update changed, and the image it ran: the one
+		// queued, unless the agent updated its own container instead.
+		changed, oldImage, oldDigest := changedContainer(update.ContainerName, update.CurrentImage, update.CurrentDigest, res)
+		key := update.Key()
+		if changed != update.ContainerName {
+			key = store.ScopedKey(update.HostID, changed)
 		}
 		if err != nil {
 			s.deps.Log.Error("approved update failed", "name", name, "error", err)
@@ -214,9 +223,9 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 				// An unanswered remote update's row is replaced by the
 				// agent's result if it comes later.
 				Timestamp:     cluster.HistoryTime(err, start),
-				ContainerName: update.Key(),
-				OldImage:      update.CurrentImage,
-				OldDigest:     update.CurrentDigest,
+				ContainerName: key,
+				OldImage:      oldImage,
+				OldDigest:     oldDigest,
 				NewImage:      newImage,
 				Outcome:       "failed",
 				Duration:      time.Since(start),
@@ -231,9 +240,9 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 			s.deps.Log.Info("remote update succeeded", "name", name, "host", update.HostID)
 			_ = s.deps.Store.RecordUpdate(UpdateRecord{
 				Timestamp:     start,
-				ContainerName: update.Key(),
-				OldImage:      update.CurrentImage,
-				OldDigest:     update.CurrentDigest,
+				ContainerName: key,
+				OldImage:      oldImage,
+				OldDigest:     oldDigest,
 				NewImage:      remoteUpdateTarget(update.CurrentImage, approveTarget),
 				NewDigest:     recordedNewDigest(update),
 				Outcome:       "success",

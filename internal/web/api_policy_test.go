@@ -129,8 +129,8 @@ func (m *mockClusterProviderWithContainers) RemoveHost(_ string) error { return 
 func (m *mockClusterProviderWithContainers) RevokeHost(_ string) error { return nil }
 func (m *mockClusterProviderWithContainers) PauseHost(_ string) error  { return nil }
 
-func (m *mockClusterProviderWithContainers) UpdateRemoteContainer(_ context.Context, _, _, _, _ string) error {
-	return nil
+func (m *mockClusterProviderWithContainers) UpdateRemoteContainer(_ context.Context, _, _, _, _ string) (RemoteUpdated, error) {
+	return RemoteUpdated{}, nil
 }
 
 func (m *mockClusterProviderWithContainers) RemoteContainerAction(_ context.Context, _, _, _ string) error {

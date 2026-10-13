@@ -331,6 +331,11 @@ func (s *Server) recordForCaller(hostID, name, target, purpose string, ur *proto
 	if s.history == nil || (ur != nil && ur.GetOutcome() == "skipped") {
 		return
 	}
+	// The container that changed: the agent's own, for a request naming
+	// another Sentinel container on its host.
+	if changed := ur.GetContainerName(); changed != "" {
+		name = changed
+	}
 	rec := store.UpdateRecord{
 		Timestamp:     time.Now(),
 		ContainerName: store.ScopedKey(hostID, name),

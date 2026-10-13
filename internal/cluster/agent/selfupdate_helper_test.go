@@ -170,6 +170,10 @@ func TestAgentSelfUpdateTargetsItsOwnContainerWhateverNameTheHubSent(t *testing.
 	if res.GetOutcome() != "success" {
 		t.Fatalf("result = %+v", res)
 	}
+	// The result names the container that changed, for the hub's history.
+	if res.GetContainerName() != "lh-sentinel-agent" {
+		t.Errorf("result names %q, want the agent's own lh-sentinel-agent", res.GetContainerName())
+	}
 	for _, r := range mock.renameCalls {
 		if r.id == "other99other99" {
 			t.Errorf("renamed the other Sentinel: %+v", mock.renameCalls)

@@ -343,8 +343,8 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 				}
 			}()
 			start := time.Now()
-			err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, "")
-			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, targetImage, err)
+			res, err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, "")
+			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, targetImage, res, err)
 			if errors.Is(err, cluster.ErrUpdateSkipped) {
 				s.deps.Log.Info("remote update skipped by a pre-update hook", "name", name, "host", hostID)
 			} else if err != nil {
@@ -795,8 +795,8 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 				}
 			}()
 			start := time.Now()
-			err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, "")
-			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, targetImage, err)
+			res, err := s.deps.Cluster.UpdateRemoteContainer(context.Background(), hostID, name, targetImage, "")
+			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, targetImage, res, err)
 			if err != nil {
 				s.deps.Log.Error("remote version update failed", "name", name, "host", hostID, "tag", body.Tag, "error", err)
 				s.deps.EventBus.Publish(events.SSEEvent{
@@ -910,11 +910,12 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 
 // recordRemoteUpdate writes the history row for an "Update now" on a remote
 // container, under the scoped key every remote history row uses.
-func (s *Server) recordRemoteUpdate(start time.Time, hostID, hostName, name, oldImage, newImage string, updateErr error) {
+func (s *Server) recordRemoteUpdate(start time.Time, hostID, hostName, name, oldImage, newImage string, res RemoteUpdated, updateErr error) {
 	// A skipped update changed nothing and leaves no row, as locally.
 	if s.deps.Store == nil || errors.Is(updateErr, cluster.ErrUpdateSkipped) {
 		return
 	}
+	name, oldImage, _ = changedContainer(name, oldImage, "", res)
 	rec := UpdateRecord{
 		// An unanswered update's row is replaced by the agent's result if
 		// it comes later.
@@ -934,6 +935,17 @@ func (s *Server) recordRemoteUpdate(start time.Time, hostID, hostName, name, old
 	if err := s.recordRemoteFailure(updateErr, rec); err != nil {
 		s.deps.Log.Warn("failed to record remote update", "name", name, "host", hostID, "error", err)
 	}
+}
+
+// changedContainer returns the container a remote update of name changed,
+// and the image and digest it ran: name's, unless the agent updated
+// another container (its own, for a request naming another Sentinel
+// container on its host).
+func changedContainer(name, oldImage, oldDigest string, res RemoteUpdated) (string, string, string) {
+	if res.ContainerName == "" || res.ContainerName == name {
+		return name, oldImage, oldDigest
+	}
+	return res.ContainerName, res.OldImage, res.OldDigest
 }
 
 // historyInserter is a HistoryStore that records a row only when none

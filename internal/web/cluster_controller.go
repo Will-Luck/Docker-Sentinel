@@ -154,10 +154,10 @@ func (c *ClusterController) AllHostContainers() []RemoteContainer {
 // Returns an error when clustering is disabled.
 // The call runs outside the lock: it can take minutes, and SetProvider must
 // not wait for it.
-func (c *ClusterController) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error {
+func (c *ClusterController) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (RemoteUpdated, error) {
 	p := c.current()
 	if p == nil {
-		return fmt.Errorf("cluster not enabled")
+		return RemoteUpdated{}, fmt.Errorf("cluster not enabled")
 	}
 	return p.UpdateRemoteContainer(ctx, hostID, containerName, targetImage, targetDigest)
 }

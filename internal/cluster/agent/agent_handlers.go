@@ -232,9 +232,15 @@ func (a *Agent) handleUpdateContainer(ctx context.Context, stream proto.AgentSer
 		newImage = targetImage
 	}
 
+	// The result names the container that changed: for a self-update,
+	// this agent's own, whatever the request named.
+	changed := name
+	if isSelf && selfErr == nil {
+		changed = selfName
+	}
 	result := &proto.UpdateResult{
 		RequestId:     requestID,
-		ContainerName: name,
+		ContainerName: changed,
 		OldImage:      oldImage,
 		OldDigest:     oldDigest,
 		NewImage:      newImage,

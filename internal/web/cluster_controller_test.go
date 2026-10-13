@@ -47,8 +47,8 @@ func (m *mockClusterProvider) PauseHost(id string) error {
 	return nil
 }
 
-func (m *mockClusterProvider) UpdateRemoteContainer(_ context.Context, hostID, containerName, targetImage, targetDigest string) error {
-	return nil
+func (m *mockClusterProvider) UpdateRemoteContainer(_ context.Context, hostID, containerName, targetImage, targetDigest string) (RemoteUpdated, error) {
+	return RemoteUpdated{}, nil
 }
 
 func (m *mockClusterProvider) RemoteContainerAction(_ context.Context, _, _, _ string) error {
@@ -102,7 +102,7 @@ func TestEnabledReturnsFalseWithNoProvider(t *testing.T) {
 	if err := cc.PauseHost("any"); err == nil {
 		t.Error("PauseHost() should return error when disabled")
 	}
-	if err := cc.UpdateRemoteContainer(context.Background(), "h", "c", "img", "dig"); err == nil {
+	if _, err := cc.UpdateRemoteContainer(context.Background(), "h", "c", "img", "dig"); err == nil {
 		t.Error("UpdateRemoteContainer() should return error when disabled")
 	}
 	if err := cc.RollbackRemoteContainer(context.Background(), "h", "c"); err == nil {
@@ -172,7 +172,7 @@ func TestSetProviderEnablesAndDelegates(t *testing.T) {
 	if err := cc.PauseHost("host-1"); err != nil {
 		t.Errorf("PauseHost() error: %v", err)
 	}
-	if err := cc.UpdateRemoteContainer(context.Background(), "host-1", "nginx", "nginx:latest", "sha256:abc"); err != nil {
+	if _, err := cc.UpdateRemoteContainer(context.Background(), "host-1", "nginx", "nginx:latest", "sha256:abc"); err != nil {
 		t.Errorf("UpdateRemoteContainer() error: %v", err)
 	}
 	if err := cc.RollbackRemoteContainer(context.Background(), "host-1", "nginx"); err != nil {
@@ -240,7 +240,7 @@ func TestConcurrentAccess(t *testing.T) {
 					// Error return is expected when disabled; just ensure no panic.
 					_, _, _ = cc.GenerateEnrollToken()
 					_ = cc.RemoveHost("h1")
-					_ = cc.UpdateRemoteContainer(context.Background(), "h1", "c", "i", "d")
+					_, _ = cc.UpdateRemoteContainer(context.Background(), "h1", "c", "i", "d")
 					_ = cc.RollbackRemoteContainer(context.Background(), "h1", "c")
 				}
 			}
@@ -264,7 +264,8 @@ func TestDisabledMethodsReturnConsistentErrors(t *testing.T) {
 		{"RevokeHost", func() error { return cc.RevokeHost("x") }},
 		{"PauseHost", func() error { return cc.PauseHost("x") }},
 		{"UpdateRemoteContainer", func() error {
-			return cc.UpdateRemoteContainer(context.Background(), "h", "c", "i", "d")
+			_, err := cc.UpdateRemoteContainer(context.Background(), "h", "c", "i", "d")
+			return err
 		}},
 		{"RollbackRemoteContainer", func() error {
 			return cc.RollbackRemoteContainer(context.Background(), "h", "c")

@@ -211,8 +211,9 @@ type ClusterProvider interface {
 	RevokeHost(id string) error
 	// PauseHost sets a host to paused state (no new updates).
 	PauseHost(id string) error
-	// UpdateRemoteContainer dispatches a container update to a remote agent.
-	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) error
+	// UpdateRemoteContainer dispatches a container update to a remote agent
+	// and says what it changed.
+	UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (RemoteUpdated, error)
 	// RemoteContainerAction dispatches a lifecycle action to a container on a remote agent.
 	RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error
 	// RemoteContainerLogs fetches the last N lines of logs from a remote container.
@@ -222,6 +223,19 @@ type ClusterProvider interface {
 	RollbackRemoteContainer(ctx context.Context, hostID, containerName string) error
 	// AllHostContainers returns containers from all connected hosts.
 	AllHostContainers() []RemoteContainer
+}
+
+// RemoteUpdated is what a remote update changed, as the agent reports it.
+// Empty fields are not known (an agent before v3.0.0, or a failed update).
+type RemoteUpdated struct {
+	// ContainerName is the container that changed: the one named, or, for a
+	// request naming a Sentinel container, the agent's own container,
+	// which may be another.
+	ContainerName string
+	OldImage      string
+	OldDigest     string
+	NewImage      string
+	NewDigest     string
 }
 
 // RemoteContainer represents a container on a remote host.

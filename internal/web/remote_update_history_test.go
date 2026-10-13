@@ -48,8 +48,8 @@ type failingUpdateCluster struct {
 	err error
 }
 
-func (f *failingUpdateCluster) UpdateRemoteContainer(context.Context, string, string, string, string) error {
-	return f.err
+func (f *failingUpdateCluster) UpdateRemoteContainer(context.Context, string, string, string, string) (RemoteUpdated, error) {
+	return RemoteUpdated{}, f.err
 }
 
 func remoteUpdateServer(cp ClusterProvider, hist HistoryStore) *Server {
@@ -267,5 +267,36 @@ func TestLocalUpdateEntryPoints_NeverAddAFailedRow(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+type redirectingCluster struct {
+	mockClusterProviderWithContainers
+}
+
+func (redirectingCluster) UpdateRemoteContainer(_ context.Context, _, _, target, _ string) (RemoteUpdated, error) {
+	return RemoteUpdated{ContainerName: "sentinel-agent", OldImage: "sentinel:3.0.0", NewImage: target}, nil
+}
+
+// smoke NEW-1: "Update now" on another Sentinel container of an agent's
+// host updates the agent's own container instead. The history row is for
+// the container that changed, from the image it ran.
+func TestApiUpdate_RemoteRecordsTheContainerThatChanged(t *testing.T) {
+	hist := &recordingHistory{}
+	cp := &redirectingCluster{mockClusterProviderWithContainers{
+		hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"},
+		containers: []RemoteContainer{{Name: "other-sentinel", Image: "sentinel:3.0.1", HostID: "h1", HostName: "Agent One"}},
+	}}
+	srv := remoteUpdateServer(cp, hist)
+	r := httptest.NewRequest(http.MethodPost, "/api/containers/other-sentinel/update?host=h1", nil)
+	r.SetPathValue("name", "other-sentinel")
+	w := httptest.NewRecorder()
+	srv.apiUpdate(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	rec := hist.wait(t)
+	if rec.ContainerName != "h1::sentinel-agent" || rec.OldImage != "sentinel:3.0.0" || rec.NewImage != "sentinel:3.0.1" {
+		t.Errorf("history row = %+v, want sentinel-agent from sentinel:3.0.0 to sentinel:3.0.1", rec)
 	}
 }

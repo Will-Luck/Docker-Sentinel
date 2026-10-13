@@ -16,10 +16,10 @@ type blockingProvider struct {
 	release chan struct{}
 }
 
-func (b *blockingProvider) UpdateRemoteContainer(context.Context, string, string, string, string) error {
+func (b *blockingProvider) UpdateRemoteContainer(context.Context, string, string, string, string) (RemoteUpdated, error) {
 	b.started <- struct{}{}
 	<-b.release
-	return nil
+	return RemoteUpdated{}, nil
 }
 
 func (b *blockingProvider) RemoteContainerAction(context.Context, string, string, string) error {
@@ -41,7 +41,7 @@ func (b *blockingProvider) RemoteContainerLogs(context.Context, string, string, 
 func TestClusterController_RemoteCallsDoNotHoldTheLock(t *testing.T) {
 	calls := map[string]func(*ClusterController){
 		"update": func(c *ClusterController) {
-			_ = c.UpdateRemoteContainer(context.Background(), "h1", "web", "nginx:2", "")
+			_, _ = c.UpdateRemoteContainer(context.Background(), "h1", "web", "nginx:2", "")
 		},
 		"action": func(c *ClusterController) { _ = c.RemoteContainerAction(context.Background(), "h1", "web", "restart") },
 		"logs":   func(c *ClusterController) { _, _ = c.RemoteContainerLogs(context.Background(), "h1", "web", 10) },
