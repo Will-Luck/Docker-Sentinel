@@ -263,7 +263,7 @@ func TestCertErrorGuidance(t *testing.T) {
 	if agentExpired == hubExpired || agentExpired == mismatch || hubExpired == mismatch {
 		t.Fatalf("expected three different explanations, got %q, %q, %q", agentExpired, hubExpired, mismatch)
 	}
-	if !strings.Contains(agentExpired, "agent's certificate has expired") {
+	if !strings.Contains(agentExpired, "agent's certificate as expired") {
 		t.Errorf("agent expiry explained as %q", agentExpired)
 	}
 	if !strings.Contains(hubExpired, "server's TLS certificate has expired") {
@@ -525,5 +525,17 @@ func TestRecoverStagedRenewal_RemovesInterruptedTempFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("%s was removed: %v", name, err)
 		}
+	}
+}
+
+// A server certificate that is not valid yet means this host's clock is
+// behind. Re-enrolling would not help; the advice must say so.
+func TestCertErrorGuidance_NotYetValidIsClockSkew(t *testing.T) {
+	msg, fix := certErrorGuidance(errors.New("tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time 2026-10-13T08:00:00Z is before 2026-10-13T10:00:00Z"))
+	if !strings.Contains(msg, "clock is behind") {
+		t.Errorf("explanation %q does not point at this host's clock", msg)
+	}
+	if strings.Contains(fix, "delete the cluster data directory") || !strings.Contains(fix, "not help") {
+		t.Errorf("fix %q should say to correct the clock, and that re-enrolling will not help", fix)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestEnsureCA_CreatesNewCA(t *testing.T) {
@@ -514,5 +515,51 @@ func TestSignCSR_AcceptsOnlyECDSAP256OrP384(t *testing.T) {
 		if _, _, err := ca.SignCSR(csrFor(key), "host"); err != nil {
 			t.Errorf("refused a CSR for a %s key: %v", name, err)
 		}
+	}
+}
+
+// A host whose clock runs a few hours behind must still accept a
+// certificate issued just now. Every certificate the CA issues is valid
+// from 24 hours back.
+func TestIssuedCertsToleratesClockSkew(t *testing.T) {
+	ca, err := EnsureCA(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := time.Now().Add(-23 * time.Hour)
+	notBefore := func(certPEM []byte) time.Time {
+		block, _ := pem.Decode(certPEM)
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.NotBefore
+	}
+
+	if nb := ca.cert.NotBefore; nb.After(limit) {
+		t.Errorf("new CA valid from %v, want 24 hours back", nb)
+	}
+	serverPEM, _, err := ca.IssueServerCert()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nb := notBefore(serverPEM); nb.After(limit) {
+		t.Errorf("server certificate valid from %v, want 24 hours back", nb)
+	}
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	csr, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "x"}}, key)
+	agentPEM, _, err := ca.SignCSR(csr, "host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nb := notBefore(agentPEM); nb.After(limit) {
+		t.Errorf("agent certificate valid from %v, want 24 hours back", nb)
+	}
+	issued, err := ca.IssueCert("x", &key.PublicKey, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nb := notBefore(issued); nb.After(limit) {
+		t.Errorf("issued certificate valid from %v, want 24 hours back", nb)
 	}
 }

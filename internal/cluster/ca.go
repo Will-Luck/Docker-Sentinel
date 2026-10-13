@@ -17,6 +17,10 @@ import (
 	"time"
 )
 
+// clockSkewAllowance backdates every certificate the CA issues, so a host
+// whose clock runs behind the hub's (by up to a day) still accepts it.
+const clockSkewAllowance = 24 * time.Hour
+
 // CA manages a built-in certificate authority for mTLS between server and agents.
 // All issued certificates use ECDSA P-256. The CA cert itself is self-signed with
 // a 10-year validity period; agent and server certs are valid for 1 year.
@@ -66,7 +70,7 @@ func EnsureCA(dir string) (*CA, error) {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "Docker-Sentinel CA"},
-		NotBefore:    now.Add(-1 * time.Hour), // small backdate to handle clock skew
+		NotBefore:    now.Add(-clockSkewAllowance),
 		NotAfter:     now.Add(10 * 365 * 24 * time.Hour),
 
 		IsCA:                  true,
@@ -130,7 +134,7 @@ func (ca *CA) IssueCert(name string, pub crypto.PublicKey, isServer bool) (certP
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: name},
-		NotBefore:    now.Add(-1 * time.Hour),
+		NotBefore:    now.Add(-clockSkewAllowance),
 		NotAfter:     now.Add(365 * 24 * time.Hour),
 
 		KeyUsage:              x509.KeyUsageDigitalSignature,
@@ -182,7 +186,7 @@ func (ca *CA) IssueServerCert(extraAddrs ...string) (certPEM, keyPEM []byte, err
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: "sentinel-server"},
-		NotBefore:    now.Add(-1 * time.Hour),
+		NotBefore:    now.Add(-clockSkewAllowance),
 		NotAfter:     now.Add(365 * 24 * time.Hour),
 
 		KeyUsage: x509.KeyUsageDigitalSignature,
@@ -242,7 +246,7 @@ func (ca *CA) SignCSR(csrDER []byte, hostID string) (certPEM []byte, serial stri
 	tmpl := &x509.Certificate{
 		SerialNumber: serialNum,
 		Subject:      pkix.Name{CommonName: hostID},
-		NotBefore:    now.Add(-1 * time.Hour),
+		NotBefore:    now.Add(-clockSkewAllowance),
 		NotAfter:     now.Add(365 * 24 * time.Hour),
 
 		KeyUsage:              x509.KeyUsageDigitalSignature,

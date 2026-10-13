@@ -521,10 +521,16 @@ func certErrorGuidance(err error) (msg, fix string) {
 	s := err.Error()
 	switch {
 	case strings.Contains(s, "tls: expired certificate"):
-		// The hub rejected this agent's certificate as expired.
-		return "this agent's certificate has expired, so the server refuses it",
-			"re-enrol this agent: stop it, delete the cluster data directory, and restart with a fresh SENTINEL_ENROLL_TOKEN. " +
+		// The hub rejected this agent's certificate on its dates: expired,
+		// or not valid yet because the hub's clock is behind.
+		return "the server refuses this agent's certificate as expired or not yet valid",
+			"first check that the clocks on both hosts are right. If they are, the certificate has expired: re-enrol this agent " +
+				"(stop it, delete the cluster data directory, and restart with a fresh SENTINEL_ENROLL_TOKEN). " +
 				"Agents renew their certificate automatically while it is still valid, so this means the agent could not reach the server for too long"
+	case strings.Contains(s, "certificate has expired or is not yet valid") && strings.Contains(s, " is before "):
+		// The hub's certificate starts later than this host's clock.
+		return "this host's clock is behind the server's: the server's TLS certificate is not valid yet by this host's time",
+			"correct the clock on this host (enable NTP); re-enrolling the agent will not help"
 	case strings.Contains(s, "certificate has expired or is not yet valid"):
 		// This agent rejected the hub's certificate on its dates.
 		return "the server's TLS certificate has expired or is not yet valid, or the clocks on the two hosts disagree",
