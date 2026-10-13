@@ -15,11 +15,12 @@ const SettingHistoryRetentionDays = "history_retention_days"
 // environment variable is set.
 const DefaultHistoryRetentionDays = 90
 
-// keptOutcomes are history records that describe a real change to a
-// container. They are small and rare, and rollback and image-history lookups
-// rely on them, so retention never removes them.
+// keptOutcome reports history records that describe a real change to a
+// container (partial means the new image is running but finalising failed).
+// They are small and rare, and rollback and image-history lookups rely on
+// them, so retention never removes them.
 func keptOutcome(outcome string) bool {
-	return outcome == "success" || outcome == "rollback"
+	return outcome == "success" || outcome == "rollback" || outcome == "partial"
 }
 
 // PruneHistory deletes history records older than cutoff, except records of

@@ -56,3 +56,14 @@ func TestPruneLogsRemovesOldEntries(t *testing.T) {
 		t.Fatalf("unexpected logs left: %+v", left)
 	}
 }
+
+func TestPruneHistoryKeepsPartialUpdates(t *testing.T) {
+	s := testStore(t)
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	old := now.AddDate(0, 0, -200)
+	_ = s.RecordUpdate(UpdateRecord{Timestamp: old, ContainerName: "web", OldImage: "web:1", Outcome: "partial"})
+	n, err := s.PruneHistory(now.AddDate(0, 0, -90))
+	if err != nil || n != 0 {
+		t.Fatalf("pruned %d (err %v): a partial update is an applied update and must be kept", n, err)
+	}
+}
