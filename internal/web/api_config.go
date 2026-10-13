@@ -33,6 +33,9 @@ type ConfigImportResult struct {
 const redactedPlaceholder = "***REDACTED***"
 
 // sensitiveKeys is an explicit whitelist of setting keys that hold secrets.
+// It is the one list used by the settings read, the config export and the
+// import; TestSecretSettingKeysCoverStoredKeys fails when a stored key that
+// ends in _secret, _password or _token is missing from it.
 // Using a whitelist instead of substring matching avoids false positives
 // (e.g. docker_tls_key is a file path, not a secret).
 var sensitiveKeys = map[string]bool{
@@ -40,6 +43,8 @@ var sensitiveKeys = map[string]bool{
 	"notification_config":   true, // contains provider credentials
 	"notification_channels": true, // channel settings may contain tokens
 	"oidc_client_secret":    true,
+	"npm_password":          true,
+	"enroll_token":          true,
 }
 
 // validSettingKeys is an allowlist of all setting keys that may be stored.
@@ -280,6 +285,28 @@ func (s *Server) apiConfigImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Notification channels ---
+	if s.deps.NotifyConfig != nil && len(imported.Notifications) > 0 {
+		// A default (no secrets) export holds masked values. Keep the stored
+		// secret for a channel that already exists; skip one that is new.
+		existing, _ := s.deps.NotifyConfig.GetNotificationChannels()
+		existingByID := make(map[string]notify.Channel, len(existing))
+		for _, ch := range existing {
+			existingByID[ch.ID] = ch
+		}
+		kept := make([]notify.Channel, 0, len(imported.Notifications))
+		for _, ch := range imported.Notifications {
+			if old, ok := existingByID[ch.ID]; ok {
+				ch.Settings = restoreSecrets(ch, old)
+			}
+			if hasMaskedValue(ch.Settings) {
+				result.Skipped++
+				result.Warnings = append(result.Warnings, "notification channel skipped, it holds redacted secrets: "+ch.Name)
+				continue
+			}
+			kept = append(kept, ch)
+		}
+		imported.Notifications = kept
+	}
 	if s.deps.NotifyConfig != nil && len(imported.Notifications) > 0 {
 		if err := s.deps.NotifyConfig.SetNotificationChannels(imported.Notifications); err != nil {
 			s.deps.Log.Error("config import: failed to save notification channels", "error", err)

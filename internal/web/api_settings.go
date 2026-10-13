@@ -36,6 +36,17 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Never return a credential: the Viewer role and settings.view tokens can
+	// read this endpoint. Report only whether each one is set.
+	for k := range sensitiveKeys {
+		if v, ok := values[k]; ok {
+			delete(values, k)
+			if v != "" {
+				values[k+"_set"] = "true"
+			}
+		}
+	}
+
 	// These toggles are only stored once saved in the UI, so the stored key
 	// alone cannot show an env-var value. Report what the engine uses.
 	cfg := s.deps.Config

@@ -213,16 +213,7 @@ func restoreSecrets(incoming, saved notify.Channel) json.RawMessage {
 
 	// Only restore individual masked fields from the saved data,
 	// keeping all other fields from the incoming (user-edited) data.
-	changed := false
-	for k, v := range inFields {
-		s, ok := v.(string)
-		if ok && strings.HasSuffix(s, "****") {
-			if orig, exists := savedFields[k]; exists {
-				inFields[k] = orig
-				changed = true
-			}
-		}
-	}
+	changed := restoreMaskedFields(inFields, savedFields)
 
 	if !changed {
 		return incoming.Settings
@@ -233,4 +224,55 @@ func restoreSecrets(incoming, saved notify.Channel) json.RawMessage {
 		return incoming.Settings
 	}
 	return merged
+}
+
+// restoreMaskedFields replaces every masked string ("...****") in incoming
+// with the value saved at the same path, descending into nested objects such
+// as a webhook channel's headers. It reports whether anything was replaced.
+func restoreMaskedFields(incoming, saved map[string]interface{}) bool {
+	changed := false
+	for k, v := range incoming {
+		switch val := v.(type) {
+		case string:
+			if strings.HasSuffix(val, "****") {
+				if orig, exists := saved[k]; exists {
+					incoming[k] = orig
+					changed = true
+				}
+			}
+		case map[string]interface{}:
+			if savedNested, ok := saved[k].(map[string]interface{}); ok {
+				if restoreMaskedFields(val, savedNested) {
+					changed = true
+				}
+			}
+		}
+	}
+	return changed
+}
+
+// hasMaskedValue reports whether any string in the settings object (at any
+// depth) still carries the "****" mask.
+func hasMaskedValue(settings json.RawMessage) bool {
+	var fields map[string]interface{}
+	if err := json.Unmarshal(settings, &fields); err != nil {
+		return false
+	}
+	var walk func(m map[string]interface{}) bool
+	walk = func(m map[string]interface{}) bool {
+		for _, v := range m {
+			switch val := v.(type) {
+			case string:
+				if strings.HasSuffix(val, "****") {
+					return true
+				}
+			case map[string]interface{}:
+				if walk(val) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(fields)
 }

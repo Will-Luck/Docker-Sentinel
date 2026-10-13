@@ -195,7 +195,7 @@ func maskWebhookSecrets(settings json.RawMessage) json.RawMessage {
 	if json.Unmarshal(settings, &s) != nil {
 		return settings
 	}
-	sensitiveWords := []string{"token", "bearer", "key", "secret"}
+	sensitiveWords := []string{"token", "bearer", "key", "secret", "auth", "basic", "cookie", "password"}
 	for k, v := range s.Headers {
 		lower := strings.ToLower(k + " " + v)
 		for _, word := range sensitiveWords {
@@ -204,6 +204,9 @@ func maskWebhookSecrets(settings json.RawMessage) json.RawMessage {
 				break
 			}
 		}
+	}
+	if s.URL != "" {
+		s.URL = maskURL(s.URL)
 	}
 	out, _ := json.Marshal(s)
 	return out
