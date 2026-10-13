@@ -27,7 +27,7 @@ import (
 func (s *Server) deliverPending(hostID, requestID string, msg *proto.AgentMessage) {
 	key := hostID + ":" + requestID
 	s.pendingMu.Lock()
-	ch, ok := s.pending[key]
+	pr, ok := s.pending[key]
 	if ok {
 		delete(s.pending, key)
 	}
@@ -37,7 +37,7 @@ func (s *Server) deliverPending(hostID, requestID string, msg *proto.AgentMessag
 		// Non-blocking send. Channel is buffered (size 1), so this only
 		// drops if something went very wrong (double delivery).
 		select {
-		case ch <- msg:
+		case pr.ch <- msg:
 		default:
 		}
 	}
@@ -54,19 +54,63 @@ func (s *Server) registerPending(hostID, requestID string) (chan *proto.AgentMes
 	if _, exists := s.pending[key]; exists {
 		return nil, fmt.Errorf("duplicate request %s for agent %s", requestID, hostID)
 	}
-	s.pending[key] = ch
+	s.pending[key] = &pendingRequest{ch: ch}
 	return ch, nil
 }
 
 // cancelPending removes the pending channel for a host+request pair.
-// Used for cleanup when SendCommand fails after registration.
+// Used for cleanup when sending fails after registration.
 func (s *Server) cancelPending(hostID, requestID string, ch chan *proto.AgentMessage) {
 	key := hostID + ":" + requestID
 	s.pendingMu.Lock()
-	if cur, ok := s.pending[key]; ok && cur == ch {
+	if cur, ok := s.pending[key]; ok && cur.ch == ch {
 		delete(s.pending, key)
 	}
 	s.pendingMu.Unlock()
+}
+
+// sendPending sends a request that registerPending has already recorded,
+// on the host's current stream, and tags the pending entry with that
+// stream so the stream's cleanup can fail it.
+func (s *Server) sendPending(hostID, requestID string, msg *proto.ServerMessage) error {
+	s.mu.RLock()
+	as, ok := s.streams[hostID]
+	s.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("agent %s not connected", hostID)
+	}
+
+	s.pendingMu.Lock()
+	if as.closed {
+		s.pendingMu.Unlock()
+		return fmt.Errorf("agent %s disconnected", hostID)
+	}
+	if pr, ok := s.pending[hostID+":"+requestID]; ok {
+		pr.stream = as
+	}
+	s.pendingMu.Unlock()
+
+	select {
+	case as.send <- msg:
+		return nil
+	default:
+		return fmt.Errorf("agent %s send buffer full", hostID)
+	}
+}
+
+// failPending closes the response channel of every request that went out on
+// as, which is going away and so can never carry their replies. It also
+// marks as closed so that no later request is tagged to it.
+func (s *Server) failPending(as *agentStream) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	as.closed = true
+	for key, pr := range s.pending {
+		if pr.stream == as {
+			delete(s.pending, key)
+			close(pr.ch)
+		}
+	}
 }
 
 // awaitPending blocks on an already-registered response channel until a
@@ -75,7 +119,8 @@ func (s *Server) awaitPending(ctx context.Context, hostID, requestID string, ch 
 	select {
 	case resp, ok := <-ch:
 		if !ok {
-			// Channel was closed by the disconnect cleanup — agent dropped.
+			// Channel was closed by the stream cleanup: the stream that
+			// carried the request has gone.
 			return nil, fmt.Errorf("agent %s disconnected", hostID)
 		}
 		return resp, nil
@@ -85,11 +130,11 @@ func (s *Server) awaitPending(ctx context.Context, hostID, requestID string, ch 
 	}
 }
 
-// ListContainersSync sends a ListContainersRequest to the agent and blocks
-// until the agent responds with a ContainerList or the context is cancelled.
-// The request_id on the ServerMessage is used for correlation.
-func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]cluster.ContainerInfo, error) {
+// request sends msg to the agent under a fresh request ID and waits for the
+// agent's reply. what names the request in errors.
+func (s *Server) request(ctx context.Context, hostID, what string, msg *proto.ServerMessage) (*proto.AgentMessage, error) {
 	reqID := generateRequestID()
+	msg.RequestId = reqID
 
 	// Register the response channel BEFORE sending, so a fast agent
 	// response doesn't race with registration.
@@ -98,21 +143,29 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 		return nil, err
 	}
 
-	msg := &proto.ServerMessage{
-		RequestId: reqID,
-		Payload: &proto.ServerMessage_ListContainers{
-			ListContainers: &proto.ListContainersRequest{},
-		},
-	}
-
-	if err := s.SendCommand(hostID, msg); err != nil {
+	if err := s.sendPending(hostID, reqID, msg); err != nil {
 		s.cancelPending(hostID, reqID, ch)
-		return nil, fmt.Errorf("send list containers: %w", err)
+		return nil, fmt.Errorf("send %s: %w", what, err)
 	}
 
 	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
 	if err != nil {
-		return nil, fmt.Errorf("await container list: %w", err)
+		return nil, fmt.Errorf("await %s: %w", what, err)
+	}
+	return resp, nil
+}
+
+// ListContainersSync sends a ListContainersRequest to the agent and blocks
+// until the agent responds with a ContainerList or the context is cancelled.
+// The request_id on the ServerMessage is used for correlation.
+func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]cluster.ContainerInfo, error) {
+	resp, err := s.request(ctx, hostID, "container list", &proto.ServerMessage{
+		Payload: &proto.ServerMessage_ListContainers{
+			ListContainers: &proto.ListContainersRequest{},
+		},
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	cl, ok := resp.Payload.(*proto.AgentMessage_ContainerList)
@@ -126,17 +179,7 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 // UpdateContainerSync sends an UpdateContainerRequest to the agent and blocks
 // until the agent responds with an UpdateResult or the context is cancelled.
 func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (*proto.UpdateResult, error) {
-	reqID := generateRequestID()
-
-	// Register the response channel BEFORE sending, so a fast agent
-	// response doesn't race with registration.
-	ch, err := s.registerPending(hostID, reqID)
-	if err != nil {
-		return nil, err
-	}
-
-	msg := &proto.ServerMessage{
-		RequestId: reqID,
+	resp, err := s.request(ctx, hostID, "update result", &proto.ServerMessage{
 		Payload: &proto.ServerMessage_UpdateContainer{
 			UpdateContainer: &proto.UpdateContainerRequest{
 				ContainerName: containerName,
@@ -144,16 +187,9 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 				TargetDigest:  targetDigest,
 			},
 		},
-	}
-
-	if err := s.SendCommand(hostID, msg); err != nil {
-		s.cancelPending(hostID, reqID, ch)
-		return nil, fmt.Errorf("send update container: %w", err)
-	}
-
-	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("await update result: %w", err)
+		return nil, err
 	}
 
 	ur, ok := resp.Payload.(*proto.AgentMessage_UpdateResult)
@@ -167,30 +203,16 @@ func (s *Server) UpdateContainerSync(ctx context.Context, hostID, containerName,
 // ContainerActionSync sends a ContainerActionRequest to the agent and blocks
 // until the agent responds with a ContainerActionResult or the context is cancelled.
 func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName, action string) error {
-	reqID := generateRequestID()
-	ch, err := s.registerPending(hostID, reqID)
-	if err != nil {
-		return err
-	}
-
-	msg := &proto.ServerMessage{
-		RequestId: reqID,
+	resp, err := s.request(ctx, hostID, "container action result", &proto.ServerMessage{
 		Payload: &proto.ServerMessage_ContainerAction{
 			ContainerAction: &proto.ContainerActionRequest{
 				ContainerName: containerName,
 				Action:        action,
 			},
 		},
-	}
-
-	if err := s.SendCommand(hostID, msg); err != nil {
-		s.cancelPending(hostID, reqID, ch)
-		return fmt.Errorf("send container action: %w", err)
-	}
-
-	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
+	})
 	if err != nil {
-		return fmt.Errorf("await container action result: %w", err)
+		return err
 	}
 
 	ar, ok := resp.Payload.(*proto.AgentMessage_ContainerActionResult)
@@ -206,12 +228,6 @@ func (s *Server) ContainerActionSync(ctx context.Context, hostID, containerName,
 // FetchLogsSync sends a FetchLogsRequest to the agent and blocks until the
 // agent responds with a FetchLogsResult or the context is cancelled.
 func (s *Server) FetchLogsSync(ctx context.Context, hostID, containerName string, lines int) (string, error) {
-	reqID := generateRequestID()
-	ch, err := s.registerPending(hostID, reqID)
-	if err != nil {
-		return "", err
-	}
-
 	if lines <= 0 {
 		lines = 50
 	}
@@ -219,24 +235,16 @@ func (s *Server) FetchLogsSync(ctx context.Context, hostID, containerName string
 		lines = 500
 	}
 
-	msg := &proto.ServerMessage{
-		RequestId: reqID,
+	resp, err := s.request(ctx, hostID, "fetch logs", &proto.ServerMessage{
 		Payload: &proto.ServerMessage_FetchLogs{
 			FetchLogs: &proto.FetchLogsRequest{
 				ContainerName: containerName,
 				Lines:         int32(lines), //nolint:gosec // clamped to 0-500 above
 			},
 		},
-	}
-
-	if err := s.SendCommand(hostID, msg); err != nil {
-		s.cancelPending(hostID, reqID, ch)
-		return "", fmt.Errorf("send fetch logs: %w", err)
-	}
-
-	resp, err := s.awaitPending(ctx, hostID, reqID, ch)
+	})
 	if err != nil {
-		return "", fmt.Errorf("await fetch logs: %w", err)
+		return "", err
 	}
 
 	lr, ok := resp.Payload.(*proto.AgentMessage_FetchLogsResult)

@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
@@ -223,21 +222,22 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 	// Cleanup on disconnect -- runs when the recv loop exits.
 	defer func() {
 		s.mu.Lock()
-		// Only remove if it's still our stream (not replaced by a newer one).
-		if cur, ok := s.streams[hostID]; ok && cur == as {
+		cur, ok := s.streams[hostID]
+		replaced := ok && cur != as
+		if ok && cur == as {
 			delete(s.streams, hostID)
 		}
 		s.mu.Unlock()
 
-		s.pendingMu.Lock()
-		prefix := hostID + ":"
-		for key, ch := range s.pending {
-			if strings.HasPrefix(key, prefix) {
-				delete(s.pending, key)
-				close(ch)
-			}
+		// Requests that went out on this stream can never be answered.
+		s.failPending(as)
+
+		// A newer stream for the same agent has taken over: the host is
+		// still connected, so leave its state and requests alone.
+		if replaced {
+			s.log.Info("stale agent stream closed", "hostID", hostID, "error", streamErr)
+			return
 		}
-		s.pendingMu.Unlock()
 
 		s.registry.SetDisconnected(hostID, streamErr)
 		// Force-persist LastSeen on disconnect so it survives server restart.

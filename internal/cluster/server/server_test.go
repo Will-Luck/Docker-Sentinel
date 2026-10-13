@@ -1309,7 +1309,7 @@ func TestMultipleAgents(t *testing.T) {
 
 func TestRegisterPending_AllowsConcurrentPerHost(t *testing.T) {
 	s := &Server{
-		pending: make(map[string]chan *proto.AgentMessage),
+		pending: make(map[string]*pendingRequest),
 	}
 
 	ch1, err := s.registerPending("h1", "req1")

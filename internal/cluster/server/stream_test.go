@@ -1,0 +1,129 @@
+package server
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+)
+
+// connectedStream opens an agent Channel with the given credentials and
+// waits until the server has registered a stream other than prev for the
+// host. It returns the client stream and the server-side agentStream.
+func connectedStream(t *testing.T, srv *Server, addr, hostID string, certPEM, keyPEM, caPEM []byte, prev *agentStream) (proto.AgentService_ChannelClient, *agentStream, func()) {
+	t.Helper()
+	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := proto.NewAgentServiceClient(conn).Channel(ctx)
+	if err != nil {
+		cancel()
+		t.Fatalf("Channel: %v", err)
+	}
+	var as *agentStream
+	waitFor(t, 3*time.Second, func() bool {
+		srv.mu.RLock()
+		defer srv.mu.RUnlock()
+		cur, ok := srv.streams[hostID]
+		if ok && cur != prev {
+			as = cur
+			return true
+		}
+		return false
+	}, "server should register the new stream")
+	return stream, as, func() { cancel(); conn.Close() }
+}
+
+// When an agent reconnects before the hub notices that the old connection
+// is dead, the old stream's cleanup must not mark the host offline or fail
+// requests that went out on the new stream. Requests that went out on the
+// old stream can never be answered and must fail.
+func TestChannel_StaleStreamCleanupLeavesLiveStreamAlone(t *testing.T) {
+	srv, addr, _, _ := testServer(t)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+
+	_, asA, closeA := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	defer closeA()
+
+	// A request goes out on A, which never answers (half-open socket).
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	errA := make(chan error, 1)
+	go func() {
+		_, err := srv.ListContainersSync(ctx, hostID)
+		errA <- err
+	}()
+	waitFor(t, 3*time.Second, func() bool { return pendingCount(srv) == 1 }, "request on A should be pending")
+
+	// The agent reconnects on B before the hub has noticed A is dead.
+	streamB, _, closeB := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, asA)
+	defer closeB()
+
+	answer := make(chan struct{})
+	go func() {
+		for {
+			msg, err := streamB.Recv()
+			if err != nil {
+				return
+			}
+			if msg.GetListContainers() == nil {
+				continue
+			}
+			<-answer
+			_ = streamB.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_ContainerList{
+				ContainerList: &proto.ContainerList{
+					RequestId:  msg.GetRequestId(),
+					Containers: []*proto.ContainerInfo{{Id: "1", Name: "web", Image: "nginx:1", State: "running"}},
+				},
+			}})
+		}
+	}()
+
+	resB := make(chan error, 1)
+	go func() {
+		_, err := srv.ListContainersSync(ctx, hostID)
+		resB <- err
+	}()
+	waitFor(t, 3*time.Second, func() bool { return pendingCount(srv) == 2 }, "request on B should be pending")
+
+	// The stale connection A finally dies.
+	closeA()
+
+	select {
+	case err := <-errA:
+		if err == nil {
+			t.Error("request sent on the dead stream A returned no error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("request sent on the dead stream A was not failed when A closed")
+	}
+
+	// Give A's cleanup time to run in full before checking what it touched.
+	time.Sleep(200 * time.Millisecond)
+
+	if hs, _ := srv.Registry().Get(hostID); !hs.Connected {
+		t.Errorf("registry says Connected=false after stale stream A closed, but stream B is live (ConnectedHosts=%v)", srv.ConnectedHosts())
+	}
+	select {
+	case err := <-resB:
+		t.Fatalf("request in flight on live stream B ended early when A closed: %v", err)
+	default:
+	}
+
+	close(answer)
+	select {
+	case err := <-resB:
+		if err != nil {
+			t.Fatalf("request on live stream B failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("request on live stream B was never answered")
+	}
+}
+
+func pendingCount(srv *Server) int {
+	srv.pendingMu.Lock()
+	defer srv.pendingMu.Unlock()
+	return len(srv.pending)
+}

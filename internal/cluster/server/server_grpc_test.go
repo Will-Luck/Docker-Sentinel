@@ -64,7 +64,7 @@ func journalTestServer(t *testing.T, hist HistoryRecorder) *Server {
 		bus:      bus,
 		log:      log.With("component", "test-server"),
 		streams:  make(map[string]*agentStream),
-		pending:  make(map[string]chan *proto.AgentMessage),
+		pending:  make(map[string]*pendingRequest),
 	}
 }
 

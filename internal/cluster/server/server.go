@@ -67,13 +67,21 @@ type Server struct {
 	mu      sync.RWMutex            // protects streams map
 	streams map[string]*agentStream // hostID -> active stream
 
-	// pendingMu protects the pending map. Separate from mu to avoid holding
-	// the streams lock while waiting for responses.
+	// pendingMu protects the pending map and agentStream.closed. Separate
+	// from mu to avoid holding the streams lock while waiting for responses.
 	pendingMu sync.Mutex
-	// pending maps "hostID:requestID" to a channel that receives the
-	// corresponding response from the agent. Multiple concurrent requests
-	// per host are supported.
-	pending map[string]chan *proto.AgentMessage
+	// pending maps "hostID:requestID" to the request waiting for the
+	// agent's response. Multiple concurrent requests per host are supported.
+	pending map[string]*pendingRequest
+}
+
+// pendingRequest is a synchronous request waiting for an agent's reply.
+type pendingRequest struct {
+	ch chan *proto.AgentMessage
+	// stream is the stream the request went out on, nil until it is sent.
+	// Only that stream's cleanup fails the request: a reply can only come
+	// back on the stream that carried the request.
+	stream *agentStream
 }
 
 // agentStream tracks an active bidirectional stream with an agent.
@@ -82,6 +90,10 @@ type agentStream struct {
 	hostID string
 	send   chan *proto.ServerMessage
 	cancel context.CancelFunc
+
+	// closed is set (under Server.pendingMu) once the stream's cleanup has
+	// failed its pending requests, so no new request is tagged to it.
+	closed bool
 
 	mu       sync.RWMutex // protects version and features
 	features []string
@@ -109,7 +121,7 @@ func New(ca *cluster.CA, store ClusterStore, bus *events.Bus, log *slog.Logger) 
 		bus:      bus,
 		log:      log.With("component", "cluster-server"),
 		streams:  make(map[string]*agentStream),
-		pending:  make(map[string]chan *proto.AgentMessage),
+		pending:  make(map[string]*pendingRequest),
 	}, nil
 }
 
