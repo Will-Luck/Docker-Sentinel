@@ -8,8 +8,8 @@ require (
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/go-webauthn/webauthn v0.15.0
-	github.com/moby/moby/api v1.53.0
-	github.com/moby/moby/client v0.2.2
+	github.com/moby/moby/api v1.56.1
+	github.com/moby/moby/client v0.6.2
 	github.com/pquerna/otp v1.5.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.66.1
@@ -30,7 +30,7 @@ require (
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/go-connections v0.6.0 // indirect
+	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
