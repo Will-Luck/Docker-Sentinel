@@ -16,7 +16,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -231,6 +233,14 @@ func Begin(ctx context.Context, p Params) (*Handover, error) {
 		p.Settle = defaultSettle
 	}
 
+	if InProgress(p.DataDir) {
+		return nil, errors.New("another self-update is in progress")
+	}
+	if p.DataDir != "" {
+		// A marker left by an earlier swap must not be mistaken for this one's.
+		_ = os.Remove(filepath.Join(p.DataDir, OutcomeFile))
+	}
+
 	h := &Handover{p: p, oldID: p.Inspect.ID}
 	h.oldName = fmt.Sprintf("%s-old-%d", p.Name, time.Now().Unix())
 
@@ -323,10 +333,15 @@ func Begin(ctx context.Context, p Params) (*Handover, error) {
 
 // Wait waits for the helper to do its work. When the swap succeeds the helper
 // stops this process and Wait never returns. It returns an error when the
-// helper ends while this instance is still running (the swap did not start or
-// was undone) or does not stop it within the watchdog time; in both cases the
-// replacement and helper are removed and the running container has its name
-// back.
+// helper ends while this instance is still running, or does not stop it within
+// the watchdog time.
+//
+// What is done then follows the helper's outcome marker, never the mere fact
+// that the helper is gone: a helper that has begun the swap owns both
+// containers, so with an unfinished or unknown outcome nothing is removed or
+// renamed (and the error says so); a rolled-back or failed outcome means the
+// helper already restored this instance. Only when the helper never began (no
+// marker at all) is its set-up undone, and then only what is provably unused.
 func (h *Handover) Wait(ctx context.Context) error {
 	p := h.p
 	poll := p.Poll
@@ -346,24 +361,70 @@ func (h *Handover) Wait(ctx context.Context) error {
 		}
 		info, err := p.Docker.InspectContainer(ctx, h.helperID)
 		if err != nil || info.State == nil || !info.State.Running {
-			h.cleanup()
-			return errors.New("the self-update helper finished without replacing this instance; it has been left running unchanged (check the helper's logs, and that the new image supports v3.0.0 self-update)")
+			return h.resolve("the self-update helper finished without replacing this instance")
 		}
 		if time.Now().After(deadline) {
-			h.cleanup()
-			return fmt.Errorf("the self-update helper did not replace this instance within %s", watchdog)
+			return h.resolve(fmt.Sprintf("the self-update helper did not replace this instance within %s", watchdog))
 		}
 	}
 }
 
-// cleanup removes the helper and replacement and restores the running
-// container's name.
-func (h *Handover) cleanup() {
+// resolve decides, from the helper's outcome marker, what to do about a
+// self-update that did not replace this instance.
+func (h *Handover) resolve(what string) error {
+	p := h.p
+	marker := ReadOutcomeFile(p.DataDir)
+	switch {
+	case marker != nil && (marker.Result == ResultRolledBack || marker.Result == ResultFailed):
+		// The helper judged the new container and restored this instance.
+		return fmt.Errorf("%s: it %s (%s); this instance is unchanged", what, strings.ReplaceAll(marker.Result, "_", " "), marker.Error)
+	case marker != nil:
+		// In progress or (impossibly) successful: the helper owns the swap.
+		p.Log.Error("self-update: the helper ended while the swap was not finished; leaving both containers exactly as they are, check them by hand",
+			"old", h.oldName, "old_id", h.oldID, "new_id", h.newID, "marker", marker.Result)
+		return fmt.Errorf("%s while the swap was marked %s; nothing was removed or renamed (old container %s, replacement %s), check them by hand",
+			what, marker.Result, h.oldName, h.newID)
+	case p.DataDir == "":
+		p.Log.Error("self-update: the helper ended and no outcome can be read here; leaving both containers exactly as they are, check them by hand",
+			"old", h.oldName, "old_id", h.oldID, "new_id", h.newID)
+		return fmt.Errorf("%s and its outcome is unknown; nothing was removed or renamed (old container %s, replacement %s), check them by hand",
+			what, h.oldName, h.newID)
+	}
+
+	// No marker: the helper never began the swap, so the old container was
+	// never touched. Remove only what is provably unused: the helper, which
+	// this instance created, and the replacement if it was never started.
 	bg := context.Background()
-	_ = h.p.Docker.RemoveContainer(bg, h.helperID)
-	_ = h.p.Docker.RemoveContainer(bg, h.newID)
-	_ = h.p.Docker.RenameContainer(bg, h.oldID, h.p.Name)
+	_ = p.Docker.RemoveContainer(bg, h.helperID)
+	if info, err := p.Docker.InspectContainer(bg, h.newID); err == nil && info.State != nil &&
+		(info.State.Running || info.State.Restarting) {
+		p.Log.Error("self-update: the replacement is running although the helper never began; leaving it, check the containers by hand",
+			"old", h.oldName, "new_id", h.newID)
+		return fmt.Errorf("%s, but the replacement %s is running; nothing was removed (old container %s), check them by hand", what, h.newID, h.oldName)
+	}
+	_ = p.Docker.RemoveContainer(bg, h.newID)
+	_ = p.Docker.RenameContainer(bg, h.oldID, p.Name)
+	return fmt.Errorf("%s; the helper never started the swap, so this instance was put back unchanged (check the helper's logs)", what)
 }
+
+// FindSelf returns the container with the given ID (or ID prefix), or nil. A
+// Sentinel identifies itself by the ID of its own container, never by the
+// sentinel.self label, because several Sentinel containers can share a host.
+func FindSelf(containers []container.Summary, selfID string) *container.Summary {
+	if selfID == "" {
+		return nil
+	}
+	for i := range containers {
+		if strings.HasPrefix(containers[i].ID, selfID) {
+			return &containers[i]
+		}
+	}
+	return nil
+}
+
+// ErrSelfUnknown means this process's own container could not be determined,
+// so no self-update is done: guessing could replace another Sentinel.
+var ErrSelfUnknown = errors.New("could not determine which container this Sentinel is running in, so it will not self-update (a guess could replace another Sentinel)")
 
 func findContainer(ctx context.Context, d Docker, name string) (*container.Summary, error) {
 	all, err := d.ListAllContainers(ctx)

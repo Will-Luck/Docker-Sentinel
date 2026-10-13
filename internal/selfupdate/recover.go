@@ -113,6 +113,23 @@ func Recover(ctx context.Context, d Docker, hostname, dataDir string, log Logger
 	return out
 }
 
+// ReadOutcomeFile returns the outcome file in dir whatever its result (in
+// progress included), or nil when there is none or it is unreadable.
+func ReadOutcomeFile(dir string) *Outcome {
+	if dir == "" {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(dir, OutcomeFile))
+	if err != nil {
+		return nil
+	}
+	var out Outcome
+	if json.Unmarshal(data, &out) != nil || out.Result == "" {
+		return nil
+	}
+	return &out
+}
+
 func readMarker(dir string) *Outcome {
 	if dir == "" {
 		return nil

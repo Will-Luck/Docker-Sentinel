@@ -111,6 +111,9 @@ func (f *fake) CreateContainer(_ context.Context, name string, cfg *container.Co
 	id := fmt.Sprintf("id-%s", name)
 	f.created[id], f.hosts[id], f.nets[id], f.names[id] = cfg, h, n, name
 	f.note("create:" + name)
+	f.mu.Lock()
+	f.state[id] = &container.State{Status: "created"}
+	f.mu.Unlock()
 	return id, nil
 }
 func (f *fake) StartContainer(_ context.Context, id string) error {
@@ -236,17 +239,42 @@ func TestBeginHelperStartFailureRestoresEverything(t *testing.T) {
 	}
 }
 
-// If the helper ends while the old instance still runs, the update did not
-// happen: Wait says so and puts things back.
-func TestWaitReportsHelperThatEndedWithoutReplacingUs(t *testing.T) {
+// paramsWithDataDir is params with a real data directory the helper's outcome
+// marker can live in.
+func paramsWithDataDir(t *testing.T, f *fake) (Params, string) {
+	t.Helper()
+	dir := t.TempDir()
+	p := params(f)
+	p.DataDir = dir
+	p.Inspect.Mounts = append(slices.Clone(p.Inspect.Mounts), container.MountPoint{Type: mount.TypeVolume, Name: "datavol", Destination: dir})
+	return p, dir
+}
+
+func helperGone(f *fake) {
+	f.mu.Lock()
+	delete(f.state, "id-sentinel-self-update-helper")
+	f.mu.Unlock()
+}
+
+func hasRemoval(f *fake) bool {
+	for _, e := range f.events {
+		if strings.HasPrefix(e, "remove:") {
+			return true
+		}
+	}
+	return false
+}
+
+// If the helper never began the swap (no outcome marker), the old instance was
+// never touched: Wait undoes the set-up, removing only what is unused.
+func TestWaitUndoesTheSetUpWhenTheHelperNeverBeganTheSwap(t *testing.T) {
 	f := newFake()
-	h, err := Begin(context.Background(), params(f))
+	p, _ := paramsWithDataDir(t, f)
+	h, err := Begin(context.Background(), p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.mu.Lock()
-	delete(f.state, "id-sentinel-self-update-helper") // the helper has gone
-	f.mu.Unlock()
+	helperGone(f)
 	if err := h.Wait(context.Background()); err == nil {
 		t.Fatal("Wait returned nil although this instance is still running")
 	}
@@ -255,18 +283,134 @@ func TestWaitReportsHelperThatEndedWithoutReplacingUs(t *testing.T) {
 	}
 }
 
-func TestWaitWatchdogRemovesAHangingHelper(t *testing.T) {
+// A helper that has begun the swap owns both containers. However it ended, an
+// unfinished or unknown outcome leaves both exactly as they are.
+func TestWaitNeverRemovesAnythingWhileTheSwapIsMarkedInProgress(t *testing.T) {
 	f := newFake()
-	h, err := Begin(context.Background(), params(f))
+	p, dir := paramsWithDataDir(t, f)
+	h, err := Begin(context.Background(), p)
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.events = nil
+	setMarker(t, dir, Outcome{Result: ResultInProgress})
+	helperGone(f)
+
+	err = h.Wait(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "nothing was removed or renamed") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.events) != 0 {
+		t.Errorf("touched containers: %v", f.events)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, OutcomeFile)); statErr != nil {
+		t.Errorf("the marker was removed: %v", statErr)
+	}
+}
+
+// A rolled-back swap was restored by the helper itself: Wait removes nothing
+// (the replacement is already gone) and leaves the marker for the report.
+func TestWaitLeavesARolledBackSwapAlone(t *testing.T) {
+	f := newFake()
+	p, dir := paramsWithDataDir(t, f)
+	h, err := Begin(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.events = nil
+	setMarker(t, dir, Outcome{Result: ResultRolledBack, Error: "boom"})
+	helperGone(f)
+
+	err = h.Wait(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.events) != 0 {
+		t.Errorf("touched containers: %v", f.events)
+	}
+}
+
+// With no data directory the outcome cannot be read, so nothing is guessed.
+func TestWaitTouchesNothingWhenTheOutcomeCannotBeRead(t *testing.T) {
+	f := newFake()
+	p := params(f)
+	p.DataDir = ""
+	h, err := Begin(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.events = nil
+	helperGone(f)
+	if err := h.Wait(context.Background()); err == nil || !strings.Contains(err.Error(), "outcome is unknown") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.events) != 0 {
+		t.Errorf("touched containers: %v", f.events)
+	}
+}
+
+// No marker, but the replacement is running: it is not ours to remove.
+func TestWaitLeavesARunningReplacementAlone(t *testing.T) {
+	f := newFake()
+	p, _ := paramsWithDataDir(t, f)
+	h, err := Begin(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.state["id-sentinel"] = &container.State{Running: true}
+	f.mu.Unlock()
+	helperGone(f)
+	f.events = nil
+	if err := h.Wait(context.Background()); err == nil {
+		t.Fatal("expected an error")
+	}
+	if slices.Contains(f.events, "remove:id-sentinel") {
+		t.Errorf("removed a running replacement: %v", f.events)
+	}
+}
+
+func TestWaitWatchdogNeverKillsAHelperThatHasBegun(t *testing.T) {
+	f := newFake()
+	p, dir := paramsWithDataDir(t, f)
+	h, err := Begin(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.events = nil
+	setMarker(t, dir, Outcome{Result: ResultInProgress})
 	err = h.Wait(context.Background()) // the helper stays "running"
 	if err == nil || !strings.Contains(err.Error(), "did not replace") {
 		t.Fatalf("err = %v", err)
 	}
-	if !slices.Contains(f.events, "remove:id-sentinel-self-update-helper") {
-		t.Errorf("hanging helper not removed: %v", f.events)
+	if len(f.events) != 0 {
+		t.Errorf("touched containers: %v", f.events)
+	}
+}
+
+func TestBeginRefusesWhileAnotherSwapIsInProgress(t *testing.T) {
+	f := newFake()
+	p, dir := paramsWithDataDir(t, f)
+	setMarker(t, dir, Outcome{Result: ResultInProgress})
+	if _, err := Begin(context.Background(), p); err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if len(f.events) != 0 {
+		t.Errorf("touched containers: %v", f.events)
+	}
+}
+
+func TestFindSelfMatchesTheContainerIDNotTheLabel(t *testing.T) {
+	self := map[string]string{"sentinel.self": "true"}
+	list := []container.Summary{
+		{ID: "aaaaaaaaaaaa1111", Names: []string{"/lh2-hub"}, Labels: self},
+		{ID: "bbbbbbbbbbbb2222", Names: []string{"/lh-sentinel-hub"}, Labels: self},
+	}
+	if got := FindSelf(list, "bbbbbbbbbbbb"); got == nil || got.Names[0] != "/lh-sentinel-hub" {
+		t.Errorf("FindSelf = %+v", got)
+	}
+	if FindSelf(list, "") != nil || FindSelf(list, "cccccccccccc") != nil {
+		t.Error("FindSelf guessed")
 	}
 }
 
