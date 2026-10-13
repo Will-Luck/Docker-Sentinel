@@ -13,6 +13,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/robfig/cron/v3"
 )
@@ -250,6 +251,48 @@ func (u *Updater) maintenanceWindow() string {
 	return u.cfg.MaintenanceWindow()
 }
 
+// isImageIDRef reports whether an image reference is a bare image ID rather
+// than a repository reference. Docker reports a container's image as its ID
+// once the tag it was started from points at a different image.
+func isImageIDRef(ref, imageID string) bool {
+	return strings.HasPrefix(ref, "sha256:") || (imageID != "" && ref == imageID)
+}
+
+// resolveImageRefs replaces image-ID references in the container list with the
+// reference each container was configured with, so a container whose tag has
+// moved is still checked against the registry instead of being treated as a
+// local image. The input slice is not modified.
+func (u *Updater) resolveImageRefs(ctx context.Context, containers []container.Summary) []container.Summary {
+	out := make([]container.Summary, len(containers))
+	copy(out, containers)
+	for i := range out {
+		c := &out[i]
+		if !isImageIDRef(c.Image, c.ImageID) {
+			continue
+		}
+		inspect, err := u.docker.InspectContainer(ctx, c.ID)
+		if err != nil || inspect.Config == nil || inspect.Config.Image == "" || isImageIDRef(inspect.Config.Image, c.ImageID) {
+			u.log.Debug("could not resolve configured image for image-ID reference", "container", containerName(*c), "error", err)
+			continue
+		}
+		c.Image = inspect.Config.Image
+	}
+	return out
+}
+
+// containerBehindTag reports whether the container runs a different image from
+// the one imageRef currently resolves to in the local image store.
+func (u *Updater) containerBehindTag(ctx context.Context, c container.Summary, imageRef string) bool {
+	if c.ImageID == "" {
+		return false
+	}
+	tagID, err := u.docker.ImageID(ctx, imageRef)
+	if err != nil || tagID == "" {
+		return false
+	}
+	return strings.TrimPrefix(tagID, "sha256:") != strings.TrimPrefix(c.ImageID, "sha256:")
+}
+
 // Scan lists running containers, checks for updates, and processes them
 // according to each container's policy. The mode controls rate limit headroom.
 func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
@@ -268,6 +311,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		return result
 	}
 	result.Total = len(containers)
+	containers = u.resolveImageRefs(ctx, containers)
 
 	// Discover registries and probe for fresh rate limit data.
 	// Probes all discovered registries (credentialed or anonymous) so that
@@ -461,6 +505,17 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 		// Record scan time for per-container schedule tracking.
 		_ = u.store.SetLastContainerScan(name, u.clock.Now())
 
+		// The registry digest comparison looks at the tag, not at the image the
+		// container runs. If the tag has since been pulled (a sibling container
+		// on the same tag was updated, or someone ran docker pull) the digests
+		// match while this container is still on the old image.
+		behindTag := false
+		if !check.UpdateAvailable && u.containerBehindTag(ctx, c, imageRef) {
+			check.UpdateAvailable = true
+			behindTag = true
+			u.log.Info("container runs an older image than its tag", "name", name, "image", imageRef)
+		}
+
 		if !check.UpdateAvailable {
 			// Prune stale queue entries: if this container is in the queue
 			// but the registry now reports it as up-to-date, remove it.
@@ -623,6 +678,10 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 				continue
 			}
 			pullOnly := docker.ContainerPullOnly(labels) || u.isPullOnly()
+			if pullOnly && behindTag {
+				u.log.Debug("pull-only: tag already pulled, nothing to fetch", "name", name, "image", imageRef)
+				continue
+			}
 			if pullOnly {
 				target := scanTarget
 				if target == "" {
