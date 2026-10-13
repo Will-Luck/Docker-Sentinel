@@ -190,8 +190,8 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 
 	var streamErr error
 
-	ctx, cancel := context.WithCancel(stream.Context())
-	defer cancel()
+	ctx, cancel := context.WithCancelCause(stream.Context())
+	defer cancel(nil)
 
 	as := &agentStream{
 		hostID: hostID,
@@ -202,8 +202,12 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 	// Register the stream. If an old stream exists for this host (stale
 	// connection), cancel it first to avoid duplicate streams.
 	s.mu.Lock()
+	if s.stopping {
+		s.mu.Unlock()
+		return status.Error(codes.Unavailable, "cluster server is stopping")
+	}
 	if old, ok := s.streams[hostID]; ok {
-		old.cancel()
+		old.cancel(errStreamReplaced)
 		s.log.Warn("replaced stale stream", "hostID", hostID)
 	}
 	s.streams[hostID] = as
@@ -267,30 +271,51 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 				}
 				if err := stream.Send(msg); err != nil {
 					s.log.Warn("send to agent failed", "hostID", hostID, "error", err)
-					cancel()
+					cancel(fmt.Errorf("send to agent: %w", err))
 					return
 				}
 			}
 		}
 	}()
 
-	// Receive loop: reads messages from the agent and dispatches them.
-	for {
-		msg, err := stream.Recv()
-		if err != nil {
-			streamErr = err
-			if err == io.EOF || ctx.Err() != nil {
-				return nil
+	// Receive loop: reads messages from the agent and dispatches them. It
+	// runs in its own goroutine because Recv returns only when the agent
+	// sends something or hangs up, and cancelling ctx (stream replaced,
+	// host removed, server stopping) has to end this handler regardless.
+	// Returning from the handler is what closes the stream on the agent.
+	recvDone := make(chan error, 1)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				recvDone <- err
+				return
 			}
-			return err
+			if ctx.Err() != nil {
+				recvDone <- nil
+				return
+			}
+			s.handleAgentMessage(hostID, as, msg)
 		}
-		// If our context was cancelled (stream replaced by a newer connection),
-		// exit so the agent detects the broken stream and reconnects cleanly.
-		if ctx.Err() != nil {
-			return nil
+	}()
+
+	select {
+	case streamErr = <-recvDone:
+	case <-ctx.Done():
+		streamErr = context.Cause(ctx)
+		if stream.Context().Err() != nil {
+			// The transport went away, so Recv is about to fail too. Its
+			// error says why (EOF, reset) better than the bare cancel does.
+			select {
+			case streamErr = <-recvDone:
+			case <-time.After(time.Second):
+			}
 		}
-		s.handleAgentMessage(hostID, as, msg)
 	}
+	if streamErr == nil || streamErr == io.EOF || ctx.Err() != nil {
+		return nil
+	}
+	return streamErr
 }
 
 // ReportState handles a full state snapshot from an agent.

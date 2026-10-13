@@ -57,7 +57,7 @@ func TestChannel_StaleStreamCleanupLeavesLiveStreamAlone(t *testing.T) {
 	waitFor(t, 3*time.Second, func() bool { return pendingCount(srv) == 1 }, "request on A should be pending")
 
 	// The agent reconnects on B before the hub has noticed A is dead.
-	streamB, _, closeB := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, asA)
+	streamB, asB, closeB := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, asA)
 	defer closeB()
 
 	answer := make(chan struct{})
@@ -85,9 +85,10 @@ func TestChannel_StaleStreamCleanupLeavesLiveStreamAlone(t *testing.T) {
 		_, err := srv.ListContainersSync(ctx, hostID)
 		resB <- err
 	}()
-	waitFor(t, 3*time.Second, func() bool { return pendingCount(srv) == 2 }, "request on B should be pending")
+	waitFor(t, 3*time.Second, func() bool { return pendingOn(srv, asB) == 1 }, "request on B should be pending")
 
-	// The stale connection A finally dies.
+	// The stale connection A finally dies (if replacing it has not already
+	// ended its handler).
 	closeA()
 
 	select {
@@ -122,8 +123,60 @@ func TestChannel_StaleStreamCleanupLeavesLiveStreamAlone(t *testing.T) {
 	}
 }
 
+// Turning cluster mode off, or stopping the hub, must not wait for agents to
+// hang up: their streams stay open for as long as the agents run. Stop has
+// to end the agent streams itself and return promptly.
+func TestStop_ReturnsWithConnectedAgent(t *testing.T) {
+	srv, addr, _, _ := testServer(t)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	defer closeConn()
+
+	recvErr := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := stream.Recv(); err != nil {
+				recvErr <- err
+				return
+			}
+		}
+	}()
+
+	done := make(chan struct{})
+	go func() { srv.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("srv.Stop() did not return within 5s while an agent stream was open")
+	}
+
+	select {
+	case <-recvErr:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the agent's stream was still open after Stop returned")
+	}
+	if hs, _ := srv.Registry().Get(hostID); hs.Connected {
+		t.Error("host still marked connected after Stop")
+	}
+}
+
 func pendingCount(srv *Server) int {
 	srv.pendingMu.Lock()
 	defer srv.pendingMu.Unlock()
 	return len(srv.pending)
+}
+
+// pendingOn counts the pending requests that went out on as.
+func pendingOn(srv *Server, as *agentStream) int {
+	srv.pendingMu.Lock()
+	defer srv.pendingMu.Unlock()
+	n := 0
+	for _, pr := range srv.pending {
+		if pr.stream == as {
+			n++
+		}
+	}
+	return n
 }

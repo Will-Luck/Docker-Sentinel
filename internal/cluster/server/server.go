@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
@@ -48,6 +50,17 @@ type ClusterStore interface {
 // enough that a truly stalled agent gets dropped rather than consuming memory.
 const sendBufferSize = 64
 
+// stopGracePeriod bounds how long Stop waits for in-flight RPCs (enrolment,
+// state reports) to finish once the agent streams have been ended.
+const stopGracePeriod = 5 * time.Second
+
+// Causes recorded when the server itself ends an agent stream.
+var (
+	errServerStopping = errors.New("cluster server stopped")
+	errStreamReplaced = errors.New("replaced by a newer connection from the same agent")
+	errHostRemoved    = errors.New("host removed from the cluster")
+)
+
 // Server manages the gRPC server for cluster communication.
 // It implements both EnrollmentServiceServer (unauthenticated, token-based)
 // and AgentServiceServer (requires mTLS client certificate).
@@ -63,9 +76,10 @@ type Server struct {
 	log      *slog.Logger
 	hmacKey  []byte // 32-byte random key for HMAC-SHA256 token signing
 
-	grpcSrv *grpc.Server
-	mu      sync.RWMutex            // protects streams map
-	streams map[string]*agentStream // hostID -> active stream
+	grpcSrv  *grpc.Server
+	mu       sync.RWMutex            // protects streams and stopping
+	streams  map[string]*agentStream // hostID -> active stream
+	stopping bool                    // set by Stop; new agent streams are refused
 
 	// pendingMu protects the pending map and agentStream.closed. Separate
 	// from mu to avoid holding the streams lock while waiting for responses.
@@ -89,7 +103,9 @@ type pendingRequest struct {
 type agentStream struct {
 	hostID string
 	send   chan *proto.ServerMessage
-	cancel context.CancelFunc
+	// cancel ends the stream's Channel handler, which closes the stream
+	// on the agent. The cause becomes the host's disconnect reason.
+	cancel context.CancelCauseFunc
 
 	// closed is set (under Server.pendingMu) once the stream's cleanup has
 	// failed its pending requests, so no new request is tagged to it.
@@ -244,11 +260,35 @@ func (s *Server) buildTLSConfig(serverCert tls.Certificate, caPool *x509.CertPoo
 	}
 }
 
-// Stop gracefully stops the gRPC server. Waits for active RPCs to finish.
+// Stop shuts the gRPC server down. Agent streams never end on their own
+// (agents keep them open for as long as they run), so Stop ends them first:
+// each agent sees its stream close and goes back to reconnecting. It then
+// lets other in-flight RPCs finish for up to stopGracePeriod before closing
+// whatever connections remain.
 func (s *Server) Stop() {
-	if s.grpcSrv != nil {
-		s.log.Info("stopping cluster gRPC server")
+	if s.grpcSrv == nil {
+		return
+	}
+	s.log.Info("stopping cluster gRPC server")
+
+	s.mu.Lock()
+	s.stopping = true
+	for _, as := range s.streams {
+		as.cancel(errServerStopping)
+	}
+	s.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
 		s.grpcSrv.GracefulStop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(stopGracePeriod):
+		s.log.Warn("cluster gRPC server did not drain in time, closing remaining connections")
+		s.grpcSrv.Stop()
+		<-done
 	}
 }
 
@@ -325,7 +365,7 @@ func (s *Server) RevokeHost(id string) error {
 func (s *Server) disconnectAgent(id string) {
 	s.mu.Lock()
 	if as, ok := s.streams[id]; ok {
-		as.cancel()
+		as.cancel(errHostRemoved)
 		delete(s.streams, id)
 	}
 	s.mu.Unlock()

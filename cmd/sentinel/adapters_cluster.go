@@ -184,6 +184,10 @@ func (a *clusterAdapter) RollbackRemoteContainer(ctx context.Context, hostID, co
 // start/stop from the settings API. Uses ClusterController.SetProvider()
 // to swap the active provider atomically — no value-copy issues.
 type clusterManager struct {
+	// opMu serialises Start and Stop. mu guards srv only and is never held
+	// across a blocking call, so the scheduler's post-scan callback, which
+	// takes mu to read srv, cannot stall behind a slow shutdown.
+	opMu    sync.Mutex
 	mu      sync.Mutex
 	srv     *clusterserver.Server
 	db      *store.Store
@@ -195,6 +199,8 @@ type clusterManager struct {
 }
 
 func (m *clusterManager) Start() error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -250,19 +256,22 @@ func (m *clusterManager) Start() error {
 }
 
 func (m *clusterManager) Stop() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 
-	if m.srv == nil {
+	m.mu.Lock()
+	srv := m.srv
+	if srv == nil {
+		m.mu.Unlock()
 		return
 	}
-
 	// Clear provider first so handlers stop dispatching.
 	m.ctrl.SetProvider(nil)
 	m.updater.SetClusterScanner(nil)
-
-	m.srv.Stop()
 	m.srv = nil
+	m.mu.Unlock()
+
+	srv.Stop()
 
 	m.log.Info("cluster gRPC server stopped")
 }
