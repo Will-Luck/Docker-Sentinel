@@ -47,6 +47,12 @@ func UpdateComposeTag(composePath, serviceName, newImage string) error {
 	return nil
 }
 
+// composeImageTag matches an "image: repo:tag" line. The tag is after the
+// last colon of the last path segment, so a registry port is part of the
+// repository; a digest-pinned or untagged image does not match. A quote
+// around the reference is kept.
+var composeImageTag = regexp.MustCompile(`^(\s+image:\s*["']?(?:[^\s"']*/)?[^/:@\s"']+):([^/:@\s"']+)(["']?)\s*$`)
+
 // updateImageInCompose finds the image line for a service and updates its tag.
 func updateImageInCompose(content, serviceName, newTag string) string {
 	lines := strings.Split(content, "\n")
@@ -72,10 +78,8 @@ func updateImageInCompose(content, serviceName, newTag string) string {
 				continue
 			}
 
-			// Match "image: repo:tag" or "image: repo"
-			re := regexp.MustCompile(`^(\s+image:\s*\S+?):(\S+)\s*$`)
-			if m := re.FindStringSubmatch(line); m != nil {
-				lines[i] = m[1] + ":" + newTag
+			if m := composeImageTag.FindStringSubmatch(line); m != nil {
+				lines[i] = m[1] + ":" + newTag + m[3]
 				return strings.Join(lines, "\n")
 			}
 		}

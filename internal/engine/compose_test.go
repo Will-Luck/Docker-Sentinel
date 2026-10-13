@@ -137,3 +137,29 @@ func stringContains(s, substr string) bool {
 	}
 	return false
 }
+
+// The tag is the part after the last colon of the last path segment, so an
+// image from a registry with a port keeps its host:port, and an image
+// pinned by digest, or with no tag, is left alone.
+func TestUpdateImageInComposeRegistryPort(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{"    image: registry.local:5000/app:1.0", "    image: registry.local:5000/app:1.1"},
+		{"    image: registry.local:5000/team/app:1.0  ", "    image: registry.local:5000/team/app:1.1"},
+		{"    image: app:1.0", "    image: app:1.1"},
+		{"    image: registry.local:5000/app", "    image: registry.local:5000/app"},
+		{"    image: app:1.0@sha256:abc", "    image: app:1.0@sha256:abc"},
+	} {
+		content := "services:\n  web:\n" + tc.line + "\n"
+		got := updateImageInCompose(content, "web", "1.1")
+		if want := "services:\n  web:\n" + tc.want + "\n"; got != want {
+			t.Errorf("%q: got %q, want %q", tc.line, got, want)
+		}
+	}
+}
+
+func TestUpdateImageInComposeKeepsQuotes(t *testing.T) {
+	got := updateImageInCompose("services:\n  web:\n    image: \"registry.local:5000/app:1.0\"\n", "web", "1.1")
+	if want := "services:\n  web:\n    image: \"registry.local:5000/app:1.1\"\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
