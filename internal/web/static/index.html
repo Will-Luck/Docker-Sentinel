@@ -406,7 +406,12 @@
                                         {{else}}
                                             {{$tag}}
                                         {{end}}
-                                        <span class="badge badge-muted" style="margin-left:6px;font-size:0.55rem">newer build</span>
+                                        {{if .ResolvedTarget}}
+                                        <span class="version-arrow">&rarr;</span>
+                                        <span class="version-new">{{.ResolvedTarget}}</span>
+                                        {{else}}
+                                        <span class="badge badge-muted" style="margin-left:6px;font-size:0.55rem">new digest</span>
+                                        {{end}}
                                         {{if .Severity}}<span class="severity-badge severity-{{.Severity}}">{{.Severity}}</span>{{end}}
                                     {{else}}
                                         {{with changelogURL $img}}

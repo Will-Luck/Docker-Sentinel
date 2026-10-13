@@ -185,9 +185,13 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					tag = c.Image
 				}
 			}
-			var newestVersion string
-			if pend, ok := s.deps.Queue.Get(n); ok && len(pend.NewerVersions) > 0 {
-				newestVersion = pend.NewerVersions[0]
+			var newestVersion, resolvedTarget string
+			if pend, ok := s.deps.Queue.Get(n); ok {
+				if len(pend.NewerVersions) > 0 {
+					newestVersion = pend.NewerVersions[0]
+				} else {
+					resolvedTarget = pend.ResolvedTargetVersion
+				}
 			}
 			var resolved string
 			if _, isSemver := registry.ParseSemVer(tag); !isSemver {
@@ -213,6 +217,7 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 				Tag:             tag,
 				ResolvedVersion: resolved,
 				NewestVersion:   newestVersion,
+				ResolvedTarget:  resolvedTarget,
 				Policy:          policy,
 				State:           c.State,
 				Maintenance:     maintenance,
@@ -243,13 +248,15 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 						tag = rc.Image
 					}
 				}
-				var newestVersion string
+				var newestVersion, rcTarget string
 				var hasUpdate bool
 				queueKey := rc.HostID + "::" + rc.Name
 				if pend, ok := s.deps.Queue.Get(queueKey); ok {
 					hasUpdate = true
 					if len(pend.NewerVersions) > 0 {
 						newestVersion = pend.NewerVersions[0]
+					} else {
+						rcTarget = pend.ResolvedTargetVersion
 					}
 				}
 				var rcSeverity string
@@ -273,22 +280,23 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				v := containerView{
-					Name:          rc.Name,
-					Image:         rc.Image,
-					Tag:           tag,
-					NewestVersion: newestVersion,
-					Policy:        policy,
-					State:         rc.State,
-					HasUpdate:     hasUpdate,
-					DigestOnly:    hasUpdate && newestVersion == "",
-					Severity:      rcSeverity,
-					IsSelf:        rc.Labels["sentinel.self"] == "true",
-					HostID:        rc.HostID,
-					HostName:      rc.HostName,
-					HostAddress:   rcHostAddr,
-					Registry:      registry.RegistryHost(rc.Image),
-					Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
-					Ports:         rc.Ports,
+					Name:           rc.Name,
+					Image:          rc.Image,
+					Tag:            tag,
+					NewestVersion:  newestVersion,
+					ResolvedTarget: rcTarget,
+					Policy:         policy,
+					State:          rc.State,
+					HasUpdate:      hasUpdate,
+					DigestOnly:     hasUpdate && newestVersion == "",
+					Severity:       rcSeverity,
+					IsSelf:         rc.Labels["sentinel.self"] == "true",
+					HostID:         rc.HostID,
+					HostName:       rc.HostName,
+					HostAddress:    rcHostAddr,
+					Registry:       registry.RegistryHost(rc.Image),
+					Maintenance:    s.isRemoteUpdating(rc.HostID, rc.Name),
+					Ports:          rc.Ports,
 				}
 				v.PortURLs = s.resolvePortURLs(rc.Name, rcHostAddr, rc.HostID, rc.Ports)
 				targetView = &v

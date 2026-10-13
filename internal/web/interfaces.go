@@ -453,6 +453,20 @@ type PendingUpdate struct {
 	HostName               string    `json:"host_name,omitempty"`
 }
 
+// IgnoreKey is what Ignore stores for this update: the newest listed version,
+// else (a mutable tag such as latest) the version the tag resolves to, else
+// the remote digest. It matches the engine's ignore filter. Empty means there
+// is nothing to key an ignore on.
+func (p PendingUpdate) IgnoreKey() string {
+	if len(p.NewerVersions) > 0 {
+		return p.NewerVersions[0]
+	}
+	if p.ResolvedTargetVersion != "" {
+		return p.ResolvedTargetVersion
+	}
+	return p.RemoteDigest
+}
+
 // Key returns the queue map key. Remote containers use "hostID::name" to
 // avoid collisions with local or other-host containers of the same name.
 func (u PendingUpdate) Key() string {

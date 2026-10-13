@@ -237,3 +237,54 @@ func TestApiQueueExport_EmptyQueue_JSON(t *testing.T) {
 		t.Errorf("got %d items, want 0", len(items))
 	}
 }
+
+type recordingIgnores struct{ added map[string][]string }
+
+func (r *recordingIgnores) AddIgnoredVersion(name, version string) error {
+	if r.added == nil {
+		r.added = map[string][]string{}
+	}
+	r.added[name] = append(r.added[name], version)
+	return nil
+}
+func (r *recordingIgnores) GetIgnoredVersions(string) ([]string, error) { return nil, nil }
+func (r *recordingIgnores) ClearIgnoredVersions(string) error           { return nil }
+
+// A :latest update has no version list. Ignore keys it by the version the tag
+// resolves to, else by the remote digest, as the engine's filter does.
+func TestApiIgnoreVersion_MutableTagUsesResolvedVersionOrDigest(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		item PendingUpdate
+		want string
+	}{
+		{"resolved", PendingUpdate{ContainerName: "web", CurrentImage: "nginx:latest", RemoteDigest: "sha256:abc", ResolvedTargetVersion: "1.29.2"}, "1.29.2"},
+		{"digest", PendingUpdate{ContainerName: "web", CurrentImage: "nginx:latest", RemoteDigest: "sha256:abc"}, "sha256:abc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ig := &recordingIgnores{}
+			srv := &Server{deps: Dependencies{Queue: &mockQueue{items: []PendingUpdate{tc.item}}, IgnoredVersions: ig, EventBus: events.New(), Log: slog.Default()}}
+			r := httptest.NewRequest(http.MethodPost, "/api/ignore/web", nil)
+			r.SetPathValue("key", "web")
+			w := httptest.NewRecorder()
+			srv.apiIgnoreVersion(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+			}
+			if got := ig.added["web"]; len(got) != 1 || got[0] != tc.want {
+				t.Errorf("stored ignore keys = %v, want [%s]", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApiIgnoreVersion_NothingToKeyOnIsRejected(t *testing.T) {
+	srv := &Server{deps: Dependencies{Queue: &mockQueue{items: []PendingUpdate{{ContainerName: "web"}}}, IgnoredVersions: &recordingIgnores{}, EventBus: events.New(), Log: slog.Default()}}
+	r := httptest.NewRequest(http.MethodPost, "/api/ignore/web", nil)
+	r.SetPathValue("key", "web")
+	w := httptest.NewRecorder()
+	srv.apiIgnoreVersion(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 when there is no version and no digest", w.Code)
+	}
+}

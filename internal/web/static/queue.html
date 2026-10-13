@@ -125,6 +125,12 @@
                                         {{if $q.ResolvedCurrentVersion}}{{with classifySev $q.ResolvedCurrentVersion (index $q.NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{else}}{{with classifySev (imageTag $q.CurrentImage) (index $q.NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{end}}
                                     {{else}}
                                         {{imageTag $q.CurrentImage}}
+                                        {{if $q.ResolvedTargetVersion}}
+                                            <span class="version-arrow">&rarr;</span>
+                                            <span class="version-new">{{$q.ResolvedTargetVersion}}</span>
+                                        {{else}}
+                                            <span class="badge badge-muted">new digest</span>
+                                        {{end}}
                                         <span class="severity-badge severity-build">build</span>
                                     {{end}}
                                 </td>
@@ -147,10 +153,10 @@
                                                 onclick="approveUpdate('{{$q.Key}}', event)">
                                             Approve
                                         </button>
-                                        {{if $q.NewerVersions}}
+                                        {{if $q.IgnoreKey}}
                                         <button class="btn btn-warning"
                                                 onclick="ignoreUpdate('{{$q.Key}}', event)"
-                                                title="Skip version {{index $q.NewerVersions 0}} — re-alerts when a newer version appears">
+                                                title="Skip {{if $q.NewerVersions}}version {{index $q.NewerVersions 0}}{{else if $q.ResolvedTargetVersion}}{{$q.ResolvedTargetVersion}}{{else}}this build{{end}}: re-alerts when a newer one appears">
                                             Ignore
                                         </button>
                                         {{end}}

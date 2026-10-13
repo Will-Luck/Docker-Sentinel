@@ -107,6 +107,7 @@ type containerView struct {
 	Maintenance     bool
 	HasUpdate       bool
 	DigestOnly      bool   // true when update is digest-only (same tag, newer build)
+	ResolvedTarget  string // version a mutable tag (latest) resolves to, when known
 	Severity        string // "major", "minor", "patch", "build", or "" (no update)
 	IsSelf          bool
 	Stack           string // com.docker.compose.project label, or "" for standalone
@@ -417,8 +418,13 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 		// Get newest version from queue entry if available.
 		var newestVersion string
-		if pending, ok := s.deps.Queue.Get(name); ok && len(pending.NewerVersions) > 0 {
-			newestVersion = pending.NewerVersions[0]
+		var resolvedTarget string
+		if pending, ok := s.deps.Queue.Get(name); ok {
+			if len(pending.NewerVersions) > 0 {
+				newestVersion = pending.NewerVersions[0]
+			} else {
+				resolvedTarget = pending.ResolvedTargetVersion
+			}
 		}
 
 		// Resolve the actual version behind non-semver tags like "latest".
@@ -451,6 +457,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			Tag:             tag,
 			ResolvedVersion: resolved,
 			NewestVersion:   newestVersion,
+			ResolvedTarget:  resolvedTarget,
 			Policy:          policy,
 			State:           c.State,
 			Maintenance:     maintenance,
@@ -674,13 +681,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				// label first, then DB override (keyed by hostID::name for remote).
 				policy := s.resolvedPolicy(rc.Labels, rc.HostID+"::"+rc.Name)
 
-				var newestVersion string
+				var newestVersion, rcTarget string
 				var hasUpdate bool
 				queueKey := rc.HostID + "::" + rc.Name
 				if pend, ok := s.deps.Queue.Get(queueKey); ok {
 					hasUpdate = true
 					if len(pend.NewerVersions) > 0 {
 						newestVersion = pend.NewerVersions[0]
+					} else {
+						rcTarget = pend.ResolvedTargetVersion
 					}
 				}
 
@@ -694,22 +703,23 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 
 				cv := containerView{
-					Name:          rc.Name,
-					Image:         rc.Image,
-					Tag:           tag,
-					NewestVersion: newestVersion,
-					Registry:      registry.RegistryHost(rc.Image),
-					Policy:        policy,
-					State:         rc.State,
-					HasUpdate:     hasUpdate,
-					DigestOnly:    hasUpdate && newestVersion == "",
-					Severity:      rcSeverity,
-					IsSelf:        rc.Labels["sentinel.self"] == "true",
-					HostID:        rc.HostID,
-					HostName:      rc.HostName,
-					HostAddress:   hostAddr[rc.HostID],
-					Maintenance:   s.isRemoteUpdating(rc.HostID, rc.Name),
-					Ports:         rc.Ports,
+					Name:           rc.Name,
+					Image:          rc.Image,
+					Tag:            tag,
+					NewestVersion:  newestVersion,
+					ResolvedTarget: rcTarget,
+					Registry:       registry.RegistryHost(rc.Image),
+					Policy:         policy,
+					State:          rc.State,
+					HasUpdate:      hasUpdate,
+					DigestOnly:     hasUpdate && newestVersion == "",
+					Severity:       rcSeverity,
+					IsSelf:         rc.Labels["sentinel.self"] == "true",
+					HostID:         rc.HostID,
+					HostName:       rc.HostName,
+					HostAddress:    hostAddr[rc.HostID],
+					Maintenance:    s.isRemoteUpdating(rc.HostID, rc.Name),
+					Ports:          rc.Ports,
 				}
 				cv.PortURLs = s.resolvePortURLs(rc.Name, hostAddr[rc.HostID], rc.HostID, rc.Ports)
 				byHost[rc.HostID] = append(byHost[rc.HostID], cv)

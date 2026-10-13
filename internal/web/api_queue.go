@@ -218,12 +218,11 @@ func (s *Server) apiIgnoreVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(update.NewerVersions) == 0 {
-		writeError(w, http.StatusBadRequest, "no specific version to ignore (digest-only update)")
+	ignoredVersion := update.IgnoreKey()
+	if ignoredVersion == "" {
+		writeError(w, http.StatusBadRequest, "nothing to ignore: the update has no version or digest")
 		return
 	}
-
-	ignoredVersion := update.NewerVersions[0]
 	if s.deps.IgnoredVersions != nil {
 		if err := s.deps.IgnoredVersions.AddIgnoredVersion(name, ignoredVersion); err != nil {
 			s.deps.Log.Error("failed to save ignored version", "name", name, "version", ignoredVersion, "error", err)
