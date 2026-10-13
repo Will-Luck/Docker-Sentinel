@@ -20,14 +20,42 @@ import (
 // not found when Sentinel started.
 var ErrVerifierUnavailable = errors.New("signature verification is set to enforce but cosign is not available")
 
-// unverifiableError is ErrVerifierUnavailable for one container or
-// service, so a scan can name the updates it refused.
-type unverifiableError struct{ name string }
+// ErrKeylessIdentityMissing is returned for an update whose image signature
+// must be checked (enforce mode) when keyless verification has no identity
+// to check against; its text names the settings to set.
+var ErrKeylessIdentityMissing = errors.New(verify.MissingKeylessIdentity)
 
-func (e *unverifiableError) Error() string {
-	return "update " + e.name + ": " + ErrVerifierUnavailable.Error()
+// unverifiableError is a refused update (reason ErrVerifierUnavailable or
+// ErrKeylessIdentityMissing) for one container or service, so a scan can
+// name the updates it refused.
+type unverifiableError struct {
+	name   string
+	reason error
 }
-func (e *unverifiableError) Unwrap() error { return ErrVerifierUnavailable }
+
+func (e *unverifiableError) Error() string { return "update " + e.name + ": " + e.reason.Error() }
+func (e *unverifiableError) Unwrap() error { return e.reason }
+
+// verifierProblem is implemented by a verifier that can tell, before any
+// check, that every check would fail (verify.Verifier.Problem).
+type verifierProblem interface {
+	Problem() string
+}
+
+// unverifiable returns why an update under mode cannot be verified at all:
+// enforce mode with no verifier, or one that is not set up. nil when it can.
+func (u *Updater) unverifiable(mode verify.Mode) error {
+	if mode != verify.ModeEnforce {
+		return nil
+	}
+	if u.imgVerifier == nil {
+		return ErrVerifierUnavailable
+	}
+	if p, ok := u.imgVerifier.(verifierProblem); ok && p.Problem() == verify.MissingKeylessIdentity {
+		return ErrKeylessIdentityMissing
+	}
+	return nil
+}
 
 // verifyModeFor returns the signature verification mode for a container:
 // its sentinel.verify label first, then the global mode. The global mode is
@@ -44,14 +72,13 @@ func (u *Updater) verifyModeFor(labels map[string]string) verify.Mode {
 	return verify.ResolveMode(labels[verify.ContainerLabel], "", global)
 }
 
-// refuseUnverifiable logs and records an update refused with
-// ErrVerifierUnavailable, and returns the error to give back. typ is the
-// history row type ("" for a container, "service"). It does not notify: a
-// scan sends one notification for all the updates it had to refuse
+// refuseUnverifiable logs and records an update refused for reason (see
+// unverifiable), and returns the error to give back. typ is the history row
+// type ("" for a container, "service"). It does not notify: a scan sends
+// one notification for all the updates it had to refuse
 // (notifyUnverifiable).
-func (u *Updater) refuseUnverifiable(name, oldImage, newImage, oldDigest, typ string, start time.Time) error {
-	u.log.Warn("signature verification is set to enforce but cosign is not available, refusing the update",
-		"name", name, "image", newImage)
+func (u *Updater) refuseUnverifiable(name, oldImage, newImage, oldDigest, typ string, start time.Time, reason error) error {
+	u.log.Warn("refusing the update: the image signature cannot be checked", "name", name, "image", newImage, "reason", reason)
 	if err := u.store.RecordUpdate(store.UpdateRecord{
 		Timestamp:     u.clock.Now(),
 		ContainerName: name,
@@ -60,7 +87,7 @@ func (u *Updater) refuseUnverifiable(name, oldImage, newImage, oldDigest, typ st
 		NewImage:      newImage,
 		Outcome:       "failed",
 		Duration:      u.clock.Since(start),
-		Error:         ErrVerifierUnavailable.Error(),
+		Error:         reason.Error(),
 		Type:          typ,
 	}); err != nil {
 		u.log.Warn("failed to persist the refused update", "name", name, "error", err)
@@ -70,8 +97,8 @@ func (u *Updater) refuseUnverifiable(name, oldImage, newImage, oldDigest, typ st
 	if typ == "service" {
 		evt = events.EventServiceUpdate
 	}
-	u.publishEvent(evt, name, "update failed: "+ErrVerifierUnavailable.Error())
-	return &unverifiableError{name: name}
+	u.publishEvent(evt, name, "update failed: "+reason.Error())
+	return &unverifiableError{name: name, reason: reason}
 }
 
 // checkSignature verifies image under mode (an enforced check without a
@@ -124,22 +151,27 @@ func (u *Updater) signatureRef(ctx context.Context, image string) string {
 // notifyUnverifiable sends one notification for the updates a scan refused
 // with ErrVerifierUnavailable, found in its errors.
 func (u *Updater) notifyUnverifiable(ctx context.Context, errs []error) {
-	var names []string
+	byReason := make(map[error][]string)
 	for _, err := range errs {
 		if ue, ok := errors.AsType[*unverifiableError](err); ok {
-			names = append(names, ue.name)
+			byReason[ue.reason] = append(byReason[ue.reason], ue.name)
 		}
 	}
-	if len(names) == 0 {
-		return
+	for _, reason := range []error{ErrVerifierUnavailable, ErrKeylessIdentityMissing} {
+		names := byReason[reason]
+		if len(names) == 0 {
+			continue
+		}
+		advice := " Make cosign available to Sentinel (and set its path in the signature verification settings), or change the mode."
+		if reason == ErrKeylessIdentityMissing {
+			advice = ""
+		}
+		u.notifier.Notify(ctx, notify.Event{
+			Type:           notify.EventUpdateFailed,
+			ContainerName:  strings.Join(names, ", "),
+			ContainerNames: names,
+			Error:          fmt.Sprintf("%s, so %d update(s) were refused.%s", reason, len(names), advice),
+			Timestamp:      u.clock.Now(),
+		})
 	}
-	u.notifier.Notify(ctx, notify.Event{
-		Type:           notify.EventUpdateFailed,
-		ContainerName:  strings.Join(names, ", "),
-		ContainerNames: names,
-		Error: fmt.Sprintf("%s, so %d update(s) were refused. Make cosign available to Sentinel "+
-			"(and set its path in the signature verification settings), or change the mode.",
-			ErrVerifierUnavailable, len(names)),
-		Timestamp: u.clock.Now(),
-	})
 }

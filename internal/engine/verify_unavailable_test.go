@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -148,4 +149,53 @@ func TestVerifyChecksThePulledDigest(t *testing.T) {
 	if len(mv.calls) != 1 || mv.calls[0] != "docker.io/library/nginx@sha256:bbb" {
 		t.Errorf("verified %v, want the pulled digest in nginx's repository", mv.calls)
 	}
+}
+
+// Keyless verification without an identity refuses every enforced update;
+// like a missing cosign, each refusal is a failed history row, and a scan
+// sends one notification naming the settings to set.
+func TestScanRefusesKeylessWithoutIdentityVisibly(t *testing.T) {
+	mock := newMockDocker()
+	auto := map[string]string{"sentinel.policy": "auto"}
+	for _, c := range []struct{ id, name string }{{"aaa", "nginx"}, {"bbb", "redis"}} {
+		ref := "localhost:1/" + c.name + ":latest"
+		mock.containers = append(mock.containers, container.Summary{ID: c.id, Names: []string{"/" + c.name}, Image: ref, Labels: auto})
+		mock.imageDigests[ref] = "localhost:1/" + c.name + "@sha256:old"
+		mock.distDigests[ref] = "sha256:new"
+		mock.inspectResults[c.id] = container.InspectResponse{
+			ID: c.id, Name: "/" + c.name,
+			Config:          &container.Config{Image: ref, Labels: auto},
+			HostConfig:      &container.HostConfig{},
+			NetworkSettings: &container.NetworkSettings{},
+		}
+	}
+	u, clk := newTestUpdater(t, mock)
+	u.clock = tickClock{clk} // history rows are keyed by time
+	u.SetVerifier(verify.New(nil, verify.WithCosignPath("/nonexistent/cosign"), verify.WithKeyless()))
+	u.SetVerifyMode(verify.ModeEnforce)
+	rec := recordNotifications(u)
+
+	result := u.Scan(context.Background(), ScanScheduled)
+
+	if result.Failed != 2 || len(mock.pullCalls) != 0 {
+		t.Errorf("failed = %d, pulls = %d, want both refused before any pull", result.Failed, len(mock.pullCalls))
+	}
+	failed := rec.ofType(notify.EventUpdateFailed)
+	if len(failed) != 1 || !slices.Equal(failed[0].ContainerNames, []string{"nginx", "redis"}) || !strings.Contains(failed[0].Error, "cosign_identity") {
+		t.Errorf("failure notifications = %+v, want one naming both and the settings to set", failed)
+	}
+	for _, name := range []string{"nginx", "redis"} {
+		history, _ := u.store.ListHistoryByContainer(name, 10)
+		if len(history) != 1 || history[0].Outcome != "failed" || !strings.Contains(history[0].Error, "cosign_oidc_issuer") {
+			t.Errorf("%s history = %+v, want a failed row naming the settings", name, history)
+		}
+	}
+}
+
+// tickClock moves on a second each time it is read.
+type tickClock struct{ *mockClock }
+
+func (c tickClock) Now() time.Time {
+	c.Advance(time.Second)
+	return c.mockClock.Now()
 }

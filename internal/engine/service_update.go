@@ -11,7 +11,6 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
-	"github.com/Will-Luck/Docker-Sentinel/internal/verify"
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/robfig/cron/v3"
 )
@@ -343,8 +342,8 @@ func (u *Updater) UpdateService(ctx context.Context, serviceID, name, targetImag
 	}
 	// Signature verification gate, as for containers.
 	verifyMode := u.verifyModeFor(svc.Spec.Labels)
-	if verifyMode == verify.ModeEnforce && u.imgVerifier == nil {
-		return u.refuseUnverifiable(name, oldImage, containerSpec.Image, "", "service", start)
+	if reason := u.unverifiable(verifyMode); reason != nil {
+		return u.refuseUnverifiable(name, oldImage, containerSpec.Image, "", "service", start, reason)
 	}
 	if err := u.checkSignature(ctx, name, containerSpec.Image, verifyMode); err != nil {
 		return err

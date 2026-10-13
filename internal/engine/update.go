@@ -96,8 +96,8 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 	// An update that must have its signature checked is refused, before
 	// anything changes, when there is no verifier to check it.
 	verifyMode := u.verifyModeFor(inspect.Config.Labels)
-	if verifyMode == verify.ModeEnforce && u.imgVerifier == nil {
-		return u.refuseUnverifiable(name, oldImage, pullImage, extractDigestForRecord(inspect), "", start)
+	if reason := u.unverifiable(verifyMode); reason != nil {
+		return u.refuseUnverifiable(name, oldImage, pullImage, extractDigestForRecord(inspect), "", start, reason)
 	}
 
 	u.log.Info("starting update", "name", name, "image", oldImage)

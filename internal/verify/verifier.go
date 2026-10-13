@@ -139,6 +139,18 @@ func New(log Logger, opts ...Option) *Verifier {
 	return v
 }
 
+// Problem returns why every check would fail as configured, or "": today
+// only keyless verification without an identity (MissingKeylessIdentity).
+func (v *Verifier) Problem() string {
+	if v.keyPath != "" || !v.keyless {
+		return ""
+	}
+	if v.identity == nil || !v.identity().Complete() {
+		return MissingKeylessIdentity
+	}
+	return ""
+}
+
 // Available checks whether the cosign binary is installed and reachable.
 func (v *Verifier) Available() bool {
 	_, err := exec.LookPath(v.cosignPath)
