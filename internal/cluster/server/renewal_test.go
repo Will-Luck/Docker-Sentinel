@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -340,28 +341,42 @@ func sendCSR(t *testing.T, stream proto.AgentService_ChannelClient, csrDER []byt
 	}
 }
 
+// refusedRenewal sends csrDER on a fresh agent stream of srv and checks the
+// hub refused it: no reply, the stream still open and the host connected,
+// and the reason in the hub log.
+func refusedRenewal(t *testing.T, srv *Server, logs *syncBuffer, stream proto.AgentService_ChannelClient, hostID string, csrDER []byte, reason string) {
+	t.Helper()
+	if sendCSR(t, stream, csrDER, 500*time.Millisecond) {
+		t.Fatal("hub signed a renewal it should have refused")
+	}
+	if err := stream.Context().Err(); err != nil {
+		t.Errorf("agent stream closed after a refused renewal: %v", err)
+	}
+	if hs, _ := srv.Registry().Get(hostID); !hs.Connected || hs.Info.PendingCertSerial != "" {
+		t.Errorf("after a refused renewal: connected=%v pending=%q, want connected and no pending serial", hs.Connected, hs.Info.PendingCertSerial)
+	}
+	if out := logs.String(); !strings.Contains(out, "cert renewal refused") || !strings.Contains(out, reason) {
+		t.Errorf("hub log does not give the refusal reason %q:\n%s", reason, out)
+	}
+}
+
 // The hub signs a renewal only for a certificate that is due for one. A
 // freshly enrolled agent (or a stolen key) cannot mint certificates at will.
 func TestCertRenewal_RefusedWhenNotDue(t *testing.T) {
-	srv, addr, _, _ := testServer(t)
+	srv, addr, logs := testServerWithLog(t)
 	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
 	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
 	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
 	defer closeConn()
 
 	csrDER, _ := renewalCSR(t, hostID)
-	if sendCSR(t, stream, csrDER, 500*time.Millisecond) {
-		t.Error("hub renewed a certificate that was issued moments ago")
-	}
-	if hs, _ := srv.Registry().Get(hostID); hs.Info.PendingCertSerial != "" {
-		t.Errorf("pending serial %s recorded for a refused renewal", hs.Info.PendingCertSerial)
-	}
+	refusedRenewal(t, srv, logs, stream, hostID, csrDER, "not due for renewal")
 }
 
 // A renewal must come with a new key.
 func TestCertRenewal_RefusedWhenReusingTheCurrentKey(t *testing.T) {
 	allowRenewalNow(t)
-	srv, addr, _, _ := testServer(t)
+	srv, addr, logs := testServerWithLog(t)
 	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
 	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
 	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
@@ -376,15 +391,13 @@ func TestCertRenewal_RefusedWhenReusingTheCurrentKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sendCSR(t, stream, csrDER, 500*time.Millisecond) {
-		t.Error("hub renewed a certificate for the key already in use")
-	}
+	refusedRenewal(t, srv, logs, stream, hostID, csrDER, "reuses the key")
 }
 
 // At most one renewal per host in a short window, however often it asks.
 func TestCertRenewal_AtMostOnePerHostPerInterval(t *testing.T) {
 	allowRenewalNow(t)
-	srv, addr, _, _ := testServer(t)
+	srv, addr, logs := testServerWithLog(t)
 	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
 	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
 	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
@@ -394,8 +407,18 @@ func TestCertRenewal_AtMostOnePerHostPerInterval(t *testing.T) {
 	if !sendCSR(t, stream, first, 3*time.Second) {
 		t.Fatal("first renewal was not answered")
 	}
+	pending := srv.Registry().pendingSerial(hostID)
 	second, _ := renewalCSR(t, hostID)
 	if sendCSR(t, stream, second, 500*time.Millisecond) {
-		t.Error("hub signed a second renewal for the same host straight away")
+		t.Fatal("hub signed a second renewal for the same host straight away")
+	}
+	if err := stream.Context().Err(); err != nil {
+		t.Errorf("agent stream closed after a refused renewal: %v", err)
+	}
+	if got := srv.Registry().pendingSerial(hostID); got != pending {
+		t.Errorf("pending serial changed from %s to %s on a refused renewal", pending, got)
+	}
+	if out := logs.String(); !strings.Contains(out, "renewed for this host minutes ago") {
+		t.Errorf("hub log does not give the rate-limit reason:\n%s", out)
 	}
 }
