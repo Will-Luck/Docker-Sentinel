@@ -105,3 +105,46 @@ func TestFailedRollbackIsRecordedAsFailed(t *testing.T) {
 		t.Errorf("history = %+v, want one failed row saying the rollback failed", history)
 	}
 }
+
+// A stop timeout longer than the swap's own time budget still gets its full
+// time: the swap's context allows for it (it allowed 3 minutes in all, so a
+// 5-minute stop_grace_period was cut off and the old container left down).
+func TestSwapAllowsTheWholeStopTimeout(t *testing.T) {
+	f, u, old := setupFakeUpdate(t, true, nil)
+	long := 300
+	old.cfg.StopTimeout = &long
+
+	if err := u.UpdateContainer(context.Background(), "old", "app", ""); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if got := f.stopBudget["old"]; got < 300*time.Second {
+		t.Errorf("the stop had %v left on its context, want at least the 300s stop timeout", got)
+	}
+}
+
+// If a stop still runs out of time, its outcome is unknown: the undo starts
+// the old container if it stopped, and keeps the journal record (with the
+// stop in flight) so recovery watches it, instead of forgetting it.
+func TestUndoAfterAStopThatTimedOut(t *testing.T) {
+	savedTimeout, savedMargin := swapTimeout, swapStopMargin
+	swapTimeout, swapStopMargin = 50*time.Millisecond, 0
+	defer func() { swapTimeout, swapStopMargin = savedTimeout, savedMargin }()
+	f, u, _ := setupFakeUpdate(t, true, nil)
+	f.stopBlocks = map[string]bool{"old": true}
+	old, _ := f.InspectContainer(context.Background(), "old")
+	sw := newSwap(f, u.log, u.store, swapSpec{kind: swapUpdate, name: "app", oldID: "old", old: old, snapshot: []byte(`{}`)})
+
+	if err := sw.replace(context.Background(), recreateFrom(old), true, nil); err == nil {
+		t.Fatal("expected the stop to run out of time")
+	}
+	if err := sw.undo(context.Background()); err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	if c := f.byName("app"); c == nil || c.id != "old" || !c.running {
+		t.Errorf("containers = %v, want the old container back and running", f.names())
+	}
+	recs := journal(t, u)
+	if len(recs) != 1 || !recs[0].Stopping {
+		t.Errorf("journal = %+v, want the record kept with the stop in flight", recs)
+	}
+}

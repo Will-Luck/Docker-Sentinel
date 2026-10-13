@@ -57,7 +57,18 @@ func (u *Updater) setAside(name string) bool {
 // swapTimeout bounds each group of Docker calls in a swap. The calls run
 // without the caller's cancellation, so a shutdown cannot stop a swap
 // halfway and leave the container missing.
-const swapTimeout = 3 * time.Minute
+var swapTimeout = 3 * time.Minute // a variable so tests can shorten it
+
+// swapBudget is the time a group of swap calls that includes stopping a
+// container gets: swapTimeout plus the stop timeout (in seconds) and a
+// margin, so a container's own long stop timeout is never cut short.
+func swapBudget(stopSeconds int) time.Duration {
+	return swapTimeout + time.Duration(max(stopSeconds, 0))*time.Second + swapStopMargin
+}
+
+// swapStopMargin is the margin swapBudget adds (a variable so tests can
+// shorten it).
+var swapStopMargin = stopWatchMargin
 
 // Swap kinds, recorded in the journal.
 const (
@@ -186,7 +197,7 @@ func newSwapToken() string {
 // running). verify, if set, checks the created container before the old
 // one is stopped. On error, call undo (or undoOrRetry) when changed().
 func (s *swap) replace(ctx context.Context, rc docker.Recreate, start bool, verify func(ctx context.Context, id string) error) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapBudget(s.stopTimeout))
 	defer cancel()
 
 	if err := s.resolvePending(ctx); err != nil {
@@ -333,7 +344,7 @@ func (s *swap) changed() bool {
 // not stop it starting the old container (under its set-aside name if need
 // be), so the service runs meanwhile. It can be called again.
 func (s *swap) undo(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapBudget(s.stopTimeout))
 	defer cancel()
 
 	if s.newID != "" {
@@ -374,6 +385,14 @@ func (s *swap) undo(ctx context.Context) error {
 			s.restartChanged = false
 		}
 	}
+	// A stop that did not return (it ran out of time) may have stopped the
+	// old container, or may still be going in the daemon.
+	stopUnknown := !s.stopped && s.rec.Stopping
+	if stopUnknown {
+		if old, err := s.d.InspectContainer(ctx, s.oldID); err == nil && old.State != nil && !old.State.Running {
+			s.stopped = true
+		}
+	}
 	if s.stopped {
 		if err := s.d.StartContainer(ctx, s.oldID); err != nil {
 			return fmt.Errorf("start the old container again: %w", err)
@@ -385,6 +404,12 @@ func (s *swap) undo(ctx context.Context) error {
 	}
 	if policyErr != nil {
 		return fmt.Errorf("restore the old container's restart policy: %w", policyErr)
+	}
+	if stopUnknown {
+		// The daemon may still stop the old container: keep the record, with
+		// the stop in flight, so recovery watches it (see resolvePendingSwap).
+		s.log.Warn("the old container is back, but its stop did not return; recovery watches it", "name", s.name)
+		return nil
 	}
 	if s.rec.FailedName != "" {
 		// The old container is back; the record stays so recovery removes
@@ -860,7 +885,7 @@ func (u *Updater) checkWatched(ctx context.Context, name string, now time.Time) 
 		return // resolved meanwhile
 	}
 	// Once begun, a check runs to its end, like a swap.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapTimeout)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), swapBudget(rec.StopTimeout))
 	defer cancel()
 	if now.Before(rec.WatchUntil) {
 		c, err := u.docker.InspectContainer(ctx, rec.OldID)

@@ -69,7 +69,9 @@ type fakeDocker struct {
 	slowStop     map[string]bool
 	pendingStops []string
 
-	stopTimeouts map[string]int // the last stop timeout given, by container ID
+	stopTimeouts map[string]int           // the last stop timeout given, by container ID
+	stopBudget   map[string]time.Duration // time left on the stop call's context, by ID
+	stopBlocks   map[string]bool          // the stop does not return until its context ends
 
 	// Crash injection: once crashAfter container calls have been made, every
 	// later call panics with errCrash (crashPanics, a process crash) or
@@ -366,7 +368,19 @@ func (f *fakeDocker) StartContainer(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeDocker) StopContainer(_ context.Context, id string, timeout int) error {
+func (f *fakeDocker) StopContainer(ctx context.Context, id string, timeout int) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		f.fmu.Lock()
+		if f.stopBudget == nil {
+			f.stopBudget = make(map[string]time.Duration)
+		}
+		f.stopBudget[id] = time.Until(deadline)
+		f.fmu.Unlock()
+	}
+	if f.stopBlocks[id] {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	if err := f.tick(); err != nil {
 		return err
 	}
