@@ -1305,3 +1305,9 @@ table.managing .td-checkbox {
     color: var(--fg-muted);
 }
 
+
+/* A cluster stack's rows, hidden when the stack is collapsed. A class rather
+   than inline display, so the stat cards still count them. */
+.stack-row-collapsed {
+    display: none;
+}

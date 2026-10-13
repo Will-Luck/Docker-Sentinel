@@ -51,7 +51,7 @@ function updateContainerRow(name, hostId) {
     var enc = encodeURIComponent(name);
     var url = "/api/containers/" + enc + "/row";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
-    authFetchJSON(url)
+    return authFetchJSON(url)
         .then(function(data) {
             if (!data.html) return;
 
@@ -178,7 +178,8 @@ function reapplyBadgeSpinners() {
         var parts = key.split("::");
         var h = parts[0], n = parts[1];
         var selector = '.status-badge-wrap[data-name="' + n + '"]';
-        if (h) selector += '[data-host-id="' + h + '"]';
+        // A local row has an empty host: match only rows with no host.
+        selector += '[data-host-id="' + h + '"]';
         var wrap = document.querySelector(selector);
         if (wrap) wrap.setAttribute("data-pending", "");
     }

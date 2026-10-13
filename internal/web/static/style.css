@@ -2118,6 +2118,9 @@ table.managing .td-checkbox {
   background: var(--bg-hover);
   color: var(--fg-muted);
 }
+.stack-row-collapsed {
+  display: none;
+}
 
 /* internal/web/static/src/css/queue.css */
 .policy-select {

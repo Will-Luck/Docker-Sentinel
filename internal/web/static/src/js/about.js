@@ -335,11 +335,13 @@ function renderReleaseSources() {
 }
 
 function addReleaseSource() {
+    releaseSources = collectReleaseSourcesFromDOM(); // keep what is typed on the other rows
     releaseSources.push({ image_pattern: "", github_repo: "" });
     renderReleaseSources();
 }
 
 function deleteReleaseSource(index) {
+    releaseSources = collectReleaseSourcesFromDOM(); // keep what is typed on the other rows
     releaseSources.splice(index, 1);
     renderReleaseSources();
 }

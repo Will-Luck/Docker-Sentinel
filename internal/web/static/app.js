@@ -212,7 +212,7 @@
       });
     });
   }
-  function apiPost2(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
+  function apiPost2(url, body, successMsg, errorMsg, triggerEl, onSuccess, onError) {
     var opts = { method: "POST" };
     if (body) {
       opts.headers = { "Content-Type": "application/json" };
@@ -238,11 +238,13 @@
         if (onSuccess) onSuccess(result.data);
       } else {
         showToast(result.data.error || errorMsg, "error");
+        if (onError) onError();
       }
       clearLoading();
     }).catch(function() {
       clearLoading();
       showToast("Network error \u2014 " + errorMsg.toLowerCase(), "error");
+      if (onError) onError();
     });
   }
   function apiFetch(url, opts) {
@@ -500,7 +502,7 @@
     }
     var sibling = headerRow.nextElementSibling;
     while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
-      sibling.style.display = collapsed ? "none" : "";
+      sibling.classList.toggle("stack-row-collapsed", collapsed);
       sibling = sibling.nextElementSibling;
     }
   }
@@ -539,7 +541,7 @@
       if (chevron) chevron.style.transform = "rotate(90deg)";
       var sibling = hostStackHeaders[i].nextElementSibling;
       while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
-        sibling.style.display = "";
+        sibling.classList.remove("stack-row-collapsed");
         sibling = sibling.nextElementSibling;
       }
     }
@@ -568,7 +570,7 @@
       if (chevron) chevron.style.transform = "rotate(0deg)";
       var sibling = hostStackHeaders[i].nextElementSibling;
       while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
-        sibling.style.display = "none";
+        sibling.classList.add("stack-row-collapsed");
         sibling = sibling.nextElementSibling;
       }
     }
@@ -619,12 +621,24 @@
     }
     updateSelectionUI();
   }
+  function stackRowCheckboxes(stackCb) {
+    var group = stackCb.closest("tbody.stack-group");
+    if (group) return Array.prototype.slice.call(group.querySelectorAll(".row-select"));
+    var header = stackCb.closest("tr.stack-header");
+    var found = [];
+    var sibling = header ? header.nextElementSibling : null;
+    while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
+      var cb = sibling.querySelector ? sibling.querySelector(".row-select") : null;
+      if (cb) found.push(cb);
+      sibling = sibling.nextElementSibling;
+    }
+    return found;
+  }
   function recomputeSelectionState() {
-    var stacks = document.querySelectorAll("tbody.stack-group");
+    var stacks = document.querySelectorAll(".stack-select");
     for (var s = 0; s < stacks.length; s++) {
-      var stackCb = stacks[s].querySelector(".stack-select");
-      if (!stackCb) continue;
-      var rows = stacks[s].querySelectorAll(".row-select");
+      var stackCb = stacks[s];
+      var rows = stackRowCheckboxes(stackCb);
       var total = rows.length;
       var checked = 0;
       for (var r = 0; r < rows.length; r++) {
@@ -1541,13 +1555,20 @@
       }
     }, 180);
   }
+  function isTagList(tags) {
+    return Array.isArray(tags);
+  }
   function toggleQueueAccordion(index) {
     var panel = document.getElementById("accordion-queue-" + index);
     if (!panel) return;
+    toggleQueuePanelAfter(panel.previousElementSibling);
+  }
+  function toggleQueuePanelAfter(row) {
+    var panel = row ? row.nextElementSibling : null;
+    if (!panel) return;
     var visible = panel.style.display !== "none";
     panel.style.display = visible ? "none" : "";
-    var row = panel.previousElementSibling;
-    var chevron = row ? row.querySelector(".queue-expand") : null;
+    var chevron = row.querySelector(".queue-expand");
     if (chevron) chevron.textContent = visible ? "\u25B8" : "\u25BE";
   }
   function approveUpdate(key, event) {
@@ -1704,11 +1725,11 @@
     var btn = event && event.target ? event.target.closest(".badge-action") : null;
     var url = "/api/update/" + encodeURIComponent(name);
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
+    var key = (hostId || "") + "::" + name;
     if (btn) {
       btn.classList.add("loading");
       btn.disabled = true;
       window._updateLoadingBtns = window._updateLoadingBtns || {};
-      var key = (hostId || "") + "::" + name;
       window._updateLoadingBtns[key] = btn;
       setTimeout(function() {
         if (window._updateLoadingBtns && window._updateLoadingBtns[key]) {
@@ -1722,7 +1743,16 @@
       url,
       null,
       "Update started for " + name,
-      "Failed to trigger update"
+      "Failed to trigger update",
+      null,
+      null,
+      function() {
+        if (window._updateLoadingBtns && window._updateLoadingBtns[key]) {
+          window._updateLoadingBtns[key].classList.remove("loading");
+          window._updateLoadingBtns[key].disabled = false;
+          delete window._updateLoadingBtns[key];
+        }
+      }
     );
   }
   function triggerCheck(name, event, hostId) {
@@ -1747,14 +1777,20 @@
       btn
     );
   }
-  function changePolicy(name, newPolicy, hostId) {
+  function changePolicy(name, newPolicy, hostId, onSuccess, onError) {
     var url = "/api/containers/" + encodeURIComponent(name) + "/policy";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     apiPost2(
       url,
       { policy: newPolicy },
       "Policy changed to " + newPolicy + " for " + name,
-      "Failed to change policy"
+      "Failed to change policy",
+      null,
+      onSuccess,
+      function() {
+        if (window.updateContainerRow) window.updateContainerRow(name, hostId || "");
+        if (onError) onError();
+      }
     );
   }
   function triggerScan(event) {
@@ -1822,10 +1858,21 @@
     if (!name) return;
     var body = document.getElementById("all-tags-body");
     var preview = document.getElementById("all-tags-preview");
+    if (window._containerHostId) {
+      if (body) body.innerHTML = '<div class="accordion-empty">Tag lookup is not available for containers on other hosts.</div>';
+      if (preview) preview.textContent = "n/a";
+      return;
+    }
     fetch("/api/containers/" + encodeURIComponent(name) + "/tags").then(function(r) {
       return r.json();
     }).then(function(tags) {
-      if (!tags || tags.length === 0) {
+      if (!isTagList(tags)) {
+        var msg = tags && tags.error ? tags.error : "Failed to load tags.";
+        if (body) body.innerHTML = '<div class="accordion-empty">' + escapeHTML(msg) + "</div>";
+        if (preview) preview.textContent = "Error";
+        return;
+      }
+      if (tags.length === 0) {
         if (body) body.innerHTML = '<div class="accordion-empty">No tags found.</div>';
         if (preview) preview.textContent = "None";
         return;
@@ -2066,7 +2113,7 @@
       case " ":
         if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
           e.preventDefault();
-          toggleQueueAccordion(_kbFocusIndex);
+          toggleQueuePanelAfter(rows[_kbFocusIndex]);
         }
         break;
       case "a":
@@ -2438,7 +2485,7 @@
     var enc = encodeURIComponent(name);
     var url = "/api/containers/" + enc + "/row";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
-    authFetchJSON(url).then(function(data) {
+    return authFetchJSON(url).then(function(data) {
       if (!data.html) return;
       updateStats2(data.total, data.running, data.pending);
       var temp = document.createElement("tbody");
@@ -2535,7 +2582,7 @@
       var parts = key.split("::");
       var h = parts[0], n = parts[1];
       var selector = '.status-badge-wrap[data-name="' + n + '"]';
-      if (h) selector += '[data-host-id="' + h + '"]';
+      selector += '[data-host-id="' + h + '"]';
       var wrap = document.querySelector(selector);
       if (wrap) wrap.setAttribute("data-pending", "");
     }
@@ -4327,9 +4374,11 @@
         showToast("Cluster settings saved", "success");
       } else {
         showToast(result.data.error || "Failed to save cluster settings", "error");
+        loadClusterSettings();
       }
     }).catch(function() {
       showToast("Network error -- could not save cluster settings", "error");
+      loadClusterSettings();
     });
   }
 
@@ -4572,6 +4621,7 @@
   function addChannel() {
     var select = document.getElementById("channel-type-select");
     if (!select || !select.value) return;
+    collectChannelsFromDOM();
     var type = select.value;
     var name = type.charAt(0).toUpperCase() + type.slice(1);
     var defaultEvents = [];
@@ -4592,6 +4642,7 @@
   }
   function deleteChannel(index) {
     if (index < 0 || index >= notificationChannels.length) return;
+    collectChannelsFromDOM();
     var name = notificationChannels[index].name || notificationChannels[index].type;
     notificationChannels.splice(index, 1);
     renderChannels();
@@ -4696,7 +4747,7 @@
     var btn = document.querySelectorAll('.channel-card[data-index="' + index + '"] .btn')[0];
     apiPost2(
       "/api/settings/notifications/test",
-      { id: ch.id },
+      { id: ch.id, channel: ch },
       "Test sent to " + (ch.name || ch.type),
       "Test failed for " + (ch.name || ch.type),
       btn
@@ -5477,12 +5528,14 @@
     }
     var reg = select.value;
     var id = "reg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
+    collectRegistryCredentialsFromDOM();
     registryCredentials.push({ id, registry: reg, username: "", secret: "" });
     select.value = "";
     renderRegistryCredentials();
     showToast("Added " + reg + " \u2014 enter credentials and save", "info");
   }
   function deleteRegistryCredential(index) {
+    collectRegistryCredentialsFromDOM();
     registryCredentials.splice(index, 1);
     renderRegistryCredentials();
     showToast("Credential removed \u2014 save to persist", "info");
@@ -5863,10 +5916,12 @@
     });
   }
   function addReleaseSource() {
+    releaseSources = collectReleaseSourcesFromDOM();
     releaseSources.push({ image_pattern: "", github_repo: "" });
     renderReleaseSources();
   }
   function deleteReleaseSource(index) {
+    releaseSources = collectReleaseSourcesFromDOM();
     releaseSources.splice(index, 1);
     renderReleaseSources();
   }
@@ -6740,13 +6795,10 @@
           return;
         }
         if (target.classList.contains("stack-select")) {
-          var tbody = target.closest("tbody.stack-group");
-          if (tbody) {
-            var rows = tbody.querySelectorAll(".row-select");
-            for (var i = 0; i < rows.length; i++) {
-              rows[i].checked = target.checked;
-              selectedContainers[checkboxKey(rows[i])] = target.checked;
-            }
+          var rows = stackRowCheckboxes(target);
+          for (var i = 0; i < rows.length; i++) {
+            rows[i].checked = target.checked;
+            selectedContainers[checkboxKey(rows[i])] = target.checked;
           }
           recomputeSelectionState();
           return;
@@ -6784,7 +6836,13 @@
         endpoint,
         null,
         label + " initiated for " + name,
-        "Failed to " + action + " " + name
+        "Failed to " + action + " " + name,
+        null,
+        null,
+        function() {
+          delete pendingBadgeActions[actionKey];
+          wrap.removeAttribute("data-pending");
+        }
       );
     });
   });

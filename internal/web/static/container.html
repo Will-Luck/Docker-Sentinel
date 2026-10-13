@@ -446,13 +446,17 @@
     }
 
     function changePolicyRadio(policy) {
-        changePolicy(_containerName, policy, _containerHostId);
-        // Update the preview badge in the accordion header
-        var preview = document.querySelector('[data-policy-preview]');
-        if (preview) {
-            preview.textContent = policy;
-            preview.className = "accordion-preview badge " + (policyBadgeClass[policy] || "badge-muted");
-        }
+        // Update the preview badge in the accordion header once the save has
+        // gone through; if it fails, put the page back as the server has it.
+        changePolicy(_containerName, policy, _containerHostId, function () {
+            var preview = document.querySelector('[data-policy-preview]');
+            if (preview) {
+                preview.textContent = policy;
+                preview.className = "accordion-preview badge " + (policyBadgeClass[policy] || "badge-muted");
+            }
+        }, function () {
+            window.location.reload();
+        });
     }
 
     function copyContainerID() {

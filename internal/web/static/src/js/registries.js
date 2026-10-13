@@ -376,6 +376,7 @@ function addRegistryCredential() {
     }
     var reg = select.value;
     var id = "reg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9);
+    collectRegistryCredentialsFromDOM(); // keep what is typed on the other rows
     registryCredentials.push({ id: id, registry: reg, username: "", secret: "" });
     select.value = "";
     renderRegistryCredentials();
@@ -383,6 +384,7 @@ function addRegistryCredential() {
 }
 
 function deleteRegistryCredential(index) {
+    collectRegistryCredentialsFromDOM(); // keep what is typed on the other rows
     registryCredentials.splice(index, 1);
     renderRegistryCredentials();
     showToast("Credential removed \u2014 save to persist", "info");

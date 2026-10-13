@@ -68,13 +68,26 @@ function removeQueueRow(btn) {
     }, 180);
 }
 
+// isTagList reports whether a tags response is a list rather than an error body.
+function isTagList(tags) {
+    return Array.isArray(tags);
+}
+
 function toggleQueueAccordion(index) {
     var panel = document.getElementById("accordion-queue-" + index);
     if (!panel) return;
+    toggleQueuePanelAfter(panel.previousElementSibling);
+}
+
+// toggleQueuePanelAfter shows or hides the details panel that follows a row.
+// Rows are removed without renumbering, so the keyboard handler goes by the
+// row itself, not by its position.
+function toggleQueuePanelAfter(row) {
+    var panel = row ? row.nextElementSibling : null;
+    if (!panel) return;
     var visible = panel.style.display !== "none";
     panel.style.display = visible ? "none" : "";
-    var row = panel.previousElementSibling;
-    var chevron = row ? row.querySelector(".queue-expand") : null;
+    var chevron = row.querySelector(".queue-expand");
     if (chevron) chevron.textContent = visible ? "\u25B8" : "\u25BE";
 }
 
@@ -243,13 +256,13 @@ function triggerUpdate(name, event, hostId) {
     var btn = event && event.target ? event.target.closest(".badge-action") : null;
     var url = "/api/update/" + encodeURIComponent(name);
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
+    var key = (hostId || "") + "::" + name;
     // Same pattern as triggerSvcUpdate: manage loading state ourselves,
     // don't pass btn to apiPost, let SSE handle the row refresh.
     if (btn) {
         btn.classList.add("loading");
         btn.disabled = true;
         window._updateLoadingBtns = window._updateLoadingBtns || {};
-        var key = (hostId || "") + "::" + name;
         window._updateLoadingBtns[key] = btn;
         setTimeout(function() {
             if (window._updateLoadingBtns && window._updateLoadingBtns[key]) {
@@ -261,7 +274,17 @@ function triggerUpdate(name, event, hostId) {
     }
     apiPost(url, null,
         "Update started for " + name,
-        "Failed to trigger update"
+        "Failed to trigger update",
+        null,
+        null,
+        function() {
+            // The request failed, so no SSE event will end the spinner.
+            if (window._updateLoadingBtns && window._updateLoadingBtns[key]) {
+                window._updateLoadingBtns[key].classList.remove("loading");
+                window._updateLoadingBtns[key].disabled = false;
+                delete window._updateLoadingBtns[key];
+            }
+        }
     );
 }
 
@@ -289,14 +312,21 @@ function triggerRollback(name, event) {
     );
 }
 
-function changePolicy(name, newPolicy, hostId) {
+function changePolicy(name, newPolicy, hostId, onSuccess, onError) {
     var url = "/api/containers/" + encodeURIComponent(name) + "/policy";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
     apiPost(
         url,
         { policy: newPolicy },
         "Policy changed to " + newPolicy + " for " + name,
-        "Failed to change policy"
+        "Failed to change policy",
+        null,
+        onSuccess,
+        function() {
+            // The save failed: show what the server has, not what was clicked.
+            if (window.updateContainerRow) window.updateContainerRow(name, hostId || "");
+            if (onError) onError();
+        }
     );
 }
 
@@ -371,10 +401,22 @@ function loadAllTags(summaryEl) {
     var body = document.getElementById("all-tags-body");
     var preview = document.getElementById("all-tags-preview");
 
+    if (window._containerHostId) {
+        if (body) body.innerHTML = '<div class="accordion-empty">Tag lookup is not available for containers on other hosts.</div>';
+        if (preview) preview.textContent = "n/a";
+        return;
+    }
+
     fetch("/api/containers/" + encodeURIComponent(name) + "/tags")
         .then(function(r) { return r.json(); })
         .then(function(tags) {
-            if (!tags || tags.length === 0) {
+            if (!isTagList(tags)) {
+                var msg = (tags && tags.error) ? tags.error : "Failed to load tags.";
+                if (body) body.innerHTML = '<div class="accordion-empty">' + escapeHTML(msg) + '</div>';
+                if (preview) preview.textContent = "Error";
+                return;
+            }
+            if (tags.length === 0) {
                 if (body) body.innerHTML = '<div class="accordion-empty">No tags found.</div>';
                 if (preview) preview.textContent = "None";
                 return;
@@ -672,7 +714,7 @@ function _onQueueKeydown(e) {
         case " ":
             if (_kbFocusIndex >= 0 && _kbFocusIndex < rows.length) {
                 e.preventDefault();
-                toggleQueueAccordion(_kbFocusIndex);
+                toggleQueuePanelAfter(rows[_kbFocusIndex]);
             }
             break;
 

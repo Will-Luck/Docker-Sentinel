@@ -178,7 +178,7 @@ function showConfirm(title, bodyHTML, opts) {
    5. apiPost helper (shared fetch wrapper)
    ------------------------------------------------------------ */
 
-function apiPost(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
+function apiPost(url, body, successMsg, errorMsg, triggerEl, onSuccess, onError) {
     var opts = { method: "POST" };
     if (body) {
         opts.headers = { "Content-Type": "application/json" };
@@ -206,12 +206,14 @@ function apiPost(url, body, successMsg, errorMsg, triggerEl, onSuccess) {
                 if (onSuccess) onSuccess(result.data);
             } else {
                 showToast(result.data.error || errorMsg, "error");
+                if (onError) onError();
             }
             clearLoading();
         })
         .catch(function () {
             clearLoading();
             showToast("Network error \u2014 " + errorMsg.toLowerCase(), "error");
+            if (onError) onError();
         });
 }
 

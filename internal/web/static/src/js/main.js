@@ -38,6 +38,7 @@ import {
     updateSelectionUI,
     clearSelection,
     recomputeSelectionState,
+    stackRowCheckboxes,
     initFilters,
     activateFilter,
     applyFiltersAndSort,
@@ -573,13 +574,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
             // Stack-level select checkbox
             if (target.classList.contains("stack-select")) {
-                var tbody = target.closest("tbody.stack-group");
-                if (tbody) {
-                    var rows = tbody.querySelectorAll(".row-select");
-                    for (var i = 0; i < rows.length; i++) {
-                        rows[i].checked = target.checked;
-                        selectedContainers[checkboxKey(rows[i])] = target.checked;
-                    }
+                var rows = stackRowCheckboxes(target);
+                for (var i = 0; i < rows.length; i++) {
+                    rows[i].checked = target.checked;
+                    selectedContainers[checkboxKey(rows[i])] = target.checked;
                 }
                 recomputeSelectionState();
                 return;
@@ -631,7 +629,14 @@ document.addEventListener("DOMContentLoaded", function () {
             endpoint,
             null,
             label + " initiated for " + name,
-            "Failed to " + action + " " + name
+            "Failed to " + action + " " + name,
+            null,
+            null,
+            function() {
+                // The request failed, so no SSE event will end the spinner.
+                delete pendingBadgeActions[actionKey];
+                wrap.removeAttribute("data-pending");
+            }
         );
     });
 });

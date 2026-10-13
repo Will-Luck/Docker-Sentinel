@@ -367,6 +367,12 @@
     document.addEventListener('DOMContentLoaded', function() {
         if (window.sseSource) {
             window.sseSource.addEventListener('cluster_host', function() {
+                // A reload would throw away an enrolment token that was just
+                // generated and is only shown here. Leave the page alone then.
+                if (window._enrollToken) {
+                    showToast('Hosts changed. Reload the page once you have copied the token.', 'info');
+                    return;
+                }
                 window.location.reload();
             });
         }

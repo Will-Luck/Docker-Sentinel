@@ -94,10 +94,12 @@ function saveClusterSettings() {
                 showToast("Cluster settings saved", "success");
             } else {
                 showToast(result.data.error || "Failed to save cluster settings", "error");
+                loadClusterSettings(); // show what is saved, not what was clicked
             }
         })
         .catch(function() {
             showToast("Network error -- could not save cluster settings", "error");
+            loadClusterSettings();
         });
 }
 

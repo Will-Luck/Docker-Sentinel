@@ -281,6 +281,7 @@ function buildChannelCard(index) {
 function addChannel() {
     var select = document.getElementById("channel-type-select");
     if (!select || !select.value) return;
+    collectChannelsFromDOM(); // keep what is typed on the other cards
 
     var type = select.value;
     var name = type.charAt(0).toUpperCase() + type.slice(1);
@@ -306,6 +307,7 @@ function addChannel() {
 
 function deleteChannel(index) {
     if (index < 0 || index >= notificationChannels.length) return;
+    collectChannelsFromDOM(); // keep what is typed on the other cards
     var name = notificationChannels[index].name || notificationChannels[index].type;
     notificationChannels.splice(index, 1);
     renderChannels();
@@ -410,7 +412,7 @@ function testChannel(index) {
 
     apiPost(
         "/api/settings/notifications/test",
-        { id: ch.id },
+        { id: ch.id, channel: ch },
         "Test sent to " + (ch.name || ch.type),
         "Test failed for " + (ch.name || ch.type),
         btn

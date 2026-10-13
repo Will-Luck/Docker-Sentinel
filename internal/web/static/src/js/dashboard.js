@@ -301,7 +301,9 @@ function toggleStack(headerRow) {
     }
     var sibling = headerRow.nextElementSibling;
     while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
-        sibling.style.display = collapsed ? "none" : "";
+        // A class, not inline display: the stat cards skip rows hidden by a
+        // filter (inline display) but must still count collapsed ones.
+        sibling.classList.toggle("stack-row-collapsed", collapsed);
         sibling = sibling.nextElementSibling;
     }
 }
@@ -345,7 +347,7 @@ function expandAllStacks() {
         if (chevron) chevron.style.transform = "rotate(90deg)";
         var sibling = hostStackHeaders[i].nextElementSibling;
         while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
-            sibling.style.display = "";
+            sibling.classList.remove("stack-row-collapsed");
             sibling = sibling.nextElementSibling;
         }
     }
@@ -378,7 +380,7 @@ function collapseAllStacks() {
         if (chevron) chevron.style.transform = "rotate(0deg)";
         var sibling = hostStackHeaders[i].nextElementSibling;
         while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
-            sibling.style.display = "none";
+            sibling.classList.add("stack-row-collapsed");
             sibling = sibling.nextElementSibling;
         }
     }
@@ -439,13 +441,29 @@ function clearSelection() {
     updateSelectionUI();
 }
 
+// stackRowCheckboxes returns the row checkboxes a stack's select box covers.
+// A local stack is a tbody of its own. In cluster mode a stack is a header
+// row inside a host's tbody, followed by its rows up to the next header.
+function stackRowCheckboxes(stackCb) {
+    var group = stackCb.closest("tbody.stack-group");
+    if (group) return Array.prototype.slice.call(group.querySelectorAll(".row-select"));
+    var header = stackCb.closest("tr.stack-header");
+    var found = [];
+    var sibling = header ? header.nextElementSibling : null;
+    while (sibling && !sibling.classList.contains("stack-header") && !sibling.classList.contains("host-header")) {
+        var cb = sibling.querySelector ? sibling.querySelector(".row-select") : null;
+        if (cb) found.push(cb);
+        sibling = sibling.nextElementSibling;
+    }
+    return found;
+}
+
 function recomputeSelectionState() {
     // Per-stack: set stack checkbox to checked/unchecked/indeterminate.
-    var stacks = document.querySelectorAll("tbody.stack-group");
+    var stacks = document.querySelectorAll(".stack-select");
     for (var s = 0; s < stacks.length; s++) {
-        var stackCb = stacks[s].querySelector(".stack-select");
-        if (!stackCb) continue;
-        var rows = stacks[s].querySelectorAll(".row-select");
+        var stackCb = stacks[s];
+        var rows = stackRowCheckboxes(stackCb);
         var total = rows.length;
         var checked = 0;
         for (var r = 0; r < rows.length; r++) {
@@ -1523,6 +1541,7 @@ export {
     updateSelectionUI,
     clearSelection,
     recomputeSelectionState,
+    stackRowCheckboxes,
     initFilters,
     activateFilter,
     applyFiltersAndSort,
