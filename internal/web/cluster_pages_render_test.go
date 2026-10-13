@@ -74,3 +74,25 @@ func renderAny(t *testing.T, name string, data any) string {
 	}
 	return buf.String()
 }
+
+// The row checkbox is announced with the host's name, not its 32-character ID.
+func TestDashboardRow_CheckboxNamesTheHost(t *testing.T) {
+	s := &Server{}
+	s.parseTemplates()
+	render := func(v containerView) string {
+		var buf bytes.Buffer
+		if err := s.tmpl.ExecuteTemplate(&buf, "container-row", v); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+	id := strings.Repeat("ab", 16)
+	out := render(containerView{Name: "web", Image: "nginx:1", Tag: "1", State: "running", HostID: id, HostName: "Agent One"})
+	if !strings.Contains(out, `aria-label="Select web on Agent One"`) {
+		t.Errorf("checkbox label should use the host name")
+	}
+	out = render(containerView{Name: "web", Image: "nginx:1", Tag: "1", State: "running", HostID: id})
+	if !strings.Contains(out, `aria-label="Select web on `+id+`"`) {
+		t.Errorf("without a name the label falls back to the host ID")
+	}
+}
