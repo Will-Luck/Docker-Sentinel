@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Importing a config export dropped the signature verification settings
+  (`verify_mode`, `cosign_path`, `cosign_keyless`, `cosign_key_path`), so
+  an enforce mode came back disabled. A config import now keeps them.
+- Signature verification checked the tag as the registry served it at
+  check time, so the image could change between the check and the
+  create. Updates now check the digest they pulled, in the image's own
+  repository.
+- Keyless cosign verification accepted a signature from anyone with a
+  Sigstore certificate. It now checks the certificate identity and OIDC
+  issuer set in `cosign_identity` and `cosign_oidc_issuer` (or
+  `SENTINEL_COSIGN_IDENTITY` and `SENTINEL_COSIGN_OIDC_ISSUER`; a saved
+  setting wins), matched exactly or, with `cosign_identity_regexp` /
+  `SENTINEL_COSIGN_IDENTITY_REGEXP` set to true, as regular expressions.
+  Without them keyless checks fail: in enforce mode each refused update
+  is recorded as failed in the history and a scan sends one notification
+  for them, and startup logs a warning naming the two settings. They
+  apply without a restart; switching keyless on or off, the key path and
+  the cosign path still need one.
 - With signature verification set to enforce, updates went ahead without
   any signature check when cosign was not available (the official image
   ships none), with only an info line at startup. Such updates are now
@@ -17,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for them, and startup logs a warning; warn mode still updates and logs
   each one. A mode saved in Settings now applies without a restart, and a
   `sentinel.verify` label is honoured when the global mode is disabled.
+- Swarm service updates never had their image signature checked. They
+  now go through the same gate as containers: enforce blocks an image
+  that fails the check (or any update when cosign is not available), warn
+  logs and updates, and a `sentinel.verify` label on the service wins
+  over the global mode. A digest-only service update checks the exact
+  digest it rolls out.
 - A cluster host being revoked could keep a valid certificate: a
   certificate renewal arriving during the revoke was recorded just before
   the host was removed, and its certificate was never revoked. Revoking
@@ -31,6 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - One connection to the cluster port could open any number of streams,
   each allowed a 64 MB message before any certificate was checked. The
   server now allows 64 streams per connection.
+- An agent enrolling trusted whatever answered at `SENTINEL_SERVER_ADDR`,
+  so anything on the network path could take the one-time token and
+  become that agent's server. Enrolment tokens now end with the
+  fingerprint of the server's CA (`<secret>.<fingerprint>`), the server
+  sends its CA in the TLS handshake, and the agent checks the two match
+  before it sends the token, and again on the CA it receives. Copy the
+  whole token. A token without the fingerprint (from an older server)
+  still enrols, with a warning that the server could not be checked;
+  agents before v3.0.0 can use the new tokens.
 - `GET /api/settings` returned the OIDC client secret, the Nginx Proxy
   Manager password, the inbound webhook secret and the agent enrolment
   token in plaintext to the Viewer role and to tokens with `settings.view`.
@@ -53,6 +86,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential (Basic auth, cookies, passwords as well as tokens and keys) and
   the secret path of the webhook URL when channels are shown to the Viewer
   role or exported without secrets.
+- Single sign-on could take over a local account. Sentinel matched an SSO
+  login to an existing account by username (or email), so anyone who could
+  set their username at the identity provider to `admin` was signed in as the
+  local admin, skipping 2FA. Accounts are now bound to the provider's issuer
+  and subject, and login matches on that pair only. A new SSO identity whose
+  username clashes with an account it is not linked to is refused with a
+  clear message instead of being logged in as that account.
+  - Signed-in users link their SSO identity from the Account page; an
+    administrator can remove the link from the user list.
+  - Upgrade note: nothing links to an existing account by username on its
+    own any more. After upgrading, a user who signed in with SSO under an
+    older version is told "This account is not linked to your sign-in
+    provider yet" and needs one of three things: an admin clicks "Allow SSO
+    link" on the user list (the next SSO login with that username links the
+    account, once, within 24 hours; both steps are written to the activity
+    log), the user signs in with a password and links from the Account page,
+    or you switch on `SENTINEL_OIDC_LINK_EXISTING=true` (or the matching
+    toggle in Settings, which wins over the variable), which links unlinked
+    non-admin accounts by username. Admin accounts, and accounts with 2FA
+    or a passkey, are never linked by that switch.
+  - Recovery for instances whose admins only ever signed in with SSO (their
+    password is unknown, so none of the routes above works): set
+    `SENTINEL_OIDC_LINK_ADMIN=<username>` and restart. The next SSO login
+    with that username links that one account, admin or not, once; Sentinel
+    logs a warning and writes the activity log, and remembers it has been
+    used for that account. Remove the variable afterwards.
+- Settings > Signature Verification now warns when cosign is not found at
+  the configured path inside the container (the Sentinel image does not
+  include it), and says what enforce and warn do without it. Approving an
+  update that the engine refused (signature check or pre-update hook) left
+  two failed rows in the history; it now leaves one.
+- Settings > System Settings has a History retention field (days of update
+  history and activity log to keep; successful updates and rollbacks are kept
+  for good; 0 keeps everything). A value saved there overrides
+  `SENTINEL_HISTORY_RETENTION_DAYS`, and the page says which one is in effect.
+- The first-run setup wizard is served over HTTPS when TLS is configured
+  (`SENTINEL_TLS_AUTO` or a certificate), instead of plain HTTP.
+- The Sentinel container's own row shows its real state instead of always
+  "Running". Fonts are now bundled and served by Sentinel, because the
+  page's CSP blocked Google Fonts. The Cluster page's Server card no longer
+  overflows on a long version string.
+- A 2FA code could be used again within its 30-second window, and a password
+  success cleared the sign-in throttle, so someone holding a password got
+  many more code guesses than intended. A code is now accepted once,
+  entering the password no longer resets the throttle, and a pending 2FA
+  sign-in is thrown away after five wrong codes.
+- Request bodies are capped (64 KB on the public sign-in endpoints, 8 MB
+  elsewhere), closing a container log no longer leaks a goroutine, and the
+  inbound webhook help says the secret goes in the `X-Webhook-Secret` header.
+- Failed stop, start and restart now show an error, settings toggles no longer
+  report success when the save failed, History rows open their details, and
+  a remote container's notification setting is kept under its host.
+- Settings shows whether Trivy is available, has a form for cloud registry
+  logins (ECR, ACR, GCR) and marks registries whose stored login was
+  rejected.
+- Behind a reverse proxy, five failed logins from one attacker blocked
+  sign-in for everyone, because every client shared the proxy's address. Set
+  `SENTINEL_TRUSTED_PROXIES` to the proxy's IP or CIDR range (comma
+  separated) and Sentinel takes the client from `X-Forwarded-For`. With it
+  unset nothing changes.
+- After the first connection, changing the NPM URL or login, or switching NPM
+  off, changed nothing until a restart, and Test connection reported success
+  against the old target. Test now rebuilds from the saved settings and the
+  old connection is dropped.
+- Signature Verification has Signer identity, Identity is a pattern and OIDC
+  issuer fields, shown in keyless mode, because keyless verification now
+  refuses unless the expected signer is set.
+- The 2FA QR code renders again (its library was blocked by the page's CSP),
+  `escapeHTML` escapes quotes, and a refused image removal is counted as
+  failed in Images bulk Remove.
+- A channel's Test button now tests what is on screen (a channel just added or
+  edited but not saved too); it used to test the saved copy or fail with
+  "channel not found".
+- Several small dashboard and settings fixes: adding or removing a
+  notification channel, registry login or release source no longer wipes what
+  was typed on the others; a failed stop, start, restart or update clears its
+  spinner; failed policy and cluster changes are put back as saved; the
+  Cluster page no longer reloads away a new enrolment token; in cluster mode
+  collapsing a stack no longer changes the stat cards and a stack's
+  select-all works; the queue's Enter key opens the focused row; All Registry
+  Tags shows errors properly.
+- A manual Check for updates on a local container reported a new image behind the same tag (for example :latest) as "up to date (newer versions ignored)" and did not queue it. It is now queued, as a scan does.
+- Saving other OIDC settings no longer pins "Link existing accounts by
+  username" over `SENTINEL_OIDC_LINK_EXISTING`: the toggle is stored only
+  when you change it. The opt-in also skips accounts with 2FA or a passkey.
+- NPM Test connection uses the same settings as startup (the environment,
+  then saved settings), and the NPM connection built at startup stops
+  syncing when it is replaced or switched off.
+- An abandoned "Link single sign-on" no longer breaks the next SSO sign-in,
+  and only messages that begin with an action failure show as errors.
 
 ### Added
 
@@ -60,6 +183,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Sentinel could not finish on its own, once you have fixed the containers
   by hand. Sentinel tells you when that is needed, after three failed
   attempts. There is no dashboard button for it yet.
+- Self-update works when Sentinel publishes a host port, for the hub, a
+  standalone instance and an agent. A running container cannot free its own
+  port or database lock before the new one starts, so every earlier attempt
+  rolled back. Sentinel now sets the replacement up and starts a short-lived
+  helper container from the new image (the hidden `self-update-helper`
+  subcommand, with the Docker socket mounted). The helper stops the old
+  container, starts the new one, waits for it to stay up (and healthy, if it
+  has a health check), puts the old one back if it does not, and leaves the
+  outcome in the data directory; the new instance logs it on startup. The
+  replacement is built the same way as every other recreate, so it keeps its
+  networks, anonymous volumes and the new image's defaults. If the Docker
+  socket is not mounted in the Sentinel container (a TCP Docker host), the
+  old in-process swap is used, which still needs no published ports.
+  Leftover `-old-<timestamp>` containers and helpers are removed at start,
+  for agents too.
+- The new Sentinel image goes through the signature gate before a
+  self-update: in enforce mode it is refused when cosign is missing or the
+  signature does not verify, and in warn mode the failure is logged. Agents
+  rely on the hub's check of the target image.
+- Sentinel sends the registry credentials it has stored to the Docker daemon
+  (`X-Registry-Auth`) for every pull and digest lookup, so a private registry
+  no longer needs `docker login` on the host, and for Swarm service updates.
+  For remote hosts the hub sends the credential for the target image's
+  registry with the update request (new optional `registry_auth` field,
+  number 20, on `UpdateContainerRequest`; older agents ignore it).
+- AWS ECR, Azure ACR and Google GCR/Artifact Registry logins, advertised
+  since v2.9 but never connected, now work. Configure a provider by saving
+  JSON under the setting `cloud_auth_ecr` (`region`, `access_key`,
+  `secret_key`), `cloud_auth_acr` (`tenant_id`, `client_id`,
+  `client_secret`, `login_server`) or `cloud_auth_gcr`
+  (`service_account_json`). Tag listing, digest lookups and pulls for a
+  matching host use it when no login is stored for that host.
 
 ### Changed
 
@@ -101,6 +256,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ("cert-renewal", "keepalive") in the reply to an agent's state report.
   Servers and agents on v2.16.x ignore them, so either side keeps working
   with the other.
+- Agents keep their swap journal in their database (`SENTINEL_DB_PATH`, in
+  the data directory), next to the settings of their web UI.
+- The cluster wire format gains optional fields: the images a container
+  ran before and the server's hooks with an update request, a host name in
+  an agent's state report, and remove volumes and image backup in the
+  settings the server sends. Servers and agents before v3.0.0 ignore them.
+- Enrolment tokens are longer: they end with `.<fingerprint>` of the
+  server's CA.
 - One precedence rule for image backup, remove volumes and the rollback
   policy: a value saved on the Settings page overrides the environment
   (`SENTINEL_IMAGE_BACKUP`, `SENTINEL_REMOVE_VOLUMES`,
@@ -127,6 +290,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Cluster page warns on a host card when the same Docker engine is also
   enrolled as another host, so double-counted containers have a visible
   cause.
+- History and the activity log are no longer kept for ever: records older
+  than 90 days are pruned daily (at start-up too). Set
+  `SENTINEL_HISTORY_RETENTION_DAYS`, or the `history_retention_days`
+  setting, which wins over the variable; 0 keeps everything. Records of
+  applied updates and rollbacks are never pruned.
 
 ### Removed
 
@@ -140,6 +308,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- When an update failed and the daemon would not remove the new
+  container, the service stayed down until a later recovery. The failed
+  container is now renamed aside (`<name>-sentinel-failed`) with its
+  restart policy off, the old container gets its name back and starts at
+  once, and recovery removes the set-aside container later. Agents do the
+  same.
+- With image backup on, image cleanup deleted the backed-up image (taking
+  the backup tag with it) for mutable tags, while for versioned tags the
+  backups piled up for good. A backed-up image is now kept by cleanup, so
+  a rollback can use it, and only the newest three backups of each
+  repository are kept.
+- The history recorded an update as rolled back even when the rollback
+  itself failed, and a failed final step wrote a second, contradictory
+  row. A failed rollback is now recorded as failed, with the reason and
+  the rollback error, in one row.
+- When Sentinel was down through an interrupted update, recovery put the
+  old container back without a trace in the update history. Each
+  interrupted update, rollback or recreate that recovery resolves now
+  gets a history row saying what it did (finished it, restored or rebuilt
+  the old container, or kept the replacement).
+- Post-update hooks ran in the updated container just before Sentinel
+  replaced it to remove the maintenance label, so anything a hook did
+  inside the container (and a hook still running) was lost. They now run
+  in the container that stays, after that step.
+- Validation gave up on a healthcheck after a fixed 60 seconds and rolled
+  back containers that were still starting, and every stop Sentinel made
+  cut a container's own longer stop timeout to 30 or 10 seconds. The
+  health wait now follows the healthcheck (start period, interval,
+  timeout and retries, at least 60 seconds and at most 30 minutes), and a
+  container's stop timeout is used when it is longer than Sentinel's,
+  with the time to wait it out in full. If a stop still does not return,
+  the old container is started again and recovery watches it.
+- Maintenance windows: a weekly window over several days (such as
+  `Fri 22:00-Mon 06:00`) was closed on the days between, a `Sat
+  22:00-02:00` window ran on the wrong night, and a window shorter than
+  the poll interval could be missed altogether because scans ran only at
+  their usual times. Weekly windows are now evaluated across days, and the
+  scheduler also wakes when a closed window opens.
+- Containers updated outside Sentinel, or removed, stayed in every digest
+  for good. A container found up to date now leaves the digest, and the
+  digest state of removed containers and services is pruned at each scan.
+- Compose sync turned an image from a registry with a port, such as
+  `registry.local:5000/app:1.0`, into an invalid reference. The tag is now
+  taken after the last path segment, digest-pinned images are left alone
+  and quotes are kept.
+- With a digest interval under a day, the digest fired every minute from
+  the day's last slot until midnight. The next slot is now always ahead.
+- A scan counted an update that a pre-update hook skipped (exit 75), or
+  whose pull found the image already running, as updated, and the scan
+  summary in the history printed the rate-limited count as "skipped".
+  Hook skips now count as skipped, unchanged images as up to date, and
+  the summary prints skipped and rate-limited counts separately.
+- A scan updated containers in the order the daemon listed them, so a
+  container could be recreated before the container it depends on
+  (`sentinel.depends-on`, compose `depends_on`, a `container:` network
+  mode) had its own update. Scans now update dependencies first. A
+  dependency cycle is broken in name order and logged as a warning.
+- Containers that an older Sentinel had updated kept the environment,
+  labels and command of the first image they ran, because that Sentinel
+  copied the whole config and only the current image's defaults were
+  left out on the next update. Sentinel now also leaves out values equal
+  to a default of any image the container ran before, found through its
+  update history (the last 10 updates that changed its image, same
+  repository only) and read from the host or, when the image is gone,
+  from its registry with the stored credentials. An image it cannot read
+  is skipped.
 - Updating a container could delete it. Sentinel stopped and removed the
   old container before it knew the new one could be created, so a create
   the daemon rejected (or a missing image) left the service gone when the
@@ -264,6 +498,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A pull-only container that was already pulled but still behind its tag
   showed as an update and counted as automatic on every scan. It is now
   skipped.
+- Version checks failed against registries that answer with a Bearer
+  challenge (lscr.io, registry.gitlab.com). Sentinel now follows the
+  challenge to the registry's token endpoint.
+- Images with many tags (linuxserver/* on GHCR) lost their newest versions
+  because tag listing stopped after 10,000 tags, and registries with pages
+  under 1,000 tags were read only to the first page. Listing now follows the
+  `Link` header and stops after 100,000 tags.
+- An expired or revoked Docker Hub or GHCR token made every version check
+  for that registry stop quietly. The rejection is logged as a warning and
+  the token request is retried anonymously.
+- Registry failures (rate limit, outage) for official Docker Hub images such
+  as `nginx` were logged at debug level and counted as local images. They
+  now record a failed check. Swarm service lookups report their failure the
+  same way.
+- A container on a floating tag such as `nginx:1.27` was offered the pinned
+  `nginx:1.29.2` instead of `nginx:1.29`, which stopped it floating. A
+  floating tag now gets the tag of its own precision for a version line
+  first, when the registry publishes one.
+- The scanner settings (mode, threshold, Trivy path) only applied at startup,
+  and in the stock image, which has no Trivy, "Pre-update" scanning checked
+  nothing and said nothing. The saved settings are now read when each update
+  runs, Trivy is looked for again at the saved path, and a pre-update scan
+  that cannot run is logged as a warning.
+- The new Sentinel instance could delete the old container within seconds
+  of starting, while the self-update helper was still deciding whether to
+  keep the new one. If the new version then crashed, nothing was left to
+  restore. The helper now marks the swap as in progress, removes the old
+  container itself on success, and startup cleanup leaves old containers
+  alone while a helper is active or the swap is in progress, and otherwise
+  only removes one whose replacement is running and healthy.
+- The self-update helper ran the target image, so rolling an agent back to
+  a v2.16 image (or updating to any image without the helper subcommand)
+  started a full Sentinel instead and the rollback never happened. The
+  helper now runs the image the running instance uses.
+- An agent told the hub its self-update succeeded when the helper started.
+  If the swap was rolled back, the agent that comes back now sends a failed
+  result for it, so the hub's history and notifications show what happened.
+- A network error or a 5xx from a registry's token endpoint marked a valid
+  login as rejected on the settings page. Only a 401 or 403 does, and the
+  mark clears when the login works again.
+- Starting a self-update no longer force-removes a container that merely
+  has the helper's name, and the helper ignores SIGTERM until the swap is
+  settled. The hub now sends agents cloud (ECR, ACR, GCR) registry logins
+  with updates as well as stored ones.
+- A host restart between the self-update helper stopping the old Sentinel
+  and starting the new one left no Sentinel running. The helper now sets the
+  old container's restart policy to `always` for the swap (putting the
+  original back on rollback), so the old instance returns with the daemon;
+  finding itself parked as `-old-<timestamp>` with a replacement that never
+  started, it removes the replacement, takes its name and restart policy
+  back, and an agent tells the hub.
+- A self-update helper that was created but never started no longer blocks
+  the cleanup of old containers for ever; after 15 minutes it is removed.
 - Cluster agents dropped out of the cluster for good a year after they
   enrolled: an agent certificate lasts 365 days and nothing renewed it, so
   the only way back was a re-enrolment that gave the host a new ID. Once
@@ -271,10 +558,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the server for a new one over its live connection and switches to it.
   The server keeps the old certificate valid until the agent connects with
   the new one, and never drops the reply. Agents ask only a server that
-  says it renews safely, so a v2.17.0 agent keeps its working certificate
+  says it renews safely, so a v3.0.0 agent keeps its working certificate
   (and warns) when its server is older. The server also renews its own
   certificate before it expires, so a server left running for a year
-  keeps accepting agents. Agents older than v2.17.0 do not renew; update
+  keeps accepting agents. Agents older than v3.0.0 do not renew; update
   them before their first year is up (with "Auto-update agents" on, the
   server does this for you).
 - An agent whose clock ran more than an hour behind the server could not
@@ -292,7 +579,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scheduled scan waited on that host for ever, so no host was updated
   again until a restart. The agent now always replies, with the error, and
   every call the server makes to an agent has a time limit. A server
-  older than v2.17.0 shows such a host with no containers until its next
+  older than v3.0.0 shows such a host with no containers until its next
   successful list.
 - A host with many containers or large labels sends a container list over
   gRPC's 4 MB default; the server refused it, so the host dropped out of
@@ -390,6 +677,164 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server restored from a backup taken before the agent renewed) logged
   only a bare error. It now explains the cause and that re-enrolling is
   the fix.
+- An agent killed part way through an update (a restart, a crash, a host
+  reboot) could leave the container stopped, or renamed to
+  `<name>-sentinel-old`, with nothing to bring it back. Agents now run
+  every update through the same journalled swap as the server's own
+  containers, with the journal in the agent's database: an interrupted
+  update is finished or undone when the agent starts again, and retried
+  every minute until it is resolved. Until then the agent refuses other
+  updates of that container. One it cannot resolve on its own is
+  discarded from the server, once the containers are right on the host,
+  with `DELETE /api/swaps/<name>?host=<hostID>` (agents before v3.0.0
+  cannot, and the server says so). After an update, an agent also restarts the
+  container's dependents when dependency awareness is on, as the server
+  does.
+- Signature verification (enforce, warn, or a container's `sentinel.verify`
+  label) applied only to the server's own containers: an update dispatched
+  to an agent went ahead unchecked. The server now checks the image before
+  it asks an agent to update, with the same rules, whether the update
+  comes from a scan, the dashboard or the API. A rollback is not checked.
+- A container on an agent that an older Sentinel had updated kept the
+  environment, labels and command of the first image it ran, through every
+  later update. The server now sends the images a container ran before
+  (from its update history) with each update, and the agent leaves out
+  whatever came from any of them that it can read, so the new container
+  takes the new image's defaults. An earlier image no longer on the agent's
+  host is fetched from its registry (with the credentials the server sends
+  for the update); one that cannot be fetched is skipped.
+- Lifecycle hooks never ran for containers on agents: neither the
+  `sentinel.hook.*` labels nor the hooks saved on the server for a remote
+  container. They now run around a remote update exactly as around a local
+  one: the hooks the server stores for that container win over its labels,
+  the pre-update hook runs in the old container before anything changes
+  (exit 75 skips the update, which is then counted as skipped and leaves
+  no history row; under a server before v3.0.0 the agent reports the skip
+  as a success with a note, as that server would count it as a failure;
+  any other failure aborts it), and the post-update hook
+  runs in the new container (a failure is reported with the result). They
+  follow the hooks setting, which the server now sends to its agents. A
+  rollback runs no hooks.
+- Hooks saved for a remote container were also listed for a local
+  container whose name equals that host's ID.
+- Agents never received the server's settings, so remote updates ignored
+  image cleanup, image backup, lifecycle hooks and dependency awareness as
+  set on the server. The server now sends them
+  when an agent connects and again within a heartbeat (30 seconds) of a
+  change, and agents keep the last ones received for when the server is
+  away (and follow them from the start, including when they finish an
+  interrupted update). Rule: a setting given in an agent's own environment
+  (`SENTINEL_REMOVE_VOLUMES`, `SENTINEL_IMAGE_CLEANUP`,
+  `SENTINEL_IMAGE_BACKUP`, `SENTINEL_HOOKS`, `SENTINEL_DEPS`) wins on that
+  agent's host; the cluster settings page says so. Remove volumes is the
+  exception: agents before v3.0.0 never removed volumes, so the server
+  sends it only when the new cluster setting "Remove volumes on agents
+  too" is on (off by default). Check it before turning it on: an agent's
+  containers then start on new anonymous volumes and the old ones are
+  deleted. Update delay, rollback
+  policy and the update policy itself stay with the server, which decides
+  when a remote update runs.
+- Remote updates left the old image on the agent's host. Agents now remove
+  it after an update when image cleanup is on, as the server does, and
+  tag it as a backup first when image backup is on.
+- `SENTINEL_CLUSTER_PORT` was ignored: the cluster listener used only the
+  port saved in the settings (saved with every change to the cluster
+  settings) or 9443. Set in the environment, it now wins, as
+  `SENTINEL_CLUSTER_ENABLED` does.
+- An agent started its web UI even with `SENTINEL_WEB_ENABLED=false`.
+- Stopping an agent logged an error ("context canceled") and exited with
+  status 1. A stopping agent now waits up to 90 seconds for commands it is
+  running (an update half way through) before it closes its database, and
+  exits cleanly.
+- One enrolment token could enrol more than one agent when they used it
+  at the same moment, and a refused second use left nothing in the
+  server's log. The token is now checked and used in one step, and every
+  refused token (used, expired, not matching) is logged with the host name
+  and address that presented it.
+- An agent restarted with a new `SENTINEL_HOST_NAME` kept its old name in
+  the cluster. Agents now send their name with their state report and the
+  server takes it.
+- Agent versions were never stored, so the cluster page and the hosts API
+  showed none, and after a server restart "Auto-update agents" waited for
+  the scan after next: the version came only with an agent's first
+  heartbeat. The version in an agent's state report is now stored with the
+  host and used at once.
+- An image pushed to more than one repository showed a same-tag update
+  that was not there, again and again: Sentinel compared the digest of
+  whichever repository Docker listed first with the registry of the
+  container's own. It now uses the digest of the container's repository
+  (agents and the server alike).
+- An update that finished on an agent while its connection to the server
+  was down was lost from the history: its result could not be sent, and
+  the offline journal meant to carry it was never written. The agent now
+  keeps such a result and sends it when it reconnects; the server records
+  it in the history, in place of the "agent disconnected" failure recorded
+  when the connection dropped (a late result of an update the server had
+  stopped waiting for also replaces that failure, instead of adding a
+  second row; and if the result arrives first, the failure is not written
+  over it).
+- A scan that ran while a remote update was in progress saw the old image
+  and queued (or started) the update again, leaving a queue entry for an
+  update that had already happened. A container whose update the server
+  is waiting for is now left to it.
+- A queued remote update stayed in the queue after its container became
+  up to date, or was filtered out or pinned. The scan now removes it, as
+  it does for a local container, and counts up-to-date remote containers.
+- Remote containers did not follow the rules local containers do. A scan
+  now applies, to a container on an agent: the update delay (remote auto
+  updates with a delay never ran), the maintenance window and the
+  `sentinel.schedule` label, pull-only (global or `sentinel.pull-only`:
+  the agent pulls the image, with the server's registry credentials, and
+  reports how it went, and the container is left alone; remote containers
+  were recreated. An agent before v3.0.0 is asked to pull but cannot say
+  how it went, so nothing is recorded), and "Ignore version" (saved for the remote
+  container instead of a local container of the same name).
+- Remote updates were silent: notifications are now sent when an update
+  of a remote container is available, starts, succeeds or fails, named
+  "container on host". A failed remote auto update is in the history with
+  its error (it was missing, or recorded without the error), and the scan
+  no longer sends a second, host-less event that refreshed a local row.
+- Pausing a host did nothing, the cluster page's Drain button called an
+  endpoint that does not exist, and a paused host could not be resumed. A
+  paused host now gets no new updates from any path (a rollback still
+  goes through), the button pauses it, and a Resume button ends the pause.
+- Turning cluster mode off waited behind any remote update, action or log
+  fetch in progress, and every cluster page request waited behind that.
+- "Check for updates" on a remote container compared the server's own
+  copy of the image, which it usually does not have (an error), instead of
+  the digest the agent reported, and a new image behind the same tag was
+  reported as "up to date (newer versions ignored)" and not queued. Both
+  now behave as the scan does.
+- The dashboard showed remote containers under the server's default
+  policy, while the scan used the cluster's default remote policy and the
+  `:latest` rule; the cluster settings showed "manual" as the remote
+  default when none was saved. They now show the policy the scan applies.
+- After an approved or "update to version" remote update, the dashboard
+  row stayed on "Updating" until the page was reloaded.
+- When the cluster CA could not be read, the server replaced it with a new
+  one without a word, locking out every agent. It still creates a new one
+  (the cluster cannot run without), but keeps the old files aside and logs
+  how to restore them.
+- An agent whose enrolment was cut short after the key was written could
+  not start ("read host id"). The host ID is now written before the key,
+  and an agent without the file takes it from its certificate.
+- An enrolment whose answer never reached the agent used up the token, so
+  the agent could not enrol again without a new one. For 10 minutes after
+  a token is used, the same agent (the same key, which it now keeps until
+  enrolment finishes) may enrol with it again and gets the same host; the
+  server logs the retry. Any other agent is refused as before.
+- Autonomous mode (while the server is unreachable) was stopped before
+  every reconnect attempt and started again after it, logging "entering
+  autonomous mode" every 30 seconds and never reaching its own poll. It now
+  runs until the agent connects again, and counts stopped containers too.
+- The server's view of an agent's containers went stale between scans (6
+  hours by default): a container stopped or started by hand kept its old
+  state on the dashboard. Agents now send their container list every 5
+  minutes, and two lists sent close together can no longer arrive out of
+  order and leave the older one in place.
+- Remote updates started from the dashboard or the API (approve, "Update
+  now", update to version) now send the same notifications as local ones:
+  started, then succeeded or failed.
 - Saving Settings > Notifications overwrote a webhook channel's real header
   (for example `Authorization: Bearer ...`) with its masked form, so the
   channel started failing with 401. Masked values, including those inside
@@ -418,6 +863,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings showed Remove volumes and Image backup as Off while the engine
   had them On from the environment, and the UI rollback ignored
   `SENTINEL_ROLLBACK_POLICY`.
+- A failed notification was recorded as delivered whenever the built-in
+  log record succeeded, so if the only real channel (Gotify, say) failed
+  on the scan that first saw an update, Sentinel never tried again and you
+  were never alerted. Only real channels now decide whether an update was
+  notified about. Batched notifications still count as sent once queued;
+  a failed flush is logged.
+- Batched notifications could be postponed for ever: the batch window
+  restarted on every new event, so a steady trickle of failures never
+  flushed. The window now runs from the first queued event. The first
+  retry delay was also unbounded; it is now capped at 30 seconds like
+  the later ones.
+- The daily digest and batched summaries named one container (the digest
+  named only the alphabetically first one, a batch said "3 containers")
+  on every provider but webhook. They now list every container, and MQTT
+  payloads carry a `container_names` list.
+- Telegram rejected failure messages whose error text held an unmatched
+  `_` or `*` (a Swarm service called `stack_web`, for example), so the
+  alert never arrived. The error now goes in a code span. Combined
+  failure errors are capped at 1000 characters, Discord fields at 1024
+  and Pushover messages at 1024, which those services reject otherwise.
+- Custom notification templates saved in Settings validated and previewed
+  but every real notification used the built-in text. Templates are now
+  loaded at start-up and after each save or reset, and rendered by every
+  provider. A template that fails to run falls back to the built-in text.
+  Telegram shows a custom template as plain code text. `{{.ContainerNames}}`
+  is available for digests and batched summaries.
+- An SMTP server that accepted the connection and then never answered
+  (port 465 with TLS left off, for example) blocked the scan for well past
+  the advertised 30 seconds. The socket now carries the deadline.
+- The per-container "Notify on every scan" mode behaved like the default
+  and went quiet after the first alert. It now alerts on every scan that
+  finds the update, and those containers are left out of the scheduled
+  digest, as the Settings text says.
+- With `SENTINEL_WEB_ENABLED=false` the daily digest never ran (so
+  containers in digest-only mode produced no notifications at all), a
+  fresh install still served the setup wizard on the web port, and after
+  it finished no scan ever started. The digest now runs headless, a fresh
+  headless install skips the wizard and takes the `SENTINEL_MODE` role
+  (server if unset), and scans start straight away.
+- The Home Assistant discovery switch in Settings only took effect after
+  a restart, and a sensor that had gone ON stayed ON after its update was
+  applied or dismissed. Discovery now connects and disconnects when the
+  setting changes and sets sensors back to OFF when a container leaves the
+  queue. After a restart Sentinel does not know which sensors it left ON,
+  so a stale ON clears only the next time that container is pending.
+- Home Assistant discovery gave containers whose names differ only in
+  `-`, `.` or `_` the same topic and unique ID, so one hid the other. Names
+  with such characters now carry a short suffix. Their Home Assistant
+  entities are created again under the new ID once, and the old entities
+  can be deleted in Home Assistant.
+- History "Load more" repeated rows (time zones east of UTC) or skipped
+  hours of records (west of UTC) from the third page on when `TZ` was not
+  UTC. The cursor is now normalised to UTC before the lookup.
+- Deleting a user left their passkeys behind, so the login page kept
+  offering passkey sign-in with nothing that could use it. Their
+  credentials and indexes are now removed with the user.
+- Notification channels migrated from the pre-2.x single-config format got
+  a new random ID on every read, so the first save from the UI stored the
+  masked Gotify token as the real one. They keep fixed IDs now.
+- Environment values that were set but could not be parsed fell back to
+  the default without a word: `SENTINEL_POLL_INTERVAL=86400` became six
+  hours and `SENTINEL_WEB_ENABLED=maybe` stayed on. Sentinel still starts
+  with the default, but now logs an error at start-up naming the variable,
+  the value it could not read and the default in use (values of tokens,
+  passwords, secrets, keys and URLs with credentials are never logged).
+  `yes`, `no`, `on` and `off` are accepted as booleans.
+- A headless agent (`SENTINEL_WEB_ENABLED=false` with
+  `SENTINEL_ENROLL_TOKEN` and `SENTINEL_SERVER_ADDR`) became a standalone
+  server and never joined its hub. Those variables now select the agent
+  role on a fresh start; an explicit `SENTINEL_MODE` still wins.
+- If the tag moved to a new digest while every notification channel was
+  down, the update was never reported: the earlier notification time was
+  kept with the new digest, so the next scan thought it was announced.
+  It is now retried until it is delivered.
+- History retention also pruned `partial` update records, which are
+  applied updates. They are kept like successful updates.
+- Telegram rejected a failure whose error was over about 3,900
+  characters, because the cut left its code span open. The error is now
+  trimmed inside the span.
+- Discord ignored custom notification templates. A saved template now
+  fills the embed description.
+- Saving the Home Assistant discovery settings twice in quick succession
+  (on, then off) could leave discovery connected, and each save waited on
+  the broker connection. Saves now hand the change to one background
+  worker, so the last save always decides the final state and the page
+  never waits on the broker.
 
 ## [2.16.1] - 2026-10-13
 
