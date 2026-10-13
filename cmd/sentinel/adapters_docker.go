@@ -13,8 +13,6 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/docker"
 	"github.com/Will-Luck/Docker-Sentinel/internal/engine"
-	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
-	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/Will-Luck/Docker-Sentinel/internal/web"
 )
 
@@ -176,15 +174,15 @@ func (a *imageAdapter) RemoveImageByID(ctx context.Context, id string) error {
 	return a.client.RemoveImageByID(ctx, id)
 }
 
-// rollbackAdapter bridges engine.RollbackFromStore to web.ContainerRollback.
+// rollbackAdapter bridges the updater's rollback to web.ContainerRollback.
+// Going through the updater takes the container's update lock, so a
+// dashboard rollback cannot interleave with an update of the same container.
 type rollbackAdapter struct {
-	d   *docker.Client
-	s   *store.Store
-	log *logging.Logger
+	updater *engine.Updater
 }
 
 func (a *rollbackAdapter) RollbackContainer(ctx context.Context, name string) error {
-	return engine.RollbackFromStore(ctx, a.d, a.s, name, a.log)
+	return a.updater.RollbackContainer(ctx, name)
 }
 
 // swarmPorts converts a Swarm service's published endpoint ports to web.PortMapping.

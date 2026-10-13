@@ -551,6 +551,15 @@ func (u *Updater) restoreAfterFailedUpdate(ctx context.Context, sw *swap, snapsh
 	err := sw.undo(ctx)
 	if err == nil {
 		u.log.Info("old container restored", "name", sw.name)
+		// A :latest pull moved the tag to the new image. Point it back at
+		// the image the restored container runs, or the dashboard shows a
+		// bare image ID and the next scan cannot resolve the container.
+		var old container.InspectResponse
+		if json.Unmarshal(snapshotData, &old) == nil && old.Config != nil && old.Image != "" {
+			if _, tagErr := retag(context.WithoutCancel(ctx), u.docker, old.Config.Image, old.Image, u.log); tagErr != nil {
+				u.log.Warn("could not point the tag back at the old image", "name", sw.name, "error", tagErr)
+			}
+		}
 	} else {
 		u.log.Warn("could not restore the old container, recreating it from the snapshot", "name", sw.name, "error", err)
 		err = rollback(ctx, u.docker, sw.name, snapshotData, u.log)

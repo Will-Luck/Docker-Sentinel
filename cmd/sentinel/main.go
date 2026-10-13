@@ -697,7 +697,7 @@ func main() {
 			ConfigWriter:        cfg,
 			EventBus:            bus,
 			Snapshots:           &snapshotAdapter{db},
-			Rollback:            &rollbackAdapter{d: client, s: db, log: log},
+			Rollback:            &rollbackAdapter{updater: updater},
 			Restarter:           &restartAdapter{client},
 			Registry:            &registryAdapter{log: log},
 			TagLister:           &tagListerAdapter{log: log},

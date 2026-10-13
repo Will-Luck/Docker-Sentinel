@@ -100,6 +100,8 @@ func TestUpdateContainerRestoresOldContainerWhenValidationFails(t *testing.T) {
 // update falls back to recreating it from the snapshot.
 func TestUpdateContainerFallsBackToSnapshotWhenOldContainerIsGone(t *testing.T) {
 	mock, u := setupUpdateWithScanVerify(t)
+	mock.mirrorCreate = true
+	mock.imageIDs["sha256:old111"] = "sha256:old111" // the old image is still on the host
 	mock.createErrOnCall[1] = errors.New("No such image")
 	mock.renameErrTo["nginx"] = errors.New("No such container: aaa")
 

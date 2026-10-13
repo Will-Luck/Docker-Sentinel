@@ -105,6 +105,9 @@ type mockDocker struct {
 	renameErrTo map[string]error
 	// imageConfigs is what ImageConfig returns, keyed by image ID or ref.
 	imageConfigs map[string]*container.Config
+	// pullResolves makes a successful pull of ref resolve it (and the
+	// image ID itself) to the given image ID.
+	pullResolves map[string]string
 	// ops logs every rename, create, stop, start and remove in call order,
 	// as "op target" (create logs the name, the others the container ID).
 	ops []string
@@ -171,6 +174,7 @@ func newMockDocker() *mockDocker {
 		createErrOnCall: make(map[int]error),
 		renameErrTo:     make(map[string]error),
 		imageConfigs:    make(map[string]*container.Config),
+		pullResolves:    make(map[string]string),
 	}
 }
 
@@ -308,11 +312,18 @@ func (m *mockDocker) NetworkConnect(_ context.Context, networkID string, contain
 }
 
 func (m *mockDocker) PullImage(_ context.Context, ref string) error {
+	m.logOp("pull", ref)
 	m.mu.Lock()
 	m.pullCalls = append(m.pullCalls, ref)
 	m.mu.Unlock()
 	if err, ok := m.pullErr[ref]; ok {
 		return err
+	}
+	if id, ok := m.pullResolves[ref]; ok {
+		m.mu.Lock()
+		m.imageIDs[ref] = id
+		m.imageIDs[id] = id
+		m.mu.Unlock()
 	}
 	return nil
 }
@@ -349,12 +360,21 @@ func (m *mockDocker) RemoveImage(_ context.Context, id string) error {
 }
 
 func (m *mockDocker) TagImage(_ context.Context, src, target string) error {
+	m.logOp("tag", src+" "+target)
 	m.mu.Lock()
 	m.tagImageCalls = append(m.tagImageCalls, src+"->"+target)
 	m.mu.Unlock()
 	if err, ok := m.tagImageErr[src]; ok {
 		return err
 	}
+	// Like the daemon, the target now resolves to the source image.
+	m.mu.Lock()
+	if id := m.imageIDs[src]; id != "" {
+		m.imageIDs[target] = id
+	} else if strings.HasPrefix(src, "sha256:") {
+		m.imageIDs[target] = src
+	}
+	m.mu.Unlock()
 	return nil
 }
 
