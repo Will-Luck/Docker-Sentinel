@@ -134,3 +134,26 @@ func TestNewerVersionsScoped_StableCurrentSkipsPrereleases(t *testing.T) {
 		})
 	}
 }
+
+func TestNewerVersionsScoped_BuildCounters(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		tags    []string
+		want    []string
+	}{
+		{"linuxserver counter bump", "4.3.3-ls190", []string{"4.3.3-ls189", "4.3.3-ls191", "4.4.0-ls200"}, []string{"4.4.0-ls200", "4.3.3-ls191"}},
+		{"bitnami revision bump", "7.2.4-debian-12-r9", []string{"7.2.4-debian-12-r10", "7.2.5-debian-12-r0", "7.2.5-debian-11-r3"}, []string{"7.2.5-debian-12-r0", "7.2.4-debian-12-r10"}},
+		{"alpine revision then counter", "1.26.2-r1-ls300", []string{"1.26.2-r1-ls301", "1.26.3-r0-ls302", "1.26.3"}, []string{"1.26.3-r0-ls302", "1.26.2-r1-ls301"}},
+		{"counter tags never see bare tags", "4.3.3-ls190", []string{"4.5.0", "4.5.0-rc1"}, nil},
+		{"older counter is not newer", "4.3.3-ls190", []string{"4.3.3-ls9", "4.3.2-ls500"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rawVersions(NewerVersionsScoped(tt.current, tt.tags, docker.ScopeMajor, docker.ScopeDefault))
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

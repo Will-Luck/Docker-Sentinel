@@ -590,6 +590,10 @@ func TestSemVerVariant(t *testing.T) {
 		{"1.24.0-otel", "otel"},
 		{"1.24.0-alpine-perl", "alpine-perl"},
 		{"1.24.0-slim", "slim"},
+		// Trailing build counters are not part of the variant.
+		{"4.3.3-ls190", "ls#"},
+		{"7.2.4-debian-12-r9", "debian-12-r#"},
+		{"1.26.2-r1-ls300", "r#-ls#"},
 	}
 
 	for _, tt := range tests {

@@ -189,6 +189,17 @@ func (v SemVer) LessThan(other SemVer) bool {
 		if other.Pre == "" {
 			return true // v is pre-release, other is release
 		}
+		// Build-counter tags of one variant (ls190 vs ls191) order by counter.
+		if vv, vc := splitBuildCounters(v.Pre); len(vc) > 0 {
+			if ov, oc := splitBuildCounters(other.Pre); ov == vv && len(oc) == len(vc) {
+				for i := range vc {
+					if vc[i] != oc[i] {
+						return vc[i] < oc[i]
+					}
+				}
+				return false
+			}
+		}
 		return comparePre(v.Pre, other.Pre) < 0
 	}
 
@@ -483,14 +494,51 @@ func (v SemVer) IsPreRelease() bool {
 	return v.Pre != "" && preReleaseSuffixRE.MatchString(v.Pre)
 }
 
+// buildCounterRE matches one hyphen-separated suffix segment that is a build
+// or revision counter: linuxserver's ls190, Bitnami's and Alpine's r9.
+var buildCounterRE = regexp.MustCompile(`(?i)^(ls|r)(\d+)$`)
+
+// splitBuildCounters separates a tag suffix into its variant key and its build
+// counters. Each counter segment is replaced by its prefix and "#", so
+// "debian-12-r9" gives ("debian-12-r#", [9]) and "r1-ls300" gives
+// ("r#-ls#", [1 300]). Pre-release suffixes and suffixes without counters are
+// returned unchanged with no counters.
+func splitBuildCounters(pre string) (string, []int) {
+	if pre == "" || preReleaseSuffixRE.MatchString(pre) {
+		return pre, nil
+	}
+	segs := strings.Split(pre, "-")
+	var counters []int
+	for i, seg := range segs {
+		m := buildCounterRE.FindStringSubmatch(seg)
+		if m == nil {
+			continue
+		}
+		n, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		segs[i] = m[1] + "#"
+		counters = append(counters, n)
+	}
+	if len(counters) == 0 {
+		return pre, nil
+	}
+	return strings.Join(segs, "-"), counters
+}
+
 // Variant returns the build-variant identifier of a tag, or "" for bare tags
 // and pre-release suffixes. "1.24.0" and "2.0.0-rc1" are both variant "";
 // "1.24.0-alpine" is variant "alpine"; "1.24.0-alpine3.19" is "alpine3.19".
+// Trailing build counters are not part of the variant, so "4.3.3-ls190" and
+// "4.3.4-ls200" share the variant "ls#" and can be compared by version and
+// counter; "7.2.4-debian-12-r9" is variant "debian-12-r#".
 func (v SemVer) Variant() string {
 	if v.Pre == "" || preReleaseSuffixRE.MatchString(v.Pre) {
 		return ""
 	}
-	return v.Pre
+	variant, _ := splitBuildCounters(v.Pre)
+	return variant
 }
 
 // NormaliseRepo converts an image reference to a Docker Hub repository path.
