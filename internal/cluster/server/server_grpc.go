@@ -300,7 +300,7 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 	s.bus.Publish(events.SSEEvent{
 		Type:      events.EventClusterHost,
 		HostName:  hostID,
-		Message:   fmt.Sprintf("agent %s connected", hostID),
+		Message:   fmt.Sprintf("agent %s connected", s.hostLabel(hostID)),
 		Timestamp: time.Now(),
 	})
 
@@ -339,7 +339,7 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		s.bus.Publish(events.SSEEvent{
 			Type:      events.EventClusterHost,
 			HostName:  hostID,
-			Message:   fmt.Sprintf("agent %s disconnected", hostID),
+			Message:   fmt.Sprintf("agent %s disconnected", s.hostLabel(hostID)),
 			Timestamp: time.Now(),
 		})
 	}()

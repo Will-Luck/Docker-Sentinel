@@ -95,13 +95,13 @@ func (s *Server) sendPending(hostID, requestID string, msg *proto.ServerMessage)
 	as, ok := s.streams[hostID]
 	s.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("agent %s not connected", hostID)
+		return fmt.Errorf("agent %s not connected", s.hostLabel(hostID))
 	}
 
 	s.pendingMu.Lock()
 	if as.closed {
 		s.pendingMu.Unlock()
-		return fmt.Errorf("agent %s disconnected", hostID)
+		return fmt.Errorf("agent %s disconnected", s.hostLabel(hostID))
 	}
 	if pr, ok := s.pending[hostID+":"+requestID]; ok {
 		pr.stream = as
@@ -112,7 +112,7 @@ func (s *Server) sendPending(hostID, requestID string, msg *proto.ServerMessage)
 	case as.send <- msg:
 		return nil
 	default:
-		return fmt.Errorf("agent %s send buffer full", hostID)
+		return fmt.Errorf("agent %s send buffer full", s.hostLabel(hostID))
 	}
 }
 
@@ -139,7 +139,7 @@ func (s *Server) awaitPending(ctx context.Context, hostID, requestID string, ch 
 		if !ok {
 			// Channel was closed by the stream cleanup: the stream that
 			// carried the request has gone.
-			return nil, fmt.Errorf("agent %s disconnected", hostID)
+			return nil, fmt.Errorf("agent %s disconnected", s.hostLabel(hostID))
 		}
 		return resp, nil
 	case <-ctx.Done():
@@ -247,7 +247,7 @@ func (s *Server) ListContainersSync(ctx context.Context, hostID string) ([]clust
 		return nil, fmt.Errorf("unexpected response type %T (wanted ContainerList)", resp.Payload)
 	}
 	if msg := cl.ContainerList.GetError(); msg != "" {
-		return nil, fmt.Errorf("agent %s could not list its containers: %s", hostID, msg)
+		return nil, fmt.Errorf("agent %s could not list its containers: %s", s.hostLabel(hostID), msg)
 	}
 
 	return protoToContainers(cl.ContainerList.Containers), nil

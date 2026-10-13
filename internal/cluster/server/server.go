@@ -462,7 +462,7 @@ func (s *Server) SendCommand(hostID string, msg *proto.ServerMessage) error {
 	s.mu.RUnlock()
 
 	if !ok {
-		return fmt.Errorf("agent %s not connected", hostID)
+		return fmt.Errorf("agent %s not connected", s.hostLabel(hostID))
 	}
 
 	select {
@@ -470,7 +470,7 @@ func (s *Server) SendCommand(hostID string, msg *proto.ServerMessage) error {
 		return nil
 	default:
 		// Buffer full -- agent is not consuming messages fast enough.
-		return fmt.Errorf("agent %s send buffer full", hostID)
+		return fmt.Errorf("agent %s send buffer full", s.hostLabel(hostID))
 	}
 }
 
@@ -489,6 +489,15 @@ func (s *Server) ConnectedHosts() []string {
 // AllHosts delegates to the registry, returning info for every registered host.
 func (s *Server) AllHosts() []cluster.HostInfo {
 	return s.registry.AllHosts()
+}
+
+// hostLabel names hostID in errors and messages: by its host name, or by
+// its ID when it has none.
+func (s *Server) hostLabel(hostID string) string {
+	if hs, ok := s.registry.Get(hostID); ok && hs.Info.Name != "" {
+		return hs.Info.Name
+	}
+	return hostID
 }
 
 // GetHost delegates to the registry, returning the full host state.
