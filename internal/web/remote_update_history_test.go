@@ -102,3 +102,44 @@ func TestApiUpdate_RemoteWritesHistory(t *testing.T) {
 		})
 	}
 }
+
+type approveCluster struct {
+	mockClusterProviderWithContainers
+}
+
+// For a version bump the queue's RemoteDigest belongs to the old tag, so the
+// history must not record it as the new digest. A digest-only update's
+// RemoteDigest is the new one.
+func TestApiApprove_RemoteHistoryNewDigest(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		versions   []string
+		wantDigest string
+	}{
+		{"version bump", []string{"1.0.1"}, ""},
+		{"same tag, new digest", nil, "sha256:new"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hist := &recordingHistory{}
+			cp := &approveCluster{mockClusterProviderWithContainers{
+				hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"},
+			}}
+			srv := remoteUpdateServer(cp, hist)
+			srv.deps.Queue = &approvingQueue{items: []PendingUpdate{{
+				HostID: "h1", HostName: "Agent One", ContainerName: "web", CurrentImage: "nginx:1.0.0",
+				RemoteDigest: "sha256:new", NewerVersions: tc.versions,
+			}}}
+			r := httptest.NewRequest(http.MethodPost, "/api/approve/h1::web", nil)
+			r.SetPathValue("key", "h1::web")
+			w := httptest.NewRecorder()
+			srv.apiApprove(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+			}
+			rec := hist.wait(t)
+			if rec.Outcome != "success" || rec.NewDigest != tc.wantDigest {
+				t.Errorf("history row = outcome %s, new digest %q; want success and %q", rec.Outcome, rec.NewDigest, tc.wantDigest)
+			}
+		})
+	}
+}

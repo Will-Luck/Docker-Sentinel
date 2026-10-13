@@ -222,7 +222,7 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 				OldImage:      update.CurrentImage,
 				OldDigest:     update.CurrentDigest,
 				NewImage:      remoteUpdateTarget(update.CurrentImage, approveTarget),
-				NewDigest:     update.RemoteDigest,
+				NewDigest:     recordedNewDigest(update),
 				Outcome:       "success",
 				Duration:      time.Since(start),
 				Type:          update.Type,
@@ -295,4 +295,15 @@ func (s *Server) apiReject(w http.ResponseWriter, r *http.Request) {
 		"name":    name,
 		"message": "update rejected for " + name,
 	})
+}
+
+// recordedNewDigest is the digest to record for an applied update. For a
+// version bump the queue only holds the digest of the tag being replaced, not
+// of the new one, so it records none rather than a wrong one. A same-tag
+// update's remote digest is the new image.
+func recordedNewDigest(u PendingUpdate) string {
+	if len(u.NewerVersions) > 0 {
+		return ""
+	}
+	return u.RemoteDigest
 }
