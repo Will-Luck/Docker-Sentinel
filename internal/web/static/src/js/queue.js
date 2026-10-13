@@ -3,6 +3,7 @@
    ============================================================ */
 
 import { showToast, escapeHTML, showConfirm, apiPost, apiFetch } from "./utils.js";
+import { policyTargets, selectionLabel } from "./selection.js";
 
 // Access via window to avoid circular import with sse.js.
 function _updateQueueBadge() {
@@ -432,7 +433,7 @@ function applyBulkPolicy() {
     fetch("/api/bulk/policy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ containers: names, policy: policy })
+        body: JSON.stringify({ targets: policyTargets(names), policy: policy })
     })
         .then(function (resp) {
             return resp.json().then(function (data) {
@@ -462,7 +463,7 @@ function applyBulkPolicy() {
             var bodyHTML = "";
             for (var i = 0; i < preview.changes.length; i++) {
                 var c = preview.changes[i];
-                bodyHTML += '<div class="confirm-change-row"><span class="confirm-change-name">' + escapeHTML(c.name) + '</span> <span class="badge badge-muted">' + escapeHTML(c.from) + '</span> \u2192 <span class="badge badge-info">' + escapeHTML(c.to) + '</span></div>';
+                bodyHTML += '<div class="confirm-change-row"><span class="confirm-change-name">' + escapeHTML(selectionLabel(c.host ? c.host + "::" + c.name : c.name)) + '</span> <span class="badge badge-muted">' + escapeHTML(c.from) + '</span> \u2192 <span class="badge badge-info">' + escapeHTML(c.to) + '</span></div>';
             }
             if (blockedCount > 0) {
                 bodyHTML += '<div class="confirm-section-label">Blocked (' + blockedCount + ')</div>';
@@ -486,7 +487,7 @@ function applyBulkPolicy() {
                 fetch("/api/bulk/policy", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ containers: names, policy: policy, confirm: true })
+                    body: JSON.stringify({ targets: policyTargets(names), policy: policy, confirm: true })
                 })
                     .then(function (resp2) {
                         return resp2.json().then(function (data2) {
@@ -504,7 +505,7 @@ function applyBulkPolicy() {
 
                         // Refresh affected rows to reflect new policy values.
                         for (var r = 0; r < preview.changes.length; r++) {
-                            if (window.updateContainerRow) window.updateContainerRow(preview.changes[r].name);
+                            if (window.updateContainerRow) window.updateContainerRow(preview.changes[r].name, preview.changes[r].host || "");
                         }
 
                         // Clear selection and exit manage mode.

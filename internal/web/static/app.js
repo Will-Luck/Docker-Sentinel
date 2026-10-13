@@ -39,6 +39,36 @@
     });
   }
 
+  // internal/web/static/src/js/selection.js
+  function selectionKey(host, name) {
+    return host ? host + "::" + name : name;
+  }
+  function parseSelectionKey(key) {
+    var i = key.lastIndexOf("::");
+    if (i === -1) return { host: "", name: key };
+    return { host: key.slice(0, i), name: key.slice(i + 2) };
+  }
+  function containerActionURL(key, action) {
+    var t = parseSelectionKey(key);
+    var url = "/api/containers/" + encodeURIComponent(t.name) + "/" + action;
+    if (t.host) url += "?host=" + encodeURIComponent(t.host);
+    return url;
+  }
+  function selectionLabel(key) {
+    var t = parseSelectionKey(key);
+    return t.host ? t.name + " (" + t.host + ")" : t.name;
+  }
+  function policyTargets(keys) {
+    return keys.map(function(k) {
+      return parseSelectionKey(k);
+    }).map(function(t) {
+      return { name: t.name, host: t.host };
+    });
+  }
+  function checkboxKey(cb) {
+    return selectionKey(cb.getAttribute("data-host") || "", cb.value);
+  }
+
   // internal/web/static/src/js/utils.js
   var _toastBatch = [];
   var _toastBatchTimer = null;
@@ -565,7 +595,9 @@
     }
   }
   function clearSelection() {
-    selectedContainers = {};
+    Object.keys(selectedContainers).forEach(function(k) {
+      delete selectedContainers[k];
+    });
     var checkboxes = document.querySelectorAll(".row-select");
     for (var i = 0; i < checkboxes.length; i++) {
       checkboxes[i].checked = false;
@@ -1289,7 +1321,7 @@
     if (names.length === 0) return;
     var isDanger = action === "restart" || action === "stop";
     var label = action.charAt(0).toUpperCase() + action.slice(1);
-    var bodyHTML = "<p>" + label + " <strong>" + names.length + "</strong> container" + (names.length !== 1 ? "s" : "") + '?</p><p class="confirm-muted-row">' + names.map(escapeHTML).join(", ") + "</p>";
+    var bodyHTML = "<p>" + label + " <strong>" + names.length + "</strong> container" + (names.length !== 1 ? "s" : "") + '?</p><p class="confirm-muted-row">' + names.map(selectionLabel).map(escapeHTML).join(", ") + "</p>";
     showConfirm(label + " Containers", bodyHTML, {
       danger: isDanger,
       confirmLabel: label
@@ -1307,7 +1339,7 @@
           showToast(label + " completed for " + succeeded + " container" + (succeeded !== 1 ? "s" : ""), "success");
         } else {
           var msg = succeeded + " succeeded, " + failed.length + " failed: " + failed.map(function(f) {
-            return f.name + " (" + f.error + ")";
+            return selectionLabel(f.name) + " (" + f.error + ")";
           }).join(", ");
           showToast(msg, "error");
         }
@@ -1321,7 +1353,7 @@
               var idx = names.indexOf(name) + 1;
               countEl.textContent = label.replace(/e$/, "") + "ing " + idx + "/" + total + "...";
             }
-            fetch("/api/containers/" + encodeURIComponent(name) + "/" + action, {
+            fetch(containerActionURL(name, action), {
               method: "POST",
               credentials: "same-origin"
             }).then(function(r) {
@@ -1843,7 +1875,7 @@
     fetch("/api/bulk/policy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ containers: names, policy })
+      body: JSON.stringify({ targets: policyTargets(names), policy })
     }).then(function(resp) {
       return resp.json().then(function(data) {
         return { ok: resp.ok, data };
@@ -1867,7 +1899,7 @@
       var bodyHTML = "";
       for (var i2 = 0; i2 < preview.changes.length; i2++) {
         var c = preview.changes[i2];
-        bodyHTML += '<div class="confirm-change-row"><span class="confirm-change-name">' + escapeHTML(c.name) + '</span> <span class="badge badge-muted">' + escapeHTML(c.from) + '</span> \u2192 <span class="badge badge-info">' + escapeHTML(c.to) + "</span></div>";
+        bodyHTML += '<div class="confirm-change-row"><span class="confirm-change-name">' + escapeHTML(selectionLabel(c.host ? c.host + "::" + c.name : c.name)) + '</span> <span class="badge badge-muted">' + escapeHTML(c.from) + '</span> \u2192 <span class="badge badge-info">' + escapeHTML(c.to) + "</span></div>";
       }
       if (blockedCount > 0) {
         bodyHTML += '<div class="confirm-section-label">Blocked (' + blockedCount + ")</div>";
@@ -1887,7 +1919,7 @@
         fetch("/api/bulk/policy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ containers: names, policy, confirm: true })
+          body: JSON.stringify({ targets: policyTargets(names), policy, confirm: true })
         }).then(function(resp2) {
           return resp2.json().then(function(data2) {
             return { ok: resp2.ok, data: data2 };
@@ -1900,7 +1932,7 @@
           var applied = confirmResult.data.applied || 0;
           showToast("Policy changed to '" + policy + "' for " + applied + " container" + (applied !== 1 ? "s" : ""), "success");
           for (var r = 0; r < preview.changes.length; r++) {
-            if (window.updateContainerRow) window.updateContainerRow(preview.changes[r].name);
+            if (window.updateContainerRow) window.updateContainerRow(preview.changes[r].name, preview.changes[r].host || "");
           }
           if (window.clearSelection) window.clearSelection();
           if (_getManageMode() && window.toggleManageMode) window.toggleManageMode();
@@ -2418,7 +2450,8 @@
         }
         var newCb = newRow ? newRow.querySelector(".row-select") : null;
         var _selCont = window._dashboardSelectedContainers || {};
-        if (newCb && _selCont[newCb.value]) {
+        var _selKey = newCb && window.selectionCheckboxKey ? window.selectionCheckboxKey(newCb) : newCb ? newCb.value : "";
+        if (newCb && _selCont[_selKey]) {
           newCb.checked = true;
         }
         if (window.recomputeSelectionState) window.recomputeSelectionState();
@@ -6292,6 +6325,7 @@
   // internal/web/static/src/js/main.js
   setUpdateStatsFn(updateStats2);
   window._dashboardSelectedContainers = selectedContainers;
+  window.selectionCheckboxKey = checkboxKey;
   window._dashboardManageMode = false;
   window._queueBulkInProgress = getBulkInProgress;
   window.showToast = showToast;
@@ -6565,7 +6599,7 @@
           var checkboxes = table.querySelectorAll(".row-select");
           for (var i = 0; i < checkboxes.length; i++) {
             checkboxes[i].checked = target.checked;
-            selectedContainers[checkboxes[i].value] = target.checked;
+            selectedContainers[checkboxKey(checkboxes[i])] = target.checked;
           }
           recomputeSelectionState();
           return;
@@ -6576,14 +6610,14 @@
             var rows = tbody.querySelectorAll(".row-select");
             for (var i = 0; i < rows.length; i++) {
               rows[i].checked = target.checked;
-              selectedContainers[rows[i].value] = target.checked;
+              selectedContainers[checkboxKey(rows[i])] = target.checked;
             }
           }
           recomputeSelectionState();
           return;
         }
         if (target.classList.contains("row-select")) {
-          selectedContainers[target.value] = target.checked;
+          selectedContainers[checkboxKey(target)] = target.checked;
           recomputeSelectionState();
         }
       });

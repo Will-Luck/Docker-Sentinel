@@ -5,6 +5,7 @@
    ============================================================ */
 
 import { showToast, escapeHTML, showConfirm } from "./utils.js";
+import { containerActionURL, selectionLabel } from "./selection.js";
 
 /* ------------------------------------------------------------
    0. Column Visibility
@@ -422,7 +423,8 @@ function updateSelectionUI() {
 }
 
 function clearSelection() {
-    selectedContainers = {};
+    // Clear in place: other modules hold a reference to this object.
+    Object.keys(selectedContainers).forEach(function (k) { delete selectedContainers[k]; });
     var checkboxes = document.querySelectorAll(".row-select");
     for (var i = 0; i < checkboxes.length; i++) {
         checkboxes[i].checked = false;
@@ -1310,7 +1312,7 @@ function bulkContainerAction(action) {
     var label = action.charAt(0).toUpperCase() + action.slice(1);
     var bodyHTML = "<p>" + label + " <strong>" + names.length + "</strong> container" +
         (names.length !== 1 ? "s" : "") + "?</p>" +
-        "<p class=\"confirm-muted-row\">" + names.map(escapeHTML).join(", ") + "</p>";
+        "<p class=\"confirm-muted-row\">" + names.map(selectionLabel).map(escapeHTML).join(", ") + "</p>";
 
     showConfirm(label + " Containers", bodyHTML, {
         danger: isDanger,
@@ -1332,7 +1334,7 @@ function bulkContainerAction(action) {
                 showToast(label + " completed for " + succeeded + " container" + (succeeded !== 1 ? "s" : ""), "success");
             } else {
                 var msg = succeeded + " succeeded, " + failed.length + " failed: " +
-                    failed.map(function (f) { return f.name + " (" + f.error + ")"; }).join(", ");
+                    failed.map(function (f) { return selectionLabel(f.name) + " (" + f.error + ")"; }).join(", ");
                 showToast(msg, "error");
             }
 
@@ -1348,7 +1350,7 @@ function bulkContainerAction(action) {
                         countEl.textContent = label.replace(/e$/, "") + "ing " + idx + "/" + total + "...";
                     }
 
-                    fetch("/api/containers/" + encodeURIComponent(name) + "/" + action, {
+                    fetch(containerActionURL(name, action), {
                         method: "POST",
                         credentials: "same-origin"
                     })

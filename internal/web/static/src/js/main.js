@@ -5,6 +5,7 @@
 
 // Side-effect import: patches window.fetch with CSRF token injection.
 import { getCSRFToken } from "./csrf.js";
+import { checkboxKey } from "./selection.js";
 
 import {
     showToast,
@@ -217,6 +218,7 @@ setUpdateStatsFn(updateStats);
 // Expose dashboard state for cross-module access via window.
 // Queue and SSE modules read these to avoid circular imports.
 window._dashboardSelectedContainers = selectedContainers;
+window.selectionCheckboxKey = checkboxKey;
 window._dashboardManageMode = false;
 
 // Expose getBulkInProgress for SSE module.
@@ -556,7 +558,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 var checkboxes = table.querySelectorAll(".row-select");
                 for (var i = 0; i < checkboxes.length; i++) {
                     checkboxes[i].checked = target.checked;
-                    selectedContainers[checkboxes[i].value] = target.checked;
+                    selectedContainers[checkboxKey(checkboxes[i])] = target.checked;
                 }
                 recomputeSelectionState();
                 return;
@@ -569,7 +571,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     var rows = tbody.querySelectorAll(".row-select");
                     for (var i = 0; i < rows.length; i++) {
                         rows[i].checked = target.checked;
-                        selectedContainers[rows[i].value] = target.checked;
+                        selectedContainers[checkboxKey(rows[i])] = target.checked;
                     }
                 }
                 recomputeSelectionState();
@@ -578,7 +580,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
             // Individual row checkbox
             if (target.classList.contains("row-select")) {
-                selectedContainers[target.value] = target.checked;
+                selectedContainers[checkboxKey(target)] = target.checked;
                 recomputeSelectionState();
             }
         });

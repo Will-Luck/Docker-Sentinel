@@ -737,3 +737,36 @@ func TestResolvedPolicy_NilConfig_FallsBackToManual(t *testing.T) {
 		t.Errorf("resolvedPolicy = %q, want %q", got, "manual")
 	}
 }
+
+// A hub container and an agent container can share a name. The caller says
+// which one it means, so the policy lands on that one only.
+func TestBulkPolicy_TargetsNameTheHost(t *testing.T) {
+	docker := &mockContainerLister{
+		containers: []ContainerSummary{{ID: "c1", Names: []string{"/whoami"}, Labels: map[string]string{}}},
+	}
+	policy := newMockPolicyStore()
+	remotes := []RemoteContainer{{Name: "whoami", Image: "traefik/whoami", HostID: "h1", Labels: map[string]string{}}}
+	srv := newPolicyTestServer(docker, policy, nil, remotes)
+
+	w := doBulkPolicy(srv, `{"targets":[{"name":"whoami","host":""}],"policy":"auto","confirm":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("local: status = %d; body: %s", w.Code, w.Body.String())
+	}
+	if p, ok := policy.GetPolicyOverride("whoami"); !ok || p != "auto" {
+		t.Errorf("hub whoami policy = (%q, %v), want auto", p, ok)
+	}
+	if p, ok := policy.GetPolicyOverride("h1::whoami"); ok {
+		t.Errorf("agent whoami policy changed to %q by a local selection", p)
+	}
+
+	w = doBulkPolicy(srv, `{"targets":[{"name":"whoami","host":"h1"}],"policy":"pinned","confirm":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("remote: status = %d; body: %s", w.Code, w.Body.String())
+	}
+	if p, ok := policy.GetPolicyOverride("h1::whoami"); !ok || p != "pinned" {
+		t.Errorf("agent whoami policy = (%q, %v), want pinned", p, ok)
+	}
+	if p, _ := policy.GetPolicyOverride("whoami"); p != "auto" {
+		t.Errorf("hub whoami policy = %q after a remote selection, want it left at auto", p)
+	}
+}

@@ -116,9 +116,16 @@ func (s *Server) apiDeletePolicy(w http.ResponseWriter, r *http.Request) {
 // Supports preview mode (default) and confirm mode.
 func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 	var body struct {
+		// Containers are bare names; a name that exists on a remote host is
+		// matched to the first such host. Targets name the host explicitly
+		// (empty host = this instance) and are what the dashboard sends.
 		Containers []string `json:"containers"`
-		Policy     string   `json:"policy"`
-		Confirm    bool     `json:"confirm"`
+		Targets    []struct {
+			Name string `json:"name"`
+			Host string `json:"host"`
+		} `json:"targets"`
+		Policy  string `json:"policy"`
+		Confirm bool   `json:"confirm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -133,7 +140,7 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(body.Containers) == 0 {
+	if len(body.Containers) == 0 && len(body.Targets) == 0 {
 		writeError(w, http.StatusBadRequest, "containers list must not be empty")
 		return
 	}
@@ -145,16 +152,19 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 
 	type changeEntry struct {
 		Name string `json:"name"`
+		Host string `json:"host,omitempty"`
 		Key  string `json:"-"`
 		From string `json:"from"`
 		To   string `json:"to"`
 	}
 	type blockedEntry struct {
 		Name   string `json:"name"`
+		Host   string `json:"host,omitempty"`
 		Reason string `json:"reason"`
 	}
 	type unchangedEntry struct {
 		Name   string `json:"name"`
+		Host   string `json:"host,omitempty"`
 		Reason string `json:"reason"`
 	}
 
@@ -175,28 +185,54 @@ func (s *Server) apiBulkPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	type bulkTarget struct {
+		name, host string
+		explicit   bool
+	}
+	var targets []bulkTarget
 	for _, name := range body.Containers {
+		targets = append(targets, bulkTarget{name: name})
+	}
+	for _, t := range body.Targets {
+		targets = append(targets, bulkTarget{name: t.Name, host: t.Host, explicit: true})
+	}
+
+	for _, t := range targets {
+		name := t.name
 		labels := allLabels[name]
+
+		policyKey := name
+		if t.explicit {
+			if t.host != "" {
+				policyKey = t.host + "::" + name
+				labels = nil
+				if s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+					for _, rc := range s.deps.Cluster.AllHostContainers() {
+						if rc.HostID == t.host && rc.Name == name {
+							labels = rc.Labels
+							break
+						}
+					}
+				}
+			}
+		} else if hid, ok := remoteHostIDs[name]; ok {
+			policyKey = hid + "::" + name
+		}
 
 		// Self-protection check.
 		if labels != nil && labels["sentinel.self"] == "true" {
-			blocked = append(blocked, blockedEntry{Name: name, Reason: "self-protected"})
+			blocked = append(blocked, blockedEntry{Name: name, Host: t.host, Reason: "self-protected"})
 			continue
-		}
-
-		policyKey := name
-		if hid, ok := remoteHostIDs[name]; ok {
-			policyKey = hid + "::" + name
 		}
 
 		current := s.resolvedPolicy(labels, policyKey)
 
 		if current == body.Policy {
-			unchanged = append(unchanged, unchangedEntry{Name: name, Reason: "already " + body.Policy})
+			unchanged = append(unchanged, unchangedEntry{Name: name, Host: t.host, Reason: "already " + body.Policy})
 			continue
 		}
 
-		changes = append(changes, changeEntry{Name: name, Key: policyKey, From: current, To: body.Policy})
+		changes = append(changes, changeEntry{Name: name, Host: t.host, Key: policyKey, From: current, To: body.Policy})
 	}
 
 	// Preview mode: show what would happen.

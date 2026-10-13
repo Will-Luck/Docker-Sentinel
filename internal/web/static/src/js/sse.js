@@ -82,7 +82,8 @@ function updateContainerRow(name, hostId) {
                 // Reapply checkbox state from selectedContainers after DOM patch.
                 var newCb = newRow ? newRow.querySelector(".row-select") : null;
                 var _selCont = window._dashboardSelectedContainers || {};
-                if (newCb && _selCont[newCb.value]) {
+                var _selKey = newCb && window.selectionCheckboxKey ? window.selectionCheckboxKey(newCb) : (newCb ? newCb.value : "");
+                if (newCb && _selCont[_selKey]) {
                     newCb.checked = true;
                 }
                 if (window.recomputeSelectionState) window.recomputeSelectionState();
