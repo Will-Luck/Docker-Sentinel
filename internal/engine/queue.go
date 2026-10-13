@@ -28,6 +28,10 @@ type PendingUpdate struct {
 	HostName               string    `json:"host_name,omitempty"`
 }
 
+// removedHostPrefix marks host IDs from the Portainer connector, which was
+// removed in v2.17.0. Queue entries carrying it can no longer be acted on.
+const removedHostPrefix = "portainer:"
+
 // Queue manages pending updates with BoltDB persistence.
 type Queue struct {
 	mu      sync.Mutex
@@ -51,8 +55,19 @@ func NewQueue(s *store.Store, bus *events.Bus, log *slog.Logger) *Queue {
 	if err == nil && data != nil {
 		var items []PendingUpdate
 		if json.Unmarshal(data, &items) == nil {
+			dropped := 0
 			for _, item := range items {
+				if strings.HasPrefix(item.HostID, removedHostPrefix) || strings.HasPrefix(item.Key(), removedHostPrefix) {
+					dropped++
+					continue
+				}
 				q.pending[item.Key()] = item
+			}
+			if dropped > 0 {
+				if log != nil {
+					log.Info("dropped queued updates for a removed connector", "count", dropped)
+				}
+				q.persist()
 			}
 		}
 	}

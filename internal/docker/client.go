@@ -131,7 +131,7 @@ func (c *Client) Ping(ctx context.Context) error {
 
 // EngineID returns the Docker daemon's unique engine identifier.
 // This is used for source deduplication when the same daemon is
-// reachable via multiple paths (local socket, cluster agent, Portainer).
+// reachable via multiple paths (local socket, cluster agent).
 func (c *Client) EngineID(ctx context.Context) (string, error) {
 	info, err := c.api.Info(ctx, client.InfoOptions{})
 	if err != nil {

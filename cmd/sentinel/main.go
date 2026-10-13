@@ -30,7 +30,6 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/metrics"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/npm"
-	portainerpkg "github.com/Will-Luck/Docker-Sentinel/internal/portainer"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 	"github.com/Will-Luck/Docker-Sentinel/internal/scanner"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
@@ -90,6 +89,7 @@ func main() {
 		cfg.CookieSecure = cfg.TLSEnabled()
 	}
 	log := logging.New(cfg.LogJSON)
+	warnRemovedEnv(log.Logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
@@ -533,8 +533,8 @@ func main() {
 	}
 
 	// Collect local Docker Engine ID for source deduplication.
-	// If two sources (local + Portainer + cluster agent) point at the same
-	// daemon, the overlap checker uses this ID to auto-block duplicates.
+	// Keep the daemon identity for display and for cluster hosts that report
+	// the same Engine ID.
 	if eid, err := client.EngineID(ctx); err != nil {
 		log.Warn("failed to get local Docker Engine ID", "error", err)
 	} else {
@@ -607,53 +607,6 @@ func main() {
 			}
 		}
 	})
-
-	// Portainer multi-instance migration + init.
-	if migrated, err := db.MigratePortainerSettings(); err != nil {
-		log.Error("portainer settings migration failed", "error", err)
-	} else if migrated {
-		if err := db.MigratePortainerKeys("p1"); err != nil {
-			log.Error("portainer key migration failed", "error", err)
-		} else {
-			log.Info("migrated old portainer settings to instance record")
-		}
-	}
-
-	portainerAdapter := newMultiPortainerAdapter()
-	portainerAdapter.engine = updater
-	portainerAdapter.store = db
-	var enginePortainerInstances []engine.PortainerInstance
-	instances, _ := db.ListPortainerInstances()
-	for _, inst := range instances {
-		if !inst.Enabled || inst.URL == "" || inst.Token == "" {
-			continue
-		}
-		pc := portainerpkg.NewClient(inst.URL, inst.Token)
-		ps := portainerpkg.NewScanner(pc)
-		portainerAdapter.Set(inst.ID, ps)
-
-		// Build engine instance with endpoint configs.
-		ei := engine.PortainerInstance{
-			ID:      inst.ID,
-			Name:    inst.Name,
-			Scanner: &portainerScannerAdapter{scanner: ps},
-		}
-		if len(inst.Endpoints) > 0 {
-			ei.Endpoints = make(map[int]engine.EndpointConfig)
-			for k, v := range inst.Endpoints {
-				epID, _ := strconv.Atoi(k)
-				ei.Endpoints[epID] = engine.EndpointConfig{
-					Enabled: v.Enabled,
-					Blocked: v.Blocked,
-				}
-			}
-		}
-		enginePortainerInstances = append(enginePortainerInstances, ei)
-		log.Info("portainer instance loaded", "id", inst.ID, "name", inst.Name, "url", inst.URL)
-	}
-	if len(enginePortainerInstances) > 0 {
-		updater.SetPortainerInstances(enginePortainerInstances)
-	}
 
 	// NPM integration.
 	npmURL := cfg.NPMURL
@@ -779,8 +732,6 @@ func main() {
 		if isSwarm {
 			webDeps.Swarm = &swarmAdapter{client: client, updater: updater}
 		}
-		webDeps.Portainer = portainerAdapter
-		webDeps.PortainerInstances = &portainerInstanceStoreAdapter{store: db}
 		if npmProvider != nil {
 			webDeps.NPM = npmProvider
 		}

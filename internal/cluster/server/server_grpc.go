@@ -314,18 +314,10 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 		s.log.Warn("failed to update last seen on state report", "hostID", hostID, "error", err)
 	}
 
-	// Store Engine ID for source deduplication.
+	// Store Engine ID so the cluster page can show it.
 	if report.EngineId != "" {
 		if err := s.registry.UpdateEngineID(hostID, report.EngineId); err != nil {
 			s.log.Warn("failed to store engine ID", "hostID", hostID, "error", err)
-		}
-		// Notify web layer so it can check for Portainer overlap.
-		if s.onEngineID != nil {
-			var hostName string
-			if hs, ok := s.registry.Get(hostID); ok {
-				hostName = hs.Info.Name
-			}
-			go s.onEngineID(hostID, hostName, report.EngineId)
 		}
 	}
 

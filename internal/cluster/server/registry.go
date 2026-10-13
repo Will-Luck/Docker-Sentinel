@@ -236,7 +236,7 @@ func (r *Registry) SetDisconnected(hostID string, err error) {
 }
 
 // UpdateEngineID stores the Docker Engine ID reported by an agent.
-// Persisted to BoltDB so the overlap checker can compare across sources.
+// Persisted to BoltDB so the cluster page can show it.
 func (r *Registry) UpdateEngineID(hostID, engineID string) error {
 	r.mu.Lock()
 	hs, ok := r.hosts[hostID]

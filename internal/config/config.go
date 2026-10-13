@@ -63,10 +63,6 @@ type Config struct {
 	HostName             string        // agent: human-readable label for this host
 	GracePeriodOffline   time.Duration // agent: time before switching to autonomous mode (default 30m)
 
-	// Portainer integration
-	PortainerURL   string
-	PortainerToken string
-
 	// NPM (Nginx Proxy Manager) integration
 	NPMURL      string
 	NPMEmail    string
@@ -155,10 +151,6 @@ func Load() *Config {
 		EnrollToken:          envStr("SENTINEL_ENROLL_TOKEN", ""),
 		HostName:             envStr("SENTINEL_HOST_NAME", ""),
 		GracePeriodOffline:   envDuration("SENTINEL_GRACE_PERIOD_OFFLINE", 30*time.Minute),
-
-		// Portainer integration
-		PortainerURL:   envStr("SENTINEL_PORTAINER_URL", ""),
-		PortainerToken: envStr("SENTINEL_PORTAINER_TOKEN", ""),
 
 		// NPM integration
 		NPMURL:      envStr("SENTINEL_NPM_URL", ""),
@@ -274,9 +266,6 @@ func (c *Config) Values() map[string]string {
 		"SENTINEL_REMOVE_VOLUMES":       fmt.Sprintf("%t", rv),
 		"SENTINEL_SCAN_CONCURRENCY":     fmt.Sprintf("%d", sc),
 		"SENTINEL_MAINTENANCE_WINDOW":   mw,
-
-		// Portainer
-		"SENTINEL_PORTAINER_URL": c.PortainerURL,
 
 		// NPM
 		"SENTINEL_NPM_URL": c.NPMURL,
