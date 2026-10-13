@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -45,9 +44,6 @@ type pageData struct {
 	// Per-tab stats for the dashboard tab navigation.
 	TabStats []tabStats
 	HasSwarm bool
-
-	// Portainer state (populated by withPortainer helper).
-	PortainerEnabled bool
 
 	// Cluster state (populated by withCluster helper).
 	ClusterEnabled bool
@@ -631,10 +627,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		ColumnConfig:      template.JS(colConfigJSON), //nolint:gosec // server-controlled JSON from json.Marshal
 	}
 
-	// Build host groups when cluster mode is active or Portainer instances exist.
+	// Build host groups when cluster mode is active.
 	// Each host gets its own accordion section on the dashboard.
-	hasMultiHost := (s.deps.Cluster != nil && s.deps.Cluster.Enabled()) ||
-		s.hasEnabledPortainerInstances()
+	hasMultiHost := s.deps.Cluster != nil && s.deps.Cluster.Enabled()
 
 	if hasMultiHost {
 		// "local" group — this server's containers.
@@ -764,9 +759,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-
-		// Portainer host groups.
-		s.appendPortainerHostGroups(r.Context(), &data)
 	}
 
 	// Compute per-tab stats for the dashboard tab navigation.
@@ -809,7 +801,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		data.TabStats = append(data.TabStats, swarmStats)
 	}
 
-	// Cluster/Portainer host tabs — one per remote host (skip "local", already added above).
+	// Cluster host tabs: one per remote host (skip "local", already added above).
 	if len(data.HostGroups) > 0 {
 		for _, hg := range data.HostGroups {
 			if hg.ID == "local" {
@@ -841,175 +833,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	s.withAuth(r, &data)
 	s.withCluster(&data)
-	s.withPortainer(&data)
 
 	s.renderTemplate(w, "index.html", data)
-}
-
-// hasEnabledPortainerInstances returns true if any Portainer instance has usable endpoints.
-func (s *Server) hasEnabledPortainerInstances() bool {
-	if s.deps.PortainerInstances == nil {
-		return false
-	}
-	instances, err := s.deps.PortainerInstances.ListPortainerInstances()
-	if err != nil {
-		return false
-	}
-	for _, inst := range instances {
-		if !inst.Enabled {
-			continue
-		}
-		for _, ep := range inst.Endpoints {
-			if ep.Enabled && !ep.Blocked {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// appendPortainerHostGroups adds Portainer-managed containers as host groups
-// on the dashboard, following the same pattern as cluster remote hosts.
-func (s *Server) appendPortainerHostGroups(ctx context.Context, data *pageData) {
-	if s.deps.PortainerInstances == nil || s.deps.Portainer == nil {
-		return
-	}
-	instances, err := s.deps.PortainerInstances.ListPortainerInstances()
-	if err != nil || len(instances) == 0 {
-		return
-	}
-
-	for _, inst := range instances {
-		if !inst.Enabled {
-			continue
-		}
-
-		// Count enabled endpoints to decide group naming.
-		enabledCount := 0
-		for _, cfg := range inst.Endpoints {
-			if cfg.Enabled && !cfg.Blocked {
-				enabledCount++
-			}
-		}
-		if enabledCount == 0 {
-			continue
-		}
-
-		// Fetch endpoint names once per instance.
-		epNames := make(map[int]string)
-		if eps, epErr := s.deps.Portainer.AllEndpoints(ctx, inst.ID); epErr == nil {
-			for _, ep := range eps {
-				epNames[ep.ID] = ep.Name
-			}
-		}
-
-		for epIDStr, epCfg := range inst.Endpoints {
-			if epCfg.Blocked || !epCfg.Enabled {
-				continue
-			}
-			epID, _ := strconv.Atoi(epIDStr)
-			containers, cErr := s.deps.Portainer.EndpointContainers(ctx, inst.ID, epID)
-			if cErr != nil {
-				continue
-			}
-
-			hostID := fmt.Sprintf("portainer:%s:%s", inst.ID, epIDStr)
-			var views []containerView
-
-			for _, c := range containers {
-				tag := registry.ExtractTag(c.Image)
-				if tag == "" {
-					if idx := strings.LastIndex(c.Image, "/"); idx >= 0 {
-						tag = c.Image[idx+1:]
-					} else {
-						tag = c.Image
-					}
-				}
-
-				queueKey := hostID + "::" + c.Name
-				policy := s.resolvedPolicy(c.Labels, queueKey)
-
-				var newestVersion string
-				var hasUpdate bool
-				if pend, ok := s.deps.Queue.Get(queueKey); ok {
-					hasUpdate = true
-					if len(pend.NewerVersions) > 0 {
-						newestVersion = pend.NewerVersions[0]
-					}
-				}
-
-				var severity string
-				if hasUpdate {
-					if newestVersion == "" {
-						severity = "build"
-					} else {
-						severity = classifySeverity(tag, newestVersion)
-					}
-				}
-
-				cv := containerView{
-					Name:          c.Name,
-					Image:         c.Image,
-					Tag:           tag,
-					NewestVersion: newestVersion,
-					Registry:      registry.RegistryHost(c.Image),
-					Policy:        policy,
-					State:         c.State,
-					HasUpdate:     hasUpdate,
-					DigestOnly:    hasUpdate && newestVersion == "",
-					Severity:      severity,
-					HostID:        hostID,
-					HostName:      inst.Name,
-					Maintenance:   s.isRemoteUpdating(hostID, c.Name),
-				}
-				views = append(views, cv)
-			}
-
-			if len(views) > 0 {
-				sg := stackGroup{Name: "Standalone", Containers: views}
-				for _, c := range views {
-					if c.State == "running" {
-						sg.RunningCount++
-					} else {
-						sg.StoppedCount++
-					}
-					if c.HasUpdate {
-						sg.HasPending = true
-						sg.PendingCount++
-					}
-				}
-
-				epName := epNames[epID]
-				if epName == "" {
-					epName = fmt.Sprintf("Endpoint %d", epID)
-				}
-
-				// Simplify name when only one endpoint on this instance.
-				groupName := inst.Name + " / " + epName
-				if enabledCount == 1 {
-					groupName = inst.Name
-				}
-
-				data.HostGroups = append(data.HostGroups, hostGroup{
-					ID:        hostID,
-					Name:      groupName,
-					Connected: true,
-					Stacks:    []stackGroup{sg},
-					Count:     len(views),
-				})
-
-				data.TotalContainers += len(views)
-				for _, c := range views {
-					if c.State == "running" {
-						data.RunningContainers++
-					}
-					if c.HasUpdate {
-						data.PendingUpdates++
-					}
-				}
-			}
-		}
-	}
 }
 
 // extractIP strips the port from a "host:port" address string.

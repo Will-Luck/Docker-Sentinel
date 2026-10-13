@@ -10,6 +10,5 @@ func (s *Server) handleImages(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
-	s.withPortainer(&data)
 	s.renderTemplate(w, "images.html", data)
 }

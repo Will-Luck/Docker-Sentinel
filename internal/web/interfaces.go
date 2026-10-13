@@ -335,59 +335,6 @@ type ClusterLifecycle interface {
 	Stop()
 }
 
-// PortainerProvider provides multi-instance Portainer access for the web layer.
-type PortainerProvider interface {
-	TestConnection(ctx context.Context, instanceID string) error
-	Endpoints(ctx context.Context, instanceID string) ([]PortainerEndpoint, error)
-	AllEndpoints(ctx context.Context, instanceID string) ([]PortainerEndpoint, error)
-	EndpointContainers(ctx context.Context, instanceID string, endpointID int) ([]PortainerContainerInfo, error)
-	// ConnectInstance creates a scanner for the given instance config at runtime.
-	ConnectInstance(id, url, token string) error
-	// DisconnectInstance removes the scanner for the given instance.
-	DisconnectInstance(id string)
-	// UpdateStandaloneContainer recreates a standalone (non-stack) container
-	// on the given Portainer endpoint with a new image.
-	UpdateStandaloneContainer(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error
-	// RedeployStack triggers a stack redeploy via the Portainer API.
-	RedeployStack(ctx context.Context, instanceID string, stackID, endpointID int) error
-	// UpdatePortainerSelf updates a Portainer container using the official
-	// portainer-updater helper, which bypasses the Portainer API by talking
-	// directly to the Docker socket. Required because updating Portainer
-	// through its own API kills the API mid-request.
-	UpdatePortainerSelf(ctx context.Context, instanceID string, endpointID int, containerID, newImage string) error
-	// EndpointEngineID returns the Docker Engine ID for a specific endpoint,
-	// queried via Portainer's Docker proxy. Used for source deduplication.
-	EndpointEngineID(ctx context.Context, instanceID string, endpointID int) (string, error)
-}
-
-// PortainerInstanceStore persists Portainer instance configuration.
-type PortainerInstanceStore interface {
-	ListPortainerInstances() ([]PortainerInstanceConfig, error)
-	GetPortainerInstance(id string) (PortainerInstanceConfig, error)
-	SavePortainerInstance(inst PortainerInstanceConfig) error
-	DeletePortainerInstance(id string) error
-	NextPortainerID() (string, error)
-}
-
-// PortainerInstanceConfig mirrors store.PortainerInstance for the web layer.
-type PortainerInstanceConfig struct {
-	ID        string                 `json:"id"`
-	Name      string                 `json:"name"`
-	URL       string                 `json:"url"`
-	Token     string                 `json:"token,omitempty"`
-	Enabled   bool                   `json:"enabled"`
-	Endpoints map[string]EndpointCfg `json:"endpoints,omitempty"`
-}
-
-// EndpointCfg mirrors store.EndpointConfig.
-type EndpointCfg struct {
-	Enabled    bool   `json:"enabled"`
-	Blocked    bool   `json:"blocked,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-	EngineID   string `json:"engine_id,omitempty"`
-	ForceAllow bool   `json:"force_allow,omitempty"`
-}
-
 // NPMProvider provides NPM (Nginx Proxy Manager) proxy host resolution.
 // Nil when NPM is not configured.
 type NPMProvider interface {
@@ -435,31 +382,6 @@ type PortConfig struct {
 type PortOverride struct {
 	URL  string `json:"url,omitempty"`
 	Path string `json:"path,omitempty"`
-}
-
-// PortainerEndpoint represents a Portainer-managed Docker environment.
-type PortainerEndpoint struct {
-	ID         int    `json:"id"`
-	Name       string `json:"name"`
-	URL        string `json:"url"`
-	Type       int    `json:"type"`
-	Status     string `json:"status"`
-	InstanceID string `json:"instance_id,omitempty"`
-}
-
-// PortainerContainerInfo is a container from a Portainer-managed environment.
-type PortainerContainerInfo struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Image        string            `json:"image"`
-	State        string            `json:"state"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	EndpointID   int               `json:"endpoint_id"`
-	EndpointName string            `json:"endpoint_name"`
-	StackID      int               `json:"stack_id,omitempty"`
-	StackName    string            `json:"stack_name,omitempty"`
-	InstanceID   string            `json:"instance_id,omitempty"`
-	InstanceName string            `json:"instance_name,omitempty"`
 }
 
 // LogEntry mirrors store.LogEntry.

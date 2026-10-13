@@ -13,7 +13,6 @@ func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
 	data := pageData{Page: "connectors"}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
-	s.withPortainer(&data)
 	s.renderTemplate(w, "connectors.html", data)
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -49,7 +48,6 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
-	s.withPortainer(&data)
 
 	s.renderTemplate(w, "queue.html", data)
 }
@@ -80,7 +78,6 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
-	s.withPortainer(&data)
 
 	s.renderTemplate(w, "history.html", data)
 }
@@ -94,7 +91,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
-	s.withPortainer(&data)
 	s.renderTemplate(w, "settings.html", data)
 }
 
@@ -122,7 +118,6 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
-	s.withPortainer(&data)
 	s.renderTemplate(w, "logs.html", data)
 }
 
@@ -302,66 +297,6 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fallback: search Portainer endpoint containers.
-	if targetView == nil && strings.HasPrefix(hostFilter, "portainer:") && s.deps.Portainer != nil {
-		parts := strings.SplitN(strings.TrimPrefix(hostFilter, "portainer:"), ":", 2)
-		if len(parts) == 2 {
-			instanceID := parts[0]
-			epID, _ := strconv.Atoi(parts[1])
-			pContainers, pErr := s.deps.Portainer.EndpointContainers(r.Context(), instanceID, epID)
-			if pErr == nil {
-				for _, c := range pContainers {
-					if c.Name != name {
-						continue
-					}
-					tag := registry.ExtractTag(c.Image)
-					if tag == "" {
-						if idx := strings.LastIndex(c.Image, "/"); idx >= 0 {
-							tag = c.Image[idx+1:]
-						} else {
-							tag = c.Image
-						}
-					}
-					queueKey := hostFilter + "::" + c.Name
-					policy := s.resolvedPolicy(c.Labels, queueKey)
-					var newestVersion string
-					var hasUpdate bool
-					if pend, ok := s.deps.Queue.Get(queueKey); ok {
-						hasUpdate = true
-						if len(pend.NewerVersions) > 0 {
-							newestVersion = pend.NewerVersions[0]
-						}
-					}
-					var severity string
-					if hasUpdate {
-						if newestVersion == "" {
-							severity = "build"
-						} else {
-							severity = classifySeverity(tag, newestVersion)
-						}
-					}
-					v := containerView{
-						Name:          c.Name,
-						Image:         c.Image,
-						Tag:           tag,
-						NewestVersion: newestVersion,
-						Registry:      registry.RegistryHost(c.Image),
-						Policy:        policy,
-						State:         c.State,
-						HasUpdate:     hasUpdate,
-						DigestOnly:    hasUpdate && newestVersion == "",
-						Severity:      severity,
-						HostID:        hostFilter,
-						HostName:      c.InstanceName,
-						Maintenance:   s.isRemoteUpdating(hostFilter, c.Name),
-					}
-					targetView = &v
-					break
-				}
-			}
-		}
-	}
-
 	if targetView == nil {
 		writeError(w, http.StatusNotFound, "container not found")
 		return
@@ -474,7 +409,6 @@ func (s *Server) handleCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	s.withAuth(r, &data)
 	s.withCluster(&data)
-	s.withPortainer(&data)
 	s.renderTemplate(w, "cluster.html", data)
 }
 
@@ -490,8 +424,7 @@ type containerDetailData struct {
 	ChangelogURL   string
 	PortOverrides  map[string]PortOverride // per-port custom URL/path overrides, keyed by port string
 
-	PortainerEnabled bool
-	ClusterEnabled   bool
+	ClusterEnabled bool
 
 	// Auth context.
 	CurrentUser *auth.User
@@ -513,29 +446,6 @@ func (s *Server) withCluster(data *pageData) {
 		}
 		data.ClusterEnabled = v == "true"
 	}
-}
-
-// isPortainerEnabled checks whether Portainer integration is active.
-func (s *Server) isPortainerEnabled() bool {
-	if s.deps.Portainer != nil {
-		return true
-	}
-	if s.deps.PortainerInstances != nil {
-		instances, err := s.deps.PortainerInstances.ListPortainerInstances()
-		if err == nil {
-			for _, inst := range instances {
-				if inst.Enabled {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-// withPortainer populates PortainerEnabled from the live provider or DB setting.
-func (s *Server) withPortainer(data *pageData) {
-	data.PortainerEnabled = s.isPortainerEnabled()
 }
 
 // withAuth populates auth context fields on pageData from the request.
@@ -616,95 +526,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	var image string                   // for changelog/version lookups
 	var detailLabels map[string]string // labels of the resolved container, for #83 scope hint
 
-	if strings.HasPrefix(hostFilter, "portainer:") && s.deps.Portainer != nil {
-		// Portainer container: parse "portainer:instanceID:epID" or legacy "portainer:epID".
-		parts := strings.SplitN(strings.TrimPrefix(hostFilter, "portainer:"), ":", 2)
-		var instanceID, epIDStr string
-		if len(parts) == 2 {
-			instanceID = parts[0]
-			epIDStr = parts[1]
-		} else {
-			epIDStr = parts[0]
-		}
-		epID, err := strconv.Atoi(epIDStr)
-		if err != nil {
-			s.renderError(w, http.StatusBadRequest, "Bad Request", "Invalid Portainer endpoint ID.")
-			return
-		}
-		containers, err := s.deps.Portainer.EndpointContainers(r.Context(), instanceID, epID)
-		if err != nil {
-			s.deps.Log.Error("failed to list Portainer containers", "endpoint", epID, "error", err)
-			s.renderError(w, http.StatusInternalServerError, "Server Error", "Failed to load Portainer containers.")
-			return
-		}
-		var pc *PortainerContainerInfo
-		for _, c := range containers {
-			if c.Name == name {
-				pc = &c
-				break
-			}
-		}
-		if pc == nil {
-			s.renderError(w, http.StatusNotFound, "Container Not Found",
-				"The container \""+name+"\" was not found on Portainer endpoint "+epIDStr+". It may have been removed.")
-			return
-		}
-
-		queueKey := hostFilter + "::" + name
-		policy := s.resolvedPolicy(pc.Labels, queueKey)
-		tag := registry.ExtractTag(pc.Image)
-		if tag == "" {
-			if idx := strings.LastIndex(pc.Image, "/"); idx >= 0 {
-				tag = pc.Image[idx+1:]
-			} else {
-				tag = pc.Image
-			}
-		}
-		var resolved string
-		if _, isSemver := registry.ParseSemVer(tag); !isSemver {
-			if v := pc.Labels["org.opencontainers.image.version"]; v != "" && v != tag {
-				resolved = v
-			}
-		}
-		var newestVersion string
-		var hasUpdate bool
-		if pend, ok := s.deps.Queue.Get(queueKey); ok {
-			hasUpdate = true
-			if len(pend.NewerVersions) > 0 {
-				newestVersion = pend.NewerVersions[0]
-			}
-		}
-		var detailSeverity string
-		if hasUpdate {
-			if newestVersion == "" {
-				detailSeverity = "build"
-			} else {
-				detailSeverity = classifySeverity(tag, newestVersion)
-				if detailSeverity == "" && resolved != "" {
-					detailSeverity = classifySeverity(resolved, newestVersion)
-				}
-			}
-		}
-
-		view = containerView{
-			Name:            pc.Name,
-			Image:           pc.Image,
-			Tag:             tag,
-			ResolvedVersion: resolved,
-			NewestVersion:   newestVersion,
-			Policy:          policy,
-			State:           pc.State,
-			HasUpdate:       hasUpdate,
-			DigestOnly:      hasUpdate && newestVersion == "",
-			Severity:        detailSeverity,
-			IsSelf:          pc.Labels["sentinel.self"] == "true",
-			HostID:          hostFilter,
-			HostName:        pc.EndpointName,
-			Registry:        registry.RegistryHost(pc.Image),
-		}
-		image = pc.Image
-		detailLabels = pc.Labels
-	} else if hostFilter != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+	if hostFilter != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
 		// Remote container: look up from cluster cache.
 		var rc *RemoteContainer
 		for _, c := range s.deps.Cluster.AllHostContainers() {
@@ -871,8 +693,8 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		detailLabels = found.Labels
 	}
 
-	// Use the scoped key for history/snapshot lookups so Portainer and cluster
-	// containers find their records (stored as "portainer:3::name" or "hostID::name").
+	// Use the scoped key for history/snapshot lookups so cluster
+	// containers find their records (stored as "hostID::name").
 	historyKey := name
 	if hostFilter != "" {
 		historyKey = hostFilter + "::" + name
@@ -933,17 +755,16 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := containerDetailData{
-		Container:        view,
-		History:          history,
-		Snapshots:        snapshots,
-		Versions:         versions,
-		ScopeHintCount:   scopeHintCount,
-		CurrentScope:     currentScope,
-		HasSnapshot:      len(snapshots) > 0,
-		ChangelogURL:     ChangelogURL(image),
-		PortOverrides:    portOverrides,
-		PortainerEnabled: s.isPortainerEnabled(),
-		ClusterEnabled:   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
+		Container:      view,
+		History:        history,
+		Snapshots:      snapshots,
+		Versions:       versions,
+		ScopeHintCount: scopeHintCount,
+		CurrentScope:   currentScope,
+		HasSnapshot:    len(snapshots) > 0,
+		ChangelogURL:   ChangelogURL(image),
+		PortOverrides:  portOverrides,
+		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthDetail(r, &data)
 
@@ -957,8 +778,7 @@ type serviceDetailData struct {
 	Versions     []string
 	ChangelogURL string
 
-	PortainerEnabled bool
-	ClusterEnabled   bool
+	ClusterEnabled bool
 
 	// Auth context.
 	CurrentUser *auth.User
@@ -1036,12 +856,11 @@ func (s *Server) handleServiceDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := serviceDetailData{
-		Service:          view,
-		History:          history,
-		Versions:         versions,
-		ChangelogURL:     ChangelogURL(found.Image),
-		PortainerEnabled: s.isPortainerEnabled(),
-		ClusterEnabled:   s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
+		Service:        view,
+		History:        history,
+		Versions:       versions,
+		ChangelogURL:   ChangelogURL(found.Image),
+		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 	}
 	s.withAuthServiceDetail(r, &data)
 

@@ -8,7 +8,7 @@ import (
 )
 
 // validateServiceURL checks that rawURL is a well-formed http(s) URL.
-// Private/LAN addresses are allowed since services like NPM and Portainer
+// Private/LAN addresses are allowed since services like NPM
 // typically run on the same network. Only loopback and unspecified are blocked.
 func validateServiceURL(rawURL string) error {
 	if rawURL == "" {
