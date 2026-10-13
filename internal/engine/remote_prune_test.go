@@ -15,6 +15,7 @@ import (
 type fakeCluster struct {
 	mu        sync.Mutex
 	connected []string
+	removed   map[string]bool // hosts no longer in the cluster
 	lists     map[string][]RemoteContainer
 	listErr   map[string]error
 	updates   []string // "hostID/name -> target"
@@ -39,6 +40,9 @@ func (c *tickingClock) Since(t time.Time) time.Duration        { return c.Now().
 func (f *fakeCluster) ConnectedHosts() []string { return f.connected }
 
 func (f *fakeCluster) HostInfo(hostID string) (HostContext, bool) {
+	if f.removed[hostID] {
+		return HostContext{}, false
+	}
 	return HostContext{HostID: hostID, HostName: "name-" + hostID}, true
 }
 
@@ -147,5 +151,36 @@ func TestScanRemoteAutoUpdateHistoryNamesTheHost(t *testing.T) {
 	}
 	if recs[0].HostID != "h1" || recs[0].HostName != "name-h1" {
 		t.Errorf("history row host = %q/%q, want h1/name-h1", recs[0].HostID, recs[0].HostName)
+	}
+}
+
+// A host removed or revoked from the cluster will never list again: its
+// queued updates go, while a host that is only offline keeps its own.
+func TestScanPrunesQueueOfRemovedHost(t *testing.T) {
+	u, _ := newTestUpdater(t, newMockDocker())
+	u.SetClusterScanner(&fakeCluster{removed: map[string]bool{"gone": true}})
+	u.queue.Add(PendingUpdate{HostID: "gone", ContainerName: "web", CurrentImage: "nginx:1"})
+	u.queue.Add(PendingUpdate{HostID: "offline", ContainerName: "db", CurrentImage: "postgres:16"})
+
+	u.Scan(context.Background(), ScanScheduled)
+
+	got := queuedKeys(u)
+	if got["gone::web"] {
+		t.Error("queued update of a removed host was kept")
+	}
+	if !got["offline::db"] {
+		t.Error("queued update of an offline host was pruned")
+	}
+}
+
+// With cluster mode off there are no remote hosts: their queued updates go.
+func TestScanPrunesRemoteQueueWhenClusterIsOff(t *testing.T) {
+	u, _ := newTestUpdater(t, newMockDocker())
+	u.queue.Add(PendingUpdate{HostID: "h1", ContainerName: "web", CurrentImage: "nginx:1"})
+
+	u.Scan(context.Background(), ScanScheduled)
+
+	if queuedKeys(u)["h1::web"] {
+		t.Error("remote queued update kept with cluster mode off")
 	}
 }

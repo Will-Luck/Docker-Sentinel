@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 )
 
 func selfTestServer() *Server {
@@ -62,3 +64,93 @@ func TestIsQueueItemSelf_OnlyTheLocalSentinel(t *testing.T) {
 		t.Error("the hub's own container not marked as itself")
 	}
 }
+
+// approvingQueue is an UpdateQueue whose Approve hands the item over.
+type approvingQueue struct{ items []PendingUpdate }
+
+func (q *approvingQueue) List() []PendingUpdate { return q.items }
+func (q *approvingQueue) Get(key string) (PendingUpdate, bool) {
+	for _, it := range q.items {
+		if it.Key() == key {
+			return it, true
+		}
+	}
+	return PendingUpdate{}, false
+}
+func (q *approvingQueue) Add(u PendingUpdate) { q.items = append(q.items, u) }
+func (q *approvingQueue) Approve(key string) (PendingUpdate, bool) {
+	for i, it := range q.items {
+		if it.Key() == key {
+			q.items = append(q.items[:i], q.items[i+1:]...)
+			return it, true
+		}
+	}
+	return PendingUpdate{}, false
+}
+func (q *approvingQueue) Remove(string) {}
+
+// recordingUpdater is a local ContainerUpdater that records its calls.
+type recordingUpdater struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (r *recordingUpdater) UpdateContainer(_ context.Context, id, name, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, id+"/"+name)
+	return nil
+}
+func (r *recordingUpdater) IsUpdating(string) bool { return false }
+func (r *recordingUpdater) IsIdle() bool           { return true }
+func (r *recordingUpdater) SelfUpdateQueued() bool { return false }
+func (r *recordingUpdater) count() int             { r.mu.Lock(); defer r.mu.Unlock(); return len(r.calls) }
+
+// A queued update for a remote host cannot be applied when cluster mode is
+// off or the host has left the cluster. Approve must refuse it, keep it
+// queued, and never hand the remote container to the local updater.
+func TestApiApprove_RefusesRemoteRowWithoutItsHost(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cluster bool
+	}{{"cluster off", false}, {"host not in cluster", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var srv *Server
+			if tc.cluster {
+				srv = selfTestServer() // knows host h1 only
+			} else {
+				srv = newPolicyTestServer(&mockContainerLister{}, &mockPolicyStore{}, nil, nil)
+			}
+			q := &approvingQueue{items: []PendingUpdate{{HostID: "h9", ContainerID: "remote-id", ContainerName: "web", CurrentImage: "nginx:1"}}}
+			up := &recordingUpdater{}
+			srv.deps.Queue = q
+			srv.deps.Updater = up
+			srv.deps.Store = nopHistory{}
+
+			r := httptest.NewRequest(http.MethodPost, "/api/approve/h9::web", nil)
+			r.SetPathValue("key", "h9::web")
+			w := httptest.NewRecorder()
+			srv.apiApprove(w, r)
+
+			if w.Code != http.StatusConflict {
+				t.Errorf("status = %d (%s), want 409", w.Code, w.Body.String())
+			}
+			if _, ok := q.Get("h9::web"); !ok {
+				t.Error("refused update was taken off the queue")
+			}
+			time.Sleep(100 * time.Millisecond)
+			if n := up.count(); n != 0 {
+				t.Errorf("remote container handed to the local updater %d times", n)
+			}
+		})
+	}
+}
+
+// nopHistory is a HistoryStore that keeps nothing.
+type nopHistory struct{}
+
+func (nopHistory) ListHistory(int, string) ([]UpdateRecord, error)            { return nil, nil }
+func (nopHistory) ListAllHistory() ([]UpdateRecord, error)                    { return nil, nil }
+func (nopHistory) ListHistoryByContainer(string, int) ([]UpdateRecord, error) { return nil, nil }
+func (nopHistory) GetMaintenance(string) (bool, error)                        { return false, nil }
+func (nopHistory) RecordUpdate(UpdateRecord) error                            { return nil }

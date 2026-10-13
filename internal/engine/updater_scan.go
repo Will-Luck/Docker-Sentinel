@@ -427,9 +427,11 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 	}
 	// Add remote cluster container keys (hostID::name format). A remote
 	// entry can only be judged stale for a host that is connected and
-	// listed its containers this scan. Entries of any other host (not yet
-	// reconnected after a hub restart, partitioned, or whose list failed)
-	// are kept as they are.
+	// listed its containers this scan. Entries of a host that is still in
+	// the cluster but did not list (not yet reconnected after a hub
+	// restart, partitioned, or whose list failed) are kept. Entries of a
+	// host that left the cluster, and all remote entries when cluster mode
+	// is off, are pruned.
 	listedHosts := make(map[string]bool)
 	if u.cluster != nil {
 		for _, hostID := range u.cluster.ConnectedHosts() {
@@ -444,9 +446,14 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) ScanResult {
 			}
 		}
 	}
-	for _, p := range u.queue.List() {
-		if p.HostID != "" && !listedHosts[p.HostID] {
-			liveNames[p.Key()] = true
+	if u.cluster != nil {
+		for _, p := range u.queue.List() {
+			if p.HostID == "" || listedHosts[p.HostID] {
+				continue
+			}
+			if _, ok := u.cluster.HostInfo(p.HostID); ok {
+				liveNames[p.Key()] = true
+			}
 		}
 	}
 	if pruned := u.queue.Prune(liveNames); pruned > 0 {

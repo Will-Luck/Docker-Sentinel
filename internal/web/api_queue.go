@@ -144,6 +144,19 @@ func (s *Server) apiApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A remote update needs its host in the cluster. Refuse it, and keep
+	// it queued, rather than hand a remote container to the local updater.
+	if queued, ok := s.deps.Queue.Get(key); ok && queued.HostID != "" {
+		if s.deps.Cluster == nil || !s.deps.Cluster.Enabled() {
+			writeError(w, http.StatusConflict, "cluster mode is off: the update for "+name+" on "+queued.HostName+" cannot be applied")
+			return
+		}
+		if _, known := s.deps.Cluster.GetHost(queued.HostID); !known {
+			writeError(w, http.StatusConflict, "host "+queued.HostID+" is no longer in the cluster: the update for "+name+" cannot be applied")
+			return
+		}
+	}
+
 	update, ok := s.deps.Queue.Approve(key)
 	if !ok {
 		writeError(w, http.StatusNotFound, "no pending update for "+name)
