@@ -253,7 +253,8 @@ func (a *clusterScannerAdapter) ListContainers(ctx context.Context, hostID strin
 }
 
 func (a *clusterScannerAdapter) UpdateContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (engine.RemoteUpdateResult, error) {
-	ur, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
+	// The scan records the history row itself.
+	ur, err := a.srv.UpdateContainerSync(clusterserver.WithCallerRecords(ctx), hostID, containerName, targetImage, targetDigest)
 	if err != nil {
 		return engine.RemoteUpdateResult{}, err
 	}

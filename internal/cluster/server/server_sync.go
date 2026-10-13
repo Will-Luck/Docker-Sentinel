@@ -16,6 +16,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 )
@@ -291,16 +292,88 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 	resp, err := s.request(ctx, hostID, "update result", purpose, updateTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_UpdateContainer{UpdateContainer: req},
 	})
+	var result *proto.UpdateResult
+	if err == nil {
+		ur, ok := resp.Payload.(*proto.AgentMessage_UpdateResult)
+		if !ok {
+			return nil, fmt.Errorf("unexpected response type %T (wanted UpdateResult)", resp.Payload)
+		}
+		result = ur.UpdateResult
+	}
+	if !callerRecords(ctx) {
+		s.recordForCaller(hostID, containerName, targetImage, purpose, result, err)
+	}
+	return result, err
+}
+
+// callerRecordsKey marks a context whose caller records the history of the
+// remote update it starts (WithCallerRecords).
+type callerRecordsKey struct{}
+
+// WithCallerRecords marks ctx as that of a caller that records the history
+// row of the remote update or rollback it starts (the dashboard, the API
+// and the scan do). For an update started without it (the agent
+// auto-update), the hub records the row itself.
+func WithCallerRecords(ctx context.Context) context.Context {
+	return context.WithValue(ctx, callerRecordsKey{}, true)
+}
+
+func callerRecords(ctx context.Context) bool {
+	v, _ := ctx.Value(callerRecordsKey{}).(bool)
+	return v
+}
+
+// recordForCaller records the history row of a remote update (or
+// rollback) whose caller does not: the agent's result, or the failure to
+// get one. An unanswered request's failure is written only if no row is at
+// its time yet (its late result, recorded at the same time, wins).
+func (s *Server) recordForCaller(hostID, name, target, purpose string, ur *proto.UpdateResult, err error) {
+	if s.history == nil || (ur != nil && ur.GetOutcome() == "skipped") {
+		return
+	}
+	rec := store.UpdateRecord{
+		Timestamp:     time.Now(),
+		ContainerName: store.ScopedKey(hostID, name),
+		NewImage:      target,
+		HostID:        hostID,
+	}
+	if hs, ok := s.registry.Get(hostID); ok {
+		rec.HostName = hs.Info.Name
+		for _, c := range hs.Containers {
+			if c.Name == name {
+				rec.OldImage, rec.OldDigest = c.Image, c.ImageDigest
+			}
+		}
+	}
+	if purpose == "rollback" {
+		rec.Type = "rollback"
+	}
 	if err != nil {
-		return nil, err
+		rec.Outcome, rec.Error = "failed", err.Error()
+		rec.Timestamp = cluster.HistoryTime(err, rec.Timestamp)
+		if ins, ok := s.history.(interface {
+			RecordUpdateIfAbsent(store.UpdateRecord) (bool, error)
+		}); ok && cluster.Unanswered(err) {
+			if _, err := ins.RecordUpdateIfAbsent(rec); err != nil {
+				s.log.Warn("failed to record a remote update", "hostID", hostID, "container", name, "error", err)
+			}
+			return
+		}
+	} else {
+		if ur.GetOldImage() != "" {
+			rec.OldImage, rec.OldDigest = ur.GetOldImage(), ur.GetOldDigest()
+		}
+		if ur.GetNewImage() != "" {
+			rec.NewImage = ur.GetNewImage()
+		}
+		rec.NewDigest, rec.Outcome, rec.Error = ur.GetNewDigest(), ur.GetOutcome(), ur.GetError()
+		if d := ur.GetDuration(); d != nil {
+			rec.Duration = d.AsDuration()
+		}
 	}
-
-	ur, ok := resp.Payload.(*proto.AgentMessage_UpdateResult)
-	if !ok {
-		return nil, fmt.Errorf("unexpected response type %T (wanted UpdateResult)", resp.Payload)
+	if err := s.history.RecordUpdate(rec); err != nil {
+		s.log.Warn("failed to record a remote update", "hostID", hostID, "container", name, "error", err)
 	}
-
-	return ur.UpdateResult, nil
 }
 
 // DiscardSwapSync asks the agent on hostID to discard its record of a swap

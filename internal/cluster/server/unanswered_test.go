@@ -124,3 +124,47 @@ func TestUnansweredRollback_ReplayedAsARollback(t *testing.T) {
 		return len(recs) == 1 && recs[0].Outcome == "success" && recs[0].Type == "rollback"
 	}, "the replayed rollback should replace the failure row, as a rollback")
 }
+
+// smoke F1: an agent's own update by "Auto-update agents" left no history
+// row, so a later Rollback of that agent found nothing to go back to. An
+// update whose caller does not record history (WithCallerRecords marks
+// those that do) is recorded by the hub itself.
+func TestUpdateContainerSync_RecordsWhatNoCallerRecords(t *testing.T) {
+	srv, addr, st, _ := testServer(t)
+	srv.SetHistoryRecorder(st)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	t.Cleanup(closeConn)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if req := msg.GetUpdateContainer(); req != nil {
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{UpdateResult: &proto.UpdateResult{
+					RequestId: msg.GetRequestId(), ContainerName: req.GetContainerName(), Outcome: "success",
+					OldImage: "sentinel:3.0.0", NewImage: req.GetTargetImage(),
+				}}})
+			}
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := srv.UpdateContainerSync(ctx, hostID, "sentinel-agent", "sentinel:3.0.1", ""); err != nil {
+		t.Fatal(err)
+	}
+	recs, _ := st.ListHistoryByContainer(store.ScopedKey(hostID, "sentinel-agent"), 10)
+	if len(recs) != 1 || recs[0].Outcome != "success" || recs[0].OldImage != "sentinel:3.0.0" || recs[0].HostID != hostID {
+		t.Fatalf("history = %+v, want one success row with the old image", recs)
+	}
+
+	if _, err := srv.UpdateContainerSync(WithCallerRecords(ctx), hostID, "web", "nginx:2", ""); err != nil {
+		t.Fatal(err)
+	}
+	if recs, _ := st.ListHistoryByContainer(store.ScopedKey(hostID, "web"), 10); len(recs) != 0 {
+		t.Errorf("history for a caller that records = %+v, want none from the hub", recs)
+	}
+}

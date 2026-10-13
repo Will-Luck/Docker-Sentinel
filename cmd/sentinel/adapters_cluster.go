@@ -158,7 +158,8 @@ func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, cont
 	if a.updater != nil {
 		a.updater.NotifyRemote(ctx, hostName, containerName, oldImage, nil)
 	}
-	ur, err := a.srv.UpdateContainerSync(ctx, hostID, containerName, targetImage, targetDigest)
+	// The dashboard and the API record the history row themselves.
+	ur, err := a.srv.UpdateContainerSync(clusterserver.WithCallerRecords(ctx), hostID, containerName, targetImage, targetDigest)
 	if a.updater != nil {
 		res := engine.RemoteUpdateResult{Outcome: "failed", NewImage: targetImage}
 		if err != nil {
