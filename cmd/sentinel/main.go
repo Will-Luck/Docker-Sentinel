@@ -394,6 +394,9 @@ func main() {
 		log.Info("notification channel enabled", "name", ch.Name, "type", string(ch.Type))
 	}
 	notifier := notify.NewMulti(log, notifiers...)
+	if err := loadNotifyTemplates(db); err != nil {
+		log.Warn("failed to load custom notification templates", "error", err)
+	}
 
 	// Load notification batch window from settings (default: 0 = disabled).
 	if bw := loadSettingStr(db, "notification_batch_window"); bw != "" && bw != "0" {

@@ -318,11 +318,28 @@ func (a *notifyTemplateAdapter) GetAllNotifyTemplates() (map[string]string, erro
 }
 
 func (a *notifyTemplateAdapter) SaveNotifyTemplate(eventType, tmpl string) error {
-	return a.s.SaveNotifyTemplate(eventType, tmpl)
+	if err := a.s.SaveNotifyTemplate(eventType, tmpl); err != nil {
+		return err
+	}
+	return loadNotifyTemplates(a.s)
 }
 
 func (a *notifyTemplateAdapter) DeleteNotifyTemplate(eventType string) error {
-	return a.s.DeleteNotifyTemplate(eventType)
+	if err := a.s.DeleteNotifyTemplate(eventType); err != nil {
+		return err
+	}
+	return loadNotifyTemplates(a.s)
+}
+
+// loadNotifyTemplates hands the stored custom templates to the notify
+// providers. It runs at startup and after every save or delete.
+func loadNotifyTemplates(s *store.Store) error {
+	templates, err := s.GetAllNotifyTemplates()
+	if err != nil {
+		return err
+	}
+	notify.SetCustomTemplates(templates)
+	return nil
 }
 
 // notifyStateAdapter bridges store.Store to web.NotifyStateStore.
