@@ -539,3 +539,20 @@ func TestCertErrorGuidance_NotYetValidIsClockSkew(t *testing.T) {
 		t.Errorf("fix %q should say to correct the clock, and that re-enrolling will not help", fix)
 	}
 }
+
+// The hub refuses a certificate it did not record for this host (a
+// superseded renewal, or a hub restored from an older backup that never
+// saw the renewal). The agent must say what happened and what to do.
+func TestCertErrorGuidance_CertificateNotIssuedToHost(t *testing.T) {
+	err := errors.New("report state: rpc error: code = PermissionDenied desc = certificate is not the one issued to this host")
+	if !isCertError(err) {
+		t.Fatal("not recognised as a certificate problem")
+	}
+	msg, fix := certErrorGuidance(err)
+	if !strings.Contains(msg, "does not recognise") {
+		t.Errorf("explanation %q", msg)
+	}
+	if !strings.Contains(fix, "re-enrol") || !strings.Contains(fix, "backup") {
+		t.Errorf("fix %q should say to re-enrol and mention a server restored from backup", fix)
+	}
+}

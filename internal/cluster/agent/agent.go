@@ -543,7 +543,8 @@ func isCertError(err error) bool {
 		strings.Contains(s, "certificate is not trusted") ||
 		strings.Contains(s, "x509:") ||
 		strings.Contains(s, "tls: failed to verify certificate") ||
-		strings.Contains(s, "tls: expired certificate")
+		strings.Contains(s, "tls: expired certificate") ||
+		strings.Contains(s, "certificate is not the one issued to this host")
 }
 
 // certErrorGuidance describes a certificate error from isCertError and
@@ -551,6 +552,11 @@ func isCertError(err error) bool {
 func certErrorGuidance(err error) (msg, fix string) {
 	s := err.Error()
 	switch {
+	case strings.Contains(s, "certificate is not the one issued to this host"):
+		// The hub has no record of this certificate for this host.
+		return "the server does not recognise this agent's certificate as the one it issued to this host",
+			"re-enrol this agent: stop it, delete the cluster data directory, and restart with a fresh SENTINEL_ENROLL_TOKEN. " +
+				"This happens when the server was restored from a backup taken before the agent last renewed its certificate"
 	case strings.Contains(s, "tls: expired certificate"):
 		// The hub rejected this agent's certificate on its dates: expired,
 		// or not valid yet because the hub's clock is behind.
