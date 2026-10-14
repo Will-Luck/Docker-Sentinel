@@ -71,16 +71,34 @@
     #container-table .col-ports {
         display: none;
     }
-    /* With the secondary columns gone the name gets the rest of the width
-       (the <col> has an inline 20%, which left about 70 px at phone size). */
+    /* With the secondary columns gone the name gets the rest of the width.
+       A fixed-layout table keeps a share of the width for every grid column
+       (the group header rows span six) even when three are hidden, which left
+       the name about 50 px, so use automatic layout and let a long name end in
+       an ellipsis (its full text is in the link's tooltip). */
+    #container-table {
+        table-layout: auto;
+    }
     #container-table col.col-name {
         width: auto !important;
     }
+    #container-table td:nth-child(2) {
+        width: 100%;
+        max-width: 0;
+    }
 
-    /* Queue table: hide Detected column */
+    /* Queue table: hide the Detected column and its <col>, and lay the table
+       out automatically so the hidden column takes no width. */
+    .queue-table {
+        table-layout: auto;
+    }
     .queue-table th:nth-child(4),
-    .queue-table td:nth-child(4) {
+    .queue-table td:nth-child(4),
+    .queue-table col:nth-child(4) {
         display: none;
+    }
+    .queue-table td:nth-child(2) {
+        overflow-wrap: anywhere;
     }
 
     /* Settings: single-column layout */

@@ -383,7 +383,7 @@
                                     {{end}}
                                 </td>
                                 <td>
-                                    <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="container-link">{{.Name}}</a>
+                                    <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="container-link" title="{{.Name}}">{{.Name}}</a>
                                     {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
                                 </td>
                                 <td class="col-image cell-image mono" title="{{.Image}}">

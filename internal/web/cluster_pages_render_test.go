@@ -200,6 +200,15 @@ func TestResponsiveCSS_NameColumnGetsTheRestOnPhones(t *testing.T) {
 	if !strings.Contains(string(css), "#container-table col.col-name") {
 		t.Error("stylesheet lacks the Name column rule for small screens")
 	}
+	// A fixed-layout table keeps a share for hidden columns, so the phone
+	// layouts switch to automatic layout.
+	i := strings.Index(string(css), "@media (max-width: 768px)")
+	if i < 0 || !strings.Contains(string(css)[i:], "table-layout: auto") || !strings.Contains(string(css)[i:], ".queue-table col:nth-child(4)") {
+		t.Error("the tablet and phone layout does not switch the dashboard and queue tables to automatic layout")
+	}
+	if out := renderAny(t, "container-row", containerView{Name: "web", Image: "nginx:1", Tag: "1", State: "running"}); !strings.Contains(out, `class="container-link" title="web"`) {
+		t.Error("a truncated name has no tooltip")
+	}
 	out := renderPage(t, "index.html", pageData{Page: "dashboard", ColumnVisible: map[string]bool{"image": true, "policy": true, "status": true, "ports": true}})
 	if !strings.Contains(out, `<col class="col-name"`) {
 		t.Error("the Name <col> has no col-name class")
