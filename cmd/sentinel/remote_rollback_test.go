@@ -285,20 +285,28 @@ func TestUpdateRemoteContainer_SelfUpdateNotifiedOnceWithItsOutcome(t *testing.T
 		t.Fatalf("UpdateRemoteContainer = %+v, %v; want it reported as under way", res, err)
 	}
 	key := store.ScopedKey(hostID, "sentinel-agent")
-	waitUntil(t, 3*time.Second, func() bool { recs, _ := db.ListHistoryByContainer(key, 10); return len(recs) > 0 }, "the outcome should be recorded")
-	time.Sleep(100 * time.Millisecond)
+	notes := func() (started, ended []notify.Event) {
+		for _, e := range sent.all() {
+			switch e.Type {
+			case notify.EventUpdateStarted:
+				started = append(started, e)
+			case notify.EventUpdateSucceeded, notify.EventUpdateFailed:
+				ended = append(ended, e)
+			}
+		}
+		return started, ended
+	}
+	// The hub records the outcome, then notifies it.
+	waitUntil(t, 5*time.Second, func() bool {
+		recs, _ := db.ListHistoryByContainer(key, 10)
+		_, ended := notes()
+		return len(recs) > 0 && len(ended) > 0
+	}, "the outcome should be recorded and notified")
+	time.Sleep(100 * time.Millisecond) // time for a second row or notification to show
 	if recs, _ := db.ListHistoryByContainer(key, 10); len(recs) != 1 || recs[0].Outcome != "failed" {
 		t.Errorf("history = %+v, want one failed row", recs)
 	}
-	var started, ended []notify.Event
-	for _, e := range sent.all() {
-		switch e.Type {
-		case notify.EventUpdateStarted:
-			started = append(started, e)
-		case notify.EventUpdateSucceeded, notify.EventUpdateFailed:
-			ended = append(ended, e)
-		}
-	}
+	started, ended := notes()
 	if len(started) != 1 || len(ended) != 1 || ended[0].Type != notify.EventUpdateFailed || ended[0].ContainerName != "sentinel-agent on edge" {
 		t.Errorf("started %+v, ended %+v; want one start and one failure for sentinel-agent on edge", started, ended)
 	}

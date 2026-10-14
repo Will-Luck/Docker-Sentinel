@@ -130,8 +130,11 @@ func TestSelfUpdatePending_RecordedOnceWithTheReportedOutcome(t *testing.T) {
 			}}}); err != nil {
 				t.Fatal(err)
 			}
-			waitFor(t, 3*time.Second, func() bool { return len(f.history()) > 0 }, "the outcome should be recorded")
-			time.Sleep(100 * time.Millisecond)
+			// The hub records the outcome, then notifies it.
+			waitFor(t, 5*time.Second, func() bool {
+				return len(f.history()) > 0 && (!tc.caller || len(f.notes.all()) > 0)
+			}, "the outcome should be recorded and notified")
+			time.Sleep(100 * time.Millisecond) // time for a second row or notification to show
 			recs := f.history()
 			if len(recs) != 1 || recs[0].Outcome != tc.outcome || recs[0].Error != tc.errText ||
 				recs[0].OldImage != "sentinel:3.0.0" || recs[0].NewImage != "sentinel:3.0.1" || recs[0].HostName != "test-agent" {
@@ -159,7 +162,9 @@ func TestSelfUpdatePending_FailedWhenTheAgentDoesNotComeBack(t *testing.T) {
 	f := newSelfUpdateFixture(t)
 	f.update(t, WithCallerRecords(context.Background()))
 
-	waitFor(t, 3*time.Second, func() bool { return len(f.history()) > 0 }, "the update should be recorded once the wait ends")
+	waitFor(t, 5*time.Second, func() bool { return len(f.history()) > 0 && len(f.notes.all()) > 0 },
+		"the update should be recorded and notified once the wait ends")
+	time.Sleep(100 * time.Millisecond)
 	recs := f.history()
 	if len(recs) != 1 || recs[0].Outcome != "failed" || !strings.Contains(recs[0].Error, "did not come back on the new version") {
 		t.Errorf("history = %+v, want one failed row saying the agent did not come back", recs)
@@ -187,7 +192,9 @@ func TestSelfUpdatePending_OlderReplacementOnTheTargetSucceeds(t *testing.T) {
 	if !slices.Contains(ack.GetServerFeatures(), cluster.FeatureSelfUpdatePending) {
 		t.Errorf("server features = %v, want %s", ack.GetServerFeatures(), cluster.FeatureSelfUpdatePending)
 	}
-	waitFor(t, 3*time.Second, func() bool { return len(f.history()) > 0 }, "the update should be recorded")
+	waitFor(t, 5*time.Second, func() bool { return len(f.history()) > 0 && len(f.notes.all()) > 0 },
+		"the update should be recorded and notified")
+	time.Sleep(100 * time.Millisecond)
 	if recs := f.history(); len(recs) != 1 || recs[0].Outcome != "success" {
 		t.Errorf("history = %+v, want one success row", recs)
 	}
@@ -231,9 +238,13 @@ func TestSelfUpdatePending_OutcomeRightAfterTheAnswer(t *testing.T) {
 	if _, err := srv.UpdateContainerSync(ctx, hostID, "sentinel-agent", "sentinel:3.0.1", ""); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 3*time.Second, func() bool { return len(notes.all()) > 0 }, "the outcome should be notified")
+	waitFor(t, 5*time.Second, func() bool { return len(notes.all()) > 0 }, "the outcome should be notified")
+	time.Sleep(100 * time.Millisecond)
 	recs, _ := st.ListHistoryByContainer(store.ScopedKey(hostID, "sentinel-agent"), 10)
 	if len(recs) != 1 || recs[0].Outcome != "success" {
 		t.Errorf("history = %+v, want one success row", recs)
+	}
+	if n := notes.all(); len(n) != 1 {
+		t.Errorf("notifications = %+v, want one", n)
 	}
 }
