@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-14
+
 ### Security
 
 - Importing a config export dropped the signature verification settings
@@ -112,21 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     with that username links that one account, admin or not, once; Sentinel
     logs a warning and writes the activity log, and remembers it has been
     used for that account. Remove the variable afterwards.
-- Settings > Signature Verification now warns when cosign is not found at
-  the configured path inside the container (the Sentinel image does not
-  include it), and says what enforce and warn do without it. Approving an
-  update that the engine refused (signature check or pre-update hook) left
-  two failed rows in the history; it now leaves one.
-- Settings > System Settings has a History retention field (days of update
-  history and activity log to keep; successful updates and rollbacks are kept
-  for good; 0 keeps everything). A value saved there overrides
-  `SENTINEL_HISTORY_RETENTION_DAYS`, and the page says which one is in effect.
 - The first-run setup wizard is served over HTTPS when TLS is configured
   (`SENTINEL_TLS_AUTO` or a certificate), instead of plain HTTP.
-- The Sentinel container's own row shows its real state instead of always
-  "Running". Fonts are now bundled and served by Sentinel, because the
-  page's CSP blocked Google Fonts. The Cluster page's Server card no longer
-  overflows on a long version string.
 - A 2FA code could be used again within its 30-second window, and a password
   success cleared the sign-in throttle, so someone holding a password got
   many more code guesses than intended. A code is now accepted once,
@@ -135,68 +124,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Request bodies are capped (64 KB on the public sign-in endpoints, 8 MB
   elsewhere), closing a container log no longer leaks a goroutine, and the
   inbound webhook help says the secret goes in the `X-Webhook-Secret` header.
-- Failed stop, start and restart now show an error, settings toggles no longer
-  report success when the save failed, History rows open their details, and
-  a remote container's notification setting is kept under its host.
-- Settings shows whether Trivy is available, has a form for cloud registry
-  logins (ECR, ACR, GCR) and marks registries whose stored login was
-  rejected.
 - Behind a reverse proxy, five failed logins from one attacker blocked
   sign-in for everyone, because every client shared the proxy's address. Set
   `SENTINEL_TRUSTED_PROXIES` to the proxy's IP or CIDR range (comma
   separated) and Sentinel takes the client from `X-Forwarded-For`. With it
   unset nothing changes.
-- After the first connection, changing the NPM URL or login, or switching NPM
-  off, changed nothing until a restart, and Test connection reported success
-  against the old target. Test now rebuilds from the saved settings and the
-  old connection is dropped.
-- Signature Verification has Signer identity, Identity is a pattern and OIDC
-  issuer fields, shown in keyless mode, because keyless verification now
-  refuses unless the expected signer is set.
-- The 2FA QR code renders again (its library was blocked by the page's CSP),
-  `escapeHTML` escapes quotes, and a refused image removal is counted as
-  failed in Images bulk Remove.
-- A channel's Test button now tests what is on screen (a channel just added or
-  edited but not saved too); it used to test the saved copy or fail with
-  "channel not found".
-- Several small dashboard and settings fixes: adding or removing a
-  notification channel, registry login or release source no longer wipes what
-  was typed on the others; a failed stop, start, restart or update clears its
-  spinner; failed policy and cluster changes are put back as saved; the
-  Cluster page no longer reloads away a new enrolment token; in cluster mode
-  collapsing a stack no longer changes the stat cards and a stack's
-  select-all works; the queue's Enter key opens the focused row; All Registry
-  Tags shows errors properly.
-- A manual Check for updates on a local container reported a new image behind the same tag (for example :latest) as "up to date (newer versions ignored)" and did not queue it. It is now queued, as a scan does.
-- Saving other OIDC settings no longer pins "Link existing accounts by
-  username" over `SENTINEL_OIDC_LINK_EXISTING`: the toggle is stored only
-  when you change it. The opt-in also skips accounts with 2FA or a passkey.
-- NPM Test connection uses the same settings as startup (the environment,
-  then saved settings), and the NPM connection built at startup stops
-  syncing when it is replaced or switched off.
-- An abandoned "Link single sign-on" no longer breaks the next SSO sign-in,
-  and only messages that begin with an action failure show as errors.
-- "Update to version" and the GHCR switch on a container on another host left no history row (the notification still went out). Both now record success or failure under the host-scoped key, like Update now.
-- Approving a local update that failed no longer risks a second failed row in the history: local updates record their own history in the engine for every failure, and only remote updates are recorded by the web layer.
-- Settings > Scanning showed the poll interval and grace period as a blank "Custom..." and Show stopped as Off while the environment set 10m, 30s and true, so saving there could overwrite the real values. The page now shows the value in effect for every setting the environment can set, says whether it is saved or from the environment, and the scanner, verifier and notification retry forms send only the fields you changed.
-- At phone width (390 px) the dashboard no longer squeezes container names away: Image, Policy and Ports collapse properly and the Status column keeps only the width its badge needs.
-- Cluster host cards showed an agent's version as "vv3.0.0-rc4" and let the commit hash overflow the card; the version is now shown once and the full text is in a tooltip.
-- The page of a container on another host showed a blank Container ID and did not say which host it is on; it now shows both.
-- The service page's Policy and Notification Preferences sections were unstyled and named their options differently from the container page; they now match it. A Swarm task on a registry with a port showed its image tag cut to "5443/lh/app:1.0.1".
-- The Logs page showed raw host IDs ("Container stopped on 37770888f2...") and one line named a user by ID. Activity-log lines and failure messages now name the host, and the SSO unlink line names the user.
-- The history's scan summary counts did not add up (165 checked against 66 + 96 + 18): containers whose registry check failed, ones skipped for a swap in progress, ones whose newer versions were all ignored, rolled back before, or held back by a dry run were in no count. Each now lands in exactly one, and "check failed" is shown as its own figure.
-- The queue page kept a row for an entry removed elsewhere (approved from another client, the API, an auto-update or a scan finding it up to date) until you reloaded; it now refreshes on any queue change.
-- The container and service pages now show the pending-updates count in the navigation, like the other pages.
-- At phone width the dashboard's Name column now takes the free width instead of a fixed 20%, so container names are no longer cut at about eight characters.
-- An untouched Apply on the poll interval or Save on scan concurrency (and the other Apply and Save buttons on Settings) still sent a request, turning a value set by the environment into a saved override. They now send nothing while they show what was loaded, and the toggles the environment can also set say when they now override it.
-- At phone width the dashboard's container names now get the free width (the table switches to automatic layout, so the hidden columns no longer keep a share) and a long name ends in an ellipsis with its full text as a tooltip; the pending-updates table no longer keeps room for its hidden Detected column.
-- A container on another host now has a Rollback button on its page when the hub knows what it ran before its last update. The confirm names the host and the image it goes back to; with nothing to go back to there is no button.
-- At phone width the pending-updates page fits the screen (the version moves under the name and the Approve, Ignore and Reject buttons wrap into view) and the history page no longer overlaps the time with the name or clips the outcome badges; long names have a tooltip.
-- After a rollback, the Rollback button stayed and offered the image the container already runs (a second click recreated it on the same image and sent a "Rollback Succeeded" notification). The button is now hidden when there is nothing to go back to, and a container rolled back once offers the update before it, if any; the API's rollback uses the same rule.
-- A wide "Update Sentinel" badge no longer widens the dashboard's Status column for every row (long badges end in an ellipsis with a tooltip), and a "self" badge no longer makes a name that fits end in an ellipsis.
-- The dashboard's status badges are one line again (a badge cap in the previous release candidate put the dot above the text) and "Update Sentinel" is no longer cut at desktop width. On a phone the history hides its Version and Duration columns by class, so scan summary rows keep their Summary badge and line up with the other rows.
-- A container that was rolled back before v3.0.0 (those rollbacks were recorded as updates of type rollback) was offered the image it already runs after its next update and rollback; they now count as rollbacks, on the button and in the rollback itself.
-- The local and remote rollback now refuse with a clear message ("nothing to roll back to: the container already runs <image>") when the container was rolled back already, instead of answering "rollback started" and recreating it on the same image; the Snapshots section's Rollback button follows the same rule. The dashboard no longer asks for row refreshes of the containers Sentinel sets aside during a swap (-sentinel-old, -sentinel-failed), which logged a 404 while a container page was open during a rollback.
 
 ### Added
 
@@ -236,6 +168,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `client_secret`, `login_server`) or `cloud_auth_gcr`
   (`service_account_json`). Tag listing, digest lookups and pulls for a
   matching host use it when no login is stored for that host.
+- Settings > Signature Verification now warns when cosign is not found at
+  the configured path inside the container (the Sentinel image does not
+  include it), and says what enforce and warn do without it. Approving an
+  update that the engine refused (signature check or pre-update hook) left
+  two failed rows in the history; it now leaves one.
+- Settings > System Settings has a History retention field (days of update
+  history and activity log to keep; successful updates and rollbacks are kept
+  for good; 0 keeps everything). A value saved there overrides
+  `SENTINEL_HISTORY_RETENTION_DAYS`, and the page says which one is in effect.
+- Settings shows whether Trivy is available, has a form for cloud registry
+  logins (ECR, ACR, GCR) and marks registries whose stored login was
+  rejected.
+- Signature Verification has Signer identity, Identity is a pattern and OIDC
+  issuer fields, shown in keyless mode, because keyless verification now
+  refuses unless the expected signer is set.
+- A container on another host now has a Rollback button on its page when
+  the hub knows what it ran before its last update. The confirm names the
+  host and the image it goes back to.
 
 ### Changed
 
@@ -1015,6 +965,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings showed Remove volumes and Image backup as Off while the engine
   had them On from the environment, and the UI rollback ignored
   `SENTINEL_ROLLBACK_POLICY`.
+- The Sentinel container's own row shows its real state instead of always
+  "Running". Fonts are now bundled and served by Sentinel, because the
+  page's CSP blocked Google Fonts. The Cluster page's Server card no longer
+  overflows on a long version string.
+- Failed stop, start and restart now show an error, settings toggles no longer
+  report success when the save failed, History rows open their details, and
+  a remote container's notification setting is kept under its host.
+- After the first connection, changing the NPM URL or login, or switching NPM
+  off, changed nothing until a restart, and Test connection reported success
+  against the old target. Test now rebuilds from the saved settings and the
+  old connection is dropped.
+- The 2FA QR code renders again (its library was blocked by the page's CSP),
+  `escapeHTML` escapes quotes, and a refused image removal is counted as
+  failed in Images bulk Remove.
+- A channel's Test button now tests what is on screen (a channel just added or
+  edited but not saved too); it used to test the saved copy or fail with
+  "channel not found".
+- Several small dashboard and settings fixes: adding or removing a
+  notification channel, registry login or release source no longer wipes what
+  was typed on the others; a failed stop, start, restart or update clears its
+  spinner; failed policy and cluster changes are put back as saved; the
+  Cluster page no longer reloads away a new enrolment token; in cluster mode
+  collapsing a stack no longer changes the stat cards and a stack's
+  select-all works; the queue's Enter key opens the focused row; All Registry
+  Tags shows errors properly.
+- A manual Check for updates on a local container reported a new image
+  behind the same tag (for example :latest) as "up to date (newer versions
+  ignored)" and did not queue it. It is now queued, as a scan does.
+- Saving other OIDC settings no longer pins "Link existing accounts by
+  username" over `SENTINEL_OIDC_LINK_EXISTING`: the toggle is stored only
+  when you change it. The opt-in also skips accounts with 2FA or a passkey.
+- NPM Test connection uses the same settings as startup (the environment,
+  then saved settings), and the NPM connection built at startup stops
+  syncing when it is replaced or switched off.
+- An abandoned "Link single sign-on" no longer breaks the next SSO sign-in,
+  and only messages that begin with an action failure show as errors.
+- "Update to version" and the GHCR switch on a container on another host
+  left no history row (the notification still went out). Both now record
+  success or failure under the host-scoped key, like Update now.
+- Approving a local update that failed no longer risks a second failed row
+  in the history: local updates record their own history in the engine,
+  and only remote updates are recorded by the web layer.
+- Settings > Scanning showed the poll interval and grace period as a blank
+  "Custom..." and Show stopped as Off while the environment set them, so
+  saving there could overwrite the real values. Every setting the
+  environment can set now shows the value in effect and whether it is
+  saved or from the environment, and an untouched Apply or Save sends
+  nothing, so it can no longer turn an environment value into a saved
+  override. Toggles the environment can also set say when they override it.
+- The dashboard, pending-updates and history pages fit a phone screen:
+  container names get the free width and end in an ellipsis with the full
+  name as a tooltip, the Approve, Ignore and Reject buttons are always in
+  view, times no longer overlap names, outcome badges are whole, and scan
+  summary rows keep their Summary badge. A "self" badge no longer makes a
+  name that fits end in an ellipsis.
+- Cluster host cards showed an agent's version with a doubled "v" and let
+  the commit hash overflow the card; the version is shown once and the full
+  text is in a tooltip.
+- The page of a container on another host showed a blank Container ID and
+  did not say which host it is on; it now shows both.
+- The service page's Policy and Notification Preferences sections were
+  unstyled and named their options differently from the container page;
+  they now match it. A Swarm task on a registry with a port showed its image
+  tag cut short.
+- The Logs page showed raw host IDs and one line named a user by ID.
+  Activity-log lines and failure messages now name the host, and the SSO
+  unlink line names the user.
+- The history's scan summary counts did not add up: containers whose
+  registry check failed, ones skipped for a swap in progress, ones whose
+  newer versions were all ignored, rolled back before, or held back by a dry
+  run were in no count. Each now lands in exactly one, and "check failed" is
+  shown as its own figure.
+- The queue page kept a row for an entry removed elsewhere (approved from
+  another client, the API, an auto-update or a scan finding it up to date)
+  until you reloaded; it now refreshes on any queue change.
+- The container and service pages now show the pending-updates count in
+  the navigation, like the other pages.
+- Rollback is offered, and allowed, only when there is something to go back
+  to: after a rollback the button is hidden (or offers the update before
+  it), including for containers rolled back before v3.0.0, and the local
+  and remote rollback refuse with "nothing to roll back to: the container
+  already runs <image>" instead of recreating the container on the same
+  image. The Snapshots section's Rollback button follows the same rule.
 - A failed notification was recorded as delivered whenever the built-in
   log record succeeded, so if the only real channel (Gotify, say) failed
   on the scan that first saw an update, Sentinel never tried again and you
@@ -1981,7 +2014,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.16.1...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.16.1...v3.0.0
 [2.16.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.16.0...v2.16.1
 [2.16.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.3...v2.16.0
 [2.15.3]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.2...v2.15.3
