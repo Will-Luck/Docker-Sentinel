@@ -265,8 +265,11 @@ func TestRemoteRollbackTarget(t *testing.T) {
 		"rolled back, an older update":   {[]UpdateRecord{rb("x:2", "x:1"), up("x:1", "x:2"), up("x:0", "x:1")}, "x:0"},
 		"rolled back twice":              {[]UpdateRecord{rb("x:1", "x:0"), rb("x:2", "x:1"), up("x:1", "x:2"), up("x:0", "x:1")}, ""},
 		"updated again after a rollback": {[]UpdateRecord{up("x:1", "x:3"), rb("x:2", "x:1"), up("x:1", "x:2")}, "x:1"},
-		"old pre-3.0 rollback row":       {[]UpdateRecord{{Outcome: "success", OldImage: "x:2", Type: "rollback"}, up("x:1", "x:2")}, "x:1"},
-		"failed and imageless rows":      {[]UpdateRecord{{Outcome: "failed", OldImage: "x:9"}, {Outcome: "success"}, up("x:1", "x:2")}, "x:1"},
+		"pre-3.0 rollback row":           {[]UpdateRecord{{Outcome: "success", OldImage: "x:2", NewImage: "x:1", Type: "rollback"}, up("x:1", "x:2")}, ""},
+		"pre-3.0 rollback, older update": {[]UpdateRecord{{Outcome: "success", OldImage: "x:2", NewImage: "x:1", Type: "rollback"}, up("x:1", "x:2"), up("x:0", "x:1")}, "x:0"},
+		"lh-rg-61 history": {[]UpdateRecord{rb("x:1", "x:0"), up("x:0", "x:1"), rb("x:1", "x:0"), up("x:0", "x:1"),
+			{Outcome: "success", OldImage: "x:1", NewImage: "x:0", Type: "rollback"}, up("x:0", "x:1")}, ""},
+		"failed and imageless rows": {[]UpdateRecord{{Outcome: "failed", OldImage: "x:9"}, {Outcome: "success"}, up("x:1", "x:2")}, "x:1"},
 	} {
 		srv := &Server{deps: Dependencies{Store: rollbackHistory{recs: tc.recs}}}
 		if got := srv.remoteRollbackTarget("h1", "web"); got != tc.want {

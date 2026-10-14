@@ -113,16 +113,18 @@ func TestLastRemoteOldImage_NewestOfMigratedAndNewRows(t *testing.T) {
 	}
 }
 
-// A rollback row says which image the container left, but it is not an
-// update to undo: Rollback picks the last forward update.
-func TestLastRemoteOldImage_SkipsRollbackRows(t *testing.T) {
+// A pre-3.0 rollback row (outcome success, type rollback) counts as a rollback:
+// it cancels the forward update before it, so a container rolled back before
+// 3.0 is not offered the image it already runs. An automatic rollback of a
+// failed update (outcome rollback, no "rolled back on request") changes
+// nothing and is skipped.
+func TestLastRemoteOldImage_PreV3RollbackRowsCount(t *testing.T) {
 	_, db := historyAdapter(t)
 	key := store.ScopedKey("host-1", "nginx")
 	now := time.Now()
 	for _, rec := range []store.UpdateRecord{
 		{Timestamp: now, ContainerName: key, OldImage: "nginx:1.25", NewImage: "nginx:1.26", Outcome: "success", HostID: "host-1"},
-		// A rollback row from before v3.0.0, then one as a local rollback
-		// row is: both are skipped.
+		// A rollback row from before v3.0.0, then an automatic rollback.
 		{Timestamp: now.Add(time.Minute), ContainerName: key, OldImage: "nginx:1.26", NewImage: "nginx:1.25", Outcome: "success", HostID: "host-1", Type: "rollback"},
 		{Timestamp: now.Add(2 * time.Minute), ContainerName: key, OldImage: "nginx:1.26", NewImage: "nginx:1.25", Outcome: "rollback", HostID: "host-1"},
 	} {
@@ -134,8 +136,8 @@ func TestLastRemoteOldImage_SkipsRollbackRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "nginx:1.25" {
-		t.Errorf("rollback image = %q, want nginx:1.25 from the forward update", got)
+	if got != "" {
+		t.Errorf("rollback image = %q, want none: the pre-3.0 rollback already undid the update", got)
 	}
 }
 

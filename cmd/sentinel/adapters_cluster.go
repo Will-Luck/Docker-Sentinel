@@ -307,8 +307,8 @@ func (a *clusterAdapter) recordRemoteRollback(ctx context.Context, name, hostNam
 // from the dashboard or API (outcome "rollback" with the error text
 // cluster.RolledBackOnRequest) cancels the update before it, so a container
 // just rolled back has no target, or the next older one. Rows from before
-// v3.0.0 that are rollbacks (outcome "success", type "rollback") are not
-// updates to undo and are skipped. Remote history rows are keyed
+// v3.0.0 that are rollbacks (outcome "success", type "rollback") count as
+// rollbacks too. Remote history rows are keyed
 // "hostID::name" (rows from before v3.0.0 are moved to that key when the
 // cluster starts, migrateRemoteHistory). The dashboard's Rollback button uses
 // the same rule (web remoteRollbackTarget).
@@ -320,9 +320,10 @@ func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, 
 	pending := 0               // manual rollbacks seen that still cancel an older update
 	for _, rec := range recs { // newest first
 		switch {
-		case rec.Outcome == "rollback" && rec.Error == cluster.RolledBackOnRequest:
+		case (rec.Outcome == "rollback" && rec.Error == cluster.RolledBackOnRequest) ||
+			(rec.Outcome == "success" && rec.Type == "rollback"):
 			pending++
-		case rec.Outcome == "success" && rec.OldImage != "" && rec.Type != "rollback":
+		case rec.Outcome == "success" && rec.OldImage != "":
 			if pending > 0 {
 				pending--
 				continue

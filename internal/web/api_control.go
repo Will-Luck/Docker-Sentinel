@@ -995,8 +995,11 @@ func ownContainer(containers []ContainerSummary) (ContainerSummary, bool) {
 
 // isManualRollbackRow reports whether a history row is a rollback asked for
 // from the dashboard or the API (not an automatic rollback of a failed update).
+// Before v3.0.0 a remote rollback was recorded as outcome "success" with type
+// "rollback"; it counts too.
 func isManualRollbackRow(rec UpdateRecord) bool {
-	return rec.Outcome == "rollback" && rec.Error == cluster.RolledBackOnRequest
+	return (rec.Outcome == "rollback" && rec.Error == cluster.RolledBackOnRequest) ||
+		(rec.Outcome == "success" && rec.Type == "rollback")
 }
 
 // remoteRollbackTarget is the image a rollback of a remote container goes back
@@ -1018,7 +1021,7 @@ func (s *Server) remoteRollbackTarget(hostID, name string) string {
 		switch {
 		case isManualRollbackRow(rec):
 			pending++
-		case rec.Outcome == "success" && rec.OldImage != "" && rec.Type != "rollback":
+		case rec.Outcome == "success" && rec.OldImage != "":
 			if pending > 0 {
 				pending--
 				continue
