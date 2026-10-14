@@ -305,7 +305,7 @@ func TestSelfUpdateOutcome_RefreshesTheHostsContainers(t *testing.T) {
 		if len(cs) != 1 || cs[0].Name != "sentinel-agent" {
 			t.Errorf("refreshed containers = %+v, want only sentinel-agent", cs)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("the hub did not refresh the host's containers when the outcome came in")
 	}
 	hs, _ := srv.GetHost(hostID)

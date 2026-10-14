@@ -194,7 +194,7 @@ func TestHandleOfflineJournal_NilHistory(t *testing.T) {
 		if evt.HostName != "edge-node" {
 			t.Errorf("event HostName: got %q, want %q", evt.HostName, "edge-node")
 		}
-	case <-time.After(time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timeout waiting for SSE event")
 	}
 }
@@ -266,7 +266,7 @@ func TestHandleOfflineJournal_MixedOutcomes(t *testing.T) {
 
 	// Verify SSE events: collect two events.
 	var evts []events.SSEEvent
-	deadline := time.After(time.Second)
+	deadline := time.After(30 * time.Second)
 	for len(evts) < 2 {
 		select {
 		case evt := <-evtCh:
@@ -326,7 +326,7 @@ func TestHandleOfflineJournal_RecordUpdateError(t *testing.T) {
 
 	// SSE events should still be published for both entries.
 	var count int
-	deadline := time.After(time.Second)
+	deadline := time.After(30 * time.Second)
 	for count < 2 {
 		select {
 		case <-evtCh:

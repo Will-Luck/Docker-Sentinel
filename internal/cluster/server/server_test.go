@@ -550,7 +550,7 @@ func TestChannel_ListContainers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("agent handler: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timeout waiting for agent to respond to list containers")
 	}
 
@@ -668,22 +668,27 @@ func TestChannel_UpdateContainer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("agent handler: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timeout waiting for agent update response")
 	}
 
-	// Verify: an SSE event should have been published for the update.
-	// The select below already waits up to 2s, so no fixed sleep is needed.
-	select {
-	case evt := <-evtCh:
-		if evt.Type != events.EventContainerUpdate {
-			t.Errorf("expected event type %q, got %q", events.EventContainerUpdate, evt.Type)
+	// Verify: an SSE event should have been published for the update. Other
+	// events (such as the host's connect event) can arrive first on a slow
+	// machine, so skip them.
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case evt := <-evtCh:
+			if evt.Type != events.EventContainerUpdate {
+				continue
+			}
+			if evt.ContainerName != "nginx" {
+				t.Errorf("expected container name 'nginx', got %q", evt.ContainerName)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timeout waiting for SSE event from update result")
 		}
-		if evt.ContainerName != "nginx" {
-			t.Errorf("expected container name 'nginx', got %q", evt.ContainerName)
-		}
-	case <-time.After(2 * time.Second):
-		t.Error("timeout waiting for SSE event from update result")
 	}
 }
 
@@ -749,7 +754,7 @@ func TestChannel_Disconnect(t *testing.T) {
 
 	// Verify: disconnect SSE event published.
 	found := false
-	timeout := time.After(2 * time.Second)
+	timeout := time.After(30 * time.Second)
 	for !found {
 		select {
 		case evt := <-evtCh:

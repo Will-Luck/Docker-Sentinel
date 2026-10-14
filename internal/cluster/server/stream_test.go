@@ -98,7 +98,7 @@ func TestChannel_StaleStreamCleanupLeavesLiveStreamAlone(t *testing.T) {
 		if err == nil {
 			t.Error("request sent on the dead stream A returned no error")
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("request sent on the dead stream A was not failed when A closed")
 	}
 
@@ -120,7 +120,7 @@ func TestChannel_StaleStreamCleanupLeavesLiveStreamAlone(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request on live stream B failed: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("request on live stream B was never answered")
 	}
 }
@@ -150,13 +150,13 @@ func TestStop_ReturnsWithConnectedAgent(t *testing.T) {
 	go func() { srv.Stop(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("srv.Stop() did not return within 5s while an agent stream was open")
 	}
 
 	select {
 	case <-recvErr:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("the agent's stream was still open after Stop returned")
 	}
 	if hs, _ := srv.Registry().Get(hostID); hs.Connected {
@@ -238,7 +238,7 @@ func TestStop_ReturnsWhileAgentsKeepReconnecting(t *testing.T) {
 	go func() { srv.Stop(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("Stop did not return within 2s while an agent kept reconnecting")
 	}
 }

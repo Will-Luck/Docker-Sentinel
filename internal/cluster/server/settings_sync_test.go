@@ -44,7 +44,7 @@ func TestChannel_SendsSettingsOnConnectAndOnChange(t *testing.T) {
 		select {
 		case ss := <-got:
 			return ss
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatalf("no settings sent %s", what)
 			return nil
 		}

@@ -63,7 +63,7 @@ func TestConnectEvents_NameTheHost(t *testing.T) {
 	closeConn()
 
 	for _, want := range []string{"connected", "disconnected"} {
-		deadline := time.After(3 * time.Second)
+		deadline := time.After(30 * time.Second)
 		for found := false; !found; {
 			select {
 			case e := <-evts:

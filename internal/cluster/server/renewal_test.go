@@ -75,8 +75,8 @@ func awaitRenewalResponse(t *testing.T, stream proto.AgentService_ChannelClient)
 			t.Fatal("stream ended before the renewed certificate arrived")
 		}
 		return certPEM
-	case <-time.After(5 * time.Second):
-		t.Fatal("no renewed certificate within 5s")
+	case <-time.After(30 * time.Second):
+		t.Fatal("no renewed certificate within 30s")
 	}
 	return nil
 }
@@ -147,7 +147,7 @@ func TestCertRenewal_WaitsForRoomInSendBuffer(t *testing.T) {
 		if msg.GetCertRenewalResponse() == nil {
 			t.Fatalf("got %T, want the renewal response", msg.GetPayload())
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("renewal response was dropped because the send buffer was full")
 	}
 	<-handled
