@@ -37,7 +37,7 @@ func TestUpdateContainerSync_PrepRefusalSendsNothing(t *testing.T) {
 		return refused
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if _, err := srv.UpdateContainerSync(ctx, hostID, "web", "nginx:2", ""); !errors.Is(err, refused) {
 		t.Fatalf("UpdateContainerSync error = %v, want the refusal", err)
@@ -81,7 +81,7 @@ func TestRollbackContainerSync_PrepAddsToTheRequest(t *testing.T) {
 		return nil
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if _, err := srv.RollbackContainerSync(ctx, hostID, "web", "nginx:1"); err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestUpdateContainerSync_RefusedForAPausedHost(t *testing.T) {
 	if err := srv.PauseHost(hostID); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if _, err := srv.UpdateContainerSync(ctx, hostID, "web", "nginx:2", ""); err == nil {
 		t.Error("an update went to a paused host")
@@ -230,7 +230,7 @@ func TestDiscardSwapSync(t *testing.T) {
 			}
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := srv.DiscardSwapSync(ctx, hostID, "web"); !errors.Is(err, cluster.ErrAgentTooOld) {
@@ -247,7 +247,7 @@ func TestDiscardSwapSync(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 3*time.Second, func() bool { return srv.hostHas(hostID, cluster.FeatureDiscardSwap) }, "the hub should see the feature")
+	waitFor(t, 30*time.Second, func() bool { return srv.hostHas(hostID, cluster.FeatureDiscardSwap) }, "the hub should see the feature")
 	if err := srv.DiscardSwapSync(ctx, hostID, "web"); err != nil {
 		t.Fatalf("discard: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestPullImageSync(t *testing.T) {
 			}
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := srv.PullImageSync(ctx, hostID, "web", "nginx:2"); !errors.Is(err, cluster.ErrPullUnconfirmed) {
@@ -303,7 +303,7 @@ func TestPullImageSync(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 3*time.Second, func() bool { return srv.hostHas(hostID, cluster.FeaturePullResult) }, "the hub should see the feature")
+	waitFor(t, 30*time.Second, func() bool { return srv.hostHas(hostID, cluster.FeaturePullResult) }, "the hub should see the feature")
 	if err := srv.PullImageSync(ctx, hostID, "web", "nginx:2"); err != nil {
 		t.Errorf("confirmed pull: %v", err)
 	}

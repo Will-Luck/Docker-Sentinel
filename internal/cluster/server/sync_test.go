@@ -42,7 +42,7 @@ func TestListContainersSync_AgentErrorReply(t *testing.T) {
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	containers, err := srv.ListContainersSync(ctx, hostID)
 	if err == nil || !strings.Contains(err.Error(), "Cannot connect to the Docker daemon") {

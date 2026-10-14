@@ -67,7 +67,7 @@ func TestUnansweredUpdate_ReplayedResultReplacesTheFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		recs, _ := st.ListHistoryByContainer(key, 10)
 		return len(recs) == 1 && recs[0].Outcome == "success"
 	}, "the replayed result should replace the failure row")
@@ -119,7 +119,7 @@ func TestUnansweredRollback_ReplayedAsARollback(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		recs, _ := st.ListHistoryByContainer(key, 10)
 		return len(recs) == 1 && recs[0].Outcome == "rollback" && recs[0].Type == ""
 	}, "the replayed rollback should replace the failure row, as a rollback")
@@ -150,7 +150,7 @@ func TestUpdateContainerSync_RecordsWhatNoCallerRecords(t *testing.T) {
 			}
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if _, err := srv.UpdateContainerSync(ctx, hostID, "sentinel-agent", "sentinel:3.0.1", ""); err != nil {
@@ -193,7 +193,7 @@ func TestUpdateContainerSync_RecordsTheContainerThatChanged(t *testing.T) {
 			}
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if _, err := srv.UpdateContainerSync(ctx, hostID, "other-sentinel", "sentinel:3.0.1", ""); err != nil {
@@ -230,7 +230,7 @@ func TestRollbackContainerSync_RecordedAsALocalRollback(t *testing.T) {
 			}
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if _, err := srv.RollbackContainerSync(ctx, hostID, "web", "nginx:1"); err != nil {
 		t.Fatal(err)

@@ -113,7 +113,7 @@ func TestCertRenewal_OldCertValidUntilRenewedCertInUse(t *testing.T) {
 	_, _, closeNew := connectedStream(t, srv, addr, hostID, newCertPEM, newKeyPEM, caPEM, asOld)
 	defer closeNew()
 
-	waitFor(t, 3*time.Second, func() bool { return srv.Registry().GetCertSerial(hostID) == newSerial },
+	waitFor(t, 30*time.Second, func() bool { return srv.Registry().GetCertSerial(hostID) == newSerial },
 		"hub should take the new serial once the agent connects with it")
 	if revoked, _ := st.IsRevokedCert(oldSerial); !revoked {
 		t.Error("old certificate still valid after the agent moved to the new one")

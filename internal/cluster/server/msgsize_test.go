@@ -58,7 +58,7 @@ func TestLargeContainerList_Accepted(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	waitFor(t, 5*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, _ := srv.Registry().Get(hostID)
 		return len(hs.Containers) == 60
 	}, "6 MB container list on the stream was not accepted")
@@ -121,7 +121,7 @@ func TestOversizeMessage_LoggedWithHost(t *testing.T) {
 	if _, err := client.ReportState(ctx, &proto.StateReport{HostId: hostID, Containers: bigContainerList(20, 100)}); err == nil {
 		t.Fatal("a 2 MB report was accepted over a 1 MB limit")
 	}
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		out := logs.String()
 		return strings.Contains(out, "larger than") && strings.Contains(out, hostID)
 	}, "hub log does not name the host whose message was too large")

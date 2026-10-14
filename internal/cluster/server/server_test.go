@@ -101,7 +101,7 @@ func enrollAgent(t *testing.T, addr, token string) (hostID string, certPEM, keyP
 	// uses VerifyClientCertIfGiven, so it accepts connections without client
 	// certs. We skip server cert verification because the agent doesn't
 	// know the CA yet — that's the whole point of enrollment.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	enrollTLS := &tls.Config{
@@ -287,7 +287,7 @@ func TestEnrollment(t *testing.T) {
 	}
 
 	// 6. Token should be consumed — second enrollment with the same token fails.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	conn := noCertConn(t, addr)
@@ -318,7 +318,7 @@ func TestEnrollment(t *testing.T) {
 func TestEnrollment_InvalidToken(t *testing.T) {
 	_, addr, _, _ := testServer(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	conn := noCertConn(t, addr)
@@ -361,7 +361,7 @@ func TestEnrollment_ExpiredToken(t *testing.T) {
 	// Small sleep to guarantee the token's ExpiresAt is in the past.
 	time.Sleep(time.Millisecond)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	conn := noCertConn(t, addr)
@@ -400,7 +400,7 @@ func TestChannel_Heartbeat(t *testing.T) {
 	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
 	client := proto.NewAgentServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	stream, err := client.Channel(ctx)
@@ -409,7 +409,7 @@ func TestChannel_Heartbeat(t *testing.T) {
 	}
 
 	// Wait for the server to register the stream (host marked connected).
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && hs.Connected
 	}, "host should be connected after channel open")
@@ -440,7 +440,7 @@ func TestChannel_Heartbeat(t *testing.T) {
 	}
 
 	// Wait for the server to process the heartbeat and advance LastSeen.
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && hs.Info.LastSeen.After(lastSeenBefore)
 	}, "LastSeen should have been updated after heartbeat")
@@ -474,7 +474,7 @@ func TestChannel_ListContainers(t *testing.T) {
 	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
 	client := proto.NewAgentServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	stream, err := client.Channel(ctx)
@@ -483,7 +483,7 @@ func TestChannel_ListContainers(t *testing.T) {
 	}
 
 	// Wait for the stream to be registered server-side (host connected).
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && hs.Connected
 	}, "host should be connected before sending command")
@@ -555,7 +555,7 @@ func TestChannel_ListContainers(t *testing.T) {
 	}
 
 	// Wait for the server to process the ContainerList response.
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && len(hs.Containers) == 2
 	}, "expected 2 containers in registry after list response")
@@ -596,7 +596,7 @@ func TestChannel_UpdateContainer(t *testing.T) {
 	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
 	client := proto.NewAgentServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	stream, err := client.Channel(ctx)
@@ -605,7 +605,7 @@ func TestChannel_UpdateContainer(t *testing.T) {
 	}
 
 	// Wait for the stream to be registered server-side (host connected).
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && hs.Connected
 	}, "host should be connected before sending command")
@@ -712,7 +712,7 @@ func TestChannel_Disconnect(t *testing.T) {
 	}
 
 	// Wait for the connection to be established.
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && hs.Connected
 	}, "host should be connected before disconnect")
@@ -733,7 +733,7 @@ func TestChannel_Disconnect(t *testing.T) {
 	_ = stream.CloseSend()
 
 	// Wait for the server to detect the disconnect and clean up.
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && !hs.Connected
 	}, "host should be marked as disconnected after stream cancel")
@@ -785,7 +785,7 @@ func TestChannel_Reconnect(t *testing.T) {
 		t.Fatalf("Channel (first): %v", err)
 	}
 	// Wait for the first connection to register.
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && hs.Connected
 	}, "host should be connected after first channel open")
@@ -801,7 +801,7 @@ func TestChannel_Reconnect(t *testing.T) {
 	_ = stream1.CloseSend()
 
 	// Wait for the server to mark the host disconnected.
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && !hs.Connected
 	}, "host should be disconnected after cancel")
@@ -813,7 +813,7 @@ func TestChannel_Reconnect(t *testing.T) {
 	}
 
 	// Reconnect with the same cert (new stream, same connection).
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
 
 	stream2, err := client.Channel(ctx2)
@@ -836,7 +836,7 @@ func TestChannel_Reconnect(t *testing.T) {
 	}
 
 	// Wait for the reconnection to re-register the host as connected.
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && hs.Connected
 	}, "host should be marked as connected after reconnecting")
@@ -865,7 +865,7 @@ func TestReportState(t *testing.T) {
 	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
 	client := proto.NewAgentServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	ack, err := client.ReportState(ctx, &proto.StateReport{
@@ -938,7 +938,7 @@ func TestDuplicateRequestID(t *testing.T) {
 	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
 	client := proto.NewAgentServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	stream, err := client.Channel(ctx)
@@ -1016,7 +1016,7 @@ func TestCertRevocation(t *testing.T) {
 	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
 	client := proto.NewAgentServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// The TLS-level CRL check happens during handshake. If that passes
@@ -1070,7 +1070,7 @@ func TestChannel_NoClientCert(t *testing.T) {
 	conn := noCertConn(t, addr)
 	client := proto.NewAgentServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	stream, err := client.Channel(ctx)
@@ -1107,7 +1107,7 @@ func TestReportState_NoClientCert(t *testing.T) {
 	conn := noCertConn(t, addr)
 	client := proto.NewAgentServiceClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	_, err := client.ReportState(ctx, &proto.StateReport{

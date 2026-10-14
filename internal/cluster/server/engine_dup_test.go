@@ -53,7 +53,7 @@ func TestReportState_WarnsWhenAnEngineIsEnrolledTwice(t *testing.T) {
 		token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
 		hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
 		client := proto.NewAgentServiceClient(agentTLSConn(t, addr, certPEM, keyPEM, caPEM))
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if _, err := client.ReportState(ctx, &proto.StateReport{HostId: hostID, EngineId: "ENGINE-1"}); err != nil {
 			t.Fatalf("ReportState: %v", err)

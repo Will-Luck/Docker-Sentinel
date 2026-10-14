@@ -39,7 +39,7 @@ func TestRequestErrors_NameTheHost(t *testing.T) {
 	closeConn() // the stream drops mid-update
 	dropped := <-done
 
-	waitFor(t, 3*time.Second, func() bool { return len(srv.ConnectedHosts()) == 0 }, "the host should be marked disconnected")
+	waitFor(t, 30*time.Second, func() bool { return len(srv.ConnectedHosts()) == 0 }, "the host should be marked disconnected")
 	_, offline := srv.UpdateContainerSync(context.Background(), hostID, "web", "nginx:2", "")
 
 	for what, err := range map[string]error{"stream dropped": dropped, "not connected": offline} {

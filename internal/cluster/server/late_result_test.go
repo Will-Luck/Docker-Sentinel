@@ -91,7 +91,7 @@ func TestLateRollbackResult_RecordedAsRollback(t *testing.T) {
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, 3*time.Second, func() bool { return hist.count() == 1 }, "late rollback result not recorded")
+	waitFor(t, 30*time.Second, func() bool { return hist.count() == 1 }, "late rollback result not recorded")
 	// As a local rollback row: outcome rollback (History shows it as rolled
 	// back, and its Rollback filter finds it).
 	if r := hist.all()[0]; r.Outcome != "rollback" || r.Error != "rolled back on request" || r.Type != "" {

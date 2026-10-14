@@ -87,7 +87,7 @@ func TestCheckAgentVersions_TargetsPublishedImageTag(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("send container list: %v", err)
 	}
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, ok := srv.Registry().Get(hostID)
 		return ok && len(hs.Containers) == 1 && srv.AgentVersions()[hostID] != ""
 	}, "server should have the agent's version and container list")

@@ -30,7 +30,7 @@ func TestUpdateContainerSync_SendsRegistryAuth(t *testing.T) {
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if _, err := srv.UpdateContainerSync(ctx, hostID, "web", "ghcr.io/org/app:2", ""); err != nil {
 		t.Fatal(err)

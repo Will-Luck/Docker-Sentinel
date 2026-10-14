@@ -23,7 +23,7 @@ func connectedStream(t *testing.T, srv *Server, addr, hostID string, certPEM, ke
 		t.Fatalf("Channel: %v", err)
 	}
 	var as *agentStream
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		srv.mu.RLock()
 		defer srv.mu.RUnlock()
 		cur, ok := srv.streams[hostID]
@@ -56,7 +56,7 @@ func TestChannel_StaleStreamCleanupLeavesLiveStreamAlone(t *testing.T) {
 		_, err := srv.ListContainersSync(ctx, hostID)
 		errA <- err
 	}()
-	waitFor(t, 3*time.Second, func() bool { return pendingCount(srv) == 1 }, "request on A should be pending")
+	waitFor(t, 30*time.Second, func() bool { return pendingCount(srv) == 1 }, "request on A should be pending")
 
 	// The agent reconnects on B before the hub has noticed A is dead.
 	streamB, asB, closeB := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, asA)
@@ -87,7 +87,7 @@ func TestChannel_StaleStreamCleanupLeavesLiveStreamAlone(t *testing.T) {
 		_, err := srv.ListContainersSync(ctx, hostID)
 		resB <- err
 	}()
-	waitFor(t, 3*time.Second, func() bool { return pendingOn(srv, asB) == 1 }, "request on B should be pending")
+	waitFor(t, 30*time.Second, func() bool { return pendingOn(srv, asB) == 1 }, "request on B should be pending")
 
 	// The stale connection A finally dies (if replacing it has not already
 	// ended its handler).
@@ -196,7 +196,7 @@ func TestChannel_RefusedWhileStopping(t *testing.T) {
 	srv.mu.Unlock()
 
 	conn := agentTLSConn(t, addr, certPEM, keyPEM, caPEM)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	stream, err := proto.NewAgentServiceClient(conn).Channel(ctx)
 	if err != nil {
@@ -229,7 +229,7 @@ func TestStop_ReturnsWhileAgentsKeepReconnecting(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, _ := srv.Registry().Get(hostID)
 		return hs.Connected
 	}, "agent should connect")

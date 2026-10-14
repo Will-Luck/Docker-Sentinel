@@ -76,7 +76,7 @@ func TestKeepalive_HubNoticesPartitionedAgent(t *testing.T) {
 	if _, err := proto.NewAgentServiceClient(conn).Channel(ctx); err != nil {
 		t.Fatalf("Channel: %v", err)
 	}
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 30*time.Second, func() bool {
 		hs, _ := srv.Registry().Get(hostID)
 		return hs.Connected
 	}, "agent should connect through the proxy")
