@@ -147,6 +147,16 @@ const (
 	ScopeMajor   SemverScope = "major"  // any newer version
 )
 
+// GlobalSemverScope maps the stored global version scope setting to the scope
+// the checker applies. Only "default" is relaxed; anything else, an unset
+// setting included, is strict (the default since issue #48).
+func GlobalSemverScope(setting string) SemverScope {
+	if setting == "default" {
+		return ScopeDefault
+	}
+	return ScopeStrict
+}
+
 // ContainerTagFilters reads sentinel.include-tags and sentinel.exclude-tags labels.
 func ContainerTagFilters(labels map[string]string) (include, exclude string) {
 	return labels["sentinel.include-tags"], labels["sentinel.exclude-tags"]

@@ -61,6 +61,23 @@ func TestContainerSemverScope(t *testing.T) {
 	}
 }
 
+func TestGlobalSemverScope(t *testing.T) {
+	tests := []struct {
+		setting string
+		want    SemverScope
+	}{
+		{"", ScopeStrict},
+		{"strict", ScopeStrict},
+		{"default", ScopeDefault},
+		{"relaxed", ScopeStrict},
+	}
+	for _, tt := range tests {
+		if got := GlobalSemverScope(tt.setting); got != tt.want {
+			t.Errorf("GlobalSemverScope(%q) = %q, want %q", tt.setting, got, tt.want)
+		}
+	}
+}
+
 func TestContainerGracePeriod(t *testing.T) {
 	tests := []struct {
 		name   string

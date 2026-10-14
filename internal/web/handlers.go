@@ -475,18 +475,18 @@ func (s *Server) withAuth(r *http.Request, data *pageData) {
 		(data.CurrentUser != nil && data.CurrentUser.RoleID == "admin")
 }
 
-// globalVersionScope returns the persisted global version scope string ("default"
-// or "strict"). An unset/unavailable store maps to "default" (relaxed), matching
-// the runtime normalisation in apiSetVersionScope.
+// globalVersionScope returns the global version scope the checker applies,
+// "default" (relaxed) or "strict". An unset setting is strict, as in the checker
+// (docker.GlobalSemverScope) and the Settings page.
 func (s *Server) globalVersionScope() string {
-	if s.deps.SettingsStore == nil {
-		return "default"
+	var v string
+	if s.deps.SettingsStore != nil {
+		v, _ = s.deps.SettingsStore.LoadSetting(store.SettingVersionScope)
 	}
-	v, err := s.deps.SettingsStore.LoadSetting(store.SettingVersionScope)
-	if err != nil || v == "" {
-		return "default"
+	if docker.GlobalSemverScope(v) == docker.ScopeStrict {
+		return string(docker.ScopeStrict)
 	}
-	return v
+	return "default"
 }
 
 // effectiveScopeLabel returns the display word for the effective Version Scope of
@@ -495,7 +495,7 @@ func (s *Server) globalVersionScope() string {
 func effectiveScopeLabel(containerScope docker.SemverScope, globalScope string) string {
 	scope := containerScope
 	if scope == docker.ScopeDefault {
-		// Global default: stored "strict" -> strict, anything else -> relaxed.
+		// Global default, as normalised by globalVersionScope.
 		if globalScope == string(docker.ScopeStrict) {
 			scope = docker.ScopeStrict
 		}

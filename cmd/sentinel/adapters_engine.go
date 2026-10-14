@@ -195,11 +195,7 @@ type versionScopeAdapter struct {
 }
 
 func (a *versionScopeAdapter) SetDefaultScope(scope string) {
-	if scope == "strict" {
-		a.checker.SetDefaultScope(docker.ScopeStrict)
-	} else {
-		a.checker.SetDefaultScope(docker.ScopeDefault)
-	}
+	a.checker.SetDefaultScope(docker.GlobalSemverScope(scope))
 }
 
 // selfUpdateAdapter bridges engine.SelfUpdater to web.SelfUpdater.

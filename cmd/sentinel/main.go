@@ -479,9 +479,7 @@ func main() {
 	if cloud := buildCloudAuth(db, log); cloud != nil {
 		checker.SetCloudAuth(cloud)
 	}
-	if vs := db.VersionScope(); vs != "default" {
-		checker.SetDefaultScope(docker.ScopeStrict)
-	}
+	checker.SetDefaultScope(docker.GlobalSemverScope(db.VersionScope()))
 	bus := events.New()
 	queue := engine.NewQueue(db, bus, log.Logger)
 	updater := engine.NewUpdater(client, checker, db, queue, cfg, log, clk, notifier, bus)

@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - After a GHCR switch on a remote container, the row kept its
   "Updating" badge until the page was reloaded. It now refreshes on its
   own.
+- On an install where the global Version Scope was never saved (every
+  new install), the container page listed "Available Versions" and named
+  the scope as if it were Relaxed, while updates were checked as Strict,
+  the default. The page now uses the same scope as the update check.
 
 ### Changed
 
