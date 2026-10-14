@@ -98,6 +98,7 @@ func (s *Server) Enroll(ctx context.Context, req *proto.EnrollRequest) (*proto.E
 	// Publish a cluster event so SSE clients know about the new host.
 	s.bus.Publish(events.SSEEvent{
 		Type:      events.EventClusterHost,
+		HostID:    hostID,
 		HostName:  req.HostName,
 		Message:   fmt.Sprintf("host %s (%s) enrolled", hostID, req.HostName),
 		Timestamp: now,
@@ -299,7 +300,8 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 	s.log.Info("agent connected", "hostID", hostID)
 	s.bus.Publish(events.SSEEvent{
 		Type:      events.EventClusterHost,
-		HostName:  hostID,
+		HostID:    hostID,
+		HostName:  s.hostName(hostID),
 		Message:   fmt.Sprintf("agent %s connected", s.hostLabel(hostID)),
 		Timestamp: time.Now(),
 	})
@@ -338,7 +340,8 @@ func (s *Server) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pro
 		s.log.Info("agent disconnected", "hostID", hostID, "category", cat, "error", streamErr)
 		s.bus.Publish(events.SSEEvent{
 			Type:      events.EventClusterHost,
-			HostName:  hostID,
+			HostID:    hostID,
+			HostName:  s.hostName(hostID),
 			Message:   fmt.Sprintf("agent %s disconnected", s.hostLabel(hostID)),
 			Timestamp: time.Now(),
 		})

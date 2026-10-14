@@ -753,7 +753,7 @@ func TestChannel_Disconnect(t *testing.T) {
 	for !found {
 		select {
 		case evt := <-evtCh:
-			if evt.Type == events.EventClusterHost && evt.HostName == hostID {
+			if evt.Type == events.EventClusterHost && evt.HostID == hostID {
 				found = true
 			}
 		case <-timeout:
