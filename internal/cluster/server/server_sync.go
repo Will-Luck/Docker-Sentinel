@@ -16,6 +16,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -732,21 +733,27 @@ func (s *Server) saveEnrollToken(tok *cluster.EnrollToken) error {
 
 // protoToContainers converts proto ContainerInfo messages to cluster.ContainerInfo.
 func protoToContainers(pcs []*proto.ContainerInfo) []cluster.ContainerInfo {
-	out := make([]cluster.ContainerInfo, len(pcs))
-	for i, pc := range pcs {
-		out[i] = cluster.ContainerInfo{
+	out := make([]cluster.ContainerInfo, 0, len(pcs))
+	for _, pc := range pcs {
+		// A self-update helper lives for a minute and is not a container
+		// to show or update.
+		if selfupdate.IsHelper(pc.Labels) {
+			continue
+		}
+		out = append(out, cluster.ContainerInfo{
 			ID:          pc.Id,
 			Name:        pc.Name,
 			Image:       pc.Image,
 			ImageDigest: pc.ImageDigest,
 			State:       pc.State,
 			Labels:      pc.Labels,
-		}
+		})
+		c := &out[len(out)-1]
 		if pc.Created != nil {
-			out[i].Created = pc.Created.AsTime()
+			c.Created = pc.Created.AsTime()
 		}
 		for _, pp := range pc.Ports {
-			out[i].Ports = append(out[i].Ports, cluster.PortMapping{
+			c.Ports = append(c.Ports, cluster.PortMapping{
 				HostIP:        pp.HostIp,
 				HostPort:      uint16(min(pp.HostPort, 65535)),      //nolint:gosec // port values are always ≤65535
 				ContainerPort: uint16(min(pp.ContainerPort, 65535)), //nolint:gosec // port values are always ≤65535

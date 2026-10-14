@@ -552,6 +552,20 @@ func (u *Updater) remotePullOnly(ctx context.Context, hostID string, host HostCo
 	result.Updated++
 }
 
+// PruneRemoteQueue drops the queued updates of hostID's containers that
+// are not among names (they left the host), as the next scan would.
+func (u *Updater) PruneRemoteQueue(hostID string, names []string) {
+	live := make(map[string]bool, len(names))
+	for _, n := range names {
+		live[store.ScopedKey(hostID, n)] = true
+	}
+	for _, p := range u.queue.List() {
+		if p.HostID == hostID && !live[p.Key()] {
+			u.dropQueued(p.Key(), "no longer on the host")
+		}
+	}
+}
+
 // dropQueued removes the queued update that no longer applies of a
 // container or service (a remote one by its scoped key), and its digest
 // state, saying why.

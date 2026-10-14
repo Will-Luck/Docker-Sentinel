@@ -248,3 +248,72 @@ func TestSelfUpdatePending_OutcomeRightAfterTheAnswer(t *testing.T) {
 		t.Errorf("notifications = %+v, want one", n)
 	}
 }
+
+// rc7: after an agent updated itself, the dashboard and the queue kept its
+// parked old container and its helper (both gone from the host) until the
+// next scan. When the outcome is known the hub asks the agent for its
+// containers at once, and never keeps a self-update helper.
+func TestSelfUpdateOutcome_RefreshesTheHostsContainers(t *testing.T) {
+	srv, addr, st, _ := testServer(t)
+	srv.SetHistoryRecorder(st)
+	refreshed := make(chan []cluster.ContainerInfo, 4)
+	srv.SetHostRefreshed(func(_ string, cs []cluster.ContainerInfo) { refreshed <- cs })
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	t.Cleanup(closeConn)
+
+	helper := &proto.ContainerInfo{Id: "h", Name: "sentinel-agent-self-update-helper", Image: "sentinel:3.0.0", State: "running",
+		Labels: map[string]string{"sentinel.self-update-helper": "true", "sentinel.self": "false"}}
+	agent := &proto.ContainerInfo{Id: "new", Name: "sentinel-agent", Image: "sentinel:3.0.1", State: "running"}
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			switch {
+			case msg.GetUpdateContainer() != nil:
+				id := msg.GetRequestId()
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{UpdateResult: &proto.UpdateResult{
+					RequestId: id, ContainerName: "sentinel-agent", Outcome: cluster.OutcomePending, OldImage: "sentinel:3.0.0", NewImage: "sentinel:3.0.1",
+				}}})
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_OfflineJournal{OfflineJournal: &proto.OfflineJournal{
+					Entries: []*proto.JournalEntry{{Id: id, Action: "update", Container: "sentinel-agent", OldImage: "sentinel:3.0.0",
+						NewImage: "sentinel:3.0.1", Outcome: "success"}},
+				}}})
+			case msg.GetListContainers() != nil:
+				// The old container is gone; the helper is finishing.
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_ContainerList{ContainerList: &proto.ContainerList{
+					RequestId: msg.GetRequestId(), Containers: []*proto.ContainerInfo{agent, helper},
+				}}})
+			}
+		}
+	}()
+	// What the hub heard while the swap was under way.
+	srv.Registry().UpdateContainers(hostID, protoToContainers([]*proto.ContainerInfo{
+		agent, helper, {Id: "old", Name: "sentinel-agent-old-1791990001", Image: "sentinel:3.0.0", State: "exited"},
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := srv.UpdateContainerSync(ctx, hostID, "sentinel-agent", "sentinel:3.0.1", ""); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case cs := <-refreshed:
+		if len(cs) != 1 || cs[0].Name != "sentinel-agent" {
+			t.Errorf("refreshed containers = %+v, want only sentinel-agent", cs)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hub did not refresh the host's containers when the outcome came in")
+	}
+	hs, _ := srv.GetHost(hostID)
+	var names []string
+	for _, c := range hs.Containers {
+		names = append(names, c.Name)
+	}
+	if !slices.Equal(names, []string{"sentinel-agent"}) {
+		t.Errorf("containers the hub shows = %v, want only sentinel-agent", names)
+	}
+}

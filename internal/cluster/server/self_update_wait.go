@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"time"
@@ -179,6 +180,9 @@ func (s *Server) finishSelfUpdate(w *selfUpdateWait, outcome, errText string) {
 	}
 	s.rememberLate(w.hostID, w.requestID, "self-update", rec.Timestamp)
 	s.log.Info("agent self-update finished", "hostID", w.hostID, "container", w.name, "outcome", outcome, "error", errText)
+	// The parked old container and the helper are gone, or nearly: the
+	// dashboard and the queue need not wait for the next scan to drop them.
+	go s.refreshAfterSelfUpdate(w.hostID)
 	msg := fmt.Sprintf("update %s: %s", w.name, outcome)
 	if errText != "" {
 		msg = fmt.Sprintf("update %s failed: %s", w.name, errText)
@@ -192,6 +196,45 @@ func (s *Server) finishSelfUpdate(w *selfUpdateWait, outcome, errText string) {
 	}
 	if fn := s.selfNotify.Load(); fn != nil {
 		(*fn)(s.hostLabel(w.hostID), w.name, rec)
+	}
+}
+
+// selfUpdateRefreshAgain is when the hub asks again for the containers of a
+// host whose agent's update of itself is over: an agent that does not
+// report outcomes is taken as updated while its helper may still be
+// finishing (it settles for 20 seconds).
+var selfUpdateRefreshAgain = 30 * time.Second
+
+// SetHostRefreshed sets what is told a host's containers when the hub has
+// asked for them anew, once an agent's update of itself is over (the
+// queue drops what left the host).
+func (s *Server) SetHostRefreshed(fn func(hostID string, containers []cluster.ContainerInfo)) {
+	if fn == nil {
+		s.hostRefreshed.Store(nil)
+		return
+	}
+	s.hostRefreshed.Store(&fn)
+}
+
+// refreshAfterSelfUpdate asks the agent on hostID for its containers, now
+// and again a little later, and tells the dashboard and SetHostRefreshed.
+func (s *Server) refreshAfterSelfUpdate(hostID string) {
+	s.refreshContainers(hostID)
+	time.AfterFunc(selfUpdateRefreshAgain, func() { s.refreshContainers(hostID) })
+}
+
+func (s *Server) refreshContainers(hostID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	containers, err := s.ListContainersSync(ctx, hostID) // updates what the hub shows
+	if err != nil {
+		s.log.Debug("could not refresh the host's containers after a self-update", "hostID", hostID, "error", err)
+		return
+	}
+	// A state event with no container reloads the dashboard.
+	s.bus.Publish(events.SSEEvent{Type: events.EventContainerState, HostID: hostID, Timestamp: time.Now()})
+	if fn := s.hostRefreshed.Load(); fn != nil {
+		(*fn)(hostID, containers)
 	}
 }
 

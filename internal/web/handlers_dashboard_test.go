@@ -175,6 +175,28 @@ func TestApiContainers_FiltersSwarmTasks(t *testing.T) {
 	}
 }
 
+// rc7: a self-update helper is a short-lived container of Sentinel's own,
+// not one to show or update.
+func TestApiContainers_HidesSelfUpdateHelpers(t *testing.T) {
+	docker := &mockContainerLister{
+		containers: []ContainerSummary{
+			{ID: "c1", Names: []string{"/nginx"}, Image: "nginx:latest", Labels: map[string]string{}, State: "running"},
+			{ID: "c2", Names: []string{"/sentinel-self-update-helper"}, Image: "sentinel:3",
+				Labels: map[string]string{"sentinel.self-update-helper": "true"}, State: "running"},
+		},
+	}
+	srv := newDashboardTestServer(docker, newMockHistoryStore(), nil, nil, nil, nil)
+	w := httptest.NewRecorder()
+	srv.apiContainers(w, httptest.NewRequest(http.MethodGet, "/api/containers", nil))
+	var result []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(result) != 1 || result[0]["name"] != "nginx" {
+		t.Errorf("containers = %v, want only nginx", result)
+	}
+}
+
 func TestApiContainers_WithSwarmServices(t *testing.T) {
 	docker := &mockContainerLister{
 		containers: []ContainerSummary{

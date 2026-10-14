@@ -12,6 +12,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 )
 
 // releaseNote holds the URL and truncated body for a GitHub release.
@@ -390,6 +391,10 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	for _, c := range containers {
 		// Filter out Swarm task containers — they'll appear in the Swarm Services section.
 		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+		// A self-update helper is Sentinel's own, for a minute.
+		if selfupdate.IsHelper(c.Labels) {
 			continue
 		}
 

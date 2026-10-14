@@ -112,6 +112,9 @@ type Server struct {
 	selfMu     sync.Mutex
 	selfWaits  map[string]*selfUpdateWait
 	selfNotify atomic.Pointer[SelfUpdateNotify]
+	// hostRefreshed is told a host's containers after the hub asked for
+	// them anew (once an agent's update of itself is over).
+	hostRefreshed atomic.Pointer[func(hostID string, containers []cluster.ContainerInfo)]
 
 	// renewMu guards lastRenewal: when the hub last signed a renewal for
 	// each host.

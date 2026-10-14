@@ -131,6 +131,12 @@ type Handover struct {
 	helperID string
 }
 
+// IsHelper reports whether a container with labels is a self-update helper:
+// short-lived, Sentinel's own, and not a container to show or update.
+func IsHelper(labels map[string]string) bool {
+	return labels[HelperLabel] == "true"
+}
+
 // OldName is the name the running container was renamed to.
 func (h *Handover) OldName() string { return h.oldName }
 

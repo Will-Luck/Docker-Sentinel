@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 )
 
 // apiContainers returns all monitored containers with policy and maintenance status.
@@ -33,6 +35,10 @@ func (s *Server) apiContainers(w http.ResponseWriter, r *http.Request) {
 	for _, c := range containers {
 		// Filter out Swarm task containers — they appear under Swarm Services.
 		if _, isTask := c.Labels["com.docker.swarm.task"]; isTask {
+			continue
+		}
+		// A self-update helper is Sentinel's own, for a minute.
+		if selfupdate.IsHelper(c.Labels) {
 			continue
 		}
 

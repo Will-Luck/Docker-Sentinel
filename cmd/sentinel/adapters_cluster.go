@@ -579,6 +579,13 @@ func (m *clusterManager) Start() error {
 	updater := m.updater
 	m.srv.SetSettingsSource(func() *proto.SettingsSync { return settingsSyncFrom(updater.AgentSettings()) })
 	wireSelfUpdateNotify(m.srv, m.updater)
+	m.srv.SetHostRefreshed(func(hostID string, containers []cluster.ContainerInfo) {
+		names := make([]string, len(containers))
+		for i, c := range containers {
+			names[i] = c.Name
+		}
+		updater.PruneRemoteQueue(hostID, names)
+	})
 
 	// Read advertise addresses for TLS cert SANs. Inside Docker, the container
 	// only sees its bridge network IPs, but agents connect via the host's
