@@ -238,6 +238,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `asynctimerchan`, `x509sha1`). Remove such a setting before upgrading.
   Building from source still works with Go 1.26 or later, which fetches
   go1.27.2 through `GOTOOLCHAIN=auto`.
+- Docker-Sentinel is actively maintained again. The maintenance-mode notice
+  in the README and `MAINTENANCE.md` are removed.
 - Sentinel now keeps a journal of every container it is replacing, so
   that after a crash, a shutdown or a reboot it can finish or undo the
   replacement exactly; each scan retries anything still unfinished. Give
