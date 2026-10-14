@@ -244,6 +244,10 @@ message StateReport {
   // The agent's SENTINEL_HOST_NAME, which may have changed since it
   // enrolled. Agents before v3.0.0 do not send it.
   string host_name = 7;
+  // The name of the container the agent runs in, which an update of any
+  // Sentinel container on the host changes. Empty when the agent cannot
+  // tell, and from agents before v3.0.0.
+  string self_container = 8;
 }
 
 message StateAck {

@@ -273,6 +273,23 @@ func (r *Registry) ReissueCert(hostID, serial string) error {
 // when name is not empty, the host name it now runs with
 // (SENTINEL_HOST_NAME, which may have changed since it enrolled). Persisted
 // only when they change; nil features leave the stored ones.
+// UpdateSelfContainer records the container the agent on hostID runs in.
+func (r *Registry) UpdateSelfContainer(hostID, name string) error {
+	r.mu.Lock()
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		r.mu.Unlock()
+		return fmt.Errorf("host %s not found", hostID)
+	}
+	changed := hs.Info.SelfContainer != name
+	hs.Info.SelfContainer = name
+	r.mu.Unlock()
+	if !changed {
+		return nil
+	}
+	return r.persist(hostID)
+}
+
 func (r *Registry) UpdateAgentInfo(hostID, version, name string, features []string) error {
 	r.mu.Lock()
 	hs, ok := r.hosts[hostID]

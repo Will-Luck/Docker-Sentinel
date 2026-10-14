@@ -478,6 +478,9 @@ func (a *Agent) runSession(ctx context.Context) error {
 		return fmt.Errorf("list containers for state report: %w", err)
 	}
 
+	// The hub names this container in what it says of an update of any
+	// Sentinel container on the host (this agent updates its own).
+	selfName, _ := a.ownContainerName(ctx)
 	ack, err := a.service.ReportState(ctx, &proto.StateReport{
 		HostId:            a.hostID,
 		Containers:        containers,
@@ -486,6 +489,7 @@ func (a *Agent) runSession(ctx context.Context) error {
 		SupportedFeatures: supportedFeatures,
 		EngineId:          a.engineID,
 		HostName:          a.cfg.HostName,
+		SelfContainer:     selfName,
 	})
 	if err != nil {
 		if status.Code(err) == codes.ResourceExhausted {

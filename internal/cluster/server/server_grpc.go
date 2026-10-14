@@ -435,6 +435,9 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 	if err := s.registry.UpdateAgentInfo(hostID, report.AgentVersion, report.HostName, report.SupportedFeatures); err != nil {
 		s.log.Warn("failed to store the agent's version", "hostID", hostID, "error", err)
 	}
+	if err := s.registry.UpdateSelfContainer(hostID, report.SelfContainer); err != nil {
+		s.log.Warn("failed to store the agent's own container", "hostID", hostID, "error", err)
+	}
 	if err := s.registry.UpdateLastSeen(hostID, time.Now()); err != nil {
 		s.log.Warn("failed to update last seen on state report", "hostID", hostID, "error", err)
 	}

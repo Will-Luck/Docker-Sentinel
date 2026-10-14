@@ -60,6 +60,13 @@ func (s *sentEvents) all() []notify.Event {
 // sent.
 func hubWithAgent(t *testing.T, answer func(*proto.UpdateContainerRequest) *proto.UpdateResult, then ...func(requestID string) *proto.AgentMessage) (*clusterAdapter, string, *store.Store, *sentEvents) {
 	t.Helper()
+	return hubWithReportingAgent(t, nil, answer, then...)
+}
+
+// hubWithReportingAgent is hubWithAgent with an agent that first sends the
+// state report report (with its host ID filled in), when there is one.
+func hubWithReportingAgent(t *testing.T, report *proto.StateReport, answer func(*proto.UpdateContainerRequest) *proto.UpdateResult, then ...func(requestID string) *proto.AgentMessage) (*clusterAdapter, string, *store.Store, *sentEvents) {
+	t.Helper()
 	db, err := store.Open(t.TempDir() + "/sentinel.db")
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +134,12 @@ func hubWithAgent(t *testing.T, answer func(*proto.UpdateContainerRequest) *prot
 	})))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if report != nil {
+		report.HostId = enrolled.HostId
+		if _, err := proto.NewAgentServiceClient(conn).ReportState(context.Background(), report); err != nil {
+			t.Fatalf("ReportState: %v", err)
+		}
 	}
 	streamCtx, stop := context.WithCancel(context.Background())
 	stream, err := proto.NewAgentServiceClient(conn).Channel(streamCtx)
@@ -288,5 +301,36 @@ func TestUpdateRemoteContainer_SelfUpdateNotifiedOnceWithItsOutcome(t *testing.T
 	}
 	if len(started) != 1 || len(ended) != 1 || ended[0].Type != notify.EventUpdateFailed || ended[0].ContainerName != "sentinel-agent on edge" {
 		t.Errorf("started %+v, ended %+v; want one start and one failure for sentinel-agent on edge", started, ended)
+	}
+}
+
+// rc6: "Update now" on another Sentinel container of an agent's host
+// updates the agent's own container, which the history row and the outcome
+// name; update_started named the container requested. The agent says
+// which container is its own, and update_started names it, from its image.
+func TestUpdateRemoteContainer_StartedNamesTheAgentsOwnContainer(t *testing.T) {
+	self := map[string]string{"sentinel.self": "true"}
+	report := &proto.StateReport{
+		AgentVersion: "3.0.0", SelfContainer: "sentinel-agent",
+		Containers: []*proto.ContainerInfo{
+			{Id: "a1", Name: "lh2-agent", Image: "sentinel:3.0.1", State: "running", Labels: self},
+			{Id: "a2", Name: "sentinel-agent", Image: "sentinel:3.0.0", State: "running", Labels: self},
+		},
+	}
+	a, hostID, _, sent := hubWithReportingAgent(t, report, func(req *proto.UpdateContainerRequest) *proto.UpdateResult {
+		return &proto.UpdateResult{ContainerName: "sentinel-agent", OldImage: "sentinel:3.0.0", NewImage: req.TargetImage, Outcome: "success"}
+	})
+
+	if _, err := a.UpdateRemoteContainer(context.Background(), hostID, "lh2-agent", "sentinel:3.0.1", ""); err != nil {
+		t.Fatal(err)
+	}
+	var started []notify.Event
+	for _, e := range sent.all() {
+		if e.Type == notify.EventUpdateStarted {
+			started = append(started, e)
+		}
+	}
+	if len(started) != 1 || started[0].ContainerName != "sentinel-agent on edge" || started[0].OldImage != "sentinel:3.0.0" {
+		t.Errorf("update_started = %+v, want one for sentinel-agent on edge from sentinel:3.0.0", started)
 	}
 }

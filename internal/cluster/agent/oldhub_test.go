@@ -26,10 +26,17 @@ type fakeHub struct {
 	features []string
 	channel  chan struct{}
 	got      chan *proto.AgentMessage
-	opens    atomic.Int32 // Channel streams opened
+	opens    atomic.Int32            // Channel streams opened
+	reports  chan *proto.StateReport // state reports received, when set
 }
 
-func (h *fakeHub) ReportState(context.Context, *proto.StateReport) (*proto.StateAck, error) {
+func (h *fakeHub) ReportState(_ context.Context, r *proto.StateReport) (*proto.StateAck, error) {
+	if h.reports != nil {
+		select {
+		case h.reports <- r:
+		default:
+		}
+	}
 	return &proto.StateAck{Accepted: true, Message: "state received", ServerFeatures: h.features}, nil
 }
 
@@ -162,6 +169,35 @@ func TestRunSession_ExplainsOversizeContainerList(t *testing.T) {
 	err := a.runSession(ctx)
 	if err == nil || !strings.Contains(err.Error(), "larger than the server accepts") {
 		t.Fatalf("runSession error = %v, want one saying the container list is too large", err)
+	}
+}
+
+// rc6: the agent tells the hub which container it runs in, so the hub can
+// name it in what it says of an update of any Sentinel container on the
+// host (the agent updates its own).
+func TestRunSession_ReportsTheAgentsOwnContainer(t *testing.T) {
+	caDir, dataDir := t.TempDir(), t.TempDir()
+	h := &fakeHub{channel: make(chan struct{}, 1), got: make(chan *proto.AgentMessage, 1), reports: make(chan *proto.StateReport, 1)}
+	addr := startFakeHub(t, caDir, h)
+	provisionAgent(t, caDir, dataDir, "host-self", time.Now())
+
+	host := newFakeHost()
+	host.addContainer("lh2-agent", "sentinel:3", true)
+	own := host.addContainer("sentinel-agent", "sentinel:3", true)
+	a := New(Config{ServerAddr: addr, HostName: "self", DataDir: dataDir}, host, noopLogger())
+	a.hostID = "host-self"
+	a.selfID = func() string { return own.id }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() { _ = a.runSession(ctx) }()
+	select {
+	case r := <-h.reports:
+		if r.GetSelfContainer() != "sentinel-agent" {
+			t.Errorf("state report names %q as the agent's own container, want sentinel-agent", r.GetSelfContainer())
+		}
+	case <-ctx.Done():
+		t.Fatal("no state report")
 	}
 }
 

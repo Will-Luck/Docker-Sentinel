@@ -153,6 +153,9 @@ type HostInfo struct {
 	AgentVersion      string    `json:"agent_version"`
 	Features          []string  `json:"features,omitempty"`  // supported feature flags
 	EngineID          string    `json:"engine_id,omitempty"` // Docker Engine ID for source dedup
+	// SelfContainer is the container the agent runs in, which an update of
+	// any Sentinel container on the host changes ("" when not known).
+	SelfContainer string `json:"self_container,omitempty"`
 }
 
 // EnrollRequest is sent by an agent to register with the server.

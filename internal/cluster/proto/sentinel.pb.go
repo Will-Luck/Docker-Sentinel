@@ -1827,7 +1827,11 @@ type StateReport struct {
 	EngineId          string                 `protobuf:"bytes,6,opt,name=engine_id,json=engineId,proto3" json:"engine_id,omitempty"` // Docker Engine ID for source deduplication
 	// The agent's SENTINEL_HOST_NAME, which may have changed since it
 	// enrolled. Agents before v3.0.0 do not send it.
-	HostName      string `protobuf:"bytes,7,opt,name=host_name,json=hostName,proto3" json:"host_name,omitempty"`
+	HostName string `protobuf:"bytes,7,opt,name=host_name,json=hostName,proto3" json:"host_name,omitempty"`
+	// The name of the container the agent runs in, which an update of any
+	// Sentinel container on the host changes. Empty when the agent cannot
+	// tell, and from agents before v3.0.0.
+	SelfContainer string `protobuf:"bytes,8,opt,name=self_container,json=selfContainer,proto3" json:"self_container,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1907,6 +1911,13 @@ func (x *StateReport) GetEngineId() string {
 func (x *StateReport) GetHostName() string {
 	if x != nil {
 		return x.HostName
+	}
+	return ""
+}
+
+func (x *StateReport) GetSelfContainer() string {
+	if x != nil {
+		return x.SelfContainer
 	}
 	return ""
 }
@@ -2544,7 +2555,7 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12%\n" +
 	"\x0econtainer_name\x18\x02 \x01(\tR\rcontainerName\x12\x18\n" +
 	"\aoutcome\x18\x03 \x01(\tR\aoutcome\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\xaf\x02\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xd6\x02\n" +
 	"\vStateReport\x12\x17\n" +
 	"\ahost_id\x18\x01 \x01(\tR\x06hostId\x12?\n" +
 	"\n" +
@@ -2554,7 +2565,8 @@ const file_internal_cluster_proto_sentinel_proto_rawDesc = "" +
 	"\ragent_version\x18\x04 \x01(\tR\fagentVersion\x12-\n" +
 	"\x12supported_features\x18\x05 \x03(\tR\x11supportedFeatures\x12\x1b\n" +
 	"\tengine_id\x18\x06 \x01(\tR\bengineId\x12\x1b\n" +
-	"\thost_name\x18\a \x01(\tR\bhostName\"i\n" +
+	"\thost_name\x18\a \x01(\tR\bhostName\x12%\n" +
+	"\x0eself_container\x18\b \x01(\tR\rselfContainer\"i\n" +
 	"\bStateAck\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12'\n" +
