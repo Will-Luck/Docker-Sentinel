@@ -318,7 +318,7 @@ func TestPhoneLayout_QueueAndHistoryFit(t *testing.T) {
 	if i < 0 {
 		t.Fatal("no tablet media block")
 	}
-	for _, want := range []string{".queue-version-inline", ".queue-table td:last-child .btn-group", ".table-history th:nth-child(5)", ".table-history .badge"} {
+	for _, want := range []string{".queue-version-inline", ".queue-table td:last-child .btn-group", ".table-history .hist-duration", ".table-history .badge"} {
 		if !strings.Contains(css[i:], want) {
 			t.Errorf("the phone layout lacks %q", want)
 		}
@@ -336,9 +336,35 @@ func TestDashboardRow_NameCellAndBadgeCaps(t *testing.T) {
 		t.Errorf("the Update Sentinel badge has no tooltip")
 	}
 	b, _ := staticFS.ReadFile("static/style.css")
-	for _, want := range []string{".name-cell-badge", "#container-table td.col-status > .badge"} {
-		if !strings.Contains(string(b), want) {
-			t.Errorf("stylesheet lacks %q", want)
+	if !strings.Contains(string(b), ".name-cell-badge") {
+		t.Errorf("stylesheet lacks the name-cell badge rule")
+	}
+	// A status badge keeps the badge's own display: overriding it put the dot
+	// on a line of its own above the text.
+	if strings.Contains(string(b), "col-status > .badge") {
+		t.Errorf("a rule overrides how status badges lay out their dot and text")
+	}
+}
+
+// On a phone the history hides Version and Duration by class, so a scan
+// summary row (which has a different cell layout) keeps its Summary badge, and
+// it carries a narrow copy of its text that lines up with the other rows.
+func TestHistoryPage_PhoneColumnsHideByClass(t *testing.T) {
+	h := []UpdateRecord{
+		{Timestamp: time.Now(), Outcome: "scan_summary", Type: "scan", Error: "3 checked"},
+		{Timestamp: time.Now(), ContainerName: "web", OldImage: "a:1", NewImage: "a:2", Outcome: "success"},
+	}
+	out := renderPage(t, "history.html", pageData{Page: "history", History: h})
+	for _, want := range []string{`<th class="hist-version">`, `<th class="hist-duration">`, `class="mono hist-duration"`, `class="cell-image mono hist-version"`,
+		`scan-summary-text scan-summary-wide`, `scan-summary-text scan-summary-narrow`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("history page lacks %s", want)
 		}
+	}
+	b, _ := staticFS.ReadFile("static/style.css")
+	css := string(b)
+	i := strings.Index(css, "@media (max-width: 768px)")
+	if i < 0 || !strings.Contains(css[i:], ".table-history .hist-version,") || !strings.Contains(css[i:], ".table-history td.scan-summary-narrow") {
+		t.Errorf("the phone layout does not hide history columns by class")
 	}
 }

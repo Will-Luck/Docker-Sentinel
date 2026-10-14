@@ -476,3 +476,9 @@ kbd {
 .queue-version-inline {
     display: none;
 }
+
+/* A scan summary row has two copies of its text: the wide one (spanning
+   Container and Version) and the narrow one for the phone layout. */
+.scan-summary-narrow {
+    display: none;
+}

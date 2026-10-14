@@ -1330,14 +1330,3 @@ table.managing .td-checkbox {
     flex: none;
     font-size: 0.6rem;
 }
-
-/* A wide badge in the Status column ("Update Sentinel") ends in an ellipsis
-   instead of widening the column for every row. */
-#container-table td.col-status > .badge {
-    display: inline-block;
-    max-width: 7.5rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    vertical-align: middle;
-}

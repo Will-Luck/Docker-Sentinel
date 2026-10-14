@@ -127,10 +127,10 @@
         table-layout: auto;
         width: 100%;
     }
-    .table-history th:nth-child(3),
-    .table-history td:nth-child(3),
-    .table-history th:nth-child(5),
-    .table-history td:nth-child(5) {
+    /* By class, not position: a scan summary row has a different cell
+       layout and must keep its Summary badge. */
+    .table-history .hist-version,
+    .table-history .hist-duration {
         display: none;
     }
     .table-history th:nth-child(1),
@@ -149,6 +149,22 @@
     .table-history td:nth-child(4) {
         width: auto;
         white-space: normal;
+    }
+    /* A scan summary row shows its narrow text cell so its cells line up with
+       the other rows once Version is hidden. */
+    .table-history td.scan-summary-wide {
+        display: none;
+    }
+    .table-history td.scan-summary-narrow {
+        display: table-cell;
+    }
+    /* A scan summary's text wraps instead of widening the table. */
+    .table-history td.scan-summary-text {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        overflow-wrap: anywhere;
+        width: 100%;
     }
     /* A long outcome ("Updated (partial)") wraps inside its badge. */
     .table-history .badge {

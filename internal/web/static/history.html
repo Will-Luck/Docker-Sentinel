@@ -91,9 +91,9 @@
                         <tr>
                             <th>Time</th>
                             <th>Container</th>
-                            <th>Version</th>
+                            <th class="hist-version">Version</th>
                             <th>Outcome</th>
-                            <th>Duration</th>
+                            <th class="hist-duration">Duration</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -102,15 +102,16 @@
                             {{if eq $r.Outcome "scan_summary"}}
                             <tr class="history-row scan-summary-row" data-outcome="scan_summary">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
-                                <td colspan="2" class="scan-summary-text">{{if $r.Error}}{{$r.Error}}{{else}}&mdash;{{end}}</td>
+                                <td colspan="2" class="scan-summary-text scan-summary-wide">{{if $r.Error}}{{$r.Error}}{{else}}&mdash;{{end}}</td>
+                                <td class="scan-summary-text scan-summary-narrow">{{if $r.Error}}{{$r.Error}}{{else}}&mdash;{{end}}</td>
                                 <td><span class="badge badge-info" title="Summary of the last completed scan">Summary</span></td>
-                                <td class="mono">{{fmtDuration $r.Duration}}</td>
+                                <td class="mono hist-duration">{{fmtDuration $r.Duration}}</td>
                             </tr>
                             {{else}}
                             <tr class="container-row history-row" data-outcome="{{$r.Outcome}}" onclick="toggleHistoryDetail(event, {{$i}})">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
                                 <td><a href="{{serviceOrContainer $r.Type (plainName $r.ContainerName $r.HostID) $r.HostID}}" class="container-link" title="{{plainName $r.ContainerName $r.HostID}}">{{plainName $r.ContainerName $r.HostID}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
-                                <td class="cell-image mono">
+                                <td class="cell-image mono hist-version">
                                     {{$oldTag := imageTag $r.OldImage}}{{$newTag := imageTag $r.NewImage}}
                                     {{if and $oldTag $newTag (ne $oldTag $newTag)}}
                                         <span class="version-current">{{$oldTag}}</span>
@@ -150,7 +151,7 @@
                                         <span class="badge badge-muted">{{$r.Outcome}}</span>
                                     {{end}}
                                 </td>
-                                <td class="mono">{{fmtDuration $r.Duration}}</td>
+                                <td class="mono hist-duration">{{fmtDuration $r.Duration}}</td>
                             </tr>
                             <tr class="accordion-panel" id="accordion-history-{{$i}}" style="display:none">
                                 <td colspan="5">
@@ -297,9 +298,15 @@
 
                     var tdName = document.createElement('td');
                     if (isScanSummary) {
+                        // Two cells with the same text: the wide one spans Container
+                        // and Version, the narrow one is for the phone layout where
+                        // Version is hidden (see responsive.css).
                         tdName.colSpan = 2;
-                        tdName.className = 'scan-summary-text';
+                        tdName.className = 'scan-summary-text scan-summary-wide';
                         tdName.textContent = r.error || '\u2014';
+                        var tdNarrow = document.createElement('td');
+                        tdNarrow.className = 'scan-summary-text scan-summary-narrow';
+                        tdNarrow.textContent = r.error || '\u2014';
                     } else {
                         var plain = r.container_name;
                         if (r.host_id && plain.indexOf(r.host_id + '::') === 0) plain = plain.slice(r.host_id.length + 2);
@@ -319,7 +326,7 @@
                     }
 
                     var tdVersion = document.createElement('td');
-                    tdVersion.className = 'cell-image mono';
+                    tdVersion.className = 'cell-image mono hist-version';
                     var oldTag = extractTag(r.old_image || '');
                     var newTag = extractTag(r.new_image || '');
                     if (oldTag && newTag && oldTag !== newTag) {
@@ -355,11 +362,12 @@
                     tdOutcome.appendChild(badgeForHist(r.outcome));
 
                     var tdDur = document.createElement('td');
-                    tdDur.className = 'mono';
+                    tdDur.className = 'mono hist-duration';
                     tdDur.textContent = dur;
 
                     tr.appendChild(tdTime);
                     tr.appendChild(tdName);
+                    if (isScanSummary) tr.appendChild(tdNarrow);
                     if (!isScanSummary) tr.appendChild(tdVersion);
                     tr.appendChild(tdOutcome);
                     tr.appendChild(tdDur);
