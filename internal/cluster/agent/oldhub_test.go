@@ -182,7 +182,7 @@ func TestRunSession_ReportsTheAgentsOwnContainer(t *testing.T) {
 	provisionAgent(t, caDir, dataDir, "host-self", time.Now())
 
 	host := newFakeHost()
-	host.addContainer("lh2-agent", "sentinel:3", true)
+	host.addContainer("sentinel-agent-2", "sentinel:3", true)
 	own := host.addContainer("sentinel-agent", "sentinel:3", true)
 	a := New(Config{ServerAddr: addr, HostName: "self", DataDir: dataDir}, host, noopLogger())
 	a.hostID = "host-self"

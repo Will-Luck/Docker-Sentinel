@@ -321,7 +321,7 @@ func TestUpdateRemoteContainer_StartedNamesTheAgentsOwnContainer(t *testing.T) {
 	report := &proto.StateReport{
 		AgentVersion: "3.0.0", SelfContainer: "sentinel-agent",
 		Containers: []*proto.ContainerInfo{
-			{Id: "a1", Name: "lh2-agent", Image: "sentinel:3.0.1", State: "running", Labels: self},
+			{Id: "a1", Name: "sentinel-agent-2", Image: "sentinel:3.0.1", State: "running", Labels: self},
 			{Id: "a2", Name: "sentinel-agent", Image: "sentinel:3.0.0", State: "running", Labels: self},
 		},
 	}
@@ -329,7 +329,7 @@ func TestUpdateRemoteContainer_StartedNamesTheAgentsOwnContainer(t *testing.T) {
 		return &proto.UpdateResult{ContainerName: "sentinel-agent", OldImage: "sentinel:3.0.0", NewImage: req.TargetImage, Outcome: "success"}
 	})
 
-	if _, err := a.UpdateRemoteContainer(context.Background(), hostID, "lh2-agent", "sentinel:3.0.1", ""); err != nil {
+	if _, err := a.UpdateRemoteContainer(context.Background(), hostID, "sentinel-agent-2", "sentinel:3.0.1", ""); err != nil {
 		t.Fatal(err)
 	}
 	var started []notify.Event

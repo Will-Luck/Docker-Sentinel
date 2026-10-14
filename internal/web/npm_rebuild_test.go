@@ -56,7 +56,7 @@ func TestNPMSettingsChangesDropTheStaleProvider(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			old := &fakeNPM{}
 			srv := &Server{deps: Dependencies{NPM: old, SettingsStore: newMockSettingsStore(), Log: nopLogger()}}
-			body := `{"url":"http://192.168.1.10:81","email":"a@b.c","password":"pw"}`
+			body := `{"url":"http://192.0.2.10:81","email":"a@b.c","password":"pw"}`
 			call(srv, httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body)))
 			if srv.npmProvider() != nil || !old.stopped {
 				t.Errorf("the provider for the old settings is still in use")

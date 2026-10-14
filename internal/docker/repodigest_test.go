@@ -9,8 +9,8 @@ import "testing"
 // reported an update that was not there (live-20).
 func TestRepoDigestFor(t *testing.T) {
 	multi := []string{
-		"192.168.1.60:5443/lh/nsc@sha256:aaa",
-		"192.168.1.60:5443/lh/stp@sha256:bbb",
+		"registry.example.com:5443/test/nsc@sha256:aaa",
+		"registry.example.com:5443/test/stp@sha256:bbb",
 	}
 	hub := []string{"ghcr.io/will-luck/docker-sentinel@sha256:ccc", "nginx@sha256:ddd", "acme/app@sha256:eee"}
 	for _, tc := range []struct {
@@ -18,13 +18,13 @@ func TestRepoDigestFor(t *testing.T) {
 		digests []string
 		want    string
 	}{
-		{"192.168.1.60:5443/lh/stp:1.0.1", multi, "192.168.1.60:5443/lh/stp@sha256:bbb"},
-		{"192.168.1.60:5443/lh/nsc:1.0.1", multi, "192.168.1.60:5443/lh/nsc@sha256:aaa"},
+		{"registry.example.com:5443/test/stp:1.0.1", multi, "registry.example.com:5443/test/stp@sha256:bbb"},
+		{"registry.example.com:5443/test/nsc:1.0.1", multi, "registry.example.com:5443/test/nsc@sha256:aaa"},
 		{"nginx:1.27", hub, "nginx@sha256:ddd"},
 		{"docker.io/library/nginx:1.27", hub, "nginx@sha256:ddd"},
 		{"docker.io/acme/app", hub, "acme/app@sha256:eee"},
 		{"acme/app:2", hub, "acme/app@sha256:eee"},
-		{"192.168.1.60:5443/lh/other:1", multi, "192.168.1.60:5443/lh/nsc@sha256:aaa"}, // none matches: the first, as before
+		{"registry.example.com:5443/test/other:1", multi, "registry.example.com:5443/test/nsc@sha256:aaa"}, // none matches: the first, as before
 		{"nginx:1.27", nil, ""},
 	} {
 		if got := repoDigestFor(tc.ref, tc.digests); got != tc.want {

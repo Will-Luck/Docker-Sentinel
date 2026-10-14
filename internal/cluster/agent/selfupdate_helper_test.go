@@ -131,8 +131,8 @@ func TestAgentFlushesTheJournalToTheOpenSession(t *testing.T) {
 func twoSentinelHost(t *testing.T) (*mockDocker, *Agent) {
 	mock := newMockDocker()
 	mock.containers = []container.Summary{
-		sentinelSummary("other99other99", "lh2-hub", "sentinel:v1"),
-		sentinelSummary("bbbbbbbbbbbb2222", "lh-sentinel-agent", "sentinel:v1"),
+		sentinelSummary("other99other99", "sentinel-hub-2", "sentinel:v1"),
+		sentinelSummary("bbbbbbbbbbbb2222", "sentinel-agent", "sentinel:v1"),
 	}
 	for _, id := range []string{"other99other99", "bbbbbbbbbbbb2222"} {
 		in := sentinelInspect("sentinel:v1")
@@ -166,21 +166,21 @@ func TestAgentSelfUpdateTargetsItsOwnContainerWhateverNameTheHubSent(t *testing.
 	a.selfID = func() string { return "bbbbbbbbbbbb" }
 	a.cfg.DockerSock = "tcp://example:2375" // in-process path: observable without a helper
 
-	res := updateResultOf(t, a, "lh2-hub")
+	res := updateResultOf(t, a, "sentinel-hub-2")
 
 	if res.GetOutcome() != "success" {
 		t.Fatalf("result = %+v", res)
 	}
 	// The result names the container that changed, for the hub's history.
-	if res.GetContainerName() != "lh-sentinel-agent" {
-		t.Errorf("result names %q, want the agent's own lh-sentinel-agent", res.GetContainerName())
+	if res.GetContainerName() != "sentinel-agent" {
+		t.Errorf("result names %q, want the agent's own sentinel-agent", res.GetContainerName())
 	}
 	for _, r := range mock.renameCalls {
 		if r.id == "other99other99" {
 			t.Errorf("renamed the other Sentinel: %+v", mock.renameCalls)
 		}
 	}
-	if mock.createConfigs["lh-sentinel-agent"] == nil || mock.createConfigs["lh2-hub"] != nil {
+	if mock.createConfigs["sentinel-agent"] == nil || mock.createConfigs["sentinel-hub-2"] != nil {
 		t.Errorf("replacement created for the wrong container: %v", mock.createConfigs)
 	}
 	for _, id := range mock.removeCalls {
@@ -194,7 +194,7 @@ func TestAgentSelfUpdateRefusesWhenItCannotTellWhichContainerItIs(t *testing.T) 
 	for _, id := range []string{"", "ffffffffffff"} {
 		mock, a := twoSentinelHost(t)
 		a.selfID = func() string { return id }
-		res := updateResultOf(t, a, "lh2-hub")
+		res := updateResultOf(t, a, "sentinel-hub-2")
 		if res.GetOutcome() != "failed" || !strings.Contains(res.GetError(), "could not determine") {
 			t.Errorf("id %q: result = %+v", id, res)
 		}

@@ -394,10 +394,10 @@ func TestBeginRefusesWhileAnotherSwapIsInProgress(t *testing.T) {
 func TestFindSelfMatchesTheContainerIDNotTheLabel(t *testing.T) {
 	self := map[string]string{"sentinel.self": "true"}
 	list := []container.Summary{
-		{ID: "aaaaaaaaaaaa1111", Names: []string{"/lh2-hub"}, Labels: self},
-		{ID: "bbbbbbbbbbbb2222", Names: []string{"/lh-sentinel-hub"}, Labels: self},
+		{ID: "aaaaaaaaaaaa1111", Names: []string{"/sentinel-hub-2"}, Labels: self},
+		{ID: "bbbbbbbbbbbb2222", Names: []string{"/sentinel-hub"}, Labels: self},
 	}
-	if got := FindSelf(list, "bbbbbbbbbbbb"); got == nil || got.Names[0] != "/lh-sentinel-hub" {
+	if got := FindSelf(list, "bbbbbbbbbbbb"); got == nil || got.Names[0] != "/sentinel-hub" {
 		t.Errorf("FindSelf = %+v", got)
 	}
 	if FindSelf(list, "") != nil || FindSelf(list, "cccccccccccc") != nil {
@@ -855,12 +855,12 @@ func TestCleanupLeftoversTouchesOnlyThisInstancesOwnLeftovers(t *testing.T) {
 	f.state["hub-id"] = &container.State{Running: true}
 	dead := map[string]string{HelperLabel: "true"}
 	f.list = []container.Summary{
-		mk("agent-id", "lh2-agent", "running", self),
-		mk("hub-id", "lh-sentinel", "running", self),
-		mk("mine", "lh2-agent-old-1700000000", "exited", self),
-		mk("theirs", "lh-sentinel-old-1700000001", "exited", self),
-		mk("my-helper", "lh2-agent-self-update-helper", "exited", dead),
-		mk("their-helper", "lh-sentinel-self-update-helper", "exited", dead),
+		mk("agent-id", "sentinel-agent-2", "running", self),
+		mk("hub-id", "sentinel", "running", self),
+		mk("mine", "sentinel-agent-2-old-1700000000", "exited", self),
+		mk("theirs", "sentinel-old-1700000001", "exited", self),
+		mk("my-helper", "sentinel-agent-2-self-update-helper", "exited", dead),
+		mk("their-helper", "sentinel-self-update-helper", "exited", dead),
 	}
 	CleanupLeftovers(context.Background(), f, "agent-id", "", nopLog{})
 	if want := []string{"mine", "my-helper"}; !slices.Equal(removed(f), want) {
@@ -1093,8 +1093,8 @@ func TestSelfIDOrder(t *testing.T) {
 func overrideHost() []container.Summary {
 	self := map[string]string{"sentinel.self": "true"}
 	return []container.Summary{
-		{ID: "aaaaaaaaaaaa1111", Names: []string{"/lh2-hub"}, Labels: self},
-		{ID: "bbbbbbbbbbbb2222", Names: []string{"/lh-sentinel-hub"}, Labels: self},
+		{ID: "aaaaaaaaaaaa1111", Names: []string{"/sentinel-hub-2"}, Labels: self},
+		{ID: "bbbbbbbbbbbb2222", Names: []string{"/sentinel-hub"}, Labels: self},
 		{ID: "cccccccccccc3333", Names: []string{"/grafana"}},
 	}
 }
@@ -1102,8 +1102,8 @@ func overrideHost() []container.Summary {
 // With SENTINEL_SELF_CONTAINER (the name or an ID) the container is looked up
 // in the Docker API and must carry sentinel.self=true.
 func TestResolveSelfUsesTheOverrideWhenTheIDCannotBeDetected(t *testing.T) {
-	t.Setenv(SelfContainerEnv, "lh-sentinel-hub")
-	got, err := ResolveSelf(overrideHost(), "lh-sentinel-hub")
+	t.Setenv(SelfContainerEnv, "sentinel-hub")
+	got, err := ResolveSelf(overrideHost(), "sentinel-hub")
 	if err != nil || got.ID != "bbbbbbbbbbbb2222" {
 		t.Fatalf("by name: %+v %v", got, err)
 	}
@@ -1143,7 +1143,7 @@ func TestResolveSelfRefusalNamesTheOverrideVariable(t *testing.T) {
 
 // A detected ID is used as before; the override is not consulted.
 func TestResolveSelfIgnoresTheOverrideWhenTheIDWasDetected(t *testing.T) {
-	t.Setenv(SelfContainerEnv, "lh2-hub")
+	t.Setenv(SelfContainerEnv, "sentinel-hub-2")
 	got, err := ResolveSelf(overrideHost(), "bbbbbbbbbbbb")
 	if err != nil || got.ID != "bbbbbbbbbbbb2222" {
 		t.Fatalf("%+v %v", got, err)

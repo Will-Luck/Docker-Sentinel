@@ -42,12 +42,12 @@ func twoSentinelServer(t *testing.T, ownID string) (*Server, *recordingSelfUpdat
 	su := &recordingSelfUpdater{targets: make(chan string, 2)}
 	return &Server{deps: Dependencies{
 		Docker: &mockContainerLister{containers: []ContainerSummary{
-			{ID: "aaaaaaaaaaaa1111", Names: []string{"/lh2-hub"}, Image: "img/sentinel:1.0", Labels: self},
-			{ID: "bbbbbbbbbbbb2222", Names: []string{"/lh-sentinel-hub"}, Image: "img/sentinel:1.0", Labels: self},
+			{ID: "aaaaaaaaaaaa1111", Names: []string{"/sentinel-hub-2"}, Image: "img/sentinel:1.0", Labels: self},
+			{ID: "bbbbbbbbbbbb2222", Names: []string{"/sentinel-hub"}, Image: "img/sentinel:1.0", Labels: self},
 		}},
 		Queue: &queueOf{pending: map[string]PendingUpdate{
-			"lh2-hub":         {NewerVersions: []string{"9.9.9"}},
-			"lh-sentinel-hub": {NewerVersions: []string{"3.0.0"}},
+			"sentinel-hub-2": {NewerVersions: []string{"9.9.9"}},
+			"sentinel-hub":   {NewerVersions: []string{"3.0.0"}},
 		}},
 		SelfUpdater: su,
 		EventBus:    events.New(),
@@ -67,7 +67,7 @@ func TestApiSelfUpdateUsesTheOwnContainerNotTheFirstSentinel(t *testing.T) {
 	select {
 	case target := <-su.targets:
 		if target != "img/sentinel:3.0.0" {
-			t.Errorf("target = %q, want img/sentinel:3.0.0 (the queued version of lh-sentinel-hub)", target)
+			t.Errorf("target = %q, want img/sentinel:3.0.0 (the queued version of sentinel-hub)", target)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no self-update started")
@@ -106,7 +106,7 @@ func updateToVersion(srv *Server, name string) *httptest.ResponseRecorder {
 func TestApiUpdateToVersionSelfUpdatesOnlyTheOwnContainer(t *testing.T) {
 	srv, su := twoSentinelServer(t, "bbbbbbbbbbbb")
 
-	w := updateToVersion(srv, "lh2-hub")
+	w := updateToVersion(srv, "sentinel-hub-2")
 	if w.Code == http.StatusOK {
 		t.Errorf("another Sentinel was accepted: %s", w.Body)
 	}
@@ -116,7 +116,7 @@ func TestApiUpdateToVersionSelfUpdatesOnlyTheOwnContainer(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	w = updateToVersion(srv, "lh-sentinel-hub")
+	w = updateToVersion(srv, "sentinel-hub")
 	if w.Code != http.StatusOK {
 		t.Fatalf("own container: status %d: %s", w.Code, w.Body)
 	}
@@ -133,8 +133,8 @@ func TestApiUpdateToVersionSelfUpdatesOnlyTheOwnContainer(t *testing.T) {
 // SENTINEL_SELF_CONTAINER tells the dashboard which container it is when the
 // container ID cannot be read; it must be a Sentinel.
 func TestApiSelfUpdateHonoursSelfContainerOverride(t *testing.T) {
-	t.Setenv(selfupdate.SelfContainerEnv, "lh-sentinel-hub")
-	srv, su := twoSentinelServer(t, "lh-sentinel-hub")
+	t.Setenv(selfupdate.SelfContainerEnv, "sentinel-hub")
+	srv, su := twoSentinelServer(t, "sentinel-hub")
 	w := httptest.NewRecorder()
 	srv.apiSelfUpdate(w, httptest.NewRequest(http.MethodPost, "/api/self-update", nil))
 	if w.Code != http.StatusOK {

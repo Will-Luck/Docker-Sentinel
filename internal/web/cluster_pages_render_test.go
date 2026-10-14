@@ -151,12 +151,12 @@ func TestContainerPage_RemoteShowsIDAndHost(t *testing.T) {
 }
 
 // A Swarm task's tag is taken from its image reference by the same rule as
-// everywhere else, so a registry with a port ("192.168.1.60:5443/lh/app:1.0.1")
+// everywhere else, so a registry with a port ("registry.example.com:5443/test/app:1.0.1")
 // shows 1.0.1 and not "5443/lh/app:1.0.1".
 func TestTaskTag_RegistryWithPort(t *testing.T) {
 	for in, want := range map[string]string{
-		"192.168.1.60:5443/lh/app:1.0.1": "1.0.1",
-		"nginx:1.25":                     "1.25",
+		"registry.example.com:5443/test/app:1.0.1": "1.0.1",
+		"nginx:1.25": "1.25",
 	} {
 		if got := taskTag(in, "5443/lh/app:1.0.1"); got != want {
 			t.Errorf("taskTag(%q) = %q, want %q", in, got, want)
@@ -267,7 +267,7 @@ func TestRemoteRollbackTarget(t *testing.T) {
 		"updated again after a rollback": {[]UpdateRecord{up("x:1", "x:3"), rb("x:2", "x:1"), up("x:1", "x:2")}, "x:1"},
 		"pre-3.0 rollback row":           {[]UpdateRecord{{Outcome: "success", OldImage: "x:2", NewImage: "x:1", Type: "rollback"}, up("x:1", "x:2")}, ""},
 		"pre-3.0 rollback, older update": {[]UpdateRecord{{Outcome: "success", OldImage: "x:2", NewImage: "x:1", Type: "rollback"}, up("x:1", "x:2"), up("x:0", "x:1")}, "x:0"},
-		"lh-rg-61 history": {[]UpdateRecord{rb("x:1", "x:0"), up("x:0", "x:1"), rb("x:1", "x:0"), up("x:0", "x:1"),
+		"rolled back before v3 history": {[]UpdateRecord{rb("x:1", "x:0"), up("x:0", "x:1"), rb("x:1", "x:0"), up("x:0", "x:1"),
 			{Outcome: "success", OldImage: "x:1", NewImage: "x:0", Type: "rollback"}, up("x:0", "x:1")}, ""},
 		"failed and imageless rows": {[]UpdateRecord{{Outcome: "failed", OldImage: "x:9"}, {Outcome: "success"}, up("x:1", "x:2")}, "x:1"},
 	} {

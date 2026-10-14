@@ -10,7 +10,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 )
 
-// setupInheritedUpdate builds the smoke test's lh-mut case: the container
+// setupInheritedUpdate builds a container an older Sentinel updated: the container
 // was created on app 1.0.0 and updated to 1.0.1 by an older Sentinel, which
 // copied its whole config, so it still carries 1.0.0's env, label and
 // command. The history has the row that older Sentinel wrote.

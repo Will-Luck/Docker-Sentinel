@@ -9,7 +9,7 @@ import (
 // attacker could lock everyone out. With the proxy listed as trusted, the
 // real client is taken from X-Forwarded-For.
 func TestClientIP_TrustedProxyUsesForwardedFor(t *testing.T) {
-	SetTrustedProxies(ParseTrustedProxies("10.0.0.0/24, 192.168.1.5"))
+	SetTrustedProxies(ParseTrustedProxies("10.0.0.0/24, 192.0.2.5"))
 	defer SetTrustedProxies(nil)
 
 	mk := func(remote, xff string) string {
@@ -28,7 +28,7 @@ func TestClientIP_TrustedProxyUsesForwardedFor(t *testing.T) {
 	if got := mk("10.0.0.7:5000", "1.2.3.4, 203.0.113.9, 10.0.0.8"); got != "203.0.113.9" {
 		t.Errorf("chain: %q, want 203.0.113.9", got)
 	}
-	if got := mk("192.168.1.5:80", "198.51.100.2"); got != "198.51.100.2" {
+	if got := mk("192.0.2.5:80", "198.51.100.2"); got != "198.51.100.2" {
 		t.Errorf("single-IP proxy: %q", got)
 	}
 	// An untrusted peer cannot choose its own address.

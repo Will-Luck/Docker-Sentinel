@@ -385,8 +385,8 @@ func (g *growingList) ListAllContainers(context.Context) ([]container.Summary, e
 func twoSentinels() (*eventDocker, *mockDocker) {
 	mock := newMockDocker()
 	mock.containers = []container.Summary{
-		sentinelContainer("other99", "lh2-hub", "img:1.0"),
-		sentinelContainer("abc123", "lh-sentinel-hub", "img:1.0"),
+		sentinelContainer("other99", "sentinel-hub-2", "img:1.0"),
+		sentinelContainer("abc123", "sentinel-hub", "img:1.0"),
 	}
 	mock.inspectResults["abc123"] = sentinelInspect("img:1.0")
 	mock.inspectResults["other99"] = sentinelInspect("img:1.0")
@@ -406,8 +406,8 @@ func TestSelfUpdateInProcessChangesOnlyTheContainerItRunsIn(t *testing.T) {
 			t.Errorf("renamed the other Sentinel: %+v", mock.renameCalls)
 		}
 	}
-	if len(mock.createCalls) != 1 || mock.createCalls[0] != "lh-sentinel-hub" {
-		t.Errorf("create calls = %v, want only lh-sentinel-hub", mock.createCalls)
+	if len(mock.createCalls) != 1 || mock.createCalls[0] != "sentinel-hub" {
+		t.Errorf("create calls = %v, want only sentinel-hub", mock.createCalls)
 	}
 	if slices.Contains(ev.events, "stop:other99") || !slices.Contains(ev.events, "stop:abc123") {
 		t.Errorf("events = %v", ev.events)
@@ -430,7 +430,7 @@ func TestSelfUpdateWithHelperChangesOnlyTheContainerItRunsIn(t *testing.T) {
 	if slices.Contains(ev.events, "remove:other99") || slices.Contains(ev.events, "stop:other99") {
 		t.Errorf("touched the other Sentinel: %v", ev.events)
 	}
-	if mock.createConfigs["lh-sentinel-hub"] == nil || mock.createConfigs["lh2-hub"] != nil {
+	if mock.createConfigs["sentinel-hub"] == nil || mock.createConfigs["sentinel-hub-2"] != nil {
 		t.Errorf("replacement created for the wrong container: %v", mock.createCalls)
 	}
 }
@@ -452,14 +452,14 @@ func TestSelfUpdateRefusesWhenItCannotTellWhichContainerItIs(t *testing.T) {
 }
 
 func TestSelfUpdateHonoursTheSelfContainerOverrideAndRefusesANonSentinel(t *testing.T) {
-	t.Setenv(selfupdate.SelfContainerEnv, "lh-sentinel-hub")
+	t.Setenv(selfupdate.SelfContainerEnv, "sentinel-hub")
 	ev, mock := twoSentinels()
 	su := NewSelfUpdater(ev, newTestSelfUpdater(mock).log)
-	su.selfID = func() string { return "lh-sentinel-hub" }
+	su.selfID = func() string { return "sentinel-hub" }
 	if err := su.Update(context.Background(), "img:2.0"); err != nil {
 		t.Fatal(err)
 	}
-	if len(mock.createCalls) != 1 || mock.createCalls[0] != "lh-sentinel-hub" {
+	if len(mock.createCalls) != 1 || mock.createCalls[0] != "sentinel-hub" {
 		t.Errorf("create calls = %v", mock.createCalls)
 	}
 
