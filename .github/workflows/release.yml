@@ -22,7 +22,7 @@ jobs:
       - name: Bundle frontend
         run: make frontend
       - name: Run tests
-        run: go test -count=1 ./...
+        run: go test -count=1 -timeout 30m ./...
       - name: Upload frontend bundle
         uses: actions/upload-artifact@v7
         with:

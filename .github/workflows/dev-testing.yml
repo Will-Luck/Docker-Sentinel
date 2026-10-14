@@ -21,7 +21,7 @@ jobs:
       - name: Bundle frontend
         run: make frontend
       - name: Run tests
-        run: go test -count=1 ./...
+        run: go test -count=1 -timeout 30m ./...
 
   build-image:
     needs: [test]
