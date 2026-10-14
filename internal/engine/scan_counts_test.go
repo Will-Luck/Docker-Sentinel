@@ -11,6 +11,7 @@ import (
 	"github.com/Will-Luck/Docker-Sentinel/internal/hooks"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/swarm"
 )
 
 // setupScanOne builds a scan of one auto container, nginx, with an update.
@@ -214,5 +215,58 @@ func TestScanCountsAddUpOverAMixedScan(t *testing.T) {
 	}
 	if result.CheckFailed != 1 || result.Skipped != 2 || result.Queued != 1 || result.UpToDate != 4 {
 		t.Errorf("counts = %+v, want 1 check failed, 2 dry runs skipped, 1 queued, 4 up to date (2 ignored)", result)
+	}
+}
+
+// A container the scan filters out, or that is pinned, leaves the queue
+// (and the digest): its row would otherwise stay there for good, as no
+// scan looks at it again.
+func TestScanDropsQueueRowsOfFilteredAndPinnedContainers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+		filter string
+	}{
+		{"filtered", map[string]string{}, "nginx"},
+		{"pinned", map[string]string{"sentinel.policy": "pinned"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, u := setupScanOne(t, tc.labels)
+			if tc.name == "pinned" {
+				mock.containers[0].Labels = map[string]string{"sentinel.policy": "pinned"}
+			}
+			u.SetSettingsReader(u.store)
+			if err := u.store.SaveSetting("filters", tc.filter); err != nil {
+				t.Fatal(err)
+			}
+			u.queue.Add(PendingUpdate{ContainerID: "aaa", ContainerName: "nginx", CurrentImage: "localhost:1/nginx:latest"})
+			if err := u.store.SetNotifyState("nginx", &store.NotifyState{LastDigest: "sha256:new", LastNotified: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+
+			u.Scan(context.Background(), ScanScheduled)
+
+			if _, queued := u.queue.Get("nginx"); queued {
+				t.Error("the queue row stayed for a container the scan skips")
+			}
+			if st, _ := u.store.GetNotifyState("nginx"); st != nil {
+				t.Errorf("notify state = %+v, want it cleared with the queue row", st)
+			}
+		})
+	}
+}
+
+// The same for a Swarm service.
+func TestScanDropsQueueRowsOfFilteredServices(t *testing.T) {
+	mock := newMockDocker()
+	mock.swarmManager = true
+	mock.services = []swarm.Service{{ID: "svc-1", Spec: svcSpec("api", "fake.local/api:3.0", map[string]string{"sentinel.policy": "pinned"})}}
+	u, _ := newSwarmTestUpdater(t, mock)
+	u.queue.Add(PendingUpdate{ContainerID: "svc-1", ContainerName: "api", Type: "service"})
+
+	u.Scan(context.Background(), ScanScheduled)
+
+	if _, queued := u.queue.Get("api"); queued {
+		t.Error("the queue row stayed for a pinned service")
 	}
 }

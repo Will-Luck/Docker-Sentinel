@@ -701,6 +701,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) (result ScanResult) {
 		// Skip pinned containers.
 		if policy == docker.PolicyPinned {
 			u.log.Debug("skipping pinned container", "name", name)
+			u.dropQueued(name, "pinned") // no scan looks at it again
 			result.Skipped++
 			continue
 		}
@@ -711,6 +712,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) (result ScanResult) {
 		// Skip containers matching filter patterns.
 		if MatchesFilter(name, filters) {
 			u.log.Debug("skipping filtered container", "name", name)
+			u.dropQueued(name, "filtered out")
 			result.Skipped++
 			continue
 		}

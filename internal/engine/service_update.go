@@ -52,6 +52,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 
 		if policy == docker.PolicyPinned {
 			u.log.Debug("skipping pinned service", "name", name)
+			u.dropQueued(name, "pinned")
 			continue
 		}
 
@@ -62,6 +63,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 
 		if MatchesFilter(name, filters) {
 			u.log.Debug("skipping filtered service", "name", name)
+			u.dropQueued(name, "filtered out")
 			continue
 		}
 

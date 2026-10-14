@@ -552,8 +552,9 @@ func (u *Updater) remotePullOnly(ctx context.Context, hostID string, host HostCo
 	result.Updated++
 }
 
-// dropQueued removes the queued update of a remote container (by its
-// scoped key) that no longer applies, saying why.
+// dropQueued removes the queued update that no longer applies of a
+// container or service (a remote one by its scoped key), and its digest
+// state, saying why.
 func (u *Updater) dropQueued(key, why string) {
 	if _, queued := u.queue.Get(key); !queued {
 		return
