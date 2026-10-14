@@ -191,6 +191,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An untouched Apply on the poll interval or Save on scan concurrency (and the other Apply and Save buttons on Settings) still sent a request, turning a value set by the environment into a saved override. They now send nothing while they show what was loaded, and the toggles the environment can also set say when they now override it.
 - At phone width the dashboard's container names now get the free width (the table switches to automatic layout, so the hidden columns no longer keep a share) and a long name ends in an ellipsis with its full text as a tooltip; the pending-updates table no longer keeps room for its hidden Detected column.
 - A container on another host now has a Rollback button on its page when the hub knows what it ran before its last update. The confirm names the host and the image it goes back to; with nothing to go back to there is no button.
+- At phone width the pending-updates page fits the screen (the version moves under the name and the Approve, Ignore and Reject buttons wrap into view) and the history page no longer overlaps the time with the name or clips the outcome badges; long names have a tooltip.
+- After a rollback, the Rollback button stayed and offered the image the container already runs (a second click recreated it on the same image and sent a "Rollback Succeeded" notification). The button is now hidden when there is nothing to go back to, and a container rolled back once offers the update before it, if any; the API's rollback uses the same rule.
+- A wide "Update Sentinel" badge no longer widens the dashboard's Status column for every row (long badges end in an ellipsis with a tooltip), and a "self" badge no longer makes a name that fits end in an ellipsis.
 
 ### Added
 
@@ -349,6 +352,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The queue's "Detected" time was reset by every scan, so it showed the
+  last scan rather than when the update was first found. A row now keeps
+  its first time while the target (version or digest) stays the same,
+  for local, Swarm and remote containers.
 - A queued update stayed in the queue for good once its container was
   filtered out of scans or pinned, because no scan looked at it again.
   Such a row now leaves the queue, and the digest, at the next scan, for
@@ -954,6 +961,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sends one notification with it. After 10 minutes without an outcome it
   records the update as failed: "the agent did not come back on the new
   version". Servers before v3.0.0 are told "success" as before.
+- After an agent updated itself, the dashboard and the queue kept its
+  parked old container and its self-update helper, already gone from the
+  host, until the next scan (up to 10 minutes). The server now asks the
+  agent for its containers as soon as the outcome is known, and no longer
+  shows or queues self-update helpers.
 - Remote rollbacks were recorded as updates (outcome success, type
   rollback), so History showed them as Updated and its Rollback filter
   left them out. They are now recorded as local ones are: rolled back, or
