@@ -463,6 +463,16 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 	// Route to remote agent if host parameter is present.
 	hostID := r.URL.Query().Get("host")
 	if hostID != "" && s.deps.Cluster != nil && s.deps.Cluster.Enabled() {
+		if s.remoteRollbackTarget(hostID, name) == "" {
+			image := ""
+			for _, c := range s.deps.Cluster.AllHostContainers() {
+				if c.HostID == hostID && c.Name == name {
+					image = c.Image
+				}
+			}
+			writeError(w, http.StatusConflict, nothingToRollBackTo(image))
+			return
+		}
 		go func() {
 			if err := s.deps.Cluster.RollbackRemoteContainer(context.Background(), hostID, name); err != nil {
 				s.deps.Log.Error("remote rollback failed", "name", name, "host", hostID, "error", err)
@@ -488,6 +498,19 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status": "started", "name": name, "message": "rollback started for " + name,
 		})
+		return
+	}
+
+	if !s.localRollbackOffered(name) {
+		image := ""
+		if containers, err := s.deps.Docker.ListAllContainers(r.Context()); err == nil {
+			for _, c := range containers {
+				if containerName(c) == name {
+					image = c.Image
+				}
+			}
+		}
+		writeError(w, http.StatusConflict, nothingToRollBackTo(image))
 		return
 	}
 
@@ -1052,4 +1075,13 @@ func (s *Server) localRollbackOffered(name string) bool {
 		}
 	}
 	return true
+}
+
+// nothingToRollBackTo is the message of a refused rollback: the container was
+// rolled back already, so going back would recreate it on the image it runs.
+func nothingToRollBackTo(image string) string {
+	if image == "" {
+		return "nothing to roll back to: the container already runs its earlier image"
+	}
+	return "nothing to roll back to: the container already runs " + image
 }

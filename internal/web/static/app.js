@@ -2501,7 +2501,11 @@
       window.location.reload();
     }, 2e3);
   }
+  function isSetAsideName(name) {
+    return typeof name === "string" && /-sentinel-(old|failed)(-\d+)?$/.test(name);
+  }
   function updateContainerRow(name, hostId) {
+    if (isSetAsideName(name)) return Promise.resolve();
     var enc = encodeURIComponent(name);
     var url = "/api/containers/" + enc + "/row";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);

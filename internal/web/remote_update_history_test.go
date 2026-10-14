@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -330,5 +331,66 @@ func TestApiUpdate_RemoteSelfUpdateUnderWayRecordsNothing(t *testing.T) {
 	defer hist.mu.Unlock()
 	if len(hist.recs) != 0 {
 		t.Errorf("history = %+v, want no row while the update is under way", hist.recs)
+	}
+}
+
+type okRollback struct{ called chan string }
+
+func (r okRollback) RollbackContainer(_ context.Context, name string) error {
+	r.called <- name
+	return nil
+}
+
+// Rolling back with nothing to roll back to is refused with 409 and the image
+// the container already runs, instead of "rollback started" and a log line.
+func TestApiRollback_RefusesWhenThereIsNothingToRollBackTo(t *testing.T) {
+	rb := UpdateRecord{Outcome: "rollback", Error: cluster.RolledBackOnRequest, OldImage: "app:1.0.1", NewImage: "app:1.0.0"}
+	up := UpdateRecord{Outcome: "success", OldImage: "app:1.0.0", NewImage: "app:1.0.1"}
+	remotes := []RemoteContainer{{Name: "web", Image: "app:1.0.0", HostID: "h1", HostName: "Agent One"}}
+	cp := &failingUpdateCluster{mockClusterProviderWithContainers: mockClusterProviderWithContainers{
+		hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"}, containers: remotes}}
+
+	for _, tc := range []struct {
+		name   string
+		remote bool
+		recs   []UpdateRecord
+		code   int
+	}{
+		{"local, just rolled back", false, []UpdateRecord{rb, up}, http.StatusConflict},
+		{"local, updated", false, []UpdateRecord{up}, http.StatusOK},
+		{"remote, just rolled back", true, []UpdateRecord{rb, up}, http.StatusConflict},
+		{"remote, updated", true, []UpdateRecord{up}, http.StatusOK},
+		{"remote, no history", true, nil, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called := make(chan string, 2)
+			srv := remoteUpdateServer(cp, rollbackHistory{recs: tc.recs})
+			srv.deps.Rollback = okRollback{called: called}
+			srv.deps.Docker = &mockContainerLister{containers: []ContainerSummary{{ID: "c1", Names: []string{"/web"}, Image: "app:1.0.0"}}}
+			url := "/api/containers/web/rollback"
+			if tc.remote {
+				url += "?host=h1"
+			}
+			r := httptest.NewRequest(http.MethodPost, url, nil)
+			r.SetPathValue("name", "web")
+			w := httptest.NewRecorder()
+			srv.apiRollback(w, r)
+			if w.Code != tc.code {
+				t.Fatalf("status = %d (%s), want %d", w.Code, w.Body.String(), tc.code)
+			}
+			if tc.code == http.StatusConflict {
+				if !strings.Contains(w.Body.String(), "nothing to roll back to") {
+					t.Errorf("message = %s", w.Body.String())
+				}
+				if tc.recs != nil && !strings.Contains(w.Body.String(), "app:1.0.0") {
+					t.Errorf("message should name the image the container runs: %s", w.Body.String())
+				}
+				select {
+				case <-called:
+					t.Errorf("a local rollback ran although it was refused")
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+		})
 	}
 }

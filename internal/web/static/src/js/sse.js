@@ -55,7 +55,15 @@ function scheduleQueueReload() {
    11a. Live Row Updates — targeted DOM patching via partial endpoint
    ------------------------------------------------------------ */
 
+// isSetAsideName reports whether a container name is one Sentinel set aside
+// during a swap or rollback (<name>-sentinel-old, <name>-sentinel-failed). It
+// is gone from the host moments later and has no row, so nothing refreshes it.
+function isSetAsideName(name) {
+    return typeof name === "string" && /-sentinel-(old|failed)(-\d+)?$/.test(name);
+}
+
 function updateContainerRow(name, hostId) {
+    if (isSetAsideName(name)) return Promise.resolve();
     var enc = encodeURIComponent(name);
     var url = "/api/containers/" + enc + "/row";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);

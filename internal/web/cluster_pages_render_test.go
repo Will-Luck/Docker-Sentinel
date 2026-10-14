@@ -371,3 +371,17 @@ func TestHistoryPage_PhoneColumnsHideByClass(t *testing.T) {
 		t.Errorf("the phone layout does not hide history columns by class")
 	}
 }
+
+// The Rollback button in the Snapshots section follows the same rule as the
+// header button: hidden when there is nothing to roll back to.
+func TestContainerPage_SnapshotRollbackFollowsTheRule(t *testing.T) {
+	snaps := []SnapshotEntry{{Timestamp: time.Now(), ImageRef: "nginx:1.25"}}
+	on := renderAny(t, "container.html", containerDetailData{Container: containerView{Name: "web"}, Snapshots: snaps, HasSnapshot: true})
+	if strings.Count(on, "triggerRollback('web', event)") != 2 {
+		t.Errorf("both Rollback buttons should show when there is a target")
+	}
+	off := renderAny(t, "container.html", containerDetailData{Container: containerView{Name: "web"}, Snapshots: snaps, HasSnapshot: false})
+	if strings.Contains(off, "triggerRollback(") {
+		t.Errorf("no Rollback button should show when there is nothing to roll back to")
+	}
+}

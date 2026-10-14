@@ -350,7 +350,7 @@
                                 <tr>
                                     <td title="{{fmtTime .Timestamp}}">{{fmtTimeAgo .Timestamp}}</td>
                                     <td class="cell-image mono">{{.ImageRef}}</td>
-                                    <td style="text-align:right"><button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}', event)">Rollback</button></td>
+                                    <td style="text-align:right">{{if $.HasSnapshot}}<button class="btn btn-warning btn-sm" onclick="triggerRollback('{{$.Container.Name}}', event)">Rollback</button>{{end}}</td>
                                 </tr>
                                 {{end}}
                             </tbody>
