@@ -189,6 +189,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The container and service pages now show the pending-updates count in the navigation, like the other pages.
 - At phone width the dashboard's Name column now takes the free width instead of a fixed 20%, so container names are no longer cut at about eight characters.
 - An untouched Apply on the poll interval or Save on scan concurrency (and the other Apply and Save buttons on Settings) still sent a request, turning a value set by the environment into a saved override. They now send nothing while they show what was loaded, and the toggles the environment can also set say when they now override it.
+- At phone width the dashboard's container names now get the free width (the table switches to automatic layout, so the hidden columns no longer keep a share) and a long name ends in an ellipsis with its full text as a tooltip; the pending-updates table no longer keeps room for its hidden Detected column.
+- A container on another host now has a Rollback button on its page when the hub knows what it ran before its last update. The confirm names the host and the image it goes back to; with nothing to go back to there is no button.
 
 ### Added
 
@@ -347,6 +349,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A queued update stayed in the queue for good once its container was
+  filtered out of scans or pinned, because no scan looked at it again.
+  Such a row now leaves the queue, and the digest, at the next scan, for
+  containers and Swarm services alike.
 - The scan summary did not add up ("165 checked" against 162 in the
   counts): Swarm task containers were counted in the total but in no
   count, and remote containers whose registry check failed, whose update
@@ -956,14 +962,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A request to update another Sentinel container on an agent's host
   updates the agent's own container, but the history row named the
   container requested, which did not change. It now names the container
-  that changed, from the image it ran.
+  that changed, from the image it ran, and so do its "update started" and
+  outcome notifications (agents now say which container they run in).
 - When an agent rolled back an update because the new container did not
   stay up, the reason was only "the new container did not stay up". It now
   says why, as a local update does: the exit code, the restart count, or
   the healthcheck's output.
 - A remote update whose agent dropped its connection failed with "agent
   37770888... disconnected". Errors from a request to an agent now name
-  its host.
+  its host, and the live events for an agent connecting or disconnecting
+  give the host's name, not its ID, as the host name.
 - Saving Settings > Notifications overwrote a webhook channel's real header
   (for example `Authorization: Bearer ...`) with its masked form, so the
   channel started failing with 401. Masked values, including those inside
