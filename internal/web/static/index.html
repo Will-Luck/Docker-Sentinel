@@ -383,8 +383,10 @@
                                     {{end}}
                                 </td>
                                 <td>
-                                    <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="container-link" title="{{.Name}}">{{.Name}}</a>
-                                    {{if .IsSelf}}<span class="badge badge-muted" style="margin-left:6px;font-size:0.6rem">self</span>{{end}}
+                                    <div class="name-cell">
+                                        <a href="/container/{{.Name}}{{if .HostID}}?host={{.HostID}}{{end}}" class="container-link" title="{{.Name}}">{{.Name}}</a>
+                                        {{if .IsSelf}}<span class="badge badge-muted name-cell-badge">self</span>{{end}}
+                                    </div>
                                 </td>
                                 <td class="col-image cell-image mono" title="{{.Image}}">
                                     {{$tag := .Tag}}{{$img := .Image}}{{$ver := .NewestVersion}}{{$rv := .ResolvedVersion}}
@@ -441,7 +443,7 @@
                                         <span class="badge badge-warning badge-action" onclick="event.stopPropagation(); triggerUpdate('{{.Name}}', event, '{{.HostID}}')" role="button" tabindex="0">Update</span>
                                     {{else if .IsSelf}}
                                         {{if and .HasUpdate (eq .HostID "")}}
-                                        <span class="badge badge-info badge-action" onclick="event.stopPropagation(); triggerSelfUpdate(event)" role="button" tabindex="0">Update Sentinel</span>
+                                        <span class="badge badge-info badge-action" onclick="event.stopPropagation(); triggerSelfUpdate(event)" role="button" tabindex="0" title="Update Sentinel">Update Sentinel</span>
                                         {{else if eq .State "running"}}
                                         <span class="badge badge-success">Running</span>
                                         {{else}}

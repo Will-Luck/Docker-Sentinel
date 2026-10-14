@@ -1311,3 +1311,33 @@ table.managing .td-checkbox {
 .stack-row-collapsed {
     display: none;
 }
+
+/* A container's name and its self badge: the name gives way (ellipsis), the
+   badge keeps its room. */
+.name-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.name-cell .container-link {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.name-cell-badge {
+    flex: none;
+    font-size: 0.6rem;
+}
+
+/* A wide badge in the Status column ("Update Sentinel") ends in an ellipsis
+   instead of widening the column for every row. */
+#container-table td.col-status > .badge {
+    display: inline-block;
+    max-width: 7.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+}

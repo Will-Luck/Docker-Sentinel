@@ -324,3 +324,21 @@ func TestPhoneLayout_QueueAndHistoryFit(t *testing.T) {
 		}
 	}
 }
+
+// The name and its self badge sit in a flex cell so a long name ends in an
+// ellipsis without swallowing the badge, and a wide status badge is capped.
+func TestDashboardRow_NameCellAndBadgeCaps(t *testing.T) {
+	out := renderAny(t, "container-row", containerView{Name: "sentinel", Image: "s:1", Tag: "1", State: "running", IsSelf: true, HasUpdate: true})
+	if !strings.Contains(out, `<div class="name-cell">`) || !strings.Contains(out, `badge badge-muted name-cell-badge">self`) {
+		t.Errorf("the name and self badge should sit in a name-cell")
+	}
+	if !strings.Contains(out, `title="Update Sentinel">Update Sentinel`) {
+		t.Errorf("the Update Sentinel badge has no tooltip")
+	}
+	b, _ := staticFS.ReadFile("static/style.css")
+	for _, want := range []string{".name-cell-badge", "#container-table td.col-status > .badge"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("stylesheet lacks %q", want)
+		}
+	}
+}

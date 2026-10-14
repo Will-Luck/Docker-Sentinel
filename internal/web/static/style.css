@@ -2121,6 +2121,30 @@ table.managing .td-checkbox {
 .stack-row-collapsed {
   display: none;
 }
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.name-cell .container-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.name-cell-badge {
+  flex: none;
+  font-size: 0.6rem;
+}
+#container-table td.col-status > .badge {
+  display: inline-block;
+  max-width: 7.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
 
 /* internal/web/static/src/css/queue.css */
 .policy-select {
