@@ -138,3 +138,37 @@ func TestLastRemoteOldImage_SkipsRollbackRows(t *testing.T) {
 		t.Errorf("rollback image = %q, want nginx:1.25 from the forward update", got)
 	}
 }
+
+// A container that was just rolled back has nothing to roll back to; with an
+// older update behind it the target is that update's old image. The same rule
+// decides whether the dashboard offers the button.
+func TestLastRemoteOldImage_AfterAManualRollback(t *testing.T) {
+	_, db := historyAdapter(t)
+	key := store.ScopedKey("host-1", "nginx")
+	now := time.Now()
+	rec := func(at time.Duration, old, nw, outcome, errText string) store.UpdateRecord {
+		return store.UpdateRecord{Timestamp: now.Add(at), ContainerName: key, OldImage: old, NewImage: nw, Outcome: outcome, Error: errText, HostID: "host-1"}
+	}
+	for _, r := range []store.UpdateRecord{
+		rec(0, "nginx:1.24", "nginx:1.25", "success", ""),
+		rec(time.Minute, "nginx:1.25", "nginx:1.26", "success", ""),
+		rec(2*time.Minute, "nginx:1.26", "nginx:1.25", "rollback", cluster.RolledBackOnRequest),
+	} {
+		if err := db.RecordUpdate(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := lastRemoteOldImage(db, "host-1", "nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "nginx:1.24" {
+		t.Errorf("after rolling back 1.26 to 1.25 the target = %q, want nginx:1.24", got)
+	}
+	if err := db.RecordUpdate(rec(3*time.Minute, "nginx:1.25", "nginx:1.24", "rollback", cluster.RolledBackOnRequest)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := lastRemoteOldImage(db, "host-1", "nginx"); got != "" {
+		t.Errorf("after rolling back twice the target = %q, want none", got)
+	}
+}

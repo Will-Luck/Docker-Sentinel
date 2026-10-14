@@ -301,20 +301,32 @@ func (a *clusterAdapter) recordRemoteRollback(ctx context.Context, name, hostNam
 	}
 }
 
-// lastRemoteOldImage returns the old image of the most recent successful
-// update of containerName on hostID, or "" if there is none. Remote history
-// rows are keyed "hostID::name" (rows from before v3.0.0 are moved to that
-// key when the cluster starts, migrateRemoteHistory). Rollback rows are not
-// updates to undo and are skipped: outcome "rollback", as local rollback
-// rows are, or, from before v3.0.0, outcome "success" with type
-// "rollback".
+// lastRemoteOldImage returns the image a rollback of containerName on hostID
+// goes back to: the old image of its newest successful update that has not
+// been rolled back already, or "" if there is none. Each rollback asked for
+// from the dashboard or API (outcome "rollback" with the error text
+// cluster.RolledBackOnRequest) cancels the update before it, so a container
+// just rolled back has no target, or the next older one. Rows from before
+// v3.0.0 that are rollbacks (outcome "success", type "rollback") are not
+// updates to undo and are skipped. Remote history rows are keyed
+// "hostID::name" (rows from before v3.0.0 are moved to that key when the
+// cluster starts, migrateRemoteHistory). The dashboard's Rollback button uses
+// the same rule (web remoteRollbackTarget).
 func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, error) {
 	recs, err := st.ListHistoryByContainer(store.ScopedKey(hostID, containerName), 50)
 	if err != nil {
 		return "", fmt.Errorf("lookup update history for %s on %s: %w", containerName, hostID, err)
 	}
+	pending := 0               // manual rollbacks seen that still cancel an older update
 	for _, rec := range recs { // newest first
-		if rec.Outcome == "success" && rec.OldImage != "" && rec.Type != "rollback" {
+		switch {
+		case rec.Outcome == "rollback" && rec.Error == cluster.RolledBackOnRequest:
+			pending++
+		case rec.Outcome == "success" && rec.OldImage != "" && rec.Type != "rollback":
+			if pending > 0 {
+				pending--
+				continue
+			}
 			return rec.OldImage, nil
 		}
 	}

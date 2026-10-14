@@ -775,7 +775,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		Versions:       versions,
 		ScopeHintCount: scopeHintCount,
 		CurrentScope:   currentScope,
-		HasSnapshot:    len(snapshots) > 0,
+		HasSnapshot:    len(snapshots) > 0 && (view.HostID != "" || s.localRollbackOffered(view.Name)),
 		ChangelogURL:   ChangelogURL(image),
 		PortOverrides:  portOverrides,
 		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),

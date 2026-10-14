@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"strings"
 	"testing"
 	"time"
@@ -245,22 +246,53 @@ func (h rollbackHistory) ListHistoryByContainer(string, int) ([]UpdateRecord, er
 	return h.recs, nil
 }
 
-// The target is the newest image-changing success: rollbacks are skipped, and
-// so are rows with no old image.
+// The target is the old image of the newest update that has not been rolled
+// back already: each manual rollback row cancels the update before it.
 func TestRemoteRollbackTarget(t *testing.T) {
-	srv := &Server{deps: Dependencies{Store: rollbackHistory{recs: []UpdateRecord{
-		{Outcome: "rollback", OldImage: "x:3"},
-		{Outcome: "success", OldImage: "x:2", Type: "rollback"},
-		{Outcome: "failed", OldImage: "x:9"},
-		{Outcome: "success", OldImage: ""},
-		{Outcome: "success", OldImage: "x:1"},
-	}}}}
-	if got := srv.remoteRollbackTarget("h1", "web"); got != "x:1" {
-		t.Errorf("target = %q, want x:1", got)
+	up := func(old, nw string) UpdateRecord {
+		return UpdateRecord{Outcome: "success", OldImage: old, NewImage: nw}
 	}
-	srv.deps.Store = rollbackHistory{}
-	if got := srv.remoteRollbackTarget("h1", "web"); got != "" {
-		t.Errorf("no history gave %q, want none", got)
+	rb := func(from, to string) UpdateRecord {
+		return UpdateRecord{Outcome: "rollback", Error: cluster.RolledBackOnRequest, OldImage: from, NewImage: to}
+	}
+	for name, tc := range map[string]struct {
+		recs []UpdateRecord // newest first
+		want string
+	}{
+		"one update":                     {[]UpdateRecord{up("x:1", "x:2")}, "x:1"},
+		"no history":                     {nil, ""},
+		"rolled back, nothing older":     {[]UpdateRecord{rb("x:2", "x:1"), up("x:1", "x:2")}, ""},
+		"rolled back, an older update":   {[]UpdateRecord{rb("x:2", "x:1"), up("x:1", "x:2"), up("x:0", "x:1")}, "x:0"},
+		"rolled back twice":              {[]UpdateRecord{rb("x:1", "x:0"), rb("x:2", "x:1"), up("x:1", "x:2"), up("x:0", "x:1")}, ""},
+		"updated again after a rollback": {[]UpdateRecord{up("x:1", "x:3"), rb("x:2", "x:1"), up("x:1", "x:2")}, "x:1"},
+		"old pre-3.0 rollback row":       {[]UpdateRecord{{Outcome: "success", OldImage: "x:2", Type: "rollback"}, up("x:1", "x:2")}, "x:1"},
+		"failed and imageless rows":      {[]UpdateRecord{{Outcome: "failed", OldImage: "x:9"}, {Outcome: "success"}, up("x:1", "x:2")}, "x:1"},
+	} {
+		srv := &Server{deps: Dependencies{Store: rollbackHistory{recs: tc.recs}}}
+		if got := srv.remoteRollbackTarget("h1", "web"); got != tc.want {
+			t.Errorf("%s: target = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+// The local Rollback button is hidden while the newest image change is a
+// rollback: the container already runs what the snapshot holds.
+func TestLocalRollbackOffered(t *testing.T) {
+	rb := UpdateRecord{Outcome: "rollback", Error: cluster.RolledBackOnRequest}
+	up := UpdateRecord{Outcome: "success", OldImage: "x:1", NewImage: "x:2"}
+	for name, tc := range map[string]struct {
+		recs []UpdateRecord
+		want bool
+	}{
+		"after an update":              {[]UpdateRecord{up}, true},
+		"just rolled back":             {[]UpdateRecord{rb, up}, false},
+		"updated again after rollback": {[]UpdateRecord{up, rb, up}, true},
+		"no history":                   {nil, true},
+	} {
+		srv := &Server{deps: Dependencies{Store: rollbackHistory{recs: tc.recs}}}
+		if got := srv.localRollbackOffered("web"); got != tc.want {
+			t.Errorf("%s: offered = %v, want %v", name, got, tc.want)
+		}
 	}
 }
 
