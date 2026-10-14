@@ -25,7 +25,7 @@ func TestBehindTagQueueRowHasResolvedVersions(t *testing.T) {
 		"sha256:img110": {"localhost:1/lat@sha256:d110"},
 	}}
 	var asked string
-	u.resolveVersions = func(_ context.Context, imageRef, digest string, _ docker.SemverScope, _, _ string) registry.CheckResult {
+	u.checkDigest = func(_ context.Context, imageRef, digest string, _ docker.SemverScope, _, _ string) registry.CheckResult {
 		asked = imageRef + " " + digest
 		return registry.CheckResult{ResolvedCurrentVersion: "1.1.0", ResolvedTargetVersion: "1.2.0"}
 	}

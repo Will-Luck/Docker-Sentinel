@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -93,9 +94,14 @@ type Updater struct {
 	selfUpdateKey    atomic.Value         // stores queue key (string) of the self-update entry
 	shutdownCtx      context.Context      // optional: ends every update and rollback on shutdown
 	imageConfigs     *imageconfig.Fetcher // configs of images containers ran before (inheritedImages)
-	// resolveVersions checks an image against a known digest (Checker's
-	// CheckVersionedWithDigest); a field so tests can stand in for the registry.
-	resolveVersions func(ctx context.Context, imageRef, digest string, scope docker.SemverScope, include, exclude string) registry.CheckResult
+	// The registry lookups the engine makes: checkImage and checkDigest are
+	// the Checker's CheckVersioned and CheckVersionedWithDigest,
+	// probeRateLimit and ghcrAlternative the registry package's. They are
+	// fields so tests can keep them off the network.
+	checkImage      func(ctx context.Context, imageRef string, scope docker.SemverScope, include, exclude string) registry.CheckResult
+	checkDigest     func(ctx context.Context, imageRef, digest string, scope docker.SemverScope, include, exclude string) registry.CheckResult
+	probeRateLimit  func(ctx context.Context, host string, cred *registry.RegistryCredential) (http.Header, error)
+	ghcrAlternative func(ctx context.Context, imageRef string, hubCred, ghcrCred *registry.RegistryCredential) (*registry.GHCRAlternative, error)
 	watching        atomic.Bool    // the watch of restored containers is running (watchRestored)
 	watchers        sync.WaitGroup // tracks that watch
 }
@@ -116,8 +122,9 @@ func NewUpdater(d docker.API, checker *registry.Checker, s *store.Store, q *Queu
 	local, _ := d.(docker.ImageConfigReader)
 	u.imageConfigs = imageconfig.New(local, u.registryCredentials)
 	if checker != nil {
-		u.resolveVersions = checker.CheckVersionedWithDigest
+		u.checkImage, u.checkDigest = checker.CheckVersioned, checker.CheckVersionedWithDigest
 	}
+	u.probeRateLimit, u.ghcrAlternative = registry.ProbeRateLimit, registry.CheckGHCRAlternative
 	return u
 }
 

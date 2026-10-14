@@ -33,7 +33,7 @@ func TestSchedulerWaitsForReadyGate(t *testing.T) {
 	cfg.SetGracePeriod(1 * time.Second)
 	cfg.SetPollInterval(1 * time.Hour)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 	sched := NewScheduler(u, cfg, log, clk)
 
 	gate := make(chan struct{})
@@ -74,7 +74,7 @@ func TestSchedulerRunsInitialScan(t *testing.T) {
 	cfg.SetGracePeriod(1 * time.Second)
 	cfg.SetPollInterval(1 * time.Hour)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 	sched := NewScheduler(u, cfg, log, clk)
 
 	// Cancel immediately after the initial scan.
@@ -102,7 +102,7 @@ func TestMaybeSelfUpdate_ManualModeSkips(t *testing.T) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetGracePeriod(1 * time.Second)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 
 	settings := &testSettings{data: map[string]string{"self_update_mode": "manual"}}
 	sched := NewScheduler(u, cfg, log, clk)
@@ -133,7 +133,7 @@ func TestMaybeSelfUpdate_AutoModeWhenBusy(t *testing.T) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetGracePeriod(1 * time.Second)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 
 	settings := &testSettings{data: map[string]string{"self_update_mode": "auto"}}
 	sched := NewScheduler(u, cfg, log, clk)
@@ -172,7 +172,7 @@ func TestMaybeSelfUpdate_AutoModeWhenIdle(t *testing.T) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetGracePeriod(1 * time.Second)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 
 	settings := &testSettings{data: map[string]string{"self_update_mode": "auto"}}
 	sched := NewScheduler(u, cfg, log, clk)
@@ -240,7 +240,7 @@ func TestLastScanTimeZeroBeforeScan(t *testing.T) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetPollInterval(1 * time.Hour)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 	sched := NewScheduler(u, cfg, log, clk)
 
 	if !sched.LastScanTime().IsZero() {
@@ -259,7 +259,7 @@ func TestSetPollInterval(t *testing.T) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetPollInterval(1 * time.Hour)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 	sched := NewScheduler(u, cfg, log, clk)
 
 	sched.SetPollInterval(30 * time.Minute)
@@ -279,7 +279,7 @@ func TestSetScanCallback(t *testing.T) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetPollInterval(1 * time.Hour)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 	sched := NewScheduler(u, cfg, log, clk)
 
 	called := false
@@ -305,7 +305,7 @@ func TestTriggerScanUpdatesLastScanTime(t *testing.T) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetPollInterval(1 * time.Hour)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 	sched := NewScheduler(u, cfg, log, clk)
 
 	if !sched.LastScanTime().IsZero() {
@@ -337,7 +337,7 @@ func TestMaybeSelfUpdate_ConcurrentGuard(t *testing.T) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetGracePeriod(1 * time.Second)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
+	u := offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil))
 
 	settings := &testSettings{data: map[string]string{"self_update_mode": "auto"}}
 	sched := NewScheduler(u, cfg, log, clk)

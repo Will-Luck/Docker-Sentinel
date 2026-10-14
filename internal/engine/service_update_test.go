@@ -23,7 +23,7 @@ func newSwarmTestUpdater(t *testing.T, mock *mockDocker) (*Updater, *mockClock) 
 	cfg := config.NewTestConfig()
 	cfg.SetDefaultPolicy("manual")
 	notifier := notify.NewMulti(log)
-	return NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil), clk
+	return offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)), clk
 }
 
 func svcSpec(name, image string, labels map[string]string) swarm.ServiceSpec {

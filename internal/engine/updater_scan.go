@@ -329,7 +329,7 @@ func (u *Updater) containerBehindTag(ctx context.Context, c container.Summary, i
 // registry check matched the tag, so it resolved none. They are resolved
 // from the container's own image digest, as for a remote container.
 func (u *Updater) resolveBehindTag(ctx context.Context, c container.Summary, imageRef string, check *registry.CheckResult, scope docker.SemverScope, include, exclude string) {
-	if u.resolveVersions == nil {
+	if u.checkDigest == nil {
 		return
 	}
 	if _, semver := registry.ParseSemVer(registry.ExtractTag(imageRef)); semver {
@@ -346,7 +346,7 @@ func (u *Updater) resolveBehindTag(ctx context.Context, c container.Summary, ima
 	repo := repoKey(imageRef)
 	for _, d := range digests {
 		if name, _, ok := strings.Cut(d, "@"); ok && repoKey(name) == repo {
-			res := u.resolveVersions(ctx, imageRef, d, scope, include, exclude)
+			res := u.checkDigest(ctx, imageRef, d, scope, include, exclude)
 			check.ResolvedCurrentVersion, check.ResolvedTargetVersion = res.ResolvedCurrentVersion, res.ResolvedTargetVersion
 			return
 		}
@@ -572,7 +572,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) (result ScanResult) {
 			host = registry.NormaliseRegistryHost(host)
 			cred := registry.FindByRegistry(creds, host)
 			probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
-			headers, err := registry.ProbeRateLimit(probeCtx, host, cred)
+			headers, err := u.probeRateLimit(probeCtx, host, cred)
 			probeCancel()
 			if err != nil {
 				u.log.Debug("rate limit probe failed", "registry", host, "error", err)
@@ -755,7 +755,7 @@ func (u *Updater) Scan(ctx context.Context, mode ScanMode) (result ScanResult) {
 		// Check the registry for an update (versioned check also finds newer semver tags).
 		semverScope := docker.ContainerSemverScope(labels)
 		includeRE, excludeRE := docker.ContainerTagFilters(labels)
-		check := u.checker.CheckVersioned(ctx, imageRef, semverScope, includeRE, excludeRE)
+		check := u.checkImage(ctx, imageRef, semverScope, includeRE, excludeRE)
 
 		if check.Error != nil {
 			u.log.Warn("registry check failed", "name", name, "image", imageRef, "error", check.Error)

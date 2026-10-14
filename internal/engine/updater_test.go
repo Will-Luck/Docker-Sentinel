@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/config"
-	"github.com/Will-Luck/Docker-Sentinel/internal/docker/imageconfig"
 	"github.com/Will-Luck/Docker-Sentinel/internal/logging"
 	"github.com/Will-Luck/Docker-Sentinel/internal/notify"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
@@ -27,9 +26,7 @@ func newTestUpdater(t *testing.T, mock *mockDocker) (*Updater, *mockClock) {
 	cfg.SetDefaultPolicy("manual")
 	cfg.SetGracePeriod(1 * time.Second)
 	notifier := notify.NewMulti(log)
-	u := NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)
-	u.imageConfigs = imageconfig.NewLocal(mock) // tests never reach a registry
-	return u, clk
+	return offline(NewUpdater(mock, checker, s, q, cfg, log, clk, notifier, nil)), clk
 }
 
 func TestScanSkipsPinned(t *testing.T) {

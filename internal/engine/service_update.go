@@ -100,7 +100,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 		includeRE, excludeRE := docker.ContainerTagFilters(labels)
 		var check registry.CheckResult
 		if specDigest != "" {
-			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, specDigest, semverScope, includeRE, excludeRE)
+			check = u.checkDigest(ctx, imageRef, specDigest, semverScope, includeRE, excludeRE)
 		} else {
 			// Try local image inspect first; fall back to registry digest
 			// for multi-node swarm where images only exist on worker nodes.
@@ -115,7 +115,7 @@ func (u *Updater) scanServices(ctx context.Context, services []swarm.Service, mo
 				}
 				localDigest = remoteDigest
 			}
-			check = u.checker.CheckVersionedWithDigest(ctx, imageRef, localDigest, semverScope, includeRE, excludeRE)
+			check = u.checkDigest(ctx, imageRef, localDigest, semverScope, includeRE, excludeRE)
 		}
 		if check.Error != nil {
 			u.log.Warn("service registry check failed", "name", name, "image", imageRef, "error", check.Error)

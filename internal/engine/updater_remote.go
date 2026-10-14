@@ -137,7 +137,7 @@ func (u *Updater) scanRemoteHost(ctx context.Context, hostID string, host HostCo
 		// the server's Docker daemon.
 		semverScope := docker.ContainerSemverScope(c.Labels)
 		includeRE, excludeRE := docker.ContainerTagFilters(c.Labels)
-		check := u.checker.CheckVersionedWithDigest(ctx, c.Image, c.ImageDigest, semverScope, includeRE, excludeRE)
+		check := u.checkDigest(ctx, c.Image, c.ImageDigest, semverScope, includeRE, excludeRE)
 		if check.Error != nil {
 			u.log.Warn("registry check failed for remote container",
 				"host", host.HostName, "name", c.Name, "error", check.Error)
@@ -753,7 +753,7 @@ func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []contai
 		}
 
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		alt, err := registry.CheckGHCRAlternative(checkCtx, c.Image, hubCred, ghcrCred)
+		alt, err := u.ghcrAlternative(checkCtx, c.Image, hubCred, ghcrCred)
 		cancel()
 
 		if err != nil {
