@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -194,37 +195,39 @@ func checkRecovered(t *testing.T, f *fakeDocker, s *store.Store, sc crashScenari
 // one copy of the service with its original restart policy. Every call
 // position of every operation is tried.
 func TestCrashAtEveryStepRecovers(t *testing.T) {
-	cases := 0
-	defer func() { t.Logf("%d crash cases", cases) }()
+	var cases atomic.Int64
+	t.Cleanup(func() { t.Logf("%d crash cases", cases.Load()) })
+	modes := []struct {
+		name         string
+		panics, late bool
+	}{{"crash-before-call", true, false}, {"crash-after-call", false, true}, {"daemon-gone", false, false}}
 	for _, sc := range crashScenarios() {
-		// Count the calls of an uninterrupted run.
-		f, u, _ := newCrashFixture(t, sc)
-		runOp(f, sc, u)
-		total := f.callCount()
-		if total == 0 {
-			t.Fatalf("%s: no container calls counted", sc.name)
-		}
+		t.Run(sc.name, func(t *testing.T) {
+			t.Parallel()
+			// Count the calls of an uninterrupted run.
+			f, u, _ := newCrashFixture(t, sc)
+			runOp(f, sc, u)
+			total := f.callCount()
+			if total == 0 {
+				t.Fatalf("%s: no container calls counted", sc.name)
+			}
+			for _, mode := range modes {
+				for n := 1; n <= total; n++ {
+					t.Run(fmt.Sprintf("%s-%d", mode.name, n), func(t *testing.T) {
+						t.Parallel()
+						where := fmt.Sprintf("%s/%s %d of %d", sc.name, mode.name, n, total)
+						f, u, s := newCrashFixture(t, sc)
+						f.setCrash(n, mode.panics, mode.late)
+						runOp(f, sc, u)
+						f.setCrash(0, false, false)
 
-		modes := []struct {
-			name         string
-			panics, late bool
-		}{{"crash-before-call", true, false}, {"crash-after-call", false, true}, {"daemon-gone", false, false}}
-		for _, mode := range modes {
-			for n := 1; n <= total; n++ {
-				where := fmt.Sprintf("%s/%s %d of %d", sc.name, mode.name, n, total)
-				f, u, s := newCrashFixture(t, sc)
-				f.setCrash(n, mode.panics, mode.late)
-				runOp(f, sc, u)
-				f.setCrash(0, false, false)
-
-				recoverAfterCrash(t, f, s)
-				checkRecovered(t, f, s, sc, where)
-				cases++
-				if t.Failed() {
-					return
+						recoverAfterCrash(t, f, s)
+						checkRecovered(t, f, s, sc, where)
+						cases.Add(1)
+					})
 				}
 			}
-		}
+		})
 	}
 }
 
@@ -232,39 +235,45 @@ func TestCrashAtEveryStepRecovers(t *testing.T) {
 // update, crash the recovery at every point as well, then let a third
 // start recover cleanly.
 func TestCrashDuringRecoveryRecovers(t *testing.T) {
-	cases := 0
-	defer func() { t.Logf("%d crash cases", cases) }()
+	var cases atomic.Int64
+	t.Cleanup(func() { t.Logf("%d crash cases", cases.Load()) })
 	for _, sc := range crashScenarios() {
-		f, u, _ := newCrashFixture(t, sc)
-		runOp(f, sc, u)
-		total := f.callCount()
-		for n := 1; n <= total; n++ {
-			// Find how many calls the recovery of this crash makes.
-			f, u, s := newCrashFixture(t, sc)
-			f.setCrash(n, false, true)
+		t.Run(sc.name, func(t *testing.T) {
+			t.Parallel()
+			f, u, _ := newCrashFixture(t, sc)
 			runOp(f, sc, u)
-			f.setCrash(0, false, false)
-			probe := cloneCrashState(t, f, s)
-			recoverAfterCrash(t, probe.f, probe.s)
-			recoveryCalls := probe.f.callCount()
+			total := f.callCount()
+			for n := 1; n <= total; n++ {
+				t.Run(fmt.Sprintf("crash-%d", n), func(t *testing.T) {
+					t.Parallel()
+					// Find how many calls the recovery of this crash makes.
+					f, u, s := newCrashFixture(t, sc)
+					f.setCrash(n, false, true)
+					runOp(f, sc, u)
+					f.setCrash(0, false, false)
+					probe := cloneCrashState(t, f, s)
+					recoverAfterCrash(t, probe.f, probe.s)
+					recoveryCalls := probe.f.callCount()
 
-			for m := 1; m <= recoveryCalls; m++ {
-				where := fmt.Sprintf("%s: crash after call %d, recovery crash after call %d", sc.name, n, m)
-				st := cloneCrashState(t, f, s)
-				st.f.setCrash(m, false, true)
-				_ = runUntilCrash(func() error {
-					recoverAfterCrash(t, st.f, st.s)
-					return nil
+					for m := 1; m <= recoveryCalls; m++ {
+						where := fmt.Sprintf("%s: crash after call %d, recovery crash after call %d", sc.name, n, m)
+						st := cloneCrashState(t, f, s)
+						st.f.setCrash(m, false, true)
+						_ = runUntilCrash(func() error {
+							recoverAfterCrash(t, st.f, st.s)
+							return nil
+						})
+						st.f.setCrash(0, false, false)
+						recoverAfterCrash(t, st.f, st.s)
+						checkRecovered(t, st.f, st.s, sc, where)
+						cases.Add(1)
+						if t.Failed() {
+							return
+						}
+					}
 				})
-				st.f.setCrash(0, false, false)
-				recoverAfterCrash(t, st.f, st.s)
-				checkRecovered(t, st.f, st.s, sc, where)
-				cases++
-				if t.Failed() {
-					return
-				}
 			}
-		}
+		})
 	}
 }
 

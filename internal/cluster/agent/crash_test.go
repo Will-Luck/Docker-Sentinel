@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,37 +165,39 @@ func checkAgentRecovered(t *testing.T, h *fakeHost, s *store.Store, sc agentCras
 // container with its original restart policy. Every call position of every
 // update is tried.
 func TestAgentCrashAtEveryStepRecovers(t *testing.T) {
-	cases := 0
-	defer func() { t.Logf("%d crash cases", cases) }()
+	var cases atomic.Int64
+	t.Cleanup(func() { t.Logf("%d crash cases", cases.Load()) })
+	modes := []struct {
+		name         string
+		panics, late bool
+	}{{"crash-before-call", true, false}, {"crash-after-call", false, true}, {"daemon-gone", false, false}}
 	for _, sc := range agentCrashScenarios() {
-		// Count the calls of an uninterrupted run.
-		h, a, _ := newAgentCrashFixture(t, sc)
-		runAgentUpdate(h, a)
-		total := h.callCount()
-		if total == 0 {
-			t.Fatalf("%s: no Docker calls counted", sc.name)
-		}
+		t.Run(sc.name, func(t *testing.T) {
+			t.Parallel()
+			// Count the calls of an uninterrupted run.
+			h, a, _ := newAgentCrashFixture(t, sc)
+			runAgentUpdate(h, a)
+			total := h.callCount()
+			if total == 0 {
+				t.Fatalf("%s: no Docker calls counted", sc.name)
+			}
+			for _, mode := range modes {
+				for n := 1; n <= total; n++ {
+					t.Run(fmt.Sprintf("%s-%d", mode.name, n), func(t *testing.T) {
+						t.Parallel()
+						where := fmt.Sprintf("%s/%s %d of %d", sc.name, mode.name, n, total)
+						h, a, s := newAgentCrashFixture(t, sc)
+						h.setCrash(n, mode.panics, mode.late)
+						runAgentUpdate(h, a)
+						h.setCrash(0, false, false)
 
-		modes := []struct {
-			name         string
-			panics, late bool
-		}{{"crash-before-call", true, false}, {"crash-after-call", false, true}, {"daemon-gone", false, false}}
-		for _, mode := range modes {
-			for n := 1; n <= total; n++ {
-				where := fmt.Sprintf("%s/%s %d of %d", sc.name, mode.name, n, total)
-				h, a, s := newAgentCrashFixture(t, sc)
-				h.setCrash(n, mode.panics, mode.late)
-				runAgentUpdate(h, a)
-				h.setCrash(0, false, false)
-
-				recoverAgentAfterCrash(t, h, s)
-				checkAgentRecovered(t, h, s, sc, where)
-				cases++
-				if t.Failed() {
-					return
+						recoverAgentAfterCrash(t, h, s)
+						checkAgentRecovered(t, h, s, sc, where)
+						cases.Add(1)
+					})
 				}
 			}
-		}
+		})
 	}
 }
 
@@ -202,39 +205,45 @@ func TestAgentCrashAtEveryStepRecovers(t *testing.T) {
 // update, crash the recovery at every point as well, then let a third
 // start recover cleanly.
 func TestAgentCrashDuringRecoveryRecovers(t *testing.T) {
-	cases := 0
-	defer func() { t.Logf("%d crash cases", cases) }()
+	var cases atomic.Int64
+	t.Cleanup(func() { t.Logf("%d crash cases", cases.Load()) })
 	for _, sc := range agentCrashScenarios() {
-		h, a, _ := newAgentCrashFixture(t, sc)
-		runAgentUpdate(h, a)
-		total := h.callCount()
-		for n := 1; n <= total; n++ {
-			// Find how many calls the recovery of this crash makes.
-			h, a, s := newAgentCrashFixture(t, sc)
-			h.setCrash(n, false, true)
+		t.Run(sc.name, func(t *testing.T) {
+			t.Parallel()
+			h, a, _ := newAgentCrashFixture(t, sc)
 			runAgentUpdate(h, a)
-			h.setCrash(0, false, false)
-			probe := cloneAgentCrashState(t, h, s)
-			recoverAgentAfterCrash(t, probe.h, probe.s)
-			recoveryCalls := probe.h.callCount()
+			total := h.callCount()
+			for n := 1; n <= total; n++ {
+				t.Run(fmt.Sprintf("crash-%d", n), func(t *testing.T) {
+					t.Parallel()
+					// Find how many calls the recovery of this crash makes.
+					h, a, s := newAgentCrashFixture(t, sc)
+					h.setCrash(n, false, true)
+					runAgentUpdate(h, a)
+					h.setCrash(0, false, false)
+					probe := cloneAgentCrashState(t, h, s)
+					recoverAgentAfterCrash(t, probe.h, probe.s)
+					recoveryCalls := probe.h.callCount()
 
-			for m := 1; m <= recoveryCalls; m++ {
-				where := fmt.Sprintf("%s: crash after call %d, recovery crash after call %d", sc.name, n, m)
-				st := cloneAgentCrashState(t, h, s)
-				st.h.setCrash(m, false, true)
-				_ = runUntilCrash(func() error {
-					recoverAgentAfterCrash(t, st.h, st.s)
-					return nil
+					for m := 1; m <= recoveryCalls; m++ {
+						where := fmt.Sprintf("%s: crash after call %d, recovery crash after call %d", sc.name, n, m)
+						st := cloneAgentCrashState(t, h, s)
+						st.h.setCrash(m, false, true)
+						_ = runUntilCrash(func() error {
+							recoverAgentAfterCrash(t, st.h, st.s)
+							return nil
+						})
+						st.h.setCrash(0, false, false)
+						recoverAgentAfterCrash(t, st.h, st.s)
+						checkAgentRecovered(t, st.h, st.s, sc, where)
+						cases.Add(1)
+						if t.Failed() {
+							return
+						}
+					}
 				})
-				st.h.setCrash(0, false, false)
-				recoverAgentAfterCrash(t, st.h, st.s)
-				checkAgentRecovered(t, st.h, st.s, sc, where)
-				cases++
-				if t.Failed() {
-					return
-				}
 			}
-		}
+		})
 	}
 }
 
