@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClusterPage_WarnsWhenEngineIsShared(t *testing.T) {
@@ -260,5 +261,34 @@ func TestRemoteRollbackTarget(t *testing.T) {
 	srv.deps.Store = rollbackHistory{}
 	if got := srv.remoteRollbackTarget("h1", "web"); got != "" {
 		t.Errorf("no history gave %q, want none", got)
+	}
+}
+
+// On a phone the queue table drops its Image and Detected columns, so the
+// version is also shown under the name, and the history table drops Version
+// and Duration; both lay out automatically so they fit with no sideways scroll.
+func TestPhoneLayout_QueueAndHistoryFit(t *testing.T) {
+	q := []PendingUpdate{{ContainerName: "web", CurrentImage: "app:latest", RemoteDigest: "sha256:y", ResolvedTargetVersion: "1.26", DetectedAt: time.Now()}}
+	out := renderPage(t, "queue.html", pageData{Page: "queue", Queue: q, QueueSelfKeys: map[string]bool{}, QueueCount: 1})
+	if strings.Count(out, `class="version-new"`) != 2 || !strings.Contains(out, `class="queue-version-inline mono"`) {
+		t.Errorf("the queue row should show its version in the Image cell and under the name")
+	}
+	if !strings.Contains(out, `class="container-link" title="web"`) {
+		t.Errorf("the queue name has no tooltip")
+	}
+	h := []UpdateRecord{{Timestamp: time.Now(), ContainerName: "web", Outcome: "success"}}
+	if out := renderPage(t, "history.html", pageData{Page: "history", History: h}); !strings.Contains(out, `class="container-link" title="web"`) {
+		t.Errorf("the history name has no tooltip")
+	}
+	b, _ := staticFS.ReadFile("static/style.css")
+	css := string(b)
+	i := strings.Index(css, "@media (max-width: 768px)")
+	if i < 0 {
+		t.Fatal("no tablet media block")
+	}
+	for _, want := range []string{".queue-version-inline", ".queue-table td:last-child .btn-group", ".table-history th:nth-child(5)", ".table-history .badge"} {
+		if !strings.Contains(css[i:], want) {
+			t.Errorf("the phone layout lacks %q", want)
+		}
 	}
 }

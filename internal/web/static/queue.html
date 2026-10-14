@@ -105,31 +105,10 @@
                             {{range $i, $q := .Queue}}
                             <tr class="container-row" data-queue-key="{{$q.Key}}"{{if index $.QueueSelfKeys $q.Key}} data-self="true"{{end}} data-href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" onclick="onRowClick(event, '{{$q.ContainerName}}')">
                                 <td class="queue-expand" onclick="toggleQueueAccordion({{$i}}); event.stopPropagation();">&#9656;</td>
-                                <td><a href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" class="container-link">{{$q.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
+                                <td><a href="{{serviceOrContainer $q.Type $q.ContainerName $q.HostID}}" class="container-link" title="{{$q.ContainerName}}">{{$q.ContainerName}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}
+                                    <div class="queue-version-inline mono" title="{{$q.CurrentImage}}">{{template "queue-version" $q}}</div></td>
                                 <td class="cell-image mono" title="{{$q.CurrentImage}}">
-                                    {{if $q.NewerVersions}}
-                                        {{if $q.ResolvedCurrentVersion}}
-                                            <span class="version-current">{{$q.ResolvedCurrentVersion}}</span>
-                                        {{else}}
-                                            <span class="version-current">{{imageTag $q.CurrentImage}}</span>
-                                        {{end}}
-                                        <span class="version-arrow">&rarr;</span>
-                                        {{with versionURL $q.CurrentImage (index $q.NewerVersions 0)}}
-                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{index $q.NewerVersions 0}}</a>
-                                        {{else}}
-                                            <span class="version-new">{{index $q.NewerVersions 0}}</span>
-                                        {{end}}
-                                        {{if $q.ResolvedCurrentVersion}}{{with classifySev $q.ResolvedCurrentVersion (index $q.NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{else}}{{with classifySev (imageTag $q.CurrentImage) (index $q.NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{end}}
-                                    {{else}}
-                                        {{imageTag $q.CurrentImage}}
-                                        {{if $q.ResolvedTargetVersion}}
-                                            <span class="version-arrow">&rarr;</span>
-                                            <span class="version-new">{{$q.ResolvedTargetVersion}}</span>
-                                        {{else}}
-                                            <span class="badge badge-muted">new digest</span>
-                                        {{end}}
-                                        <span class="severity-badge severity-build">build</span>
-                                    {{end}}
+                                    {{template "queue-version" $q}}
                                 </td>
                                 <td title="{{fmtTime $q.DetectedAt}}">{{fmtTimeAgo $q.DetectedAt}}</td>
                                 <td>
@@ -224,4 +203,30 @@
     <script src="/static/auth.js"></script>
 </body>
 </html>
+{{end}}
+
+{{define "queue-version"}}
+                                    {{if .NewerVersions}}
+                                        {{if .ResolvedCurrentVersion}}
+                                            <span class="version-current">{{.ResolvedCurrentVersion}}</span>
+                                        {{else}}
+                                            <span class="version-current">{{imageTag .CurrentImage}}</span>
+                                        {{end}}
+                                        <span class="version-arrow">&rarr;</span>
+                                        {{with versionURL .CurrentImage (index .NewerVersions 0)}}
+                                            <a href="{{.}}" target="_blank" rel="noopener" class="version-new version-link">{{index $.NewerVersions 0}}</a>
+                                        {{else}}
+                                            <span class="version-new">{{index .NewerVersions 0}}</span>
+                                        {{end}}
+                                        {{if .ResolvedCurrentVersion}}{{with classifySev .ResolvedCurrentVersion (index .NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{else}}{{with classifySev (imageTag .CurrentImage) (index .NewerVersions 0)}}<span class="severity-badge severity-{{.}}">{{.}}</span>{{end}}{{end}}
+                                    {{else}}
+                                        {{imageTag .CurrentImage}}
+                                        {{if .ResolvedTargetVersion}}
+                                            <span class="version-arrow">&rarr;</span>
+                                            <span class="version-new">{{.ResolvedTargetVersion}}</span>
+                                        {{else}}
+                                            <span class="badge badge-muted">new digest</span>
+                                        {{end}}
+                                        <span class="severity-badge severity-build">build</span>
+                                    {{end}}
 {{end}}

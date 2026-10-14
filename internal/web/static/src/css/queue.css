@@ -470,3 +470,9 @@ kbd {
     display: block;
     margin: 0 auto;
 }
+
+/* The version shown under the container name; only the phone layout uses it
+   (the Image column shows it otherwise). */
+.queue-version-inline {
+    display: none;
+}

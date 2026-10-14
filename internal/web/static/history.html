@@ -109,7 +109,7 @@
                             {{else}}
                             <tr class="container-row history-row" data-outcome="{{$r.Outcome}}" onclick="toggleHistoryDetail(event, {{$i}})">
                                 <td title="{{fmtTime $r.Timestamp}}">{{fmtTimeAgo $r.Timestamp}}</td>
-                                <td><a href="{{serviceOrContainer $r.Type (plainName $r.ContainerName $r.HostID) $r.HostID}}" class="container-link">{{plainName $r.ContainerName $r.HostID}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
+                                <td><a href="{{serviceOrContainer $r.Type (plainName $r.ContainerName $r.HostID) $r.HostID}}" class="container-link" title="{{plainName $r.ContainerName $r.HostID}}">{{plainName $r.ContainerName $r.HostID}}</a>{{if .HostName}}<span class="host-badge" title="Host: {{.HostName}}">{{.HostName}}</span>{{end}}</td>
                                 <td class="cell-image mono">
                                     {{$oldTag := imageTag $r.OldImage}}{{$newTag := imageTag $r.NewImage}}
                                     {{if and $oldTag $newTag (ne $oldTag $newTag)}}

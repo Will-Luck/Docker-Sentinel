@@ -87,11 +87,16 @@
         max-width: 0;
     }
 
-    /* Queue table: hide the Detected column and its <col>, and lay the table
-       out automatically so the hidden column takes no width. */
+    /* Queue table on a phone: the Image and Detected columns (and their
+       <col>s) go, the version moves under the name, and the actions wrap, so
+       the table fits the screen with the buttons always in view. */
     .queue-table {
         table-layout: auto;
+        width: 100%;
     }
+    .queue-table th:nth-child(3),
+    .queue-table td:nth-child(3),
+    .queue-table col:nth-child(3),
     .queue-table th:nth-child(4),
     .queue-table td:nth-child(4),
     .queue-table col:nth-child(4) {
@@ -99,6 +104,57 @@
     }
     .queue-table td:nth-child(2) {
         overflow-wrap: anywhere;
+    }
+    .queue-version-inline {
+        display: block;
+        margin-top: var(--sp-1);
+        font-size: 0.75rem;
+        overflow-wrap: anywhere;
+    }
+    .queue-table td:last-child .btn-group {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: var(--sp-1);
+    }
+    .queue-table td:last-child .btn {
+        padding: var(--sp-1) var(--sp-2);
+        font-size: 0.75rem;
+    }
+
+    /* History table on a phone: drop Version and Duration, let the name wrap
+       and keep the time on one line, so nothing overlaps. */
+    .table-history {
+        table-layout: auto;
+        width: 100%;
+    }
+    .table-history th:nth-child(3),
+    .table-history td:nth-child(3),
+    .table-history th:nth-child(5),
+    .table-history td:nth-child(5) {
+        display: none;
+    }
+    .table-history th:nth-child(1),
+    .table-history td:nth-child(1) {
+        white-space: nowrap;
+        width: auto;
+    }
+    .table-history td:nth-child(2) {
+        width: 100%;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        overflow-wrap: anywhere;
+    }
+    .table-history th:nth-child(4),
+    .table-history td:nth-child(4) {
+        width: auto;
+        white-space: normal;
+    }
+    /* A long outcome ("Updated (partial)") wraps inside its badge. */
+    .table-history .badge {
+        white-space: normal;
+        max-width: 100%;
+        text-align: center;
     }
 
     /* Settings: single-column layout */

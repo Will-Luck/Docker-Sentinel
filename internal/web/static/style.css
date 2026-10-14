@@ -2522,6 +2522,9 @@ kbd {
   display: block;
   margin: 0 auto;
 }
+.queue-version-inline {
+  display: none;
+}
 
 /* internal/web/static/src/css/settings.css */
 .notify-prefs-summary {
@@ -4080,7 +4083,11 @@ body.settings-simple [data-advanced] {
   }
   .queue-table {
     table-layout: auto;
+    width: 100%;
   }
+  .queue-table th:nth-child(3),
+  .queue-table td:nth-child(3),
+  .queue-table col:nth-child(3),
   .queue-table th:nth-child(4),
   .queue-table td:nth-child(4),
   .queue-table col:nth-child(4) {
@@ -4088,6 +4095,53 @@ body.settings-simple [data-advanced] {
   }
   .queue-table td:nth-child(2) {
     overflow-wrap: anywhere;
+  }
+  .queue-version-inline {
+    display: block;
+    margin-top: var(--sp-1);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+  }
+  .queue-table td:last-child .btn-group {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--sp-1);
+  }
+  .queue-table td:last-child .btn {
+    padding: var(--sp-1) var(--sp-2);
+    font-size: 0.75rem;
+  }
+  .table-history {
+    table-layout: auto;
+    width: 100%;
+  }
+  .table-history th:nth-child(3),
+  .table-history td:nth-child(3),
+  .table-history th:nth-child(5),
+  .table-history td:nth-child(5) {
+    display: none;
+  }
+  .table-history th:nth-child(1),
+  .table-history td:nth-child(1) {
+    white-space: nowrap;
+    width: auto;
+  }
+  .table-history td:nth-child(2) {
+    width: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+  }
+  .table-history th:nth-child(4),
+  .table-history td:nth-child(4) {
+    width: auto;
+    white-space: normal;
+  }
+  .table-history .badge {
+    white-space: normal;
+    max-width: 100%;
+    text-align: center;
   }
   .setting-row {
     flex-direction: column;
