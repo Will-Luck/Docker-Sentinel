@@ -311,27 +311,17 @@ func (a *clusterAdapter) recordRemoteRollback(ctx context.Context, name, hostNam
 // rollbacks too. Remote history rows are keyed
 // "hostID::name" (rows from before v3.0.0 are moved to that key when the
 // cluster starts, migrateRemoteHistory). The dashboard's Rollback button uses
-// the same rule (web remoteRollbackTarget).
+// the same rule (web remoteRollbackTarget); both use cluster.RollbackTarget.
 func lastRemoteOldImage(st *store.Store, hostID, containerName string) (string, error) {
-	recs, err := st.ListHistoryByContainer(store.ScopedKey(hostID, containerName), 50)
+	recs, err := st.ListHistoryByContainer(store.ScopedKey(hostID, containerName), cluster.RollbackHistoryDepth)
 	if err != nil {
 		return "", fmt.Errorf("lookup update history for %s on %s: %w", containerName, hostID, err)
 	}
-	pending := 0               // manual rollbacks seen that still cancel an older update
-	for _, rec := range recs { // newest first
-		switch {
-		case (rec.Outcome == "rollback" && rec.Error == cluster.RolledBackOnRequest) ||
-			(rec.Outcome == "success" && rec.Type == "rollback"):
-			pending++
-		case rec.Outcome == "success" && rec.OldImage != "":
-			if pending > 0 {
-				pending--
-				continue
-			}
-			return rec.OldImage, nil
-		}
+	rows := make([]cluster.HistoryRow, len(recs))
+	for i, rec := range recs {
+		rows[i] = cluster.HistoryRow{Outcome: rec.Outcome, Error: rec.Error, Type: rec.Type, OldImage: rec.OldImage}
 	}
-	return "", nil
+	return cluster.RollbackTarget(rows), nil
 }
 
 // remoteUpdatePrep checks and completes every update request the hub sends

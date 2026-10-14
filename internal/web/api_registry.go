@@ -433,7 +433,7 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 			} else {
 				s.deps.Log.Info("remote GHCR switch complete", "name", name, "host", hostID, "ghcr_image", ghcrImage)
 			}
-			time.AfterFunc(5*time.Second, func() { s.clearRemoteUpdating(hostID, name) })
+			s.finishRemoteUpdating(hostID, name)
 		}()
 
 		s.logEvent(r, "ghcr_switch", name, "Remote GHCR switch to "+ghcrImage+" on "+s.hostLabel(hostID))

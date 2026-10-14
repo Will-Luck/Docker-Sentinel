@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-10-14
+
+### Security
+
+- go-jose (used by single sign-on) is updated to v4.1.5 for advisory
+  GHSA-6mp9-8xrw-74r4. Exposure was low: tokens and signing keys come
+  from the configured identity provider over TLS.
+
+### Fixed
+
+- The Go build information in release binaries and images marked them
+  as built from a modified source tree (`+dirty`, `vcs.modified=true`;
+  the version Sentinel reports was right), because the release build
+  rewrote the committed frontend bundle with an older esbuild and wrote
+  its output inside the source tree. The build now uses the same pinned
+  esbuild as the committed bundle, keeps its output out of the tree, and
+  fails if the tree is not clean before anything is published.
+- A remote update started from another browser, or through the API,
+  showed "Updating" only for a few seconds after it had finished. Every
+  open dashboard now shows "Updating" for the whole update.
+- After a GHCR switch on a remote container, the row kept its
+  "Updating" badge until the page was reloaded. It now refreshes on its
+  own.
+
+### Changed
+
+- Dependency updates: go-oidc v3.21.0, oauth2 v0.37.0, Prometheus
+  client_golang v1.25.0 and common v0.72.1, bbolt v1.5.0 (same database
+  format, so a v3.0.0 rollback still opens it), protobuf v1.36.12,
+  golang-jwt v5.3.1. An identity provider key set that holds a key
+  Sentinel cannot use no longer makes every single sign-on login fail:
+  that key is skipped.
+- A remote update now sends the same "update started" `container_update`
+  event as a local one, so every open browser shows an info toast. If the
+  hub then refuses the update (a paused host, a failed signature check),
+  that toast is followed by the failure.
+- `/metrics` responses carry a `Vary: Accept` header.
+- esbuild is pinned to v0.28.2 and runs through `go run`, so building the
+  frontend needs no separate install.
+- The remote rollback rule (which earlier image a rollback goes back to)
+  now lives in one place, shared by the check that offers the Rollback
+  button and the code that carries the rollback out, so they cannot
+  disagree.
+
 ## [3.0.0] - 2026-10-14
 
 ### Security
@@ -2014,7 +2058,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete rewrite from Docker-Guardian (shell script) to Go
 - Modular architecture with clean package boundaries
 
-[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/Will-Luck/Docker-Sentinel/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.16.1...v3.0.0
 [2.16.1]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.16.0...v2.16.1
 [2.16.0]: https://github.com/Will-Luck/Docker-Sentinel/compare/v2.15.3...v2.16.0

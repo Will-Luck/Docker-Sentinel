@@ -9,26 +9,29 @@ DEV_HOST    := user@192.0.2.10
 DEV_PORT    := 62850
 DEV_CONTAINER := sentinel-test
 
+GOLANGCI_LINT ?= golangci-lint
+
 # Frontend bundling (esbuild)
-ESBUILD     := $(shell go env GOPATH)/bin/esbuild
+ESBUILD     := go run github.com/evanw/esbuild/cmd/esbuild@v0.28.2
 STATIC_DIR  := internal/web/static
 JS_ENTRY    := $(STATIC_DIR)/src/js/main.js
 JS_OUT      := $(STATIC_DIR)/app.js
 CSS_ENTRY   := $(STATIC_DIR)/src/css/index.css
 CSS_OUT     := $(STATIC_DIR)/style.css
 
-.PHONY: build test test-ci lint docker clean proto dev-deploy frontend js css
+.PHONY: build test test-ci lint docker clean proto dev-deploy frontend js css esbuild-warm
 
-js: $(ESBUILD)
+# Fetch and compile the pinned esbuild so a Docker layer can cache it.
+esbuild-warm:
+	$(ESBUILD) --version
+
+js:
 	$(ESBUILD) $(JS_ENTRY) --bundle --format=iife --sourcemap --outfile=$(JS_OUT)
 
-css: $(ESBUILD)
+css:
 	$(ESBUILD) $(CSS_ENTRY) --bundle --sourcemap --external:/static/fonts/* --outfile=$(CSS_OUT)
 
 frontend: js css
-
-$(ESBUILD):
-	go install github.com/evanw/esbuild/cmd/esbuild@v0.24.2
 
 build: frontend
 	go build $(LDFLAGS) -o bin/$(BINARY) ./cmd/sentinel
@@ -40,7 +43,7 @@ test-ci:
 	go test -v -count=1 -timeout 30m ./...
 
 lint:
-	golangci-lint run ./...
+	$(GOLANGCI_LINT) run ./...
 
 docker:
 	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t docker-sentinel:$(VERSION) .

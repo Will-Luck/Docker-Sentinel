@@ -142,6 +142,19 @@ func TestRemoteUpdate_RowIsRefreshedAfterTheUpdate(t *testing.T) {
 		}
 		waitState(t, srv, ch)
 	})
+	t.Run("ghcr switch", func(t *testing.T) {
+		srv, ch, cancel := newServer()
+		defer cancel()
+		srv.deps.GHCRCache = fixedGHCR{}
+		r := httptest.NewRequest(http.MethodPost, "/api/containers/web/switch-ghcr?host=h1", nil)
+		r.SetPathValue("name", "web")
+		w := httptest.NewRecorder()
+		srv.apiSwitchToGHCR(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
+		}
+		waitState(t, srv, ch)
+	})
 }
 
 // insertingHistory is a history store with a conditional insert, holding

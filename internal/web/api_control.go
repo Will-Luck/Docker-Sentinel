@@ -1016,43 +1016,35 @@ func ownContainer(containers []ContainerSummary) (ContainerSummary, bool) {
 	return ContainerSummary{}, false
 }
 
+// historyRow is the part of a history record the rollback rule reads.
+func historyRow(rec UpdateRecord) cluster.HistoryRow {
+	return cluster.HistoryRow{Outcome: rec.Outcome, Error: rec.Error, Type: rec.Type, OldImage: rec.OldImage}
+}
+
 // isManualRollbackRow reports whether a history row is a rollback asked for
 // from the dashboard or the API (not an automatic rollback of a failed update).
-// Before v3.0.0 a remote rollback was recorded as outcome "success" with type
-// "rollback"; it counts too.
 func isManualRollbackRow(rec UpdateRecord) bool {
-	return (rec.Outcome == "rollback" && rec.Error == cluster.RolledBackOnRequest) ||
-		(rec.Outcome == "success" && rec.Type == "rollback")
+	return cluster.IsManualRollback(historyRow(rec))
 }
 
 // remoteRollbackTarget is the image a rollback of a remote container goes back
-// to: the old image of the newest update that has not been rolled back
-// already, so a container that was just rolled back has no target (or the
-// next older one). It is the same rule the rollback itself uses
+// to (cluster.RollbackTarget): the old image of the newest update that has not
+// been rolled back already. It is the same rule the rollback itself uses
 // (lastRemoteOldImage), so the button shows exactly when there is something
 // to do. Empty when none.
 func (s *Server) remoteRollbackTarget(hostID, name string) string {
 	if s.deps.Store == nil {
 		return ""
 	}
-	recs, err := s.deps.Store.ListHistoryByContainer(store.ScopedKey(hostID, name), 50)
+	recs, err := s.deps.Store.ListHistoryByContainer(store.ScopedKey(hostID, name), cluster.RollbackHistoryDepth)
 	if err != nil {
 		return ""
 	}
-	pending := 0               // rollbacks seen that still cancel an older update
-	for _, rec := range recs { // newest first
-		switch {
-		case isManualRollbackRow(rec):
-			pending++
-		case rec.Outcome == "success" && rec.OldImage != "":
-			if pending > 0 {
-				pending--
-				continue
-			}
-			return rec.OldImage
-		}
+	rows := make([]cluster.HistoryRow, len(recs))
+	for i, rec := range recs {
+		rows[i] = historyRow(rec)
 	}
-	return ""
+	return cluster.RollbackTarget(rows)
 }
 
 // localRollbackOffered reports whether the local container's Rollback button

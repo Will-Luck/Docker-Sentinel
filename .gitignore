@@ -1,4 +1,5 @@
 bin/
+/dist/
 docker-sentinel
 sentinel-bin
 *.exe
@@ -10,7 +11,7 @@ docs/mood-board.md
 .gitea/
 CLAUDE.md
 .claude/
-sentinel
+/sentinel
 docs/wiki/
 docs/reddit-post.md
 .worktrees/

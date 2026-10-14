@@ -16,8 +16,6 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Install esbuild
-        run: go install github.com/evanw/esbuild/cmd/esbuild@v0.24.2
       - name: Bundle frontend
         run: make frontend
       - name: Run tests

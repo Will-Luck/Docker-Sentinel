@@ -17,10 +17,10 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - name: Install esbuild
-        run: go install github.com/evanw/esbuild/cmd/esbuild@v0.24.2
       - name: Bundle frontend
         run: make frontend
+      - name: Check tree is clean
+        run: test -z "$(git status --porcelain)" || { git status --porcelain; exit 1; }
       - name: Run tests
         run: go test -count=1 -timeout 30m ./...
       - name: Upload frontend bundle
@@ -153,6 +153,7 @@ jobs:
           path: internal/web/static/
       - name: Build binaries
         run: |
+          test -z "$(git status --porcelain)" || { git status --porcelain; exit 1; }
           mkdir -p dist
           for pair in linux/amd64 linux/arm64 linux/arm/v7 darwin/amd64 darwin/arm64; do
             OS="${pair%%/*}"

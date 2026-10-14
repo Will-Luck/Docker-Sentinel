@@ -6,7 +6,7 @@ Thanks for your interest in contributing. This guide covers everything you need 
 
 - **Go 1.26+**
 - **Docker** (for integration tests and building images)
-- **Node.js** (for esbuild frontend bundling)
+- No separate esbuild install: `make frontend` runs the pinned esbuild through `go run` (the first run downloads it)
 
 ## Building
 

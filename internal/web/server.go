@@ -100,8 +100,24 @@ type Server struct {
 	authLimiter *rateLimiter
 }
 
+// markRemoteUpdating marks a remote container as updating and tells every
+// open dashboard, as a local update does, so each fetches the row while the
+// mark is set and shows "Updating" for the whole update. The mark is stored
+// before the event, so the row fetch the event triggers sees it.
+//
+// Known limit: the event goes out before the hub can refuse the update (a
+// paused host, a failed signature check), so a refused remote update shows
+// "update started" and then the failure, where a local refusal shows only the
+// failure.
 func (s *Server) markRemoteUpdating(hostID, name string) {
 	s.pendingRemoteUpdates.Store(hostID+"::"+name, struct{}{})
+	s.deps.EventBus.Publish(events.SSEEvent{
+		Type:          events.EventContainerUpdate,
+		ContainerName: name,
+		HostID:        hostID,
+		Message:       "update started",
+		Timestamp:     time.Now(),
+	})
 }
 
 func (s *Server) clearRemoteUpdating(hostID, name string) {
