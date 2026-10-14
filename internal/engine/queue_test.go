@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -168,5 +169,60 @@ func TestQueueDropsRemovedConnectorEntriesOnLoad(t *testing.T) {
 	q3 := NewQueue(s, nil, log)
 	if q3.Len() != 2 || buf.Len() != 0 {
 		t.Errorf("third load: Len=%d log=%q", q3.Len(), buf.String())
+	}
+}
+
+// A scan re-adds a pending update every time it finds it. The row keeps
+// the time the update was first found while the target is the same (the
+// same newer version, or for a mutable tag the same digest), and starts
+// again when the target changes. Remote rows (hostID::name) and services
+// go through the same Add.
+func TestQueueKeepsFirstDetectedWhileTheTargetIsTheSame(t *testing.T) {
+	q := NewQueue(testStore(t), nil, nil)
+	t1 := time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
+	t2, t3 := t1.Add(6*time.Hour), t1.Add(12*time.Hour)
+
+	for _, tc := range []struct {
+		name         string
+		first, again PendingUpdate
+		changed      PendingUpdate
+	}{
+		{"version", PendingUpdate{ContainerName: "web", NewerVersions: []string{"1.2"}, DetectedAt: t1},
+			PendingUpdate{ContainerName: "web", NewerVersions: []string{"1.2"}, DetectedAt: t2},
+			PendingUpdate{ContainerName: "web", NewerVersions: []string{"1.3", "1.2"}, DetectedAt: t3}},
+		{"digest", PendingUpdate{ContainerName: "db", RemoteDigest: "sha256:a", DetectedAt: t1},
+			PendingUpdate{ContainerName: "db", RemoteDigest: "sha256:a", DetectedAt: t2},
+			PendingUpdate{ContainerName: "db", RemoteDigest: "sha256:b", DetectedAt: t3}},
+		{"remote", PendingUpdate{HostID: "h1", ContainerName: "web", RemoteDigest: "sha256:a", DetectedAt: t1},
+			PendingUpdate{HostID: "h1", ContainerName: "web", RemoteDigest: "sha256:a", DetectedAt: t2},
+			PendingUpdate{HostID: "h1", ContainerName: "web", RemoteDigest: "sha256:b", DetectedAt: t3}},
+	} {
+		q.Add(tc.first)
+		q.Add(tc.again)
+		if got, _ := q.Get(tc.first.Key()); !got.DetectedAt.Equal(t1) {
+			t.Errorf("%s: detected %v after the same update was found again, want the first time %v", tc.name, got.DetectedAt, t1)
+		}
+		q.Add(tc.changed)
+		if got, _ := q.Get(tc.first.Key()); !got.DetectedAt.Equal(t3) {
+			t.Errorf("%s: detected %v after the target changed, want %v", tc.name, got.DetectedAt, t3)
+		}
+	}
+}
+
+// A scan that finds the same update again leaves the row's detected time
+// as it was.
+func TestScanKeepsTheQueueRowsDetectedTime(t *testing.T) {
+	mock, u := setupScanOne(t, map[string]string{})
+	mock.containers[0].Labels = map[string]string{"sentinel.policy": "manual"}
+	clk := u.clock.(*mockClock)
+
+	u.Scan(context.Background(), ScanScheduled)
+	first, _ := u.queue.Get("nginx")
+	clk.Advance(6 * time.Hour)
+	u.Scan(context.Background(), ScanScheduled)
+	again, _ := u.queue.Get("nginx")
+
+	if first.DetectedAt.IsZero() || !again.DetectedAt.Equal(first.DetectedAt) {
+		t.Errorf("detected %v then %v, want the first time kept", first.DetectedAt, again.DetectedAt)
 	}
 }

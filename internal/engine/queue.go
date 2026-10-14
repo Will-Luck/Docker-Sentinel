@@ -80,11 +80,28 @@ func NewQueue(s *store.Store, bus *events.Bus, log *slog.Logger) *Queue {
 func (q *Queue) Add(update PendingUpdate) {
 	var data []byte
 	q.mu.Lock()
+	// A scan re-adds a pending update each time it finds it: keep when it
+	// was first found while the target is the same.
+	if prev, ok := q.pending[update.Key()]; ok && !prev.DetectedAt.IsZero() && prev.target() == update.target() {
+		update.DetectedAt = prev.DetectedAt
+	}
 	q.pending[update.Key()] = update
 	data = q.snapshotLocked()
 	q.mu.Unlock()
 	q.persistData(data)
 	q.publishEvent(update.Key(), "added")
+}
+
+// target names what the update moves to: its newest version, or for a
+// mutable tag the registry digest.
+func (u PendingUpdate) target() string {
+	if len(u.NewerVersions) > 0 {
+		return u.NewerVersions[0]
+	}
+	if i := strings.LastIndex(u.RemoteDigest, "sha256:"); i >= 0 {
+		return u.RemoteDigest[i:]
+	}
+	return u.RemoteDigest
 }
 
 // Key returns the queue map key for this update. Remote containers use
