@@ -83,6 +83,8 @@
                     {{end}}
                     {{if .HasSnapshot}}
                     <button class="btn btn-warning" onclick="triggerRollback('{{.Container.Name}}', event)">Rollback</button>
+                    {{else if .RemoteRollbackImage}}
+                    <button class="btn btn-warning" onclick="triggerRemoteRollback('{{.Container.Name}}', '{{.Container.HostID}}', '{{if .Container.HostName}}{{.Container.HostName}}{{else}}{{.Container.HostID}}{{end}}', '{{.RemoteRollbackImage}}', event)">Rollback</button>
                     {{end}}
                 </div>
             </div>

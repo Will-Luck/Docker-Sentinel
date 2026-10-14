@@ -214,3 +214,51 @@ func TestResponsiveCSS_NameColumnGetsTheRestOnPhones(t *testing.T) {
 		t.Error("the Name <col> has no col-name class")
 	}
 }
+
+// A remote container's page offers Rollback when the hub knows what to go back
+// to, naming the host and the image in the confirm; with no target it offers
+// nothing.
+func TestContainerPage_RemoteRollbackButton(t *testing.T) {
+	view := containerView{Name: "whoami", HostID: "h1", HostName: "Agent One"}
+	out := renderAny(t, "container.html", containerDetailData{Container: view, RemoteRollbackImage: "traefik/whoami:v1"})
+	if !strings.Contains(out, "triggerRemoteRollback(") || !strings.Contains(out, "Agent One") || !strings.Contains(out, "whoami:v1") {
+		t.Errorf("remote page with a target should offer Rollback naming the host and image")
+	}
+	out = renderAny(t, "container.html", containerDetailData{Container: view})
+	if strings.Contains(out, "triggerRemoteRollback(") || strings.Contains(out, ">Rollback</button>") {
+		t.Errorf("remote page with no target must not offer Rollback")
+	}
+	// The local button is unchanged.
+	out = renderAny(t, "container.html", containerDetailData{Container: containerView{Name: "web"}, HasSnapshot: true})
+	if !strings.Contains(out, "triggerRollback('web', event)") {
+		t.Errorf("local Rollback button missing")
+	}
+}
+
+type rollbackHistory struct {
+	nopHistory
+	recs []UpdateRecord
+}
+
+func (h rollbackHistory) ListHistoryByContainer(string, int) ([]UpdateRecord, error) {
+	return h.recs, nil
+}
+
+// The target is the newest image-changing success: rollbacks are skipped, and
+// so are rows with no old image.
+func TestRemoteRollbackTarget(t *testing.T) {
+	srv := &Server{deps: Dependencies{Store: rollbackHistory{recs: []UpdateRecord{
+		{Outcome: "rollback", OldImage: "x:3"},
+		{Outcome: "success", OldImage: "x:2", Type: "rollback"},
+		{Outcome: "failed", OldImage: "x:9"},
+		{Outcome: "success", OldImage: ""},
+		{Outcome: "success", OldImage: "x:1"},
+	}}}}
+	if got := srv.remoteRollbackTarget("h1", "web"); got != "x:1" {
+		t.Errorf("target = %q, want x:1", got)
+	}
+	srv.deps.Store = rollbackHistory{}
+	if got := srv.remoteRollbackTarget("h1", "web"); got != "" {
+		t.Errorf("no history gave %q, want none", got)
+	}
+}

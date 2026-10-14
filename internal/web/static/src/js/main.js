@@ -66,6 +66,7 @@ import {
     triggerUpdate,
     triggerCheck,
     triggerRollback,
+    triggerRemoteRollback,
     changePolicy,
     triggerScan,
     triggerSelfUpdate,
@@ -283,6 +284,7 @@ window.rejectAll = rejectAll;
 window.triggerUpdate = triggerUpdate;
 window.triggerCheck = triggerCheck;
 window.triggerRollback = triggerRollback;
+window.triggerRemoteRollback = triggerRemoteRollback;
 window.changePolicy = changePolicy;
 window.triggerSelfUpdate = triggerSelfUpdate;
 window.loadAllTags = loadAllTags;

@@ -435,6 +435,9 @@ type containerDetailData struct {
 
 	ClusterEnabled bool
 	QueueCount     int
+	// RemoteRollbackImage is the image a remote container goes back to if
+	// rolled back, when the hub has one. Empty means no Rollback button.
+	RemoteRollbackImage string
 
 	// Auth context.
 	CurrentUser *auth.User
@@ -777,6 +780,9 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 		PortOverrides:  portOverrides,
 		ClusterEnabled: s.deps.Cluster != nil && s.deps.Cluster.Enabled(),
 		QueueCount:     len(s.deps.Queue.List()),
+	}
+	if view.HostID != "" {
+		data.RemoteRollbackImage = s.remoteRollbackTarget(view.HostID, view.Name)
 	}
 	s.withAuthDetail(r, &data)
 

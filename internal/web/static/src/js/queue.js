@@ -312,6 +312,27 @@ function triggerRollback(name, event) {
     );
 }
 
+// triggerRemoteRollback rolls a container on another host back to the image it
+// ran before its last update, after a confirm that names the host and image.
+function triggerRemoteRollback(name, hostId, hostName, image, event) {
+    var btn = event && event.target ? event.target.closest(".btn") : null;
+    showConfirm(
+        "Roll back " + name + "?",
+        "<p>Roll back <strong>" + escapeHTML(name) + "</strong> on <strong>" + escapeHTML(hostName) +
+        "</strong> to <code>" + escapeHTML(image) + "</code>?</p>",
+        { danger: true, confirmLabel: "Roll back" }
+    ).then(function(confirmed) {
+        if (!confirmed) return;
+        apiPost(
+            "/api/containers/" + encodeURIComponent(name) + "/rollback?host=" + encodeURIComponent(hostId),
+            null,
+            "Rollback started for " + name + " on " + hostName,
+            "Failed to trigger rollback",
+            btn
+        );
+    });
+}
+
 function changePolicy(name, newPolicy, hostId, onSuccess, onError) {
     var url = "/api/containers/" + encodeURIComponent(name) + "/policy";
     if (hostId) url += "?host=" + encodeURIComponent(hostId);
@@ -797,6 +818,7 @@ export {
     triggerUpdate,
     triggerCheck,
     triggerRollback,
+    triggerRemoteRollback,
     changePolicy,
     triggerScan,
     triggerSelfUpdate,

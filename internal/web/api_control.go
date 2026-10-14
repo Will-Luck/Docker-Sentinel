@@ -992,3 +992,23 @@ func ownContainer(containers []ContainerSummary) (ContainerSummary, bool) {
 	}
 	return ContainerSummary{}, false
 }
+
+// remoteRollbackTarget is the image a rollback of a remote container goes back
+// to: the old image of its newest image-changing success in the history. It is
+// the same rule the rollback itself uses (lastRemoteOldImage), so the button
+// is shown exactly when the rollback has something to do. Empty when none.
+func (s *Server) remoteRollbackTarget(hostID, name string) string {
+	if s.deps.Store == nil {
+		return ""
+	}
+	recs, err := s.deps.Store.ListHistoryByContainer(store.ScopedKey(hostID, name), 50)
+	if err != nil {
+		return ""
+	}
+	for _, rec := range recs { // newest first
+		if rec.Outcome == "success" && rec.OldImage != "" && rec.Type != "rollback" {
+			return rec.OldImage
+		}
+	}
+	return ""
+}
