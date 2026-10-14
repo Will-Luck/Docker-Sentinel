@@ -128,6 +128,9 @@ type Server struct {
 // pendingRequest is a synchronous request waiting for an agent's reply.
 type pendingRequest struct {
 	ch chan *proto.AgentMessage
+	// callerRecords is whether the caller records and notifies what it
+	// asked for (WithCallerRecords).
+	callerRecords bool
 	// stream is the stream the request went out on, nil until it is sent.
 	// Only that stream's cleanup fails the request: a reply can only come
 	// back on the stream that carried the request.

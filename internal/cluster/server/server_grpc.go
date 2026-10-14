@@ -578,18 +578,16 @@ func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *
 		Timestamp:     time.Now(),
 	})
 
+	if ur.RequestId != "" && ur.Outcome == cluster.OutcomePending {
+		s.selfUpdateAnswered(hostID, msg, ur)
+		return
+	}
+
 	// Route to a pending synchronous caller if one is waiting. If the
 	// caller has given up (it timed out and recorded a failure), this is
 	// still what the agent did: keep it in the history.
 	// A skipped update changed nothing and leaves no history, as locally.
 	if ur.RequestId != "" && !s.deliverPending(hostID, ur.RequestId, msg) && ur.Outcome != "skipped" {
-		if ur.Outcome == cluster.OutcomePending {
-			// A self-update under way, answered late: its outcome, when
-			// it comes, replaces the failure the caller recorded (and
-			// notified).
-			s.awaitSelfUpdate(hostID, ur, s.takeLate(hostID, ur.RequestId).recordAt, false)
-			return
-		}
 		s.recordLateUpdate(hostID, ur)
 	}
 }

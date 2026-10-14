@@ -61,6 +61,15 @@ func (s *Server) deliverPending(hostID, requestID string, msg *proto.AgentMessag
 	return ok
 }
 
+// pendingCaller reports whether a caller waits for request requestID of
+// hostID, and whether it records and notifies what it asked for.
+func (s *Server) pendingCaller(hostID, requestID string) (waiting, records bool) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	pr, ok := s.pending[hostID+":"+requestID]
+	return ok, ok && pr.callerRecords
+}
+
 // registerPending creates a response channel for the given host+request pair.
 // Must be called before sending the command to avoid a race where
 // the agent responds before the channel is registered.
@@ -164,6 +173,13 @@ func (s *Server) request(ctx context.Context, hostID, what, purpose string, time
 	ch, err := s.registerPending(hostID, reqID)
 	if err != nil {
 		return nil, err
+	}
+	if callerRecords(ctx) {
+		s.pendingMu.Lock()
+		if pr, ok := s.pending[hostID+":"+reqID]; ok {
+			pr.callerRecords = true
+		}
+		s.pendingMu.Unlock()
 	}
 
 	if err := s.sendPending(hostID, reqID, msg); err != nil {
@@ -300,10 +316,10 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 		}
 		result = ur.UpdateResult
 		if result.GetOutcome() == cluster.OutcomePending {
-			// The agent's helper does its update of itself: the hub records
-			// it, and notifies it for a caller that notifies, when the
-			// outcome is known.
-			s.awaitSelfUpdate(hostID, result, time.Time{}, callerRecords(ctx))
+			// The agent's helper does its update of itself: the hub
+			// already waits for the outcome (handleUpdateResult), and
+			// records it, and notifies it for a caller that notifies,
+			// when it is known.
 			return result, nil
 		}
 	}

@@ -195,3 +195,45 @@ func TestSelfUpdatePending_OlderReplacementOnTheTargetSucceeds(t *testing.T) {
 		t.Errorf("notifications = %+v, want one success", n)
 	}
 }
+
+// An outcome the agent reports straight after its "pending" answer (here
+// in the next message) is not missed: the hub waits for it before the
+// caller is answered, so it is recorded and notified once.
+func TestSelfUpdatePending_OutcomeRightAfterTheAnswer(t *testing.T) {
+	srv, addr, st, _ := testServer(t)
+	srv.SetHistoryRecorder(st)
+	notes := &selfNotes{}
+	srv.SetSelfUpdateNotify(notes.add)
+	token, _, _ := srv.GenerateEnrollToken(5 * time.Minute)
+	hostID, certPEM, keyPEM, caPEM := enrollAgent(t, addr, token)
+	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
+	t.Cleanup(closeConn)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return
+			}
+			if req := msg.GetUpdateContainer(); req != nil {
+				id := msg.GetRequestId()
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_UpdateResult{UpdateResult: &proto.UpdateResult{
+					RequestId: id, ContainerName: "sentinel-agent", Outcome: cluster.OutcomePending, OldImage: "sentinel:3.0.0", NewImage: req.GetTargetImage(),
+				}}})
+				_ = stream.Send(&proto.AgentMessage{Payload: &proto.AgentMessage_OfflineJournal{OfflineJournal: &proto.OfflineJournal{
+					Entries: []*proto.JournalEntry{{Id: id, Action: "update", Container: "sentinel-agent", OldImage: "sentinel:3.0.0",
+						NewImage: req.GetTargetImage(), Outcome: "success"}},
+				}}})
+			}
+		}
+	}()
+	ctx, cancel := context.WithTimeout(WithCallerRecords(context.Background()), 5*time.Second)
+	defer cancel()
+	if _, err := srv.UpdateContainerSync(ctx, hostID, "sentinel-agent", "sentinel:3.0.1", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return len(notes.all()) > 0 }, "the outcome should be notified")
+	recs, _ := st.ListHistoryByContainer(store.ScopedKey(hostID, "sentinel-agent"), 10)
+	if len(recs) != 1 || recs[0].Outcome != "success" {
+		t.Errorf("history = %+v, want one success row", recs)
+	}
+}

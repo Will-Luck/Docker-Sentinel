@@ -237,3 +237,19 @@ func (s *Server) selfUpdateJournalled(hostID string, e *proto.JournalEntry) bool
 	s.finishSelfUpdate(w, e.GetOutcome(), e.GetError())
 	return true
 }
+
+// selfUpdateAnswered takes the "under way" answer to an update the agent's
+// helper does (OutcomePending). The hub starts waiting for the outcome
+// before the caller is answered, so an outcome the agent reports straight
+// after cannot be missed. Answered after the caller gave up (it recorded,
+// and notified, a failure), the outcome replaces the caller's row.
+func (s *Server) selfUpdateAnswered(hostID string, msg *proto.AgentMessage, ur *proto.UpdateResult) {
+	if waiting, records := s.pendingCaller(hostID, ur.RequestId); waiting {
+		s.awaitSelfUpdate(hostID, ur, time.Time{}, records)
+		if s.deliverPending(hostID, ur.RequestId, msg) {
+			return
+		}
+		s.takeSelfUpdate(hostID, ur.RequestId) // the caller gave up meanwhile
+	}
+	s.awaitSelfUpdate(hostID, ur, s.takeLate(hostID, ur.RequestId).recordAt, false)
+}
