@@ -7,13 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.0.1] - 2026-10-14
+## [3.0.1] - 2026-10-16
 
 ### Security
 
-- go-jose (used by single sign-on) is updated to v4.1.5 for advisory
-  GHSA-6mp9-8xrw-74r4. Exposure was low: tokens and signing keys come
-  from the configured identity provider over TLS.
+- go-jose (used by single sign-on) is updated to v4.1.6 for advisories
+  GHSA-6mp9-8xrw-74r4 and GHSA-mgcc-cww5-fp2q. Exposure was low: tokens
+  and signing keys come from the configured identity provider over TLS.
+  go-jose now refuses RSA keys larger than 4096 bits: if the identity
+  provider's key set holds one, single sign-on fails until that key is
+  removed. Common providers use 2048 or 4096 bit keys.
 
 ### Fixed
 
@@ -40,9 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency updates: go-oidc v3.21.0, oauth2 v0.37.0, Prometheus
   client_golang v1.25.0 and common v0.72.1, bbolt v1.5.0 (same database
   format, so a v3.0.0 rollback still opens it), protobuf v1.36.12,
-  golang-jwt v5.3.1. An identity provider key set that holds a key
-  Sentinel cannot use no longer makes every single sign-on login fail:
-  that key is skipped.
+  golang-jwt v5.3.1. An identity provider key set that holds a key of a
+  type or algorithm Sentinel does not support no longer makes every
+  single sign-on login fail: that key is skipped.
 - A remote update now sends the same "update started" `container_update`
   event as a local one, so every open browser shows an info toast. If the
   hub then refuses the update (a paused host, a failed signature check),
