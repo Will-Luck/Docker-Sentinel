@@ -218,11 +218,11 @@ func TestRegistry_SlowSaveDoesNotBlockOtherHosts(t *testing.T) {
 // The agent's stream ends at once.
 func TestRevokeHost_DisconnectsTheAgentAtOnce(t *testing.T) {
 	srv, hostID, stream := connectAgent(t)
-	ended := make(chan error, 1)
+	ended := make(chan struct{})
 	go func() {
 		for {
 			if _, err := stream.Recv(); err != nil {
-				ended <- err
+				close(ended)
 				return
 			}
 		}

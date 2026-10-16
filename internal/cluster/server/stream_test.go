@@ -136,11 +136,11 @@ func TestStop_ReturnsWithConnectedAgent(t *testing.T) {
 	stream, _, closeConn := connectedStream(t, srv, addr, hostID, certPEM, keyPEM, caPEM, nil)
 	defer closeConn()
 
-	recvErr := make(chan error, 1)
+	recvEnded := make(chan struct{})
 	go func() {
 		for {
 			if _, err := stream.Recv(); err != nil {
-				recvErr <- err
+				close(recvEnded)
 				return
 			}
 		}
@@ -155,7 +155,7 @@ func TestStop_ReturnsWithConnectedAgent(t *testing.T) {
 	}
 
 	select {
-	case <-recvErr:
+	case <-recvEnded:
 	case <-time.After(30 * time.Second):
 		t.Fatal("the agent's stream was still open after Stop returned")
 	}

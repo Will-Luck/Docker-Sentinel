@@ -6,6 +6,7 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 DEV_TAG     := dev-$(shell date +%Y%m%d-%H%M)
 DEV_IMAGE   := docker-sentinel:$(DEV_TAG)
 DEV_HOST    := user@192.0.2.10
+DEV_SSH_KEY ?=
 DEV_PORT    := 62850
 DEV_CONTAINER := sentinel-test
 
@@ -51,13 +52,14 @@ docker:
 clean:
 	rm -rf bin/
 
+# Build the image, load it on DEV_HOST over SSH and (re)start the test
+# container. DEV_HOST is a placeholder: point it at your own test machine.
+# Pass the private key to use as a file path:
+#   make dev-deploy DEV_HOST=me@test-box DEV_SSH_KEY=~/.ssh/id_ed25519
 dev-deploy:
+	$(if $(DEV_SSH_KEY),,$(error dev-deploy: set DEV_SSH_KEY to the path of the SSH private key for $(DEV_HOST)))
 	@set -e; \
-	TMP_KEY=$$(mktemp); \
-	trap 'rm -f "$$TMP_KEY"' EXIT; \
-	chmod 600 "$$TMP_KEY"; \
-	op read "op://Server-Keys/ssh-test-server-1/s7ela6vsq6eltvuj7g3orn4jd4" | sed 's/^concealed]=//' > "$$TMP_KEY"; \
-	DEV_SSH="ssh -i $$TMP_KEY -o StrictHostKeyChecking=no $(DEV_HOST)"; \
+	DEV_SSH="ssh -i $(DEV_SSH_KEY) -o StrictHostKeyChecking=no $(DEV_HOST)"; \
 	docker build --build-arg VERSION=$(DEV_TAG) --build-arg COMMIT=$(COMMIT) -t $(DEV_IMAGE) .; \
 	docker save $(DEV_IMAGE) | $$DEV_SSH "docker load"; \
 	$$DEV_SSH "docker stop $(DEV_CONTAINER) 2>/dev/null; docker rm $(DEV_CONTAINER) 2>/dev/null; \

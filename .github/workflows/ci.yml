@@ -34,7 +34,7 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.14.0
+          version: v2.15.0
           args: ./...
           # Analysis cache restored across dependency bumps can poison
           # staticcheck facts (false SA5011s after the x/crypto 0.52.0 bump,
