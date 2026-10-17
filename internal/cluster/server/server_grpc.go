@@ -587,9 +587,14 @@ func (s *Server) handleUpdateResult(hostID string, msg *proto.AgentMessage, ur *
 		"requestID", ur.RequestId,
 	)
 
-	sseMsg := fmt.Sprintf("update %s: %s", ur.ContainerName, ur.Outcome)
+	// A rollback is an update on the agent: the request says which it was.
+	what := "update"
+	if s.requestPurpose(hostID, ur.RequestId) == "rollback" {
+		what = "rollback"
+	}
+	sseMsg := fmt.Sprintf("%s %s: %s", what, ur.ContainerName, ur.Outcome)
 	if ur.Outcome != "success" && ur.Error != "" {
-		sseMsg = fmt.Sprintf("update %s failed: %s", ur.ContainerName, ur.Error)
+		sseMsg = fmt.Sprintf("%s %s failed: %s", what, ur.ContainerName, ur.Error)
 	}
 	s.bus.Publish(events.SSEEvent{
 		Type:          events.EventContainerUpdate,

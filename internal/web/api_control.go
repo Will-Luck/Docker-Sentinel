@@ -349,13 +349,7 @@ func (s *Server) apiUpdate(w http.ResponseWriter, r *http.Request) {
 				s.deps.Log.Info("remote update skipped by a pre-update hook", "name", name, "host", hostID)
 			} else if err != nil {
 				s.deps.Log.Error("remote update failed", "name", name, "host", hostID, "error", err)
-				s.deps.EventBus.Publish(events.SSEEvent{
-					Type:          events.EventContainerUpdate,
-					ContainerName: name,
-					HostID:        hostID,
-					Message:       "update failed on " + s.hostLabel(hostID) + ": " + err.Error(),
-					Timestamp:     time.Now(),
-				})
+				s.tellRemoteFailure(hostID, name, "update failed on "+s.hostLabel(hostID)+": ", err)
 			} else {
 				s.deps.Queue.Remove(queueKey)
 			}
@@ -476,13 +470,7 @@ func (s *Server) apiRollback(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			if err := s.deps.Cluster.RollbackRemoteContainer(context.Background(), hostID, name); err != nil {
 				s.deps.Log.Error("remote rollback failed", "name", name, "host", hostID, "error", err)
-				s.deps.EventBus.Publish(events.SSEEvent{
-					Type:          events.EventContainerUpdate,
-					ContainerName: name,
-					HostID:        hostID,
-					Message:       "rollback failed: " + err.Error(),
-					Timestamp:     time.Now(),
-				})
+				s.tellRemoteFailure(hostID, name, "rollback failed: ", err)
 				return
 			}
 			// Apply rollback policy if configured.
@@ -822,13 +810,7 @@ func (s *Server) apiUpdateToVersion(w http.ResponseWriter, r *http.Request) {
 			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, targetImage, res, err)
 			if err != nil {
 				s.deps.Log.Error("remote version update failed", "name", name, "host", hostID, "tag", body.Tag, "error", err)
-				s.deps.EventBus.Publish(events.SSEEvent{
-					Type:          events.EventContainerUpdate,
-					ContainerName: name,
-					HostID:        hostID,
-					Message:       "update to " + body.Tag + " failed on " + s.hostLabel(hostID) + ": " + err.Error(),
-					Timestamp:     time.Now(),
-				})
+				s.tellRemoteFailure(hostID, name, "update to "+body.Tag+" failed on "+s.hostLabel(hostID)+": ", err)
 			} else {
 				s.deps.Queue.Remove(queueKey)
 			}

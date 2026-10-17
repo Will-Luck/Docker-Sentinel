@@ -67,6 +67,12 @@ func hubWithAgent(t *testing.T, answer func(*proto.UpdateContainerRequest) *prot
 // state report report (with its host ID filled in), when there is one.
 func hubWithReportingAgent(t *testing.T, report *proto.StateReport, answer func(*proto.UpdateContainerRequest) *proto.UpdateResult, then ...func(requestID string) *proto.AgentMessage) (*clusterAdapter, string, *store.Store, *sentEvents) {
 	t.Helper()
+	return hubOnBus(t, events.New(), report, answer, then...)
+}
+
+// hubOnBus is hubWithReportingAgent with a hub that publishes on bus.
+func hubOnBus(t *testing.T, bus *events.Bus, report *proto.StateReport, answer func(*proto.UpdateContainerRequest) *proto.UpdateResult, then ...func(requestID string) *proto.AgentMessage) (*clusterAdapter, string, *store.Store, *sentEvents) {
+	t.Helper()
 	db, err := store.Open(t.TempDir() + "/sentinel.db")
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +82,7 @@ func hubWithReportingAgent(t *testing.T, report *proto.StateReport, answer func(
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := clusterserver.New(ca, db, events.New(), slog.New(slog.DiscardHandler))
+	srv, err := clusterserver.New(ca, db, bus, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -173,19 +173,20 @@ func TestRemoteUpdatePrep_SendsTheStoredHooks(t *testing.T) {
 }
 
 // An agent's answer becomes the caller's error: none for success, a
-// recognisable one when a pre-update hook asked to skip.
+// recognisable one when a pre-update hook asked to skip. Every error is an
+// answered one, whose end the hub has already told the dashboards.
 func TestRemoteResultErr(t *testing.T) {
 	if err := remoteResultErr(&proto.UpdateResult{Outcome: "success", Error: "a warning"}, "update"); err != nil {
 		t.Errorf("success: %v", err)
 	}
-	if err := remoteResultErr(&proto.UpdateResult{Outcome: "skipped", Error: "a pre-update hook asked to skip the update (exit 75)"}, "update"); !errors.Is(err, cluster.ErrUpdateSkipped) {
-		t.Errorf("skipped: %v, want ErrUpdateSkipped", err)
+	if err := remoteResultErr(&proto.UpdateResult{Outcome: "skipped", Error: "a pre-update hook asked to skip the update (exit 75)"}, "update"); !errors.Is(err, cluster.ErrUpdateSkipped) || !cluster.Answered(err) {
+		t.Errorf("skipped: %v, want an answered ErrUpdateSkipped", err)
 	}
-	if err := remoteResultErr(&proto.UpdateResult{Outcome: "failed", Error: "pull failed"}, "update"); err == nil || err.Error() != "pull failed" {
-		t.Errorf("failed: %v, want the agent's error", err)
+	if err := remoteResultErr(&proto.UpdateResult{Outcome: "failed", Error: "pull failed"}, "update"); err == nil || err.Error() != "pull failed" || !cluster.Answered(err) {
+		t.Errorf("failed: %v, want the agent's error, answered", err)
 	}
-	if err := remoteResultErr(&proto.UpdateResult{Outcome: "failed"}, "rollback"); err == nil || err.Error() != "rollback failed" {
-		t.Errorf("failed without detail: %v", err)
+	if err := remoteResultErr(&proto.UpdateResult{Outcome: "failed"}, "rollback"); err == nil || err.Error() != "rollback failed" || !cluster.Answered(err) {
+		t.Errorf("failed without detail: %v, want an answered error", err)
 	}
 }
 

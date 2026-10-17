@@ -2,7 +2,7 @@
    5. API Actions — Queue operations, container actions, bulk
    ============================================================ */
 
-import { showToast, escapeHTML, showConfirm, apiPost, apiFetch } from "./utils.js";
+import { showToast, toastSubjectFor, escapeHTML, showConfirm, apiPost, apiFetch } from "./utils.js";
 import { policyTargets, selectionLabel } from "./selection.js";
 
 // Access via window to avoid circular import with sse.js.
@@ -91,6 +91,14 @@ function toggleQueuePanelAfter(row) {
     if (chevron) chevron.textContent = visible ? "\u25B8" : "\u25BE";
 }
 
+// queueKeySubject is the toast subject of a queue key ("name", or
+// "hostID::name" for a remote container), as the queue's events name it.
+function queueKeySubject(key) {
+    var i = key.indexOf("::");
+    if (i === -1) return toastSubjectFor("", key);
+    return toastSubjectFor(key.slice(0, i), key.slice(i + 2));
+}
+
 function approveUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost(
@@ -99,7 +107,9 @@ function approveUpdate(key, event) {
         "Approved update for " + key,
         "Failed to approve",
         btn,
-        function () { removeQueueRow(btn); }
+        function () { removeQueueRow(btn); },
+        null,
+        queueKeySubject(key)
     );
 }
 
@@ -284,7 +294,8 @@ function triggerUpdate(name, event, hostId) {
                 window._updateLoadingBtns[key].disabled = false;
                 delete window._updateLoadingBtns[key];
             }
-        }
+        },
+        toastSubjectFor(hostId, name)
     );
 }
 
@@ -328,7 +339,10 @@ function triggerRemoteRollback(name, hostId, hostName, image, event) {
             null,
             "Rollback started for " + name + " on " + hostName,
             "Failed to trigger rollback",
-            btn
+            btn,
+            null,
+            null,
+            toastSubjectFor(hostId, name)
         );
     });
 }

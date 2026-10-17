@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/registry"
 )
 
@@ -423,13 +422,7 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 			s.recordRemoteUpdate(start, hostID, rc.HostName, name, rc.Image, ghcrImage, res, err)
 			if err != nil {
 				s.deps.Log.Error("remote GHCR switch failed", "name", name, "host", hostID, "ghcr_image", ghcrImage, "error", err)
-				s.deps.EventBus.Publish(events.SSEEvent{
-					Type:          events.EventContainerUpdate,
-					ContainerName: name,
-					HostID:        hostID,
-					Message:       "GHCR switch failed on " + s.hostLabel(hostID) + ": " + err.Error(),
-					Timestamp:     time.Now(),
-				})
+				s.tellRemoteFailure(hostID, name, "GHCR switch failed on "+s.hostLabel(hostID)+": ", err)
 			} else {
 				s.deps.Log.Info("remote GHCR switch complete", "name", name, "host", hostID, "ghcr_image", ghcrImage)
 			}

@@ -67,6 +67,10 @@ func (m *mockClusterProvider) AllHostContainers() []RemoteContainer {
 	return nil // not needed for existing tests
 }
 
+func (m *mockClusterProvider) UpdateInFlight(hostID, name string) bool {
+	return hostID == "host-1" && name == "nginx"
+}
+
 func TestNewClusterControllerStartsDisabled(t *testing.T) {
 	cc := NewClusterController()
 	if cc.Enabled() {
@@ -107,6 +111,9 @@ func TestEnabledReturnsFalseWithNoProvider(t *testing.T) {
 	}
 	if err := cc.RollbackRemoteContainer(context.Background(), "h", "c"); err == nil {
 		t.Error("RollbackRemoteContainer() should return error when disabled")
+	}
+	if cc.UpdateInFlight("host-1", "nginx") {
+		t.Error("UpdateInFlight() should return false when disabled")
 	}
 }
 
@@ -177,6 +184,11 @@ func TestSetProviderEnablesAndDelegates(t *testing.T) {
 	}
 	if err := cc.RollbackRemoteContainer(context.Background(), "host-1", "nginx"); err != nil {
 		t.Errorf("RollbackRemoteContainer() error: %v", err)
+	}
+
+	// UpdateInFlight delegates.
+	if !cc.UpdateInFlight("host-1", "nginx") || cc.UpdateInFlight("host-2", "nginx") {
+		t.Error("UpdateInFlight() should report what the provider reports")
 	}
 }
 

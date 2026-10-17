@@ -27,6 +27,23 @@ func Unanswered(err error) bool {
 	return errors.As(err, &un)
 }
 
+// AnsweredError is returned for an update or rollback the agent answered
+// with anything but success: it failed, or a pre-update hook asked to skip
+// it. The hub has already told every open dashboard how it ended, with the
+// agent's result, so a caller does not tell it again.
+type AnsweredError struct {
+	Err error
+}
+
+func (e *AnsweredError) Error() string { return e.Err.Error() }
+func (e *AnsweredError) Unwrap() error { return e.Err }
+
+// Answered reports whether err is an AnsweredError.
+func Answered(err error) bool {
+	var an *AnsweredError
+	return errors.As(err, &an)
+}
+
 // HistoryTime is the time to record a failed remote request's history row
 // at: for an unanswered one, the time its late result will replace it at;
 // otherwise fallback.

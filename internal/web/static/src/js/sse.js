@@ -4,7 +4,7 @@
    11b. Digest Banner
    ============================================================ */
 
-import { showToast, queueBatchToast } from "./utils.js";
+import { showToast, queueBatchToast, toastSubjectFor } from "./utils.js";
 
 // Module-level state shared with other modules via window in main.js.
 var ghcrAlternatives = {};
@@ -206,6 +206,14 @@ function isActionFailure(message) {
     return typeof message === "string" && /^(stop|start|restart|update|rollback) failed\b/.test(message);
 }
 
+// toastSubject names the container or service an event is about, so that
+// its toasts within the batch window are told as one; null when the event
+// names nothing.
+function toastSubject(data) {
+    if (!data || !data.container_name) return null;
+    return toastSubjectFor(data.host_id, data.container_name);
+}
+
 function clearPendingBadge(name, hostId) {
     var key = (hostId || "") + "::" + name;
     delete pendingBadgeActions[key];
@@ -335,7 +343,7 @@ function initSSE() {
                 if (data.message.indexOf("failed") !== -1) toastType = "error";
                 else if (data.message.indexOf("success") !== -1) toastType = "success";
             }
-            queueBatchToast(data.message || ("Update: " + data.container_name), toastType);
+            queueBatchToast(data.message || ("Update: " + data.container_name), toastType, toastSubject(data));
             if (data.container_name) {
                 updateContainerRow(data.container_name, data.host_id);
                 return;
@@ -365,7 +373,7 @@ function initSSE() {
         var data;
         try {
             data = JSON.parse(e.data);
-            queueBatchToast(data.message || "Queue updated", "info");
+            queueBatchToast(data.message || "Queue updated", "info", toastSubject(data));
         } catch (_) { data = {}; }
         if (document.getElementById("container-table")) {
             // Dashboard: refresh the affected row so UPDATE AVAILABLE appears.
@@ -501,7 +509,7 @@ function initSSE() {
     es.addEventListener("service_update", function (e) {
         try {
             var data = JSON.parse(e.data);
-            queueBatchToast(data.message || ("Service: " + data.container_name), "info");
+            queueBatchToast(data.message || ("Service: " + data.container_name), "info", toastSubject(data));
             if (data.container_name) {
                 if (window.refreshServiceRow) window.refreshServiceRow(data.container_name);
                 // Swarm updates converge over 10-30s; do a second refresh.

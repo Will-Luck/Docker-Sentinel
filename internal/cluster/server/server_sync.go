@@ -16,6 +16,7 @@ import (
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/cluster/proto"
+	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 	"github.com/Will-Luck/Docker-Sentinel/internal/selfupdate"
 	"github.com/Will-Luck/Docker-Sentinel/internal/store"
 	"google.golang.org/grpc/credentials"
@@ -69,6 +70,32 @@ func (s *Server) pendingCaller(hostID, requestID string) (waiting, records bool)
 	defer s.pendingMu.Unlock()
 	pr, ok := s.pending[hostID+":"+requestID]
 	return ok, ok && pr.callerRecords
+}
+
+// requestPurpose returns what update request requestID of hostID was for
+// ("update" or "rollback"), whether a caller still waits for it or the hub
+// stopped waiting; "" when the hub does not know the request.
+func (s *Server) requestPurpose(hostID, requestID string) string {
+	if requestID == "" {
+		return ""
+	}
+	key := hostID + ":" + requestID
+	s.pendingMu.Lock()
+	var purpose string
+	pr, ok := s.pending[key]
+	if ok {
+		purpose = pr.purpose
+	}
+	s.pendingMu.Unlock()
+	if ok {
+		return purpose
+	}
+	s.lateMu.Lock()
+	defer s.lateMu.Unlock()
+	if lr, ok := s.late[key]; ok && time.Since(lr.at) <= lateRequestTTL {
+		return lr.purpose
+	}
+	return ""
 }
 
 // registerPending creates a response channel for the given host+request pair.
@@ -175,13 +202,12 @@ func (s *Server) request(ctx context.Context, hostID, what, purpose string, time
 	if err != nil {
 		return nil, err
 	}
-	if callerRecords(ctx) {
-		s.pendingMu.Lock()
-		if pr, ok := s.pending[hostID+":"+reqID]; ok {
-			pr.callerRecords = true
-		}
-		s.pendingMu.Unlock()
+	s.pendingMu.Lock()
+	if pr, ok := s.pending[hostID+":"+reqID]; ok {
+		pr.callerRecords = callerRecords(ctx)
+		pr.purpose = purpose
 	}
+	s.pendingMu.Unlock()
 
 	if err := s.sendPending(hostID, reqID, msg); err != nil {
 		s.cancelPending(hostID, reqID, ch)
@@ -303,9 +329,29 @@ func (s *Server) updateContainerSync(ctx context.Context, hostID, containerName,
 			return nil, err
 		}
 	}
+	// From here the update is under way, whoever asked for it: every open
+	// dashboard is told, and a row fetched until the agent answers shows
+	// it updating (UpdateInFlight). The agent's result has its own event
+	// (handleUpdateResult), which can reach a browser before the update is
+	// out of flight, so a state event follows once it is.
 	key := hostID + "::" + containerName
 	s.inFlight.Add(key)
-	defer s.inFlight.Done(key)
+	s.bus.Publish(events.SSEEvent{
+		Type:          events.EventContainerUpdate,
+		ContainerName: containerName,
+		HostID:        hostID,
+		Message:       purpose + " started",
+		Timestamp:     time.Now(),
+	})
+	defer func() {
+		s.inFlight.Done(key)
+		s.bus.Publish(events.SSEEvent{
+			Type:          events.EventContainerState,
+			ContainerName: containerName,
+			HostID:        hostID,
+			Timestamp:     time.Now(),
+		})
+	}()
 	resp, err := s.request(ctx, hostID, "update result", purpose, updateTimeout, &proto.ServerMessage{
 		Payload: &proto.ServerMessage_UpdateContainer{UpdateContainer: req},
 	})

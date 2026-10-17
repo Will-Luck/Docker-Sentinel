@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,9 +23,11 @@ func (b *blockingUpdateCluster) UpdateRemoteContainer(context.Context, string, s
 	return RemoteUpdated{}, nil
 }
 
-// A remote update announces its start like a local one, and the row is marked
-// updating while the update runs, so a dashboard fetching it shows "Updating".
-func TestRemoteUpdate_StartIsPublishedAndTheRowIsMarkedWhileItRuns(t *testing.T) {
+// The hub announces every remote update it sends, with its result, whoever
+// started it. The dashboard and the API only mark the row updating while
+// the update runs: an event of their own as well would give every open
+// browser two "update started" toasts for one update.
+func TestRemoteUpdate_TheRowIsMarkedWhileItRunsAndOnlyTheHubAnnouncesIt(t *testing.T) {
 	cp := &blockingUpdateCluster{
 		mockClusterProviderWithContainers: mockClusterProviderWithContainers{
 			hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"},
@@ -44,17 +48,6 @@ func TestRemoteUpdate_StartIsPublishedAndTheRowIsMarkedWhileItRuns(t *testing.T)
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 	}
 
-	select {
-	case e := <-ch:
-		if e.Type != events.EventContainerUpdate || e.ContainerName != "web" || e.HostID != "h1" || e.Message != "update started" {
-			t.Fatalf("first event = %+v, want container_update \"update started\" for h1/web", e)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("no start event")
-	}
-
-	// The mark is set while the update runs (the order of mark and event is
-	// not observable from here).
 	if !srv.isRemoteUpdating("h1", "web") {
 		t.Error("the row is not marked updating while the update runs")
 	}
@@ -64,6 +57,9 @@ func TestRemoteUpdate_StartIsPublishedAndTheRowIsMarkedWhileItRuns(t *testing.T)
 	for {
 		select {
 		case e := <-ch:
+			if e.Type == events.EventContainerUpdate {
+				t.Errorf("event %+v from the dashboard: the hub announces remote updates", e)
+			}
 			if e.Type == events.EventContainerState && e.ContainerName == "web" && e.HostID == "h1" {
 				if srv.isRemoteUpdating("h1", "web") {
 					t.Error("the row was refreshed while still marked updating")
@@ -73,5 +69,41 @@ func TestRemoteUpdate_StartIsPublishedAndTheRowIsMarkedWhileItRuns(t *testing.T)
 		case <-deadline:
 			t.Fatal("no state event after the update")
 		}
+	}
+}
+
+// A remote row shows "Updating" while the hub waits for its agent to update
+// or roll it back, whoever started it: a scan (auto policy), a rollback, or
+// another hub client. The dashboard marks only the updates it starts.
+func TestContainerRow_RemoteRowUpdatingWhileTheHubHasItInFlight(t *testing.T) {
+	cp := &mockClusterProviderWithContainers{
+		hosts: []ClusterHost{{ID: "h1", Name: "Agent One"}}, connected: []string{"h1"},
+		containers: []RemoteContainer{{Name: "web", Image: "nginx:1", State: "running", HostID: "h1", HostName: "Agent One"}},
+	}
+	srv := remoteUpdateServer(cp, &recordingHistory{})
+	srv.deps.Policy = newMockPolicyStore()
+	srv.parseTemplates()
+	row := func() string {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/api/containers/web/row?host=h1", nil)
+		r.SetPathValue("name", "web")
+		w := httptest.NewRecorder()
+		srv.handleContainerRow(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("row status = %d: %s", w.Code, w.Body.String())
+		}
+		var body struct{ HTML string }
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.HTML
+	}
+
+	if strings.Contains(row(), "badge-updating") {
+		t.Fatal("the row shows Updating with no update in flight")
+	}
+	cp.inFlight = map[string]bool{"h1::web": true}
+	if !strings.Contains(row(), "badge-updating") {
+		t.Error("the row does not show Updating while the hub has its update in flight")
 	}
 }

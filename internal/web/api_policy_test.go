@@ -106,6 +106,9 @@ type mockClusterProviderWithContainers struct {
 	hosts      []ClusterHost
 	connected  []string
 	containers []RemoteContainer
+	// inFlight holds the "hostID::name" keys of the updates the hub waits
+	// for an agent to finish.
+	inFlight map[string]bool
 }
 
 func (m *mockClusterProviderWithContainers) AllHosts() []ClusterHost { return m.hosts }
@@ -147,6 +150,10 @@ func (m *mockClusterProviderWithContainers) RollbackRemoteContainer(_ context.Co
 
 func (m *mockClusterProviderWithContainers) AllHostContainers() []RemoteContainer {
 	return m.containers
+}
+
+func (m *mockClusterProviderWithContainers) UpdateInFlight(hostID, name string) bool {
+	return m.inFlight[hostID+"::"+name]
 }
 
 // ---------------------------------------------------------------------------

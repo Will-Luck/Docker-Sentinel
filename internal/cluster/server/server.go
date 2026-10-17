@@ -134,6 +134,9 @@ type pendingRequest struct {
 	// callerRecords is whether the caller records and notifies what it
 	// asked for (WithCallerRecords).
 	callerRecords bool
+	// purpose is what an update request is for ("update" or "rollback"),
+	// empty for other requests.
+	purpose string
 	// stream is the stream the request went out on, nil until it is sent.
 	// Only that stream's cleanup fails the request: a reply can only come
 	// back on the stream that carried the request.

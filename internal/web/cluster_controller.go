@@ -162,6 +162,13 @@ func (c *ClusterController) UpdateRemoteContainer(ctx context.Context, hostID, c
 	return p.UpdateRemoteContainer(ctx, hostID, containerName, targetImage, targetDigest)
 }
 
+// UpdateInFlight reports whether the hub waits for an agent to update or
+// roll back the container name on hostID. False when clustering is disabled.
+func (c *ClusterController) UpdateInFlight(hostID, name string) bool {
+	p := c.current()
+	return p != nil && p.UpdateInFlight(hostID, name)
+}
+
 // current returns the provider, nil when clustering is disabled.
 func (c *ClusterController) current() ClusterProvider {
 	c.mu.RLock()

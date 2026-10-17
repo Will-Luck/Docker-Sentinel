@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
+	"github.com/Will-Luck/Docker-Sentinel/internal/cluster"
 	"github.com/Will-Luck/Docker-Sentinel/internal/events"
 )
 
@@ -100,24 +101,14 @@ type Server struct {
 	authLimiter *rateLimiter
 }
 
-// markRemoteUpdating marks a remote container as updating and tells every
-// open dashboard, as a local update does, so each fetches the row while the
-// mark is set and shows "Updating" for the whole update. The mark is stored
-// before the event, so the row fetch the event triggers sees it.
-//
-// Known limit: the event goes out before the hub can refuse the update (a
-// paused host, a failed signature check), so a refused remote update shows
-// "update started" and then the failure, where a local refusal shows only the
-// failure.
+// markRemoteUpdating marks a remote container as updating from the moment
+// the dashboard or the API starts its update, before the hub has checked
+// it. The hub tells every open dashboard that the update started once its
+// own checks pass (an update it refuses is not announced as started),
+// whoever started it, so nothing is published here: a second start event
+// would be a second toast for the same update.
 func (s *Server) markRemoteUpdating(hostID, name string) {
 	s.pendingRemoteUpdates.Store(hostID+"::"+name, struct{}{})
-	s.deps.EventBus.Publish(events.SSEEvent{
-		Type:          events.EventContainerUpdate,
-		ContainerName: name,
-		HostID:        hostID,
-		Message:       "update started",
-		Timestamp:     time.Now(),
-	})
 }
 
 func (s *Server) clearRemoteUpdating(hostID, name string) {
@@ -149,9 +140,34 @@ func (s *Server) finishRemoteUpdating(hostID, name string) {
 	})
 }
 
+// tellRemoteFailure tells every open dashboard that a remote update or
+// rollback the dashboard or the API started has failed: msg, then why. One
+// the agent answered (cluster.AnsweredError) is not told again, as the hub
+// told its end with the agent's result. Only the dashboard can tell the
+// others: a refusal before anything was sent, or a request the agent did
+// not answer.
+func (s *Server) tellRemoteFailure(hostID, name, msg string, err error) {
+	if cluster.Answered(err) {
+		return
+	}
+	s.deps.EventBus.Publish(events.SSEEvent{
+		Type:          events.EventContainerUpdate,
+		ContainerName: name,
+		HostID:        hostID,
+		Message:       msg + err.Error(),
+		Timestamp:     time.Now(),
+	})
+}
+
+// isRemoteUpdating reports whether a remote container's row shows it
+// updating: the dashboard or the API started its update and it has not
+// finished (with the hold), or the hub waits for its agent to update or roll
+// it back, whoever asked (a scan, a rollback, another hub client).
 func (s *Server) isRemoteUpdating(hostID, name string) bool {
-	_, ok := s.pendingRemoteUpdates.Load(hostID + "::" + name)
-	return ok
+	if _, ok := s.pendingRemoteUpdates.Load(hostID + "::" + name); ok {
+		return true
+	}
+	return s.deps.Cluster != nil && s.deps.Cluster.UpdateInFlight(hostID, name)
 }
 
 // SetSetupDeadline sets the time limit for first-run setup.

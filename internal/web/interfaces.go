@@ -223,6 +223,9 @@ type ClusterProvider interface {
 	RollbackRemoteContainer(ctx context.Context, hostID, containerName string) error
 	// AllHostContainers returns containers from all connected hosts.
 	AllHostContainers() []RemoteContainer
+	// UpdateInFlight reports whether the hub waits for the agent on hostID
+	// to update or roll back the container name, whoever asked for it.
+	UpdateInFlight(hostID, name string) bool
 }
 
 // RemoteUpdated is what a remote update changed, as the agent reports it.

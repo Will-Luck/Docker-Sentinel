@@ -81,10 +81,22 @@
   var _toastBatch = [];
   var _toastBatchTimer = null;
   var _toastBatchWindow = 1500;
-  function showToast(message, type) {
-    _showToastImmediate(message, type);
+  var _clickToasts = /* @__PURE__ */ Object.create(null);
+  function showToast(message, type, subject) {
+    if (!subject) {
+      _showToastImmediate(message, type);
+      return;
+    }
+    var key = subject.key;
+    var shown = _showToastImmediate(message, type, function() {
+      if (_clickToasts[key] === shown) delete _clickToasts[key];
+    });
+    _clickToasts[key] = shown;
   }
-  function _showToastImmediate(message, type) {
+  function toastSubjectFor(hostId, name) {
+    return { key: (hostId || "") + "::" + name, name };
+  }
+  function _showToastImmediate(message, type, onFade) {
     var container = document.getElementById("toast-container");
     if (!container) {
       container = document.createElement("div");
@@ -92,40 +104,100 @@
       container.className = "toast-container";
       document.body.appendChild(container);
     }
-    var toast = document.createElement("div");
+    var shown = { el: document.createElement("div"), fade: null, onFade: onFade || null };
+    _setToast(shown, message, type);
+    container.appendChild(shown.el);
+    return shown;
+  }
+  function _setToast(shown, message, type) {
+    var toast = shown.el;
     toast.className = "toast toast-" + type;
     toast.textContent = message;
-    container.appendChild(toast);
-    setTimeout(function() {
+    if (shown.fade) clearTimeout(shown.fade);
+    shown.fade = setTimeout(function() {
+      if (shown.onFade) shown.onFade();
       toast.style.animation = "fadeOut 0.3s ease-out forwards";
       setTimeout(function() {
         if (toast.parentNode) toast.parentNode.removeChild(toast);
       }, 300);
     }, 4e3);
   }
-  function queueBatchToast(message, type) {
-    _toastBatch.push({ message, type });
+  function queueBatchToast(message, type, subject) {
+    _toastBatch.push({ message, type, subject: subject || null });
     if (_toastBatchTimer) clearTimeout(_toastBatchTimer);
     _toastBatchTimer = setTimeout(function() {
       _flushBatchToasts();
     }, _toastBatchWindow);
+  }
+  function _groupBySubject(batch) {
+    var groups = [];
+    var byKey = /* @__PURE__ */ Object.create(null);
+    for (var i = 0; i < batch.length; i++) {
+      var t = batch[i];
+      var g = t.subject ? byKey[t.subject.key] : null;
+      if (!g) {
+        g = { key: t.subject ? t.subject.key : "", name: t.subject ? t.subject.name : "", toasts: [] };
+        groups.push(g);
+        if (t.subject) byKey[t.subject.key] = g;
+      }
+      g.toasts.push(t);
+    }
+    return groups;
+  }
+  function _groupText(g) {
+    var msgs = [];
+    for (var i = 0; i < g.toasts.length; i++) {
+      if (msgs.indexOf(g.toasts[i].message) === -1) msgs.push(g.toasts[i].message);
+    }
+    var text = msgs.join(", ");
+    if (g.name && !_namesSubject(text, g.name)) text = g.name + ": " + text;
+    return text;
+  }
+  function _namesSubject(text, name) {
+    var escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp("(^|[^A-Za-z0-9_.-])" + escaped + "($|[^A-Za-z0-9_.-])").test(text);
+  }
+  var _toastSeverity = { info: 0, success: 1, warning: 2, error: 3 };
+  function _groupType(g) {
+    var type = g.toasts[0].type;
+    for (var i = 1; i < g.toasts.length; i++) {
+      if ((_toastSeverity[g.toasts[i].type] || 0) > (_toastSeverity[type] || 0)) type = g.toasts[i].type;
+    }
+    return type;
+  }
+  function _isQueueMessage(message) {
+    var msg = message.toLowerCase();
+    if (msg.indexOf("update") !== -1 || msg.indexOf("available") !== -1) return false;
+    return msg.indexOf("queue") !== -1 || msg.indexOf("added") !== -1;
   }
   function _flushBatchToasts() {
     var batch = _toastBatch;
     _toastBatch = [];
     _toastBatchTimer = null;
     if (batch.length === 0) return;
-    if (batch.length === 1) {
-      _showToastImmediate(batch[0].message, batch[0].type);
+    var groups = _groupBySubject(batch);
+    if (groups.length === 1) {
+      var g = groups[0];
+      var clicked = g.key ? _clickToasts[g.key] : null;
+      if (clicked) {
+        delete _clickToasts[g.key];
+        _setToast(clicked, _groupText(g), _groupType(g));
+      } else {
+        _showToastImmediate(_groupText(g), _groupType(g));
+      }
       return;
     }
     var updates = 0;
     var queued = 0;
-    for (var i = 0; i < batch.length; i++) {
-      var msg = batch[i].message.toLowerCase();
-      if (msg.indexOf("update") !== -1 || msg.indexOf("available") !== -1) updates++;
-      else if (msg.indexOf("queue") !== -1 || msg.indexOf("added") !== -1) queued++;
-      else updates++;
+    for (var i = 0; i < groups.length; i++) {
+      var hasUpdate = false;
+      var hasQueued = false;
+      for (var j = 0; j < groups[i].toasts.length; j++) {
+        if (_isQueueMessage(groups[i].toasts[j].message)) hasQueued = true;
+        else hasUpdate = true;
+      }
+      if (hasUpdate) updates++;
+      if (hasQueued) queued++;
     }
     var parts = [];
     if (updates > 0) parts.push(updates + " update" + (updates === 1 ? "" : "s") + " detected");
@@ -212,7 +284,7 @@
       });
     });
   }
-  function apiPost2(url, body, successMsg, errorMsg, triggerEl, onSuccess, onError) {
+  function apiPost2(url, body, successMsg, errorMsg, triggerEl, onSuccess, onError, subject) {
     var opts = { method: "POST" };
     if (body) {
       opts.headers = { "Content-Type": "application/json" };
@@ -234,7 +306,7 @@
       });
     }).then(function(result) {
       if (result.ok) {
-        showToast(result.data.message || successMsg, "success");
+        showToast(result.data.message || successMsg, "success", subject);
         if (onSuccess) onSuccess(result.data);
       } else {
         showToast(result.data.error || errorMsg, "error");
@@ -1571,6 +1643,11 @@
     var chevron = row.querySelector(".queue-expand");
     if (chevron) chevron.textContent = visible ? "\u25B8" : "\u25BE";
   }
+  function queueKeySubject(key) {
+    var i = key.indexOf("::");
+    if (i === -1) return toastSubjectFor("", key);
+    return toastSubjectFor(key.slice(0, i), key.slice(i + 2));
+  }
   function approveUpdate(key, event) {
     var btn = event && event.target ? event.target.closest(".btn") : null;
     apiPost2(
@@ -1581,7 +1658,9 @@
       btn,
       function() {
         removeQueueRow(btn);
-      }
+      },
+      null,
+      queueKeySubject(key)
     );
   }
   function ignoreUpdate(key, event) {
@@ -1752,7 +1831,8 @@
           window._updateLoadingBtns[key].disabled = false;
           delete window._updateLoadingBtns[key];
         }
-      }
+      },
+      toastSubjectFor(hostId, name)
     );
   }
   function triggerCheck(name, event, hostId) {
@@ -1790,7 +1870,10 @@
         null,
         "Rollback started for " + name + " on " + hostName,
         "Failed to trigger rollback",
-        btn
+        btn,
+        null,
+        null,
+        toastSubjectFor(hostId, name)
       );
     });
   }
@@ -2614,6 +2697,10 @@
   function isActionFailure(message) {
     return typeof message === "string" && /^(stop|start|restart|update|rollback) failed\b/.test(message);
   }
+  function toastSubject(data) {
+    if (!data || !data.container_name) return null;
+    return toastSubjectFor(data.host_id, data.container_name);
+  }
   function clearPendingBadge(name, hostId) {
     var key = (hostId || "") + "::" + name;
     delete pendingBadgeActions[key];
@@ -2708,7 +2795,7 @@
           if (data.message.indexOf("failed") !== -1) toastType = "error";
           else if (data.message.indexOf("success") !== -1) toastType = "success";
         }
-        queueBatchToast(data.message || "Update: " + data.container_name, toastType);
+        queueBatchToast(data.message || "Update: " + data.container_name, toastType, toastSubject(data));
         if (data.container_name) {
           updateContainerRow(data.container_name, data.host_id);
           return;
@@ -2736,7 +2823,7 @@
       var data;
       try {
         data = JSON.parse(e.data);
-        queueBatchToast(data.message || "Queue updated", "info");
+        queueBatchToast(data.message || "Queue updated", "info", toastSubject(data));
       } catch (_) {
         data = {};
       }
@@ -2863,7 +2950,7 @@
     es.addEventListener("service_update", function(e) {
       try {
         var data = JSON.parse(e.data);
-        queueBatchToast(data.message || "Service: " + data.container_name, "info");
+        queueBatchToast(data.message || "Service: " + data.container_name, "info", toastSubject(data));
         if (data.container_name) {
           if (window.refreshServiceRow) window.refreshServiceRow(data.container_name);
           setTimeout(function() {

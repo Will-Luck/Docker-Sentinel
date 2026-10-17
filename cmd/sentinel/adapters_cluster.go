@@ -147,6 +147,12 @@ func (a *clusterAdapter) DiscardRemoteSwap(ctx context.Context, hostID, name str
 	return a.srv.DiscardSwapSync(ctx, hostID, name)
 }
 
+// UpdateInFlight reports whether the hub waits for an agent to update or
+// roll back a container, so its row shows it updating whoever started it.
+func (a *clusterAdapter) UpdateInFlight(hostID, name string) bool {
+	return a.srv.UpdateInFlight(hostID, name)
+}
+
 func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, containerName, targetImage, targetDigest string) (web.RemoteUpdated, error) {
 	hostName, oldImage, changes := hostID, "", containerName
 	var labels map[string]string
@@ -172,9 +178,32 @@ func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, cont
 	// anything is sent, and, as a local one, without notifications (the
 	// dispatch below returns the refusal).
 	announce := a.updater != nil && !engine.IsUnverifiable(a.updater.RemoteRefusal(labels))
-	if announce {
-		a.updater.NotifyRemote(ctx, hostName, changes, oldImage, nil)
+	// The start notification is sent beside the update: a slow or failing
+	// notification service (whose sends are retried) holds up neither the
+	// hub's start event, which has every open dashboard show the container
+	// updating, nor the update. The outcome is notified after it, and this
+	// returns once it is sent. An agent's update of itself is the exception:
+	// it is answered as pending and the hub notifies its outcome on its own,
+	// so its start is sent first, before the update.
+	startSent := make(chan struct{})
+	switch {
+	case !announce:
+		close(startSent)
+	case labels["sentinel.self"] == "true":
+		a.updater.NotifyRemote(context.WithoutCancel(ctx), hostName, changes, oldImage, nil)
+		close(startSent)
+	default:
+		go func() {
+			defer close(startSent)
+			defer func() {
+				if rec := recover(); rec != nil && a.log != nil {
+					a.log.Error("panic in remote update start notification", "host", hostID, "container", containerName, "panic", rec)
+				}
+			}()
+			a.updater.NotifyRemote(context.WithoutCancel(ctx), hostName, changes, oldImage, nil)
+		}()
 	}
+	defer func() { <-startSent }()
 	// The dashboard and the API record the history row themselves.
 	ur, err := a.srv.UpdateContainerSync(clusterserver.WithCallerRecords(ctx), hostID, containerName, targetImage, targetDigest)
 	if err == nil && ur.GetOutcome() == cluster.OutcomePending {
@@ -183,6 +212,7 @@ func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, cont
 		return web.RemoteUpdated{ContainerName: ur.GetContainerName(), OldImage: ur.GetOldImage(), NewImage: ur.GetNewImage(), Pending: true}, nil
 	}
 	if announce {
+		<-startSent
 		res := engine.RemoteUpdateResult{Outcome: "failed", NewImage: targetImage}
 		if err != nil {
 			res.Error = err.Error()
@@ -202,19 +232,23 @@ func (a *clusterAdapter) UpdateRemoteContainer(ctx context.Context, hostID, cont
 }
 
 // remoteResultErr turns an agent's answer to an update or rollback (what)
-// into the caller's error: nil for success, cluster.ErrUpdateSkipped when
-// a pre-update hook asked to skip, else the agent's error.
+// into the caller's error: nil for success, else a cluster.AnsweredError
+// (the hub has told every dashboard how it ended) holding
+// cluster.ErrUpdateSkipped when a pre-update hook asked to skip, else the
+// agent's error.
 func remoteResultErr(ur *proto.UpdateResult, what string) error {
-	switch ur.Outcome {
-	case "success":
+	var err error
+	switch {
+	case ur.Outcome == "success":
 		return nil
-	case "skipped":
-		return fmt.Errorf("%w (exit 75)", cluster.ErrUpdateSkipped)
+	case ur.Outcome == "skipped":
+		err = fmt.Errorf("%w (exit 75)", cluster.ErrUpdateSkipped)
+	case ur.Error != "":
+		err = errors.New(ur.Error)
+	default:
+		err = fmt.Errorf("%s failed", what)
 	}
-	if ur.Error != "" {
-		return errors.New(ur.Error)
-	}
-	return fmt.Errorf("%s failed", what)
+	return &cluster.AnsweredError{Err: err}
 }
 
 func (a *clusterAdapter) RemoteContainerAction(ctx context.Context, hostID, containerName, action string) error {
