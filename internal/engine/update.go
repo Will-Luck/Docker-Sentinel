@@ -190,10 +190,13 @@ func (u *Updater) updateContainer(ctx context.Context, id, name, targetImage str
 	}
 
 	// 3.5 Image ID guard: if the pull resolved to the same image, skip the update.
+	// Only a re-pull of the running reference is a no-op: a new reference (a
+	// newer tag, or the GHCR copy of the image) still replaces the container,
+	// so it runs the reference asked for even when the image is the same.
 	newImageID, idErr := u.docker.ImageID(ctx, pullImage)
 	if idErr != nil {
 		u.log.Debug("could not resolve new image ID", "image", pullImage, "error", idErr)
-	} else if oldImageID != "" && newImageID == oldImageID {
+	} else if oldImageID != "" && newImageID == oldImageID && pullImage == oldImage {
 		u.log.Info("pull resolved to same image, skipping update", "name", name, "imageID", oldImageID)
 		_ = u.store.SetMaintenance(name, false)
 		duration := u.clock.Since(start)

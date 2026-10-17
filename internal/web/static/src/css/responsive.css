@@ -24,11 +24,13 @@
 }
 
 /* The nav bar holds up to eight links (Cluster only in cluster mode), the
-   queue badge, the connection status and the user menu: about 1270px at the
-   desktop padding with all of them shown, so it collapses to the hamburger
-   menu at 1280px and below instead of overflowing. The nav stays sticky; a
-   sticky element anchors the absolute dropdown as well as a relative one. */
-@media (max-width: 1280px) {
+   queue badge, the connection status and the user menu: 1326px at the
+   desktop padding with all of them shown and the longest status
+   ("Reconnecting…"). It collapses to the hamburger menu at 1360px and below,
+   leaving room for a classic scrollbar and a wider queue badge, instead of
+   overflowing. The nav stays sticky; a sticky element anchors the absolute
+   dropdown as well as a relative one. */
+@media (max-width: 1360px) {
     .nav-hamburger {
         display: flex;
     }

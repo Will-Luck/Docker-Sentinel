@@ -1053,6 +1053,43 @@ func TestUpdateContainerImageIDGuardSkipsNoChange(t *testing.T) {
 	}
 }
 
+// The GHCR switch moves a container to the GHCR copy of the image it runs,
+// which is usually the same image: the guard must not skip it, or the
+// container stays on Docker Hub and the switch does nothing.
+func TestUpdateContainerImageIDGuardReplacesForNewReference(t *testing.T) {
+	mock := newMockDocker()
+	mock.inspectResults["aaa"] = container.InspectResponse{
+		ID:              "aaa",
+		Name:            "/whoami",
+		Image:           "sha256:same123",
+		Config:          &container.Config{Image: "traefik/whoami:v1.10.3", Labels: map[string]string{}},
+		HostConfig:      &container.HostConfig{},
+		NetworkSettings: &container.NetworkSettings{},
+	}
+	mock.imageIDs["ghcr.io/traefik/whoami:v1.10.3"] = "sha256:same123"
+	mock.mirrorCreate = true
+
+	u, _ := newTestUpdater(t, mock)
+	if err := u.UpdateContainer(context.Background(), "aaa", "whoami", "ghcr.io/traefik/whoami:v1.10.3"); err != nil {
+		t.Fatalf("UpdateContainer: %v", err)
+	}
+
+	cfg := mock.createConfigs["whoami"]
+	if cfg == nil {
+		t.Fatalf("createCalls = %v, want the container replaced", mock.createCalls)
+	}
+	if cfg.Image != "ghcr.io/traefik/whoami:v1.10.3" {
+		t.Errorf("new container image = %q, want the GHCR reference", cfg.Image)
+	}
+	history, err := u.store.ListHistory(10, "")
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if len(history) != 1 || history[0].Outcome != "success" {
+		t.Errorf("history = %+v, want one success record", history)
+	}
+}
+
 func TestUpdateContainerImageIDGuardCachesDistributionDigest(t *testing.T) {
 	mock := newMockDocker()
 

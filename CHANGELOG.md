@@ -101,14 +101,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Updates Applied" on the About page counts only updates that were
   applied, not every history row (scans, failures, dry runs and rollbacks
   are left out).
-- The navigation bar no longer overflows on narrower windows: below
-  1280 px it collapses to the menu button.
+- The navigation bar no longer overflows on narrower windows: at 1360 px
+  and narrower it collapses to the menu button.
 - The container versions list (`GET /api/containers/{name}/versions`)
   follows the container's Version Scope, the same as the container page
   and the update check, instead of always using the Relaxed scope.
 - The GHCR switch (`POST /api/containers/{name}/switch-ghcr`) refuses a
   container pinned by digest (`image@sha256:...`) instead of moving it to
   the `:latest` tag, which can be another version.
+- The GHCR switch on a container on the hub's own host changed nothing
+  when the GHCR copy was the same image, which is the usual case: it was
+  recorded as unchanged and the container stayed on its Docker Hub image.
+  It now moves the container to the GHCR image. An update to a newer tag
+  that points at the same image likewise moves the container to that tag,
+  instead of being recorded as unchanged and found again by the next scan.
 
 ## [3.0.1] - 2026-10-16
 

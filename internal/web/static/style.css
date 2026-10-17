@@ -4060,7 +4060,7 @@ body.settings-simple [data-advanced] {
   background: var(--bg-hover);
   color: var(--fg-primary);
 }
-@media (max-width: 1280px) {
+@media (max-width: 1360px) {
   .nav-hamburger {
     display: flex;
   }
