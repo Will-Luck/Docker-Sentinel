@@ -59,7 +59,7 @@ func (h *fakeHub) Channel(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 }
 
 // startFakeHub serves h with mTLS from the CA in caDir.
-func startFakeHub(t *testing.T, caDir string, h *fakeHub, opts ...grpc.ServerOption) string {
+func startFakeHub(t *testing.T, caDir string, h proto.AgentServiceServer, opts ...grpc.ServerOption) string {
 	t.Helper()
 	ca, err := cluster.EnsureCA(caDir)
 	if err != nil {

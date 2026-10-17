@@ -163,15 +163,8 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var targetView *containerView
-	running, pending := 0, 0
 	for _, c := range containers {
 		n := containerName(c)
-		if c.State == "running" {
-			running++
-		}
-		if pendingNames[n] {
-			pending++
-		}
 		if n == name && hostFilter == "" {
 			maintenance, err := s.deps.Store.GetMaintenance(n)
 			if err != nil {
@@ -318,9 +311,12 @@ func (s *Server) handleContainerRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The browser puts these in the stat tiles, so they count the fleet as
+	// /api/stats does, not only this host.
+	total, running, pending := s.dashboardCounts(r.Context(), containers)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"html":    buf.String(),
-		"total":   len(containers),
+		"total":   total,
 		"running": running,
 		"pending": pending,
 	})
@@ -335,8 +331,21 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	total, running := len(containers), 0
-	for _, c := range containers {
+	total, running, pending := s.dashboardCounts(r.Context(), containers)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total":   total,
+		"running": running,
+		"pending": pending,
+	})
+}
+
+// dashboardCounts returns what the dashboard's stat tiles show, for the
+// whole fleet: the containers on this host (local, as listed), its Swarm
+// services and the containers of every cluster host; how many of those
+// containers are running; and the updates in the queue.
+func (s *Server) dashboardCounts(ctx context.Context, local []ContainerSummary) (total, running, pending int) {
+	total = len(local)
+	for _, c := range local {
 		if c.State == "running" {
 			running++
 		}
@@ -344,7 +353,7 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 
 	// Include Swarm services in total count.
 	if s.deps.Swarm != nil && s.deps.Swarm.IsSwarmMode() {
-		services, err := s.deps.Swarm.ListServices(r.Context())
+		services, err := s.deps.Swarm.ListServices(ctx)
 		if err == nil {
 			total += len(services)
 		}
@@ -360,11 +369,7 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"total":   total,
-		"running": running,
-		"pending": len(s.deps.Queue.List()),
-	})
+	return total, running, len(s.deps.Queue.List())
 }
 
 // handleCluster renders the cluster management page with host cards and enrollment.

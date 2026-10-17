@@ -349,17 +349,58 @@ func (r *Registry) RefreshEngineSharing(hostID string) []string {
 	return nil
 }
 
-// UpdateContainers replaces the known container list for a host.
+// UpdateContainers replaces the known container list for a host and says
+// how it differs from the list it replaced.
 // Only stored in memory -- the server doesn't persist remote container lists
 // because the agent will re-report them on reconnection.
-func (r *Registry) UpdateContainers(hostID string, containers []cluster.ContainerInfo) {
+func (r *Registry) UpdateContainers(hostID string, containers []cluster.ContainerInfo) ListChange {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if hs, ok := r.hosts[hostID]; ok {
-		hs.Containers = containers
-		hs.LastReport = time.Now()
+	hs, ok := r.hosts[hostID]
+	if !ok {
+		return ListChange{}
 	}
+	change := diffContainers(hs.Containers, containers)
+	hs.Containers = containers
+	hs.LastReport = time.Now()
+	return change
+}
+
+// ListChange is how a host's new container list differs from the one it
+// replaced, in what the dashboard shows of the host.
+type ListChange struct {
+	// Names is set when the set of container names changed: a container
+	// was created, removed or renamed, so the host has other rows.
+	Names bool
+	// Rows names the containers in both lists whose row changed: their
+	// state, image reference or container ID. A container's ports and
+	// labels change only when it is recreated, which gives it a new ID.
+	Rows []string
+}
+
+// diffContainers compares two container lists of one host by name. The
+// order of a list carries no meaning.
+func diffContainers(old, cur []cluster.ContainerInfo) ListChange {
+	before := make(map[string]cluster.ContainerInfo, len(old))
+	for _, c := range old {
+		before[c.Name] = c
+	}
+	var change ListChange
+	if len(before) != len(cur) {
+		change.Names = true
+	}
+	for _, c := range cur {
+		prev, ok := before[c.Name]
+		if !ok {
+			change.Names = true
+			continue
+		}
+		if prev.ID != c.ID || prev.State != c.State || prev.Image != c.Image {
+			change.Rows = append(change.Rows, c.Name)
+		}
+	}
+	return change
 }
 
 // UpdateContainerState patches the State field of a single container in the

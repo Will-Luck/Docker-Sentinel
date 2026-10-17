@@ -467,6 +467,13 @@ func (a *Agent) recoverLoop(ctx context.Context) {
 // bidirectional channel, and runs the heartbeat + receive loops. Returns
 // on any stream error (caller handles reconnect).
 func (a *Agent) runSession(ctx context.Context) error {
+	// The session returns only once its events loop has ended, and waits
+	// for it after the connection is closed, so a list it is sending fails
+	// at once. A loop that outlived its session would keep a subscription
+	// to the daemon's events for each reconnect.
+	var eventsLoop sync.WaitGroup
+	defer eventsLoop.Wait()
+
 	if err := a.connect(ctx); err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -551,6 +558,17 @@ func (a *Agent) runSession(ctx context.Context) error {
 	go func() { errCh <- a.heartbeatLoop(sessCtx, stream) }()
 	go func() { errCh <- a.receiveLoop(ctx, stream) }()
 	go func() { errCh <- a.renewalLoop(sessCtx, stream) }()
+
+	// Container events send the list as the host changes. The loop ends
+	// with the session and never writes to errCh: a failure of the Docker
+	// event stream is retried there and must not drop this session.
+	if src, ok := a.docker.(containerEventSource); ok {
+		eventsLoop.Go(func() {
+			a.watchContainerEvents(sessCtx, src, func(ctx context.Context) error {
+				return a.handleListContainers(ctx, stream, "")
+			})
+		})
+	}
 
 	// First error tears down the session.
 	return <-errCh

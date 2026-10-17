@@ -35,7 +35,9 @@ func (a *Agent) sendMsg(stream proto.AgentService_ChannelClient, msg *proto.Agen
 // heartbeatInterval is how often the agent sends a heartbeat, and
 // listRefreshEvery how many heartbeats apart it also sends its container
 // list (5 minutes), so the hub's view of the host does not wait for the
-// next scan. Variables so tests can shorten them.
+// next scan. With container events (events.go) the list goes out within
+// seconds of a change, and this resend is the safety net for a change no
+// event reported. Variables so tests can shorten them.
 var (
 	heartbeatInterval = 30 * time.Second
 	listRefreshEvery  = 10

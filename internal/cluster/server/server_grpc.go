@@ -431,7 +431,7 @@ func (s *Server) ReportState(ctx context.Context, report *proto.StateReport) (*p
 	}
 
 	containers := protoToContainers(report.Containers)
-	s.registry.UpdateContainers(hostID, containers)
+	s.publishListChange(hostID, s.registry.UpdateContainers(hostID, containers))
 	if err := s.registry.UpdateAgentInfo(hostID, report.AgentVersion, report.HostName, report.SupportedFeatures); err != nil {
 		s.log.Warn("failed to store the agent's version", "hostID", hostID, "error", err)
 	}
@@ -531,6 +531,27 @@ func (s *Server) handleHeartbeat(hostID string, as *agentStream, hb *proto.Heart
 	s.syncSettings(as)
 }
 
+// maxRowEvents is the most container rows one list refreshes one by one: a
+// list that changes more reloads the dashboard once instead, rather than
+// have each browser fetch every row and overrun its SSE buffer (64 events).
+const maxRowEvents = 10
+
+// publishListChange tells open dashboards what a host's new container list
+// changed: a container_state event with no container name reloads the
+// page (another set of containers), one naming a container refreshes its
+// row. A list that changes nothing publishes nothing, so the agent's
+// regular resend costs the browsers nothing.
+func (s *Server) publishListChange(hostID string, change ListChange) {
+	now := time.Now()
+	if change.Names || len(change.Rows) > maxRowEvents {
+		s.bus.Publish(events.SSEEvent{Type: events.EventContainerState, HostID: hostID, Timestamp: now})
+		return
+	}
+	for _, name := range change.Rows {
+		s.bus.Publish(events.SSEEvent{Type: events.EventContainerState, ContainerName: name, HostID: hostID, Timestamp: now})
+	}
+}
+
 func (s *Server) handleContainerList(hostID string, msg *proto.AgentMessage, cl *proto.ContainerList) {
 	if cl.GetError() != "" {
 		// The agent could not list its containers. Keep the last known
@@ -543,7 +564,7 @@ func (s *Server) handleContainerList(hostID string, msg *proto.AgentMessage, cl 
 	}
 
 	containers := protoToContainers(cl.Containers)
-	s.registry.UpdateContainers(hostID, containers)
+	s.publishListChange(hostID, s.registry.UpdateContainers(hostID, containers))
 
 	s.log.Debug("container list received",
 		"hostID", hostID,

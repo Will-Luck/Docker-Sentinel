@@ -387,6 +387,14 @@ func (a *Agent) endUpdate(name string) {
 	}
 }
 
+// updatesRunning reports whether an update of a container on this host is
+// under way.
+func (a *Agent) updatesRunning() bool {
+	a.updatingMu.Lock()
+	defer a.updatingMu.Unlock()
+	return len(a.updating) > 0
+}
+
 // handleContainerAction executes a stop, start, or restart action on a
 // named container and sends the result back to the server.
 func (a *Agent) handleContainerAction(ctx context.Context, stream proto.AgentService_ChannelClient, req *proto.ContainerActionRequest, requestID string) error {
