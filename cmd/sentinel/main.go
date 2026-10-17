@@ -16,8 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-webauthn/webauthn/webauthn"
-
 	"github.com/Will-Luck/Docker-Sentinel/internal/auth"
 	"github.com/Will-Luck/Docker-Sentinel/internal/backup"
 	"github.com/Will-Luck/Docker-Sentinel/internal/clock"
@@ -820,20 +818,9 @@ func main() {
 			srv.SetScanGate(scanGate)
 		}
 
-		// Configure WebAuthn passkeys if RPID is set.
-		if cfg.WebAuthnEnabled() {
-			wa, waErr := webauthn.New(&webauthn.Config{
-				RPDisplayName: cfg.WebAuthnDisplayName,
-				RPID:          cfg.WebAuthnRPID,
-				RPOrigins:     cfg.WebAuthnOriginList(),
-			})
-			if waErr != nil {
-				log.Error("failed to create WebAuthn instance", "error", waErr)
-				os.Exit(1)
-			}
-			srv.SetWebAuthn(wa)
-			log.Info("webauthn passkeys enabled", "rpid", cfg.WebAuthnRPID, "origins", cfg.WebAuthnOrigins)
-		}
+		// Configure WebAuthn passkeys if RPID is set. An unusable RPID turns
+		// passkeys off (logged) and start-up carries on.
+		setupPasskeys(cfg, srv, log.Logger)
 
 		// Configure OIDC provider if settings are present.
 		// Load OIDC group mapping configuration.

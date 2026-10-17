@@ -1,0 +1,10 @@
+{
+  "library": "github.com/go-webauthn/webauthn v0.15.0",
+  "rp_id": "sentinel.example.com",
+  "origin": "https://sentinel.example.com",
+  "username": "alice",
+  "user_id": "3e19e035218ee665",
+  "user_handle": "OM0wpyl0bzsayttzMuSEcSOcqk0BQl_PcqesHDcMcqFSG7XRWpSJ7niSfxny-9DquhhH0nhhFFtbgBFl0a_RWw",
+  "stored_record": "{\"id\":\"XgZsHnp4kxtyUaeRt+qdcQ==\",\"public_key\":\"pQECAyYgASFYICOXItpapstn/hJRdgmKXsWypvRb/XCpEgzOfWoLM1K3Ilggrgs65JKtt0SWRFjjK5r/7cyFfzvPHH0GLJJ57yaPrqI=\",\"attestation_type\":\"none\",\"transport\":[\"internal\",\"hybrid\"],\"flags\":{\"user_present\":true,\"user_verified\":true,\"backup_eligible\":true,\"backup_state\":true},\"authenticator\":{\"aaguid\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"sign_count\":0,\"clone_warning\":false,\"attachment\":\"\"},\"user_id\":\"3e19e035218ee665\",\"name\":\"Passkey\",\"created_at\":\"2026-10-16T22:56:19.400706341Z\"}",
+  "priv_pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg6MsSX0wi7VddHi_LwJtzyRo0fXpMz4oGwMkV1k81pbShRANCAAQjlyLaWqbLZ_4SUXYJil7Fsqb0W_1wqRIMzn1qCzNSt64LOuSSrbdElkRY4yua_-3MhX87zxx9BiySee8mj66i"
+}

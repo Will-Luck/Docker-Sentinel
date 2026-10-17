@@ -122,11 +122,21 @@ func (s *Server) apiPasskeyRegisterBegin(w http.ResponseWriter, r *http.Request)
 
 	wu := &webauthnUser{user: user, creds: existingCreds}
 
+	// Login is discoverable only, so ask the authenticator to keep the
+	// credential (a resident key). One selection carries every field:
+	// WithAuthenticatorSelection replaces the whole struct, so a resident key
+	// option applied before it would be lost.
+	//
+	// The library does not exclude the user's credentials by itself. Without
+	// the exclusion list, an authenticator that already holds a passkey for
+	// this user replaces it, and the stored entry for the old one stops working.
 	creation, sessionData, err := s.webauthn.BeginRegistration(wu,
-		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
-			UserVerification: protocol.VerificationPreferred,
+			RequireResidentKey: protocol.ResidentKeyNotRequired(),
+			ResidentKey:        protocol.ResidentKeyRequirementPreferred,
+			UserVerification:   protocol.VerificationPreferred,
 		}),
+		webauthn.WithExclusions(webauthn.Credentials(existingCreds).CredentialDescriptors()),
 	)
 	if err != nil {
 		s.deps.Log.Error("webauthn begin registration failed", "error", err)
