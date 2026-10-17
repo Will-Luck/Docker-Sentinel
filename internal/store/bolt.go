@@ -714,17 +714,28 @@ func (s *Store) GetAllSettings() (map[string]string, error) {
 	return result, err
 }
 
-// CountHistory returns the number of entries in the history bucket.
-// Uses bucket stats for O(1) counting.
-func (s *Store) CountHistory() (int, error) {
+// CountAppliedUpdates returns how many history rows record an update that
+// was applied: a container or service recreated on the new image (outcome
+// "success" or "partial"). Scans, failures, dry runs, pulls and rollbacks are
+// not updates applied, and neither is a remote rollback recorded before 3.0
+// (outcome "success", type "rollback").
+func (s *Store) CountAppliedUpdates() (int, error) {
 	var count int
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b, err := bucket(tx, bucketHistory)
 		if err != nil {
 			return err
 		}
-		count = b.Stats().KeyN
-		return nil
+		return b.ForEach(func(_, v []byte) error {
+			var rec UpdateRecord
+			if json.Unmarshal(v, &rec) != nil {
+				return nil
+			}
+			if (rec.Outcome == "success" || rec.Outcome == "partial") && rec.Type != "rollback" {
+				count++
+			}
+			return nil
+		})
 	})
 	return count, err
 }

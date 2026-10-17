@@ -29,6 +29,15 @@
     border-color: var(--border-strong);
 }
 
+/* A long username is cut short, so it cannot push the nav bar wider than
+   the window. */
+.nav-user-btn span:not(.nav-user-chevron):not(.nav-user-role) {
+    max-width: 9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .nav-user-role {
     display: inline-block;
     padding: 1px 6px;

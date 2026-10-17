@@ -7,6 +7,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-17
+
+### Added
+
+- The container page has a "Switch to GHCR" button wherever a GitHub
+  Container Registry copy of the image has been found, for local
+  containers and for containers on agent hosts. It asks for confirmation
+  first and uses the existing switch. Containers pinned by digest do not
+  get it.
+- GHCR alternatives are now checked for the images of containers on
+  connected agent hosts as well as the hub's own. An image used on several
+  hosts is checked once per scan.
+
+### Changed
+
+- Passkeys: the passkey domain (`SENTINEL_WEBAUTHN_RPID`) must be a
+  hostname with a dot, or `localhost`. An IP address never worked
+  (WebAuthn requires a domain). A single-label name such as `sentinel`
+  worked in 3.0 and is now refused, so passkeys registered under such a
+  name stop working: set a hostname with a dot and register them again.
+  With an RPID it cannot use, Sentinel now starts with passkeys turned off
+  and logs why (`passkeys disabled: ...`, with the RPID), instead of
+  stopping. Password and single sign-on login are not affected.
+- "Updating" now shows in every open browser for every remote update,
+  whoever started it: a scan (auto policy), the dashboard, the API or the
+  automatic update of agents. Before, an update started by a scan showed
+  no "Updating" anywhere. The hub announces each remote update once, with
+  an "update started" `container_update` event, as it sends the update to
+  the agent, so an update the hub refuses first (a paused host, a failed
+  signature check) is not announced as started.
+- A remote rollback shows "Updating" on its row while it runs, and its
+  events say rollback: "rollback started", then "rollback <name>:
+  success" or "rollback <name> failed: <reason>".
+- Toasts that arrive together are grouped by container: the toasts of one
+  container show as one toast that names it, and a summary of several
+  containers counts containers, not events (a scan that queues 3 updates
+  says "3 updates detected, 3 queued for approval", not "6 queued").
+- The Reject button on the Pending Updates page explains itself: "Dismiss
+  until the next scan. To stop seeing this version, use Ignore."
+- Dependency updates: go-webauthn v0.18.2 (from v0.15.0) with its CBOR
+  library fxamacker/cbor v2.9.6 (decoder panic and map handling fixes),
+  go-webauthn/x v0.3.1, go-tpm v0.9.8 and mapstructure v2.5.0. A passkey
+  stored by 3.0 still signs in after the update.
+- Developer: `make dev-deploy` takes the SSH private key as
+  `DEV_SSH_KEY=<path>` (and refuses to run without it) instead of reading
+  it from a password manager.
+
+### Fixed
+
+- A container removed, renamed, started or stopped on an agent host by
+  something other than Sentinel (`docker rm`, Compose, a crash) kept its
+  old row on the hub dashboard for up to 5 minutes, and an open page only
+  changed when it was reloaded. The agent now follows its Docker daemon's
+  container events and sends its container list within a few seconds of a
+  change. On a host whose containers change all the time it sends at most
+  one list every 10 seconds, and each change still reaches the hub within
+  30 seconds (or when the update ends, while Sentinel is updating a
+  container on that host). Every open dashboard follows the list: a
+  changed row refreshes, and a container added, removed or renamed
+  reloads the page. If the Docker event stream drops (the daemon
+  restarted), the agent subscribes again and sends a fresh list; its
+  connection to the hub stays up. This needs 3.1.0 on the agent as well as
+  the hub. A 3.0.x agent still works and sends its list every 5 minutes,
+  which open dashboards on a 3.1.0 hub now also follow without a reload.
+- Passkey registration never asked the authenticator to keep the passkey
+  on the device (a discoverable credential, or resident key): the request
+  was dropped before it reached the browser. A hardware security key could
+  then register a passkey that passkey sign-in, which finds passkeys only
+  on the device, could not use. Registration now asks for one
+  (`residentKey: "preferred"`). A passkey registered on an earlier release
+  that passkey sign-in does not find needs registering again: delete its
+  old entry from the passkey list first, or the browser refuses the new
+  registration.
+- Registering a passkey on an authenticator that already holds one for the
+  same account is now refused by the browser, instead of adding a
+  duplicate entry to the passkey list.
+- Approving an update showed "2 updates detected", and the tab that
+  clicked Approve showed a second toast. It now shows one toast for the
+  container in every open tab, for example "web: approved, update
+  started", for a local container, a remote one and a Swarm service alike.
+  "Update now" and rolling back a remote container likewise show one toast
+  in the tab that clicked.
+- A remote rollback ended with the message "update <name>: success". It
+  now says "rollback <name>: success".
+- A remote update or rollback started from the dashboard that failed on
+  the agent was told twice, and could show as an info toast "2 updates
+  detected". It is now told once, as one error toast.
+- A rollback you asked for no longer shows the red "Rolled Back" badge
+  with a "failed health check" tooltip. It gets a neutral badge saying it
+  was rolled back on request; automatic rollbacks after a failed health
+  check keep the red badge.
+- "Updates Applied" on the About page counts only updates that were
+  applied, not every history row (scans, failures, dry runs and rollbacks
+  are left out).
+- The navigation bar no longer overflows on narrower windows: below
+  1280 px it collapses to the menu button.
+- The container versions list (`GET /api/containers/{name}/versions`)
+  follows the container's Version Scope, the same as the container page
+  and the update check, instead of always using the Relaxed scope.
+- The GHCR switch (`POST /api/containers/{name}/switch-ghcr`) refuses a
+  container pinned by digest (`image@sha256:...`) instead of moving it to
+  the `:latest` tag, which can be another version.
+
 ## [3.0.1] - 2026-10-16
 
 ### Security

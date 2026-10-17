@@ -127,6 +127,8 @@
                                 <td>
                                     {{if eq $r.Outcome "success"}}
                                         <span class="badge badge-success" title="Container updated and running healthy">Updated</span>
+                                    {{else if and (eq $r.Outcome "rollback") (isManualRollback $r)}}
+                                        <span class="badge badge-muted" title="Rolled back on request, not a failed update">Rolled Back</span>
                                     {{else if eq $r.Outcome "rollback"}}
                                         <span class="badge badge-error" title="Update failed health check, restored previous version">Rolled Back</span>
                                     {{else if eq $r.Outcome "rollback_success"}}
@@ -359,7 +361,7 @@
                     }
 
                     var tdOutcome = document.createElement('td');
-                    tdOutcome.appendChild(badgeForHist(r.outcome));
+                    tdOutcome.appendChild(badgeForHist(r.outcome, r.error));
 
                     var tdDur = document.createElement('td');
                     tdDur.className = 'mono hist-duration';
@@ -422,10 +424,14 @@
             });
     }
 
-    function badgeForHist(outcome) {
+    function badgeForHist(outcome, errText) {
         var map = {success:'badge-success',rollback:'badge-error',rollback_success:'badge-warning',rollback_failed:'badge-error',failed:'badge-error',partial:'badge-warning',rate_limited:'badge-warning',check_failed:'badge-warning',dry_run:'badge-muted',pull_only:'badge-muted',identical:'badge-info',scan_summary:'badge-info'};
         var label = {success:'Updated',rollback:'Rolled Back',rollback_success:'Rollback OK',rollback_failed:'Rollback Failed',failed:'Failed',partial:'Updated (partial)',rate_limited:'Rate Limited',check_failed:'Check Failed',dry_run:'Simulated',pull_only:'Pulled',identical:'Image Identical',scan_summary:'Summary'};
         var tips = {success:'Container updated and running healthy',rollback:'Update failed health check, restored previous version',rollback_success:'Successfully restored previous version',rollback_failed:'Attempted rollback but restoration also failed',failed:'Update failed, container may be unhealthy',partial:'Container updated but post-update cleanup had issues',rate_limited:'Registry throttled the request, will retry next scan',check_failed:'Could not reach the registry to check for updates',dry_run:'Would have updated in normal mode (dry run enabled)',pull_only:'Image pulled but container was not restarted',identical:'New image was pulled but is identical to the current one',scan_summary:'Summary of the last completed scan'};
+        if (outcome === 'rollback' && errText === 'rolled back on request') {
+            map.rollback = 'badge-muted';
+            tips.rollback = 'Rolled back on request, not a failed update';
+        }
         var cls = map[outcome] || 'badge-muted';
         var txt = label[outcome] || outcome;
         var span = document.createElement('span');

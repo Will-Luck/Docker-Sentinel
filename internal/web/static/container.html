@@ -86,6 +86,9 @@
                     {{else if .RemoteRollbackImage}}
                     <button class="btn btn-warning" onclick="triggerRemoteRollback('{{.Container.Name}}', '{{.Container.HostID}}', '{{if .Container.HostName}}{{.Container.HostName}}{{else}}{{.Container.HostID}}{{end}}', '{{.RemoteRollbackImage}}', event)">Rollback</button>
                     {{end}}
+                    {{if .GHCRImage}}
+                    <button class="btn btn-info" onclick="switchToGHCR('{{.Container.Name}}', '{{.GHCRImage}}', '{{.Container.HostID}}')" title="Recreate this container from the GitHub Container Registry copy of its image">Switch to GHCR</button>
+                    {{end}}
                 </div>
             </div>
             {{if .Container.HostID}}
@@ -304,6 +307,7 @@
                                     <td class="cell-image mono">{{.NewImage}}</td>
                                     <td>
                                         {{if eq .Outcome "success"}}<span class="badge badge-success" title="Container updated and running healthy">Updated</span>
+                                        {{else if and (eq .Outcome "rollback") (isManualRollback .)}}<span class="badge badge-muted" title="Rolled back on request, not a failed update">Rolled Back</span>
                                         {{else if eq .Outcome "rollback"}}<span class="badge badge-error" title="Update failed health check, restored previous version">Rolled Back</span>
                                         {{else if eq .Outcome "rollback_success"}}<span class="badge badge-warning" title="Successfully restored previous version">Rollback OK</span>
                                         {{else if eq .Outcome "rollback_failed"}}<span class="badge badge-error" title="Attempted rollback but restoration also failed">Rollback Failed</span>

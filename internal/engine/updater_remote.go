@@ -696,7 +696,10 @@ func (u *Updater) removeVolumesOnAgents() bool {
 
 // checkGHCRAlternatives probes GHCR for alternatives to Docker Hub images.
 // Runs as a background goroutine after each scan. Skips images that already
-// have a valid (non-expired) cache entry.
+// have a valid (non-expired) cache entry, and images pinned by digest. It
+// covers the images of the containers on connected agent hosts as well as the
+// local ones: the cache is keyed by repository and tag, so one entry serves
+// every host, and each repository and tag is probed at most once per check.
 func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []container.Summary) {
 	// Check if GHCR detection is enabled (default: true).
 	if u.settings != nil {
@@ -717,22 +720,37 @@ func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []contai
 		ghcrCred = registry.FindByRegistry(creds, "ghcr.io")
 	}
 
-	checked := 0
+	images := make([]string, 0, len(containers))
 	for _, c := range containers {
+		images = append(images, c.Image)
+	}
+	// Cluster mode can be turned off while the check runs, which sets
+	// u.cluster to nil: keep the scanner the check started with.
+	if cs := u.cluster; cs != nil {
+		for _, hostID := range cs.ConnectedHosts() {
+			remote, err := cs.ListContainers(ctx, hostID)
+			if err != nil {
+				u.log.Debug("GHCR check: failed to list remote containers", "host", hostID, "error", err)
+				continue
+			}
+			for _, rc := range remote {
+				images = append(images, rc.Image)
+			}
+		}
+	}
+
+	checked := 0
+	tried := make(map[[2]string]bool, len(images))
+	for _, image := range images {
 		if ctx.Err() != nil {
 			break
 		}
 
-		host := registry.RegistryHost(c.Image)
-		if host != "docker.io" {
+		repo, tag, ok := registry.GHCRKey(image)
+		if !ok || tried[[2]string{repo, tag}] {
 			continue
 		}
-
-		repo := registry.RepoPath(c.Image)
-		tag := registry.ExtractTag(c.Image)
-		if tag == "" {
-			tag = "latest"
-		}
+		tried[[2]string{repo, tag}] = true
 
 		// Skip if already cached and not expired.
 		if _, ok := u.ghcrCache.Get(repo, tag); ok {
@@ -753,11 +771,11 @@ func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []contai
 		}
 
 		checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		alt, err := u.ghcrAlternative(checkCtx, c.Image, hubCred, ghcrCred)
+		alt, err := u.ghcrAlternative(checkCtx, image, hubCred, ghcrCred)
 		cancel()
 
 		if err != nil {
-			u.log.Debug("GHCR check failed", "image", c.Image, "error", err)
+			u.log.Debug("GHCR check failed", "image", image, "error", err)
 			continue
 		}
 		if alt == nil {
@@ -772,7 +790,7 @@ func (u *Updater) checkGHCRAlternatives(ctx context.Context, containers []contai
 			if alt.DigestMatch {
 				match = "identical"
 			}
-			u.log.Info("GHCR alternative found", "image", c.Image, "ghcr", alt.GHCRImage, "digest", match)
+			u.log.Info("GHCR alternative found", "image", image, "ghcr", alt.GHCRImage, "digest", match)
 		}
 	}
 

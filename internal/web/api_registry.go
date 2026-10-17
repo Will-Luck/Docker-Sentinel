@@ -401,19 +401,11 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		repo := registry.RepoPath(rc.Image)
-		tag := registry.ExtractTag(rc.Image)
-		if tag == "" {
-			tag = "latest"
-		}
-
-		alt, ok := s.deps.GHCRCache.Get(repo, tag)
-		if !ok || !alt.Available {
+		ghcrImage := s.ghcrTarget(rc.Image)
+		if ghcrImage == "" {
 			writeError(w, http.StatusBadRequest, "no GHCR alternative available for "+name)
 			return
 		}
-
-		ghcrImage := alt.GHCRImage + ":" + alt.Tag
 
 		s.markRemoteUpdating(hostID, name)
 		go func() {
@@ -459,20 +451,11 @@ func (s *Server) apiSwitchToGHCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := registry.RepoPath(imageRef)
-	tag := registry.ExtractTag(imageRef)
-	if tag == "" {
-		tag = "latest"
-	}
-
-	alt, ok := s.deps.GHCRCache.Get(repo, tag)
-	if !ok || !alt.Available {
+	ghcrImage := s.ghcrTarget(imageRef)
+	if ghcrImage == "" {
 		writeError(w, http.StatusBadRequest, "no GHCR alternative available for "+name)
 		return
 	}
-
-	// Build the target GHCR image reference.
-	ghcrImage := alt.GHCRImage + ":" + alt.Tag
 
 	// Trigger migration in background using the existing UpdateContainer lifecycle.
 	go func() {

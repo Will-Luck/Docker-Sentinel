@@ -138,7 +138,9 @@ func (a *storeAdapter) RecordUpdateIfAbsent(rec web.UpdateRecord) (bool, error) 
 // aboutStoreAdapter converts store.Store to web.AboutStore.
 type aboutStoreAdapter struct{ s *store.Store }
 
-func (a *aboutStoreAdapter) CountHistory() (int, error)   { return a.s.CountHistory() }
+func (a *aboutStoreAdapter) CountAppliedUpdates() (int, error) {
+	return a.s.CountAppliedUpdates()
+}
 func (a *aboutStoreAdapter) CountSnapshots() (int, error) { return a.s.CountSnapshots() }
 
 // snapshotAdapter converts store.Store to web.SnapshotStore.

@@ -264,6 +264,7 @@
                                     <td class="mono cell-image">{{imageTag .NewImage}}</td>
                                     <td>
                                         {{if eq .Outcome "success"}}<span class="badge badge-success" title="Container updated and running healthy">Updated</span>
+                                        {{else if and (eq .Outcome "rollback") (isManualRollback .)}}<span class="badge badge-muted" title="Rolled back on request, not a failed update">Rolled Back</span>
                                         {{else if eq .Outcome "rollback"}}<span class="badge badge-error" title="Update failed health check, restored previous version">Rolled Back</span>
                                         {{else if eq .Outcome "rollback_success"}}<span class="badge badge-warning" title="Successfully restored previous version">Rollback OK</span>
                                         {{else if eq .Outcome "rollback_failed"}}<span class="badge badge-error" title="Attempted rollback but restoration also failed">Rollback Failed</span>

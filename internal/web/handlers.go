@@ -443,11 +443,34 @@ type containerDetailData struct {
 	// RemoteRollbackImage is the image a remote container goes back to if
 	// rolled back, when the hub has one. Empty means no Rollback button.
 	RemoteRollbackImage string
+	// GHCRImage is the GHCR image this container can switch to, when the
+	// detection cache found one. Empty means no Switch to GHCR button.
+	GHCRImage string
 
 	// Auth context.
 	CurrentUser *auth.User
 	AuthEnabled bool
 	CSRFToken   string
+}
+
+// ghcrTarget returns the GHCR image a Docker Hub container can switch to
+// (the target switch-ghcr uses), or "" when no alternative was found. A
+// container that is not on Docker Hub never has one, as the cache is keyed by
+// repository and tag only, and neither does one pinned by digest
+// (registry.GHCRKey).
+func (s *Server) ghcrTarget(image string) string {
+	if s.deps.GHCRCache == nil {
+		return ""
+	}
+	repo, tag, ok := registry.GHCRKey(image)
+	if !ok {
+		return ""
+	}
+	alt, ok := s.deps.GHCRCache.Get(repo, tag)
+	if !ok || !alt.Available {
+		return ""
+	}
+	return alt.GHCRImage + ":" + alt.Tag
 }
 
 // withCluster populates ClusterEnabled by checking the controller
@@ -492,6 +515,15 @@ func (s *Server) globalVersionScope() string {
 		return string(docker.ScopeStrict)
 	}
 	return "default"
+}
+
+// scopedVersions lists the newer tags of image that the container's effective
+// Version Scope allows (its sentinel.semver label, else the global scope), the
+// rule the update checker applies, plus the count of higher tags beyond that
+// scope. The container page and the versions API both go through it.
+func (s *Server) scopedVersions(ctx context.Context, image string, labels map[string]string) ([]string, int, error) {
+	return s.deps.Registry.VersionsWithScopeHint(ctx, image,
+		string(docker.ContainerSemverScope(labels)), s.globalVersionScope())
 }
 
 // effectiveScopeLabel returns the display word for the effective Version Scope of
@@ -755,8 +787,7 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	globalScope := s.globalVersionScope()
 	currentScope := effectiveScopeLabel(containerScope, globalScope)
 	if s.deps.Registry != nil {
-		versions, scopeHintCount, err = s.deps.Registry.VersionsWithScopeHint(
-			r.Context(), image, string(containerScope), globalScope)
+		versions, scopeHintCount, err = s.scopedVersions(r.Context(), image, detailLabels)
 		if err != nil {
 			s.deps.Log.Warn("failed to list versions", "name", name, "error", err)
 			versions = nil
@@ -788,6 +819,13 @@ func (s *Server) handleContainerDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	if view.HostID != "" {
 		data.RemoteRollbackImage = s.remoteRollbackTarget(view.HostID, view.Name)
+	}
+	// Hidden where switch-ghcr refuses (isProtectedTarget, by way of
+	// isQueueItemSelf): only the hub's own container counts as Sentinel itself,
+	// by its sentinel.self label, not an agent on another host. view.IsSelf
+	// already holds that label, so no second container list is needed.
+	if view.HostID != "" || !view.IsSelf {
+		data.GHCRImage = s.ghcrTarget(image)
 	}
 	s.withAuthDetail(r, &data)
 

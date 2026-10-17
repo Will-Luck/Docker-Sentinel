@@ -174,6 +174,44 @@ func TestCheckGHCRAlternative_SkipNonDockerHub(t *testing.T) {
 	}
 }
 
+const testDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func TestGHCRKey(t *testing.T) {
+	tests := []struct {
+		image, repo, tag string
+		ok               bool
+	}{
+		{"acme/app:1.0", "acme/app", "1.0", true},
+		{"docker.io/acme/app:1.0", "acme/app", "1.0", true},
+		{"acme/app", "acme/app", "latest", true},
+		{"nginx", "library/nginx", "latest", true},
+		{"acme/app:1.0@" + testDigest, "", "", false}, // pinned by digest
+		{"acme/app@" + testDigest, "", "", false},     // pinned by digest
+		{"ghcr.io/acme/app:1.0", "", "", false},
+		{"registry.example.com:5000/acme/app:1.0", "", "", false},
+	}
+	for _, tt := range tests {
+		repo, tag, ok := GHCRKey(tt.image)
+		if repo != tt.repo || tag != tt.tag || ok != tt.ok {
+			t.Errorf("GHCRKey(%q) = %q, %q, %v, want %q, %q, %v", tt.image, repo, tag, ok, tt.repo, tt.tag, tt.ok)
+		}
+	}
+}
+
+// A digest names one build, so a digest-pinned image is skipped like an image
+// on another registry. The context is cancelled: a probe that went to the
+// registry would fail instead of skipping.
+func TestCheckGHCRAlternative_SkipDigestPinned(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, image := range []string{"acme/app:1.0@" + testDigest, "acme/app@" + testDigest} {
+		alt, err := CheckGHCRAlternative(ctx, image, nil, nil)
+		if err != nil || alt != nil {
+			t.Errorf("CheckGHCRAlternative(%q) = %+v, %v, want skipped", image, alt, err)
+		}
+	}
+}
+
 func TestCheckGHCRAlternative_SkipLibraryImages(t *testing.T) {
 	ctx := context.Background()
 

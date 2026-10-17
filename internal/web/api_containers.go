@@ -181,7 +181,8 @@ func (s *Server) apiContainerDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// apiContainerVersions returns available image versions from the registry.
+// apiContainerVersions returns the newer image versions the container's Version
+// Scope allows, the same list the container page offers.
 func (s *Server) apiContainerVersions(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !isValidContainerName(name) {
@@ -203,9 +204,11 @@ func (s *Server) apiContainerVersions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var imageRef string
+	var labels map[string]string
 	for _, c := range containers {
 		if containerName(c) == name {
 			imageRef = c.Image
+			labels = c.Labels
 			break
 		}
 	}
@@ -214,7 +217,7 @@ func (s *Server) apiContainerVersions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	versions, err := s.deps.Registry.ListVersions(r.Context(), imageRef)
+	versions, _, err := s.scopedVersions(r.Context(), imageRef, labels)
 	if err != nil {
 		s.deps.Log.Warn("failed to list versions", "name", name, "image", imageRef, "error", err)
 		writeJSON(w, http.StatusOK, []string{})

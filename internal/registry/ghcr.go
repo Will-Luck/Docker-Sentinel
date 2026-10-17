@@ -121,23 +121,30 @@ func (c *GHCRCache) Import(data []byte) error {
 	return nil
 }
 
-// CheckGHCRAlternative checks whether a Docker Hub image has a corresponding
-// image on GHCR. Returns nil for non-Docker-Hub images and official library
-// images (e.g. nginx, redis) which rarely have GHCR equivalents.
-func CheckGHCRAlternative(ctx context.Context, imageRef string, hubCred, ghcrCred *RegistryCredential) (*GHCRAlternative, error) {
-	host := RegistryHost(imageRef)
-	if host != "docker.io" {
-		return nil, nil
+// GHCRKey returns the repository and tag under which the GHCR alternative of
+// a Docker Hub image is checked and cached, the tag defaulting to "latest".
+// ok is false for an image on another registry and for one pinned by digest
+// ("repo@sha256:..." or "repo:tag@sha256:..."): a digest names one build, and
+// a GHCR tag in its place could be another version.
+func GHCRKey(imageRef string) (repo, tag string, ok bool) {
+	if strings.Contains(imageRef, "@") || RegistryHost(imageRef) != "docker.io" {
+		return "", "", false
 	}
-
-	repo := RepoPath(imageRef)
-	if strings.HasPrefix(repo, "library/") {
-		return nil, nil
-	}
-
-	tag := ExtractTag(imageRef)
+	tag = ExtractTag(imageRef)
 	if tag == "" {
 		tag = "latest"
+	}
+	return RepoPath(imageRef), tag, true
+}
+
+// CheckGHCRAlternative checks whether a Docker Hub image has a corresponding
+// image on GHCR. Returns nil for non-Docker-Hub images, images pinned by
+// digest (see GHCRKey) and official library images (e.g. nginx, redis) which
+// rarely have GHCR equivalents.
+func CheckGHCRAlternative(ctx context.Context, imageRef string, hubCred, ghcrCred *RegistryCredential) (*GHCRAlternative, error) {
+	repo, tag, ok := GHCRKey(imageRef)
+	if !ok || strings.HasPrefix(repo, "library/") {
+		return nil, nil
 	}
 
 	// Determine the GHCR repository path.

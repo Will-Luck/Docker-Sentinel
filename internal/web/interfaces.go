@@ -174,7 +174,7 @@ type GHCRAlternative struct {
 
 // AboutStore provides aggregate counts for the About page.
 type AboutStore interface {
-	CountHistory() (int, error)
+	CountAppliedUpdates() (int, error)
 	CountSnapshots() (int, error)
 }
 

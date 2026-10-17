@@ -315,37 +315,6 @@ func TestGetAllSettingsEmpty(t *testing.T) {
 // Count Methods
 // ---------------------------------------------------------------------------
 
-func TestCountHistory(t *testing.T) {
-	s := testStore(t)
-
-	count, err := s.CountHistory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Errorf("expected 0, got %d", count)
-	}
-
-	for i := 0; i < 3; i++ {
-		rec := UpdateRecord{
-			Timestamp:     time.Now().UTC().Add(time.Duration(i) * time.Minute),
-			ContainerName: fmt.Sprintf("app-%d", i),
-			Outcome:       "success",
-		}
-		if err := s.RecordUpdate(rec); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	count, err = s.CountHistory()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if count != 3 {
-		t.Errorf("expected 3, got %d", count)
-	}
-}
-
 func TestCountSnapshots(t *testing.T) {
 	s := testStore(t)
 
@@ -785,5 +754,43 @@ func TestListAllHistoryEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("expected 0, got %d", len(got))
+	}
+}
+
+// The About page's "Updates Applied" counts updates that were applied, not
+// every history row: scans, failures, dry runs and rollbacks are left out.
+func TestCountAppliedUpdates(t *testing.T) {
+	s := testStore(t)
+	if got, err := s.CountAppliedUpdates(); err != nil || got != 0 {
+		t.Fatalf("empty history: CountAppliedUpdates = %d, %v, want 0", got, err)
+	}
+	base := time.Now().UTC()
+	rows := []UpdateRecord{
+		{Outcome: "success"},
+		{Outcome: "success", Type: "service"},
+		{Outcome: "partial"},
+		{Outcome: "success", Type: "rollback"}, // remote rollback recorded before 3.0
+		{Outcome: "rollback", Error: "health check failed"},
+		{Outcome: "rollback", Error: "rolled back on request"},
+		{Outcome: "failed", Error: "pull failed"},
+		{Outcome: "scan_summary"},
+		{Outcome: "dry_run"},
+		{Outcome: "pull_only"},
+		{Outcome: "identical"},
+		{Outcome: "check_failed"},
+	}
+	for i, r := range rows {
+		r.Timestamp = base.Add(time.Duration(i) * time.Second)
+		r.ContainerName = fmt.Sprintf("app-%d", i)
+		if err := s.RecordUpdate(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.CountAppliedUpdates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
+		t.Errorf("CountAppliedUpdates = %d, want 3 (two successes and a partial)", got)
 	}
 }

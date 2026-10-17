@@ -406,7 +406,7 @@ function triggerSelfUpdate(event) {
     });
 }
 
-function switchToGHCR(name, ghcrImage) {
+function switchToGHCR(name, ghcrImage, hostId) {
     showConfirm(
         "Switch to GHCR",
         "<p>Switch <strong>" + escapeHTML(name) + "</strong> to <code>" + escapeHTML(ghcrImage) + "</code>?</p>" +
@@ -415,7 +415,9 @@ function switchToGHCR(name, ghcrImage) {
     ).then(function(confirmed) {
         if (!confirmed) return;
         var enc = encodeURIComponent(name);
-        apiFetch("/api/containers/" + enc + "/switch-ghcr", {
+        var url = "/api/containers/" + enc + "/switch-ghcr";
+        if (hostId) url += "?host=" + encodeURIComponent(hostId);
+        apiFetch(url, {
             method: "POST",
             body: { target_image: ghcrImage },
             successMsg: "Switching " + name + " to GHCR image...",

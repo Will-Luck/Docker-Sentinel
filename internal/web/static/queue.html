@@ -119,7 +119,8 @@
                                             Update Sentinel
                                         </button>
                                         <button class="btn btn-error"
-                                                onclick="rejectUpdate('{{$q.Key}}', event)">
+                                                onclick="rejectUpdate('{{$q.Key}}', event)"
+                                                title="Dismiss until the next scan. To stop seeing this version, use Ignore.">
                                             Reject
                                         </button>
                                     </div>
@@ -137,7 +138,8 @@
                                         </button>
                                         {{end}}
                                         <button class="btn btn-error"
-                                                onclick="rejectUpdate('{{$q.Key}}', event)">
+                                                onclick="rejectUpdate('{{$q.Key}}', event)"
+                                                title="Dismiss until the next scan. To stop seeing this version, use Ignore.">
                                             Reject
                                         </button>
                                     </div>

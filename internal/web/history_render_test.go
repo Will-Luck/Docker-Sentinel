@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -105,5 +106,88 @@ func TestHistoryPage_RowClickTogglesDetails(t *testing.T) {
 	}
 	if !strings.Contains(out, "r.host_id") {
 		t.Errorf("loaded rows should link to the host's container page")
+	}
+}
+
+// A rollback asked for from the dashboard is not a failed update: it gets a
+// neutral badge, while an automatic rollback keeps the red one. A row written
+// by v3.0.1 has no new field, so it is told apart by its error text alone.
+func TestHistoryPage_ManualRollbackBadgeIsNeutral(t *testing.T) {
+	out := renderPage(t, "history.html", pageData{Page: "history", History: []UpdateRecord{
+		{Timestamp: time.Now(), ContainerName: "manual", Outcome: "rollback", Error: "rolled back on request"},
+		{Timestamp: time.Now().Add(-time.Minute), ContainerName: "auto", Outcome: "rollback", Error: "health check failed"},
+	}})
+	const manual = `<span class="badge badge-muted" title="Rolled back on request, not a failed update">Rolled Back</span>`
+	const auto = `<span class="badge badge-error" title="Update failed health check, restored previous version">Rolled Back</span>`
+	if strings.Count(out, manual) != 1 {
+		t.Errorf("want exactly one neutral manual-rollback badge, got %d", strings.Count(out, manual))
+	}
+	if strings.Count(out, auto) != 1 {
+		t.Errorf("want exactly one red automatic-rollback badge, got %d", strings.Count(out, auto))
+	}
+}
+
+// The container and service pages tell the two rollbacks apart the same way.
+func TestContainerAndServicePages_ManualRollbackBadgeIsNeutral(t *testing.T) {
+	history := []UpdateRecord{
+		{Timestamp: time.Now(), ContainerName: "app", Outcome: "rollback", Error: "rolled back on request"},
+		{Timestamp: time.Now().Add(-time.Minute), ContainerName: "app", Outcome: "rollback", Error: "health check failed"},
+	}
+	const manual = `<span class="badge badge-muted" title="Rolled back on request, not a failed update">Rolled Back</span>`
+	const auto = `<span class="badge badge-error" title="Update failed health check, restored previous version">Rolled Back</span>`
+	s := &Server{}
+	s.parseTemplates()
+	for _, page := range []struct {
+		name string
+		data any
+	}{
+		{"container.html", containerDetailData{Container: containerView{Name: "app", Image: "acme/app:1.0", State: "running"}, History: history}},
+		{"service.html", serviceDetailData{Service: serviceView{Name: "app", Image: "acme/app:1.0"}, History: history}},
+	} {
+		var buf bytes.Buffer
+		if err := s.tmpl.ExecuteTemplate(&buf, page.name, page.data); err != nil {
+			t.Fatalf("render %s: %v", page.name, err)
+		}
+		out := buf.String()
+		if n := strings.Count(out, manual); n != 1 {
+			t.Errorf("%s: want exactly one neutral manual-rollback badge, got %d", page.name, n)
+		}
+		if n := strings.Count(out, auto); n != 1 {
+			t.Errorf("%s: want exactly one red automatic-rollback badge, got %d", page.name, n)
+		}
+	}
+}
+
+// buttonsLabelled returns the markup of every button whose text is label.
+func buttonsLabelled(out, label string) []string {
+	return regexp.MustCompile(`<button[^>]*>\s*`+label+`\s*</button>`).FindAllString(out, -1)
+}
+
+// Both Reject buttons (Sentinel's own update and any other) explain what
+// Reject does, and the Ignore button names the version it skips.
+func TestQueuePage_RejectAndIgnoreTooltips(t *testing.T) {
+	out := renderPage(t, "queue.html", pageData{Page: "queue",
+		Queue: []PendingUpdate{
+			{ContainerName: "sentinel", CurrentImage: "acme/sentinel:3.0", NewerVersions: []string{"3.1"}},
+			{ContainerName: "web", CurrentImage: "acme/web:1.0", NewerVersions: []string{"1.1"}},
+		},
+		QueueSelfKeys: map[string]bool{"sentinel": true},
+	})
+	const tip = `title="Dismiss until the next scan. To stop seeing this version, use Ignore."`
+	rejects := buttonsLabelled(out, "Reject")
+	if len(rejects) != 2 {
+		t.Fatalf("found %d Reject buttons, want 2 (self and ordinary row)", len(rejects))
+	}
+	for _, b := range rejects {
+		if !strings.Contains(b, tip) {
+			t.Errorf("Reject button without the tooltip: %s", b)
+		}
+	}
+	ignores := buttonsLabelled(out, "Ignore")
+	if len(ignores) != 1 {
+		t.Fatalf("found %d Ignore buttons, want 1 (the ordinary row)", len(ignores))
+	}
+	if !strings.Contains(ignores[0], `title="Skip version 1.1: re-alerts when a newer one appears"`) {
+		t.Errorf("Ignore button without its tooltip: %s", ignores[0])
 	}
 }

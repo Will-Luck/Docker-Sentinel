@@ -89,7 +89,7 @@ func (s *Server) apiAbout(w http.ResponseWriter, r *http.Request) {
 
 	// History/snapshot counts from AboutStore.
 	if s.deps.AboutStore != nil {
-		if n, err := s.deps.AboutStore.CountHistory(); err == nil {
+		if n, err := s.deps.AboutStore.CountAppliedUpdates(); err == nil {
 			resp.UpdatesApplied = n
 		}
 		if n, err := s.deps.AboutStore.CountSnapshots(); err == nil {

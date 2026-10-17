@@ -1277,13 +1277,10 @@ func TestMultipleAgents(t *testing.T) {
 		streams[i] = stream
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify: all agents should be connected.
-	connected := srv.ConnectedHosts()
-	if len(connected) != numAgents {
-		t.Errorf("expected %d connected hosts, got %d", numAgents, len(connected))
-	}
+	// Verify: all agents should be connected. The server registers a stream
+	// after Channel returns, so wait for it rather than sleep a fixed time.
+	waitFor(t, 30*time.Second, func() bool { return len(srv.ConnectedHosts()) == numAgents },
+		"not every agent was connected")
 
 	// Verify: each host is in the registry and connected.
 	for i, id := range hostIDs {

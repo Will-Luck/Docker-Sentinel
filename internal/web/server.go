@@ -310,19 +310,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) parseTemplates() {
 	funcMap := template.FuncMap{
-		"fmtDuration":  formatDuration,
-		"fmtTime":      formatTime,
-		"fmtTimeAgo":   formatTimeAgo,
-		"fmtTimeUntil": formatTimeUntil,
-		"truncDigest":  truncateDigest,
-		"json":         marshalJSON,
-		"changelogURL": ChangelogURL,
-		"versionURL":   VersionURL,
-		"imageTag":     ImageTag,
-		"classifySev":  classifySeverity,
-		"sub":          func(a, b int) int { return a - b },
-		"plainName":    plainName,
-		"agentVersion": agentVersion,
+		"fmtDuration":      formatDuration,
+		"fmtTime":          formatTime,
+		"fmtTimeAgo":       formatTimeAgo,
+		"fmtTimeUntil":     formatTimeUntil,
+		"truncDigest":      truncateDigest,
+		"json":             marshalJSON,
+		"changelogURL":     ChangelogURL,
+		"versionURL":       VersionURL,
+		"imageTag":         ImageTag,
+		"classifySev":      classifySeverity,
+		"sub":              func(a, b int) int { return a - b },
+		"plainName":        plainName,
+		"isManualRollback": isManualRollbackRow,
+		"agentVersion":     agentVersion,
 		"serviceOrContainer": func(kind, name string, hostID ...string) string {
 			base := "/container/" + name
 			if kind == "service" {
